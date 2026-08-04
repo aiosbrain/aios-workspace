@@ -40,7 +40,6 @@ the same spine, three skins.
 | `scripts/` | `scaffold-project.sh` (stamp a workspace), `aios.mjs` (Team Brain sync CLI: `push`/`pull`/`status`), `leak-gate.sh`, GUI/runtime/catalog helpers. |
 | `validation/` | The OGR validators, `OGR01`–`OGR15` **except `OGR09`** (`validate-all.sh` runs all fourteen; `--critical` = OGR03 secrets only, `--quick` = OGR01 structure only). Workspace hygiene (OGR01–05, 14), scaffold + runtime contracts (OGR06–08, 11, 12, 15), advisory scorecards (OGR10, 13 — always exit 0). **OGR09 (skill library) moved to `aiosbrain/aios-workspace-gui`** with the library data it checks (AIO-702). Must pass. Full table: `docs/feature-set.md` §3. |
 | `hooks/` | Claude Code PreToolUse guards (secrets, access-tier, frontmatter, sync nudge) shipped into every scaffolded workspace. |
-| `gui/` + `src-tauri/` | Local GUI (Claude Agent SDK) + Tauri desktop shell. In transition — see §2c. |
 | `packages/foundation/` | `@aiosbrain/foundation` (npm workspace) — the shared hub modules, **published to npm (public)**; `scripts/` paths are one-line re-export shims. |
 | `examples/` | A fully synthetic sample workspace used to demo + test the harnesses. Use it; never put real data here. |
 | `docs/` | `architecture.md`, `feature-set.md`, `workflows.md`, **`brain-api.md` (the pinned sync contract)**, roadmap. |
@@ -63,7 +62,7 @@ seams as import rules). Current, verified state:
 |-------|------|--------|
 | Core toolkit (CLI, scaffold, validators, hooks, operator loop) | this repo | Authoritative. |
 | Shared hubs (`runtimes`, `workspace-parse`, `brain-config`, `linear-client`, `brain-client`, `git-files`, `constitution`) | `@aiosbrain/foundation` — `packages/foundation/`, published to npm (public, 0.1.0) | Shipped. `scripts/` paths are one-line re-export shims. |
-| GUI + desktop shell | `github.com/aiosbrain/aios-workspace-gui` (filtered history from core at freeze SHA `d6dcdeb` / tag `cut/gui-freeze`) | **Cut, but the in-tree `gui/` + `src-tauri/` here remain authoritative** — they still exist and still work; their deletion from core is a deferred post-demo PR (AIO-612). Seam contract: `docs/gui-toolkit-contract.md` (toolkit location: `--toolkit-dir` → `AIOS_TOOLKIT_DIR` → pre-split relative fallback `gui/server/../../`, which only resolves in this in-tree layout → actionable error; standalone installs must set `AIOS_TOOLKIT_DIR` or `--toolkit-dir`). |
+| GUI + desktop shell | `github.com/aiosbrain/aios-workspace-gui` (filtered history from core at freeze SHA `d6dcdeb` / tag `cut/gui-freeze`) | **Cut and removed** (AIO-612). `gui/` and `src-tauri/` are **gone from this repo** — the GUI repo is the only copy, and it is authoritative. Seam contract: `docs/gui-toolkit-contract.md` (toolkit location: `--toolkit-dir` → `AIOS_TOOLKIT_DIR` → actionable error; the pre-split relative fallback `gui/server/../../` went with the trees, so installs must set `AIOS_TOOLKIT_DIR` or pass `--toolkit-dir`). |
 | Desktop (Tauri) | travels with the GUI repo | Adjacent-checkout mode only; **do-not-demo** for v0.9.0. Self-contained bundling is AIO-581, owned by the GUI repo. |
 | Devtools | `aiosbrain/aios-devtools` | **Cut and removed** (AIO-594 → AIO-661 → AIO-662). `ship`, `build`, `roadmap-run`, `spec-eval`, `spec-publish`, `consolidate-findings` and `scripts/ship/` are **gone from this repo**; `@aiosbrain/aios-devtools` is authoritative and is a dependency of `@aiosbrain/aios`, so `aios ship` works on a plain `npm i -g @aiosbrain/aios`. Core dispatches through `scripts/devtools-dispatch.mjs` (`--devtools-dir` → `AIOS_DEVTOOLS_DIR` → the package → actionable error). `scripts/boundaries.json` carries **zero R6 grandfathers** — the machine-checkable proof the direction is clean. Seam contract: `docs/devtools-toolkit-contract.md`. |
 
@@ -197,7 +196,7 @@ they don't recognize.
 
 ## 6. Stack & key commands
 
-- **Node ESM** tooling (zero-/light-dep CLIs), Bash validators/hooks, a Claude Agent SDK GUI + Tauri shell (in-tree, mid-split to `aiosbrain/aios-workspace-gui` — §2c), and the published `@aiosbrain/foundation` npm workspace.
+- **Node ESM** tooling (zero-/light-dep CLIs), Bash validators/hooks, and the published `@aiosbrain/foundation` npm workspace. The Claude Agent SDK GUI + Tauri shell live in `aiosbrain/aios-workspace-gui` (§2c).
 - **Node is pinned to 22** (`.nvmrc` / `.node-version`). Worktrees symlink `node_modules` from the
   primary, so they all run the primary's compiled `better-sqlite3` — running tests under a different
   Node major (e.g. Homebrew's newer Node) triggers a `NODE_MODULE_VERSION` ABI crash in the
@@ -212,7 +211,6 @@ they don't recognize.
 scripts/scaffold-project.sh --context consultant --slug sandbox --stakeholder "Acme" --owner alex --team "alex,sam"
 validation/validate-all.sh <workspace-path>     # OGR validators (must pass)
 npm run aios -- status                           # sync client status (push/pull/status)
-npm run gui                                      # local GUI (chat with this repo via the Agent SDK)
 ```
 
 - **Sync:** `aios push` (only tier-tagged content leaves), `aios pull` (brain → `1-inbox/`), `aios status`.

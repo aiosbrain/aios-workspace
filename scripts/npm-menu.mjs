@@ -18,7 +18,7 @@ const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 export const CATEGORIES = {
   Core: {
     description: "day-to-day use, once your workspace is set up",
-    scripts: ["help", "gui", "aios", "setup"],
+    scripts: ["help", "aios", "setup"],
   },
   Dev: {
     description: "contributing to this toolkit",
@@ -28,18 +28,10 @@ export const CATEGORIES = {
       "format",
       "format:check",
       "test",
-      "test:client",
-      "test:rust",
-      "test:ux",
       "test:coverage",
-      "test:install-smoke",
       "test:pack-golden",
       "test:mutation",
     ],
-  },
-  Build: {
-    description: "packaging the desktop app / GUI bundle",
-    scripts: ["gui:preflight", "gui:build", "app:dev", "app:build", "app:icon"],
   },
   "Internal / CI": {
     description: "maintainers and automation — you rarely need these directly",
@@ -64,7 +56,6 @@ export const CATEGORIES = {
       "test:node",
       "test:node:list",
       "test:coverage:report",
-      "test:mutation:smoke",
       "test:mutation:nightly",
       "postinstall", // npm runs this automatically after `npm install` — never invoked by hand
     ],

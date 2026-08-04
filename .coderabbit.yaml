@@ -99,14 +99,12 @@ reviews:
   path_filters:
     - "!node_modules/**"
     - "!dist/**"
-    - "!src-tauri/target/**"
     - "!examples/**" # synthetic sample workspace, reviewed by hand
     - "!test/ux/evidence/**"
     - "!**/*.lock"
     - "!package-lock.json"
     - "!code-review-*.md" # local review artifacts
     - "!.aios/**"
-    - "!gui/client/dist/**"
 
   path_instructions:
     - path: "scripts/aios.mjs"

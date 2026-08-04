@@ -262,9 +262,9 @@ Choosing what reaches the brain is visual, not blind:
 
 > **Repo note:** the GUI (this cockpit + the Review-and-push panel above, plus the
 > `src-tauri/` desktop shell) has been cut to a standalone repo,
-> [`aiosbrain/aios-workspace-gui`](https://github.com/aiosbrain/aios-workspace-gui) —
-> its future home. Until the deferred deletion PR (AIO-612) merges, the in-tree
-> `gui/` here stays the authoritative, working copy. The standalone repo builds
+> [`aiosbrain/aios-workspace-gui`](https://github.com/aiosbrain/aios-workspace-gui),
+> which is now its only home — `gui/` and `src-tauri/` were deleted from this repo in
+> AIO-612. That repo builds
 > against the published `@aiosbrain/foundation` npm package + the `aios` CLI and
 > locates a toolkit checkout per [`gui-toolkit-contract.md`](gui-toolkit-contract.md).
 > The desktop (Tauri) shell supports **adjacent-checkout mode only** today —

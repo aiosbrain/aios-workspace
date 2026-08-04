@@ -122,18 +122,11 @@ export const MUTATION_GROUPS = [
       "src/operator-loop/inbox/seeding.ts",
       "src/operator-loop/inbox/state-machines.ts",
     ],
-    // The unit's own oracle (0.2s) instead of the 73-file operator-loop suite
-    // (42s): with coverageAnalysis "off" every mutant reruns the whole command,
-    // so the umbrella suite would cost hours per night. Floor re-measured on
-    // the calibration dispatch before it is trusted (mutation-denominator.md).
-    nightlyTests: ["gui/server/runtime-adapters/inbox-capability.test.mjs"],
-    // The capability suite moved to gui/server (AIO-600 C5: it exercises the gui-owned durable
-    // store and travels with the repo cut), so the operator-loop glob no longer covers it —
-    // listed explicitly to keep it in the changed-code umbrella.
-    tests: [
-      "test/operator-loop/*.test.mjs",
-      "gui/server/runtime-adapters/inbox-capability.test.mjs",
-    ],
+    // The capability suite that used to serve as this group's fast oracle travelled to
+    // aiosbrain/aios-workspace-gui with the AIO-612 cut, so there is no gui-owned test to point
+    // at any more. The operator-loop suite is the oracle again; if the nightly cost becomes a
+    // problem, re-measure a replacement floor rather than reinstating a cross-repo path.
+    tests: ["test/operator-loop/*.test.mjs"],
     // This floor is calibrated for the exact compiled target only. Do not
     // project a single-file score onto the much larger mutation group.
     breakThresholdByTarget: { "dist/operator-loop/inbox/capability.js": 90 },
@@ -143,33 +136,6 @@ export const MUTATION_GROUPS = [
     // before the tests run; chmod on tracked files always exits 0, so it can
     // never kill a mutant — scoring stays purely test-driven.
     executableBits: ["hooks/*.mjs"],
-  },
-  {
-    name: "runtime-capabilities",
-    match: /^gui\/server\/runtime-adapters\/(?:capability-store|guard|index)\.mjs$/,
-    nightly: [
-      "gui/server/runtime-adapters/capability-store.mjs",
-      "gui/server/runtime-adapters/guard.mjs",
-      "gui/server/runtime-adapters/index.mjs",
-    ],
-    nightlyExcludes: [],
-    tests: [
-      "gui/server/runtime-adapters/*.test.mjs",
-      "gui/server/approval-mode-governance.test.mjs",
-    ],
-  },
-  {
-    name: "client-auth-permissions",
-    client: true,
-    match:
-      /^gui\/client\/src\/(?:lib\/(?:api|token)|components\/(?:chat|integrations)\/.+)\.(?:ts|tsx)$/,
-    nightly: [
-      "gui/client/src/lib/api.ts",
-      "gui/client/src/lib/token.ts",
-      "gui/client/src/components/chat/**/*.{ts,tsx}",
-      "gui/client/src/components/integrations/**/*.{ts,tsx}",
-    ],
-    nightlyExcludes: [],
   },
 ];
 
@@ -248,23 +214,15 @@ export function configFor(group, mutate, nightly) {
     reporters: ["clear-text", "progress", "json"],
     jsonReporter: { fileName: `reports/mutation/${group.name}.json` },
     thresholds: { high: 80, low: 60, break: breakThreshold },
-    // Incremental is UNSOUND with the command runner: it reports no per-test
-    // information, so Stryker cannot see test changes and reuses stale
-    // verdicts — measured on the AIO-539 calibration, where a strengthened
-    // oracle kept "losing" to cached Survived results. Narrowed scopes made
-    // full nightly re-runs cheap, so only the Vitest (perTest) client group
-    // keeps incremental state.
-    incremental: nightly && Boolean(group.client),
+    // Incremental is UNSOUND with the command runner: it reports no per-test information, so
+    // Stryker cannot see test changes and reuses stale verdicts — measured on the AIO-539
+    // calibration, where a strengthened oracle kept "losing" to cached Survived results. The one
+    // group that could safely keep incremental state was the Vitest (perTest) client group, and
+    // that left with gui/client in the AIO-612 cut. Every remaining group uses the command
+    // runner, so this is now unconditionally off.
+    incremental: false,
     incrementalFile: `.stryker-tmp/${group.name}.json`,
   };
-  if (group.client) {
-    return {
-      ...common,
-      testRunner: "vitest",
-      coverageAnalysis: "perTest",
-      vitest: { configFile: "gui/client/vite.config.ts" },
-    };
-  }
   return {
     ...common,
     testRunner: "command",

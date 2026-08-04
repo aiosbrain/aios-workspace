@@ -14,9 +14,8 @@ A contributor's AIOS install is really **two** repos, not one:
    person actually works and commits into. Its CLI is a **thin shim** that forwards
    every `aios <cmd>` to the toolkit checkout, so command code never needs vendoring.
 
-> **Multi-repo split note:** the GUI is being cut out of the toolkit repo into
-> `aiosbrain/aios-workspace-gui` (the in-tree `gui/` stays authoritative until the
-> deferred deletion PR, AIO-612). The standalone GUI resolves the same toolkit
+> **Multi-repo split note:** the GUI lives in `aiosbrain/aios-workspace-gui`; `gui/` was
+> deleted from the toolkit repo in AIO-612. The GUI resolves the same toolkit
 > checkout this design assumes — via `AIOS_TOOLKIT_DIR` (see
 > `gui-toolkit-contract.md`) — so the two-piece model here becomes three pieces,
 > all sharing one toolkit location. For existing workspace owners the migration at

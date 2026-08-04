@@ -20,12 +20,6 @@
       "to": "scripts/**"
     },
     {
-      "id": "R4",
-      "description": "gui/server must not deep-import scripts/** at all, at any depth. The future aios-workspace-gui repo's seam contract is 'CLI --json output + @aios-alpha/toolkit-common only' \u2014 no direct filesystem reach into aios-workspace core internals.",
-      "from": "gui/server/**",
-      "to": "scripts/**"
-    },
-    {
       "id": "R5",
       "description": "Nothing outside test/** may import test/**. Tests are a leaf: fixtures and helpers stay test-only, never a dependency of production code.",
       "from": "**",

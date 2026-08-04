@@ -148,11 +148,8 @@ test("coverage diff pathspecs include source files at every directory depth", ()
     ":(glob)scripts/**/*.mjs",
     ":(glob)hooks/**/*.mjs",
     ":(glob)validation/**/*.mjs",
-    ":(glob)gui/server/**/*.mjs",
     ":(glob)packages/**/*.mjs",
     ":(glob)src/**/*.ts",
-    ":(glob)gui/client/src/**/*.ts",
-    ":(glob)gui/client/src/**/*.tsx",
   ]);
 });
 
@@ -162,36 +159,24 @@ test("coverage diff args pin the a/ b/ prefixes against a diff.noprefix git conf
   assert.ok(coverageDiffArgs("merge-base-sha").includes("--default-prefix"));
 });
 
-test(".d.ts declaration files are never coverage sources, inside or outside gui/client", () => {
-  for (const file of [
-    "src/operator-loop/types.d.ts",
-    "src/global.d.ts",
-    "gui/client/src/lib/example.d.ts",
-    "gui/client/src/vite-env.d.ts",
-  ]) {
+test(".d.ts declaration files are never coverage sources", () => {
+  for (const file of ["src/operator-loop/types.d.ts", "src/global.d.ts"]) {
     assert.equal(isCoverageSource(file), false, file);
   }
 });
 
-test("coverage source classification matches the root and client instrumentation scopes", () => {
+test("coverage source classification matches the core instrumentation scope", () => {
   for (const file of [
     "scripts/nested/example.mjs",
     "hooks/example.mjs",
     "validation/example.mjs",
-    "gui/server/nested/example.mjs",
     "src/nested/example.ts",
-    "gui/client/src/lib/example.ts",
-    "gui/client/src/components/Example.tsx",
   ]) {
     assert.equal(isCoverageSource(file), true, file);
   }
   for (const file of [
     "test/example.test.mjs",
-    "gui/server/example.test.mjs",
-    "gui/client/src/lib/example.test.ts",
-    "gui/client/src/lib/example.d.ts",
     "scripts/check-coverage.mjs",
-    "scripts/run-rust-tests.mjs",
     "scripts/ensure-loop-built.mjs",
     "scaffold/example.js",
   ]) {
@@ -202,7 +187,10 @@ test("coverage source classification matches the root and client instrumentation
 test("every .c8rc.json tool-script exclusion is also exempt from the fail-closed LCOV check", () => {
   const c8rc = JSON.parse(readFileSync(new URL("../.c8rc.json", import.meta.url), "utf8"));
   const toolScripts = c8rc.exclude.filter((entry) => /^scripts\/[^*]+\.mjs$/.test(entry));
-  assert.ok(toolScripts.length >= 7, "expected the coverage tool-script exclusions");
+  // Was >= 7 before scripts/run-rust-tests.mjs was deleted in the AIO-612 cut. The floor exists
+  // so the exclusion list cannot be silently emptied; it tracks the real count, it is not a
+  // constant to relax whenever a check goes red.
+  assert.ok(toolScripts.length >= 6, "expected the coverage tool-script exclusions");
   for (const file of toolScripts) {
     assert.equal(isCoverageSource(file), false, `${file} must not trip the missing-LCOV gate`);
   }
@@ -210,13 +198,13 @@ test("every .c8rc.json tool-script exclusion is also exempt from the fail-closed
 
 test("changed production files missing from LCOV fail closed", () => {
   const changed = new Map([
-    ["gui/server/nested/covered.mjs", new Set([1])],
-    ["gui/server/nested/missing.mjs", new Set([1])],
-    ["gui/server/nested/example.test.mjs", new Set([1])],
+    ["scripts/nested/covered.mjs", new Set([1])],
+    ["scripts/nested/missing.mjs", new Set([1])],
+    ["scripts/nested/example.test.mjs", new Set([1])],
     ["scripts/check-coverage.mjs", new Set([1])],
   ]);
-  const coverage = new Map([["gui/server/nested/covered.mjs", new Map([[1, 1]])]]);
-  assert.deepEqual(missingCoverageFiles(changed, coverage), ["gui/server/nested/missing.mjs"]);
+  const coverage = new Map([["scripts/nested/covered.mjs", new Map([[1, 1]])]]);
+  assert.deepEqual(missingCoverageFiles(changed, coverage), ["scripts/nested/missing.mjs"]);
 });
 
 test("unimported production files remain zero in merged c8 summaries", () => {

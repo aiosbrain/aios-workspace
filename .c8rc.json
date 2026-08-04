@@ -4,14 +4,12 @@
     "scripts/**/*.mjs",
     "hooks/**/*.mjs",
     "validation/**/*.mjs",
-    "gui/server/**/*.mjs",
     "packages/**/*.mjs",
     "src/**/*.ts"
   ],
   "exclude": [
     "**/*.test.*",
     "test/**",
-    "gui/client/**",
     "coverage/**",
     "dist/**",
     "scripts/test-suite.mjs",
@@ -19,7 +17,6 @@
     "scripts/merge-coverage.mjs",
     "scripts/check-coverage.mjs",
     "scripts/run-mutation.mjs",
-    "scripts/run-rust-tests.mjs",
     "scripts/ensure-loop-built.mjs"
   ],
   "exclude-after-remap": true,

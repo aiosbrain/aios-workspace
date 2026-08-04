@@ -1,5 +1,5 @@
 {
-  "_comment": "File-size gate v2 (AIO-596): default-deny, replacing the AIO-320 enumerated allowlist. Every file matched by `include` (minus `exclude`) must be <= defaultCap lines (wc -l semantics). `grandfathered` pins the files that were already over defaultCap when the gate flipped (measured 2026-07-28 from a clean origin/main checkout via `git ls-files`) — each value is a ratchet CEILING, not a target: it only ever goes DOWN as the file shrinks (`--ratchet` lowers it automatically and rewrites this file) or is deleted once the file is extracted below defaultCap, and it never goes up. New files are never grandfathered. Prior AIO-320/AIO-315 history (the dated extraction changelog for scripts/aios.mjs, ship.mjs, update.mjs, review-bugbot.mjs, toolkit-pull.mjs) lives in git history on this file; this comment stays short by design.",
+  "_comment": "File-size gate v2 (AIO-596): default-deny, replacing the AIO-320 enumerated allowlist. Every file matched by `include` (minus `exclude`) must be <= defaultCap lines (wc -l semantics). `grandfathered` pins the files that were already over defaultCap when the gate flipped (measured 2026-07-28 from a clean origin/main checkout via `git ls-files`) \u2014 each value is a ratchet CEILING, not a target: it only ever goes DOWN as the file shrinks (`--ratchet` lowers it automatically and rewrites this file) or is deleted once the file is extracted below defaultCap, and it never goes up. New files are never grandfathered. Prior AIO-320/AIO-315 history (the dated extraction changelog for scripts/aios.mjs, ship.mjs, update.mjs, review-bugbot.mjs, toolkit-pull.mjs) lives in git history on this file; this comment stays short by design.",
   "defaultCap": 500,
   "include": [
     "**/*.mjs",
@@ -14,25 +14,15 @@
   "exclude": [
     "node_modules/**",
     "**/dist/**",
-    "src-tauri/target/**",
-    "src-tauri/gen/**",
     "scaffold/**",
     "examples/**",
     "**/__fixtures__/**",
-    "**/skill-scan-fixtures/**",
-    "gui/server/skill-library/**"
+    "**/skill-scan-fixtures/**"
   ],
   "grandfathered": {
     ".agents/skills/visual-qa/scripts/visual-qa.mjs": 541,
     ".claude/skills/visual-qa/scripts/visual-qa.mjs": 541,
     ".harness/skills/visual-qa/scripts/visual-qa.mjs": 541,
-    "gui/client/src/components/tasks/TaskViews.tsx": 553,
-    "gui/client/src/hooks/useCockpit.ts": 704,
-    "gui/client/src/types/protocol.ts": 809,
-    "gui/server/index.mjs": 1634,
-    "gui/server/runtime-adapters/capability-store.mjs": 714,
-    "gui/server/runtime-adapters/opencode.mjs": 584,
-    "gui/server/runtime-adapters/opencode.test.mjs": 546,
     "hooks/local-bugbot-gate.mjs": 878,
     "scripts/aios.mjs": 2354,
     "scripts/brain-mcp.mjs": 775,
@@ -69,7 +59,6 @@
     "test/operator-loop/daily-cli.test.mjs": 537,
     "test/operator-loop/daily.test.mjs": 552,
     "test/operator-loop/decisions-backfill.test.mjs": 529,
-    "gui/server/runtime-adapters/inbox-capability.test.mjs": 957,
     "test/operator-loop/inbox-outbox.test.mjs": 722,
     "test/operator-loop/inbox-recovery.test.mjs": 722,
     "test/operator-loop/inbox-seeding.test.mjs": 667,
@@ -78,7 +67,6 @@
     "test/ship-spec-eval.test.mjs": 598,
     "test/ship-stages.test.mjs": 967,
     "test/sync-execution-smoke.test.mjs": 642,
-    "test/update-review-repros.test.mjs": 2307,
-    "test/ux/run-ux.mjs": 552
+    "test/update-review-repros.test.mjs": 2307
   }
 }

@@ -32,7 +32,7 @@ import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 
 /** Lanes this module can switch off, and the job each one gates. */
-export const LANES = ["code", "rust", "client"];
+export const LANES = ["code"];
 
 /**
  * Paths that cannot change the behaviour of any filterable lane. Anything not matched
@@ -46,16 +46,6 @@ const INERT = [
   /^\.github\/PULL_REQUEST_TEMPLATE/,
 ];
 
-/** Changing any of these can break a production install or either sub-toolchain. */
-const SHARED_BUILD_INPUTS = [
-  /^package\.json$/,
-  /^package-lock\.json$/,
-  /^\.github\/workflows\/ci\.yml$/,
-];
-
-const RUST = [/^src-tauri\//, /^scripts\/run-rust-tests\.mjs$/, ...SHARED_BUILD_INPUTS];
-const CLIENT = [/^gui\//, ...SHARED_BUILD_INPUTS];
-
 const matches = (patterns, p) => patterns.some((re) => re.test(p));
 
 export const isInert = (p) => matches(INERT, p);
@@ -65,7 +55,7 @@ export const allLanes = () => Object.fromEntries(LANES.map((lane) => [lane, true
 
 /**
  * @param {string[] | null | undefined} paths repo-relative changed paths
- * @returns {{code: boolean, rust: boolean, client: boolean}}
+ * @returns {{code: boolean}}
  */
 export function classifyChangedPaths(paths) {
   if (!Array.isArray(paths)) return allLanes();
@@ -76,8 +66,6 @@ export function classifyChangedPaths(paths) {
 
   return {
     code: !clean.every(isInert),
-    rust: clean.some((p) => matches(RUST, p)),
-    client: clean.some((p) => matches(CLIENT, p)),
   };
 }
 

@@ -8,16 +8,6 @@
   "mutualRecursion": 3717,
   "hotspotTop": [
     {
-      "name": "ConnectWizard",
-      "file": "gui/client/src/components/integrations/ConnectWizard.tsx",
-      "outDegree": 25
-    },
-    {
-      "name": "a",
-      "file": "gui/client/src/components/chat/messages/AssistantMessage.tsx",
-      "outDegree": 0
-    },
-    {
       "name": "args",
       "file": "validation/check-agent-readiness.mjs",
       "outDegree": 0

@@ -27,7 +27,7 @@ addition.
 | Workflow-layer (operator loop) code | `docs/ENGINEERING-CONSTITUTION.md` — all-TypeScript, spec→plan→tasks→implement |
 | Secrets anywhere | `validation/check-secrets.sh` + `scripts/leak-gate.sh` + team-ops-guard are hard gates; never weaken to pass a commit |
 | Any harness change | Keep its rubric honest (`scaffold/.claude/rubrics/`) — the rubric is what makes output trustworthy |
-| Any `gui/`, `src-tauri/`, or `packages/foundation/` change | Repo topology (below) + seam contract `docs/gui-toolkit-contract.md`; `npm run check:boundaries` enforces the seams |
+| Any `packages/foundation/` change, or GUI work (now in `aiosbrain/aios-workspace-gui`) | Repo topology (below) + seam contract `docs/gui-toolkit-contract.md`; `npm run check:boundaries` enforces the seams |
 
 ## Repo Topology (multi-repo split, AIO-597 — in transition)
 
@@ -38,11 +38,10 @@ Referenced by `scripts/check-boundaries.mjs`; the fuller table is `CLAUDE.md` §
   npm** (public, 0.1.0). Hubs: runtimes, workspace-parse, brain-config, linear-client,
   brain-client, git-files, constitution. `scripts/` paths are one-line re-export shims.
 - **GUI** — cut (filtered history, freeze `cut/gui-freeze` = `d6dcdeb`) to
-  `github.com/aiosbrain/aios-workspace-gui`, the future home. **In-tree `gui/` +
-  `src-tauri/` stay authoritative until deletion PR AIO-612 merges.** Toolkit location:
-  `--toolkit-dir` → `AIOS_TOOLKIT_DIR` → pre-split relative fallback (`gui/server/../../`,
-  in-tree layout only — fails standalone) → actionable error; standalone installs must
-  set `AIOS_TOOLKIT_DIR` or `--toolkit-dir`.
+  `github.com/aiosbrain/aios-workspace-gui`. **`gui/` + `src-tauri/` are DELETED from this
+  repo (AIO-612); that repo is the only copy.** Toolkit location:
+  `--toolkit-dir` → `AIOS_TOOLKIT_DIR` → actionable error. The pre-split relative fallback
+  (`gui/server/../../`) can no longer reach a toolkit, so one of the two must be set.
 - **Desktop (Tauri)** — adjacent-checkout mode only; **do-not-demo** for v0.9.0;
   bundling = AIO-581 (GUI repo).
 - **Devtools** (`aiosbrain/aios-devtools`) — **cut and removed** (AIO-662). `ship`, `build`,

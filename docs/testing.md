@@ -1,19 +1,16 @@
 # Test strategy
 
-`npm test` is the complete local verification entrypoint. It runs static preparation, every
-Node test discovered by `scripts/test-suite.mjs`, the GUI client Vitest suite, and Rust tests
-when the local Rust/Tauri prerequisites are installed. A missing local Rust toolchain produces
-an explicit skip notice; CI sets `AIOS_REQUIRE_RUST_TESTS=1`, installs the Linux dependencies,
-and never permits that lane to skip. The Node runner keeps one child process per file and bounds
-concurrency; do not restore explicit test-file lists to `package.json`.
+`npm test` is the complete local verification entrypoint for the core repository. It runs static
+preparation and every Node test discovered by `scripts/test-suite.mjs`. The Node runner keeps one
+child process per file and bounds concurrency; do not restore explicit test-file lists to
+`package.json`. GUI client and Rust/Tauri verification belong to the standalone GUI repository.
 
 Discovery is git-tracked-only: `scripts/test-suite.mjs` intersects its filesystem walk with
 `git ls-files --cached`, so untracked scratch tests and gitignored artifact dirs never run and
 never break the discovery-parity test (`git add` a new test file for it to be picked up; outside
-a git checkout the runner falls back to the plain walk). Extension sets are per runner — Node
-roots (`test/`, `gui/server/`, `scripts/`) execute `.test.{mjs,js}`; `gui/client/src/` belongs to
-Vitest, which also runs `.test.{ts,tsx}`. A tracked `.test.ts` (or similar) under a Node root
-fails discovery loudly rather than being silently skipped.
+a git checkout the runner falls back to the plain walk). Node roots (`test/` and `scripts/`)
+execute `.test.{mjs,js}`. A tracked `.test.ts` (or similar) under a Node root fails discovery
+loudly rather than being silently skipped.
 
 Test paths front the suite with `node scripts/ensure-loop-built.mjs --strict`
 (`AIOS_LOOP_BUILD_STRICT=1` is equivalent): if the operator-loop TypeScript rebuild is needed and
@@ -25,10 +22,9 @@ never refreshes `dist/` and masks itself).
 ## CI lanes
 
 - Three Node shards run the same canonical inventory with `--shard=N/3`.
-- GUI client tests/build, Rust, corrected coverage, and the clean production install run in
-  parallel.
-- The clean-install test is network-dependent and runs only through
-  `npm run test:install-smoke`.
+- Corrected coverage runs in parallel with the Node shards.
+- The path-filtered npm package golden-path lane packs the tarball, installs it into a clean
+  prefix, then scaffolds, validates, and runs offline status via `npm run test:pack-golden`.
 - The required test gate excludes mutation while the nightly campaign is not yet healthy. The
   2026-07-25 calibration run timed out during `bugbot-security`; make the lane mandatory only
   after ten consecutive complete nightlies within the workflow budget, spanning at least seven
@@ -36,8 +32,8 @@ never refreshes `dist/` and masks itself).
 
 ## Coverage policy
 
-`npm run test:coverage` reports production files only. c8 and Vitest both include unimported
-source as zero coverage; `.c8rc.json` sets `exclude-after-remap` so `dist/**` V8 entries are
+`npm run test:coverage` reports production files only. c8 includes unimported source as zero
+coverage; `.c8rc.json` sets `exclude-after-remap` so `dist/**` V8 entries are
 source-map-remapped back to `src/**/*.ts` before include/exclude filtering (otherwise every TS
 file would report zero). `coverage-baseline.json` is a global non-regression ratchet, while
 changed executable lines must remain at least 80% covered and changed production files absent
@@ -51,12 +47,11 @@ split as the test lanes instead of re-running the whole suite:
   c8 (sharding is forwarded to `scripts/test-suite.mjs`), leaving that shard's raw V8 coverage
   data under `coverage/shard-<k>/`. It produces no final report and no gate check, and exits
   nonzero on test failure.
-- `node scripts/run-coverage.mjs --merge <n>` runs the client Vitest coverage, then merges
-  `coverage/shard-1..n/` into the standard outputs `scripts/check-coverage.mjs` consumes —
+- `node scripts/run-coverage.mjs --merge <n>` merges `coverage/shard-1..n/` into the standard
+  outputs `scripts/check-coverage.mjs` consumes —
   `coverage/coverage-summary.json` + `coverage/lcov.info` — plus the baseline candidate
   `coverage/coverage-baseline-candidate.json`. It fails closed if any shard's data is missing.
-- With no flags it performs the single full run (client coverage first, then the whole Node
-  suite under c8, then the merge).
+- With no flags it performs the single full Node run under c8, then the merge.
 
 Coverage floors are generated on the Ubuntu CI runner so platform-specific skips cannot make a
 locally generated floor fail in CI. Every coverage run uploads

@@ -129,22 +129,29 @@ Rehearsal results at the frozen SHA:
 | F7 | `maturity.test.mjs` + `cost-config.test.mjs` SEAM PARITY import core `scripts/analyze/*`; `inbox-capability.test.mjs` imports `../../../dist/operator-loop`. | Toolkit-checkout prerequisite for the parity pair; `@aios-alpha/operator-loop` publish (or toolkit-dist fallback) for the capability suite. |
 | F8 | `test/skill-install-marketplace.test.mjs` (`scripts/lock-marketplace.mjs`) and `test/ux/run-ux.mjs` (`scripts/connector.mjs`) import core modules. | Toolkit-checkout test prerequisite, as the contract already flags for the UX harness. |
 
-## 7. Deferred (owned elsewhere — do NOT solve in the cut PR)
+## 7. Deferred — DONE (AIO-612 landed)
 
-- **Tauri bundle story** — `src-tauri` moves as-is; repointing the desktop shell to the
-  new repo is **AIO-581 in the new repo** (contract §src-tauri).
-- **Nightly `inbox-authorization` mutation floor** — its calibrated oracle is the
-  gui-owned capability suite; core must re-home or re-calibrate the 90% floor
-  (measured decision per AIO-539's rules, recorded in the cut PR).
-- **Core CI lane removals** (client shards, UX nightly, gui-touching gates) — the
-  deletion PR **AIO-612**, which also deletes the moved paths from core (keeping the
-  shared `test/skill-scan-fixtures`).
+The deletion PR has merged. `gui/` and `src-tauri/` are gone from core; the GUI repo is
+the only copy. What was listed here as deferred:
+
+- **Tauri bundle story** — `src-tauri` moved as-is; repointing the desktop shell is
+  **AIO-581 in the GUI repo** (contract §src-tauri). Still open, still owned there.
+- **Nightly `inbox-authorization` mutation floor** — DONE, by removal rather than
+  re-calibration. Its calibrated oracle WAS the gui-owned capability suite, so with that
+  suite in the other repo the group's `nightlyTests` override is gone and both lanes run
+  the operator-loop umbrella. `breakThresholdByTarget` still pins the 90% floor for the
+  compiled target; if the nightly cost becomes a problem, re-measure a replacement floor
+  per AIO-539's rules rather than reinstating a cross-repo path.
+- **Core CI lane removals** — DONE. `client-tests`, `rust-tests` and `install-smoke` are
+  deleted along with their `test-gate.needs` entries (12 lanes → 9), and the
+  `runtime-capabilities` + `client-auth-permissions` mutation legs are gone from
+  `mutation.yml`. `test/skill-scan-fixtures/` was RETAINED, as specified.
 
 ## 8. Rollback
 
-The cut is non-destructive until AIO-612 merges: the filtered repo is a **new** repo
-built from a disposable mirror; core history and the primary checkout are untouched. To
-roll back at any point before the deletion PR lands: delete the new repo (or its remote)
-and stop — nothing in core changed. After AIO-612, rollback = revert the deletion PR
-(the moved files' history is still fully present in core's git history at the frozen
-SHA).
+AIO-612 has merged, so the pre-deletion rollback (delete the new repo and stop) no
+longer applies. Rollback is now **`git revert -m 1 <merge-sha>`** on the deletion PR: it
+landed as a single squash commit precisely so the trees, the lockfile, the workflows and
+the config all come back atomically. The moved files' history is still fully present in
+core's git history at the frozen SHA, so a single file can be recovered with
+`git checkout cut/gui-freeze -- <path>` (tag `cut/gui-freeze` = `d6dcdeb`).

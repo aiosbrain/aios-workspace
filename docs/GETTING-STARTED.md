@@ -364,13 +364,13 @@ get access → scaffold → sync → first PR) is the website's
 [Onboarding a contributor](https://aios-alpha.github.io/getting-started/onboarding-a-contributor/)
 page. Each repo also has its own contributor guide:
 
-- **`aios-workspace`** (this repo) — CLI, scaffold, validators, harness skills, and
-  (for now) the in-tree GUI. See [`CONTRIBUTING.md`](../CONTRIBUTING.md).
+- **`aios-workspace`** (this repo) — CLI, scaffold, validators, harness skills.
+  See [`CONTRIBUTING.md`](../CONTRIBUTING.md).
 - **`aios-workspace-gui`** — the standalone GUI repo
   ([github.com/aiosbrain/aios-workspace-gui](https://github.com/aiosbrain/aios-workspace-gui)),
-  cut from this repo with filtered history. It is the GUI's future home, but the
-  in-tree `gui/` here remains authoritative until the deferred deletion PR (AIO-612)
-  merges. Seam contract: [`gui-toolkit-contract.md`](gui-toolkit-contract.md).
+  cut from this repo with filtered history. It is the GUI's only home — `gui/` and
+  `src-tauri/` were deleted here in AIO-612. Seam contract:
+  [`gui-toolkit-contract.md`](gui-toolkit-contract.md).
 - **`aios-team-brain`** — Next.js dashboard, ingest pipeline, query layer.
   See its `DEVELOPMENT.md` (local setup + test tiers) and `CONTRIBUTING.md` (PR gates).
 - **`aios-alpha.github.io`** — the public docs (this getting-started path + the site).

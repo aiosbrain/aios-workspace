@@ -53,8 +53,6 @@ const SR17_TASK_HEADING_RE =
 // names its test file, docs page, and scaffold mirror — those references measure spec completeness,
 // not mixed concerns, and counting them made SR17 hard-block well-bounded specs (2026-07-22).
 const SR17_SURFACES = [
-  ["gui/client", /^gui\/client\b/],
-  ["gui/server", /^gui\/server\b/],
   ["scripts", /^scripts\b/],
   ["src/operator-loop", /^src\/operator-loop\b/],
   ["src", /^src\b(?!\/operator-loop)/],

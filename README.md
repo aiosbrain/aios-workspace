@@ -18,8 +18,7 @@ AIOS is organized across **three repositories**, with distinct responsibilities:
 - **This repo — the individual workspace.** One per person. You work here; you
   choose what to share. Nothing leaves until you `aios push` it.
 - **The [standalone GUI](https://github.com/aiosbrain/aios-workspace-gui).**
-  The future home of the local web GUI and desktop shell; the in-tree copy here
-  remains authoritative until AIO-612.
+  The local web GUI and desktop shell. It lives there, not here (AIO-612).
 - **The [Team Brain](docs/brain-api.md).** The *one* shared service that receives
   everyone's pushes and answers questions across the team. It is the only "team"
   layer.
@@ -50,10 +49,6 @@ aios-workspace/
 ├── scripts/         scaffold-project.sh · aios.mjs (Team Brain sync CLI) · leak-gate.sh
 ├── packages/        @aiosbrain/foundation (npm workspace) — the shared hub modules,
 │                    published to npm; scripts/ paths re-export it as thin shims
-├── gui/             local web GUI — chat with this repo via the Claude Agent SDK
-│                    (+ src-tauri/, the desktop shell). Now also a standalone repo,
-│                    github.com/aiosbrain/aios-workspace-gui; this in-tree copy stays
-│                    authoritative until the deferred deletion PR (AIO-612)
 ├── examples/        a fully synthetic sample to demo + test the harnesses
 └── docs/            architecture · feature-set · workflows · brain-api (sync contract)
 ```
@@ -142,16 +137,14 @@ Chat with your repo in a browser instead of the terminal — the **local cockpit
 npm run gui -- --repo ~/Projects/acme-workspace
 ```
 
-> **Repo transition note:** the GUI has been cut to a standalone repo —
+> **Repo topology note:** the GUI and desktop shell live in
 > [`aiosbrain/aios-workspace-gui`](https://github.com/aiosbrain/aios-workspace-gui)
-> (history filtered from this repo) — which is its future home. Until the deferred
-> deletion PR (AIO-612) merges, the in-tree `gui/` + `src-tauri/` here remain the
-> authoritative, working copy. The standalone GUI locates a toolkit checkout via
+> (history filtered from this repo). `gui/` and `src-tauri/` were **deleted from this
+> repo in AIO-612** — that repo is the only copy. The GUI locates a toolkit checkout via
 > [`docs/gui-toolkit-contract.md`](docs/gui-toolkit-contract.md): `--toolkit-dir`
-> flag → `AIOS_TOOLKIT_DIR` env → a pre-split relative fallback (`gui/server/../../`,
-> which only resolves while the GUI lives *inside* a toolkit checkout, i.e. this
-> monorepo layout — it fails in the standalone repo) → an actionable error.
-> Standalone installs must set `AIOS_TOOLKIT_DIR` or pass `--toolkit-dir`.
+> flag → `AIOS_TOOLKIT_DIR` env → an actionable error. The pre-split relative fallback
+> (`gui/server/../../`) still exists in the GUI repo's resolver but can no longer reach a
+> toolkit — nothing sits above it any more — so one of the two must be set.
 > It builds against the published
 > [`@aiosbrain/foundation`](https://www.npmjs.com/package/@aiosbrain/foundation)
 > package plus the `aios` CLI — never toolkit internals.

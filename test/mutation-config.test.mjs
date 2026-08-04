@@ -194,11 +194,14 @@ test("nightly kill commands use the unit's own tests; the changed-code lane keep
     .commandRunner.command;
   const changedCommand = configFor(inbox, ["dist/operator-loop/inbox/capability.js"], false)
     .commandRunner.command;
-  assert.match(nightlyCommand, /gui\/server\/runtime-adapters\/inbox-capability\.test\.mjs/);
-  assert.doesNotMatch(nightlyCommand, /test\/operator-loop\/\*\.test\.mjs/);
+  // The gui-owned capability suite that served as this group's fast nightly oracle travelled to
+  // aiosbrain/aios-workspace-gui with the AIO-612 cut, so there is no nightlyTests override left
+  // and both lanes now run the operator-loop umbrella. Neither command may reference a path in
+  // the other repo.
+  assert.match(nightlyCommand, /test\/operator-loop\/\*\.test\.mjs/);
   assert.match(changedCommand, /test\/operator-loop\/\*\.test\.mjs/);
-  // AIO-600 C5: the moved capability suite stays in the changed-code umbrella explicitly.
-  assert.match(changedCommand, /gui\/server\/runtime-adapters\/inbox-capability\.test\.mjs/);
+  assert.doesNotMatch(nightlyCommand, /gui\//);
+  assert.doesNotMatch(changedCommand, /gui\//);
 
   const updateSafety = MUTATION_GROUPS.find((entry) => entry.name === "update-safety");
   const updateNightly = configFor(updateSafety, ["scripts/toolkit-merge.mjs"], true).commandRunner
@@ -352,22 +355,27 @@ test("a failed campaign does not prevent later mutation groups from running", ()
   assert.deepEqual(visited, ["first", "threshold-miss", "last"]);
 });
 
-test("GUI mutation uses Vitest per-test coverage", () => {
-  const group = MUTATION_GROUPS.find((entry) => entry.client);
-  const config = configFor(group, ["gui/client/src/lib/token.ts"], true);
-  assert.equal(config.testRunner, "vitest");
-  assert.equal(config.coverageAnalysis, "perTest");
-  assert.equal(config.incremental, true);
+test("no mutation group targets the cut GUI repo", () => {
+  // The Vitest (perTest) client group was the only non-command-runner group, and it left with
+  // gui/client in the AIO-612 cut. A group pointing at a path in the other repo would configure
+  // a campaign that can never run.
+  assert.deepEqual(
+    MUTATION_GROUPS.filter((entry) => entry.client),
+    []
+  );
+  const serialized = JSON.stringify(MUTATION_GROUPS);
+  assert.doesNotMatch(serialized, /gui\//);
+  assert.doesNotMatch(serialized, /src-tauri\//);
 });
 
 test("command-runner groups never use incremental mode", () => {
   // The command runner reports no per-test information, so Stryker cannot see
   // test changes and incremental mode reuses stale verdicts — measured on the
   // AIO-539 calibration: a strengthened oracle could not flip cached Survived
-  // results until incremental was disabled. Only the Vitest (perTest) client
-  // group may keep incremental state.
+  // results until incremental was disabled. The one group that could safely keep incremental
+  // state was the Vitest (perTest) client group, and it left with gui/client (AIO-612), so this
+  // now holds for every group.
   for (const group of MUTATION_GROUPS) {
-    if (group.client) continue;
     const config = configFor(group, [toMutateTarget(group, group.nightly[0])], true);
     assert.equal(
       config.incremental,
@@ -384,14 +392,14 @@ test("mutation CLI validates value-taking flags", () => {
   }
   assert.deepEqual(
     {
-      ...parseArgs(["--base", "upstream/main", "--group=client-auth-permissions", "--list"]),
+      ...parseArgs(["--base", "upstream/main", "--group=inbox-authorization", "--list"]),
       nightly: false,
     },
     {
       nightly: false,
       list: true,
       base: "upstream/main",
-      group: "client-auth-permissions",
+      group: "inbox-authorization",
       mutate: null,
     }
   );
