@@ -1,10 +1,9 @@
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { execFileSync } from "node:child_process";
 
 /**
- * Fixture builders for the AIO-612 client-workspace guard tests
+ * Fixture builders for the AIO-742 client-coverage ownership tests
  * (`test/run-coverage-client-guard.test.mjs`).
  *
  * These live outside the test file because the guard is asserted from two directions — the
@@ -22,10 +21,8 @@ export const SUMMARY = JSON.stringify({
 /**
  * A fixture repo root: shard data for `--merge 1`, and optionally a gui/client workspace.
  *
- * The guard asks npm, so a fixture has to be a tree npm will actually resolve — no hand-written
- * lockfile can stand in. `registered` therefore controls the root `workspaces` array, which is
- * what npm reads. No lockfile is written at all: an earlier design read one, and the parity tests
- * cover why that was wrong.
+ * `registered` controls the root `workspaces` array independently from `manifest`, so tests can
+ * prove that a present client stays coverage-owned through workspace deregistration.
  */
 export function makeRoot({ manifest = false, registered = false } = {}) {
   const root = mkdtempSync(path.join(tmpdir(), "run-cov-guard-"));
@@ -49,24 +46,14 @@ export function makeRoot({ manifest = false, registered = false } = {}) {
     mkdirSync(path.join(root, "gui", "client"), { recursive: true });
     writeFileSync(
       path.join(root, "gui", "client", "package.json"),
-      JSON.stringify({ name: "@fixture/client", version: "1.0.0" })
+      JSON.stringify({
+        name: "@fixture/client",
+        version: "1.0.0",
+        scripts: { "test:coverage": "" },
+      })
     );
   }
   return root;
-}
-
-/**
- * A gui/client + gui/server pair under `root`, each with a no-op `probe` script so the parity
- * sweeps can ask real npm `run --workspace gui/client` whether it resolves.
- */
-export function makeParityMembers(root) {
-  for (const member of ["client", "server"]) {
-    mkdirSync(path.join(root, "gui", member), { recursive: true });
-    writeFileSync(
-      path.join(root, "gui", member, "package.json"),
-      JSON.stringify({ name: `@fixture/${member}`, version: "1.0.0", scripts: { probe: "" } })
-    );
-  }
 }
 
 /**
@@ -88,29 +75,4 @@ export function recorder(root) {
       }
     },
   };
-}
-
-/** Generate a real lockfile: no network, no node_modules, but npm's real workspace resolution. */
-export function install(root) {
-  try {
-    execFileSync("npm", ["install", "--package-lock-only", "--no-audit", "--no-fund"], {
-      cwd: root,
-      stdio: "pipe",
-    });
-  } catch {
-    /* npm may refuse to write a lockfile for an invalid registration; that is a valid state */
-  }
-}
-
-/** Does real npm resolve `gui/client` as a workspace in `root`? The oracle the guard is graded against. */
-export function npmResolvesClient(root) {
-  try {
-    execFileSync("npm", ["run", "probe", "--workspace", "gui/client"], {
-      cwd: root,
-      stdio: "pipe",
-    });
-    return true;
-  } catch {
-    return false;
-  }
 }
