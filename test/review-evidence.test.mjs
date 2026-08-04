@@ -14,6 +14,7 @@ import {
   disagreements,
 } from "../scripts/check-review-evidence-parity.mjs";
 import {
+  forLog,
   gatherPullRequestFacts,
   parseArgs,
   renderReport,
@@ -197,6 +198,23 @@ describe("review evidence — CLI surface", () => {
     assert.match(report, /Review evidence — FAIL/);
     assert.match(report, new RegExp(`- Reviewed at ${HEAD}`));
     assert.match(report, new RegExp(EXEMPTION_LABEL));
+  });
+
+  it("cannot be made to forge a workflow command from data it does not control", () => {
+    assert.equal(forLog("a\n::add-mask::secret"), "a : :add-mask: :secret");
+    assert.equal(forLog("a\r\nb"), "a b");
+    assert.equal(forLog(undefined), "");
+    assert.equal(forLog("x".repeat(900)).length, 500);
+    const report = renderReport(
+      {
+        ok: false,
+        kind: "error",
+        summary: "boom",
+        rejected: [{ url: "u\n::error::forged", author: "a", reason: "r" }],
+      },
+      { repo: "o/r", number: "7", headSha: HEAD }
+    );
+    assert.doesNotMatch(report, /^::error::/m);
   });
 
   it("lists rejected candidates so the reason is visible on the PR", () => {

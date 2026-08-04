@@ -37,6 +37,19 @@ const API = process.env.GITHUB_API_URL || "https://api.github.com";
 const MAX_PAGES = 20;
 const WRITE_PERMISSIONS = new Set(["admin", "maintain", "write"]);
 
+/**
+ * Neutralise anything that reaches a log line or the job summary. GitHub Actions treats a
+ * line beginning `::` as a workflow command, and this gate echoes strings it does not
+ * control — HTTP response bodies, comment authors, validator messages. Without this, a
+ * hostile response body could forge annotations (or an `::add-mask::`) in our own run log.
+ */
+export function forLog(value) {
+  return String(value ?? "")
+    .replace(/[\r\n]+/g, " ")
+    .replace(/::/g, ": :")
+    .slice(0, 500);
+}
+
 export function parseArgs(argv) {
   const flags = new Set(["clear-exemption-on-push", "no-status"]);
   const values = {};
@@ -205,12 +218,12 @@ export function renderReport(verdict, { repo, number, headSha }) {
     "",
     `- PR: ${repo}#${number}`,
     `- Head SHA: \`${headSha ?? "unknown"}\``,
-    `- Verdict: ${verdict.summary}`,
+    `- Verdict: ${forLog(verdict.summary)}`,
   ];
   if (verdict.rejected?.length) {
     lines.push("", "Rejected candidate attestations:");
     for (const item of verdict.rejected) {
-      lines.push(`- ${item.url} (@${item.author}): ${item.reason}`);
+      lines.push(`- ${forLog(item.url)} (@${forLog(item.author)}): ${forLog(item.reason)}`);
     }
   }
   if (!verdict.ok) {
@@ -268,7 +281,12 @@ async function main() {
     verdict = evaluateReviewEvidence(facts);
   } catch (error) {
     // Indeterminate is FAIL. A gate that goes green when it cannot answer is the bug class.
-    verdict = { ok: false, kind: "error", summary: `Gate error: ${error.message}`, rejected: [] };
+    verdict = {
+      ok: false,
+      kind: "error",
+      summary: `Gate error: ${forLog(error.message)}`,
+      rejected: [],
+    };
   }
 
   const report = renderReport(verdict, { repo, number, headSha });
@@ -289,7 +307,9 @@ async function main() {
     try {
       await postStatus(repo, headSha, verdict, args["target-url"]);
     } catch (error) {
-      console.error(`::error::Could not publish the ${STATUS_CONTEXT} status: ${error.message}`);
+      console.error(
+        `::error::Could not publish the ${STATUS_CONTEXT} status: ${forLog(error.message)}`
+      );
       process.exitCode = 1;
       return;
     }
