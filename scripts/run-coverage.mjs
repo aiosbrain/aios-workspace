@@ -170,11 +170,15 @@ function runClientCoverage(exec = execute) {
  * @returns {boolean}
  */
 export function isResolvedWorkspace(root, target) {
+  // NOSONAR javascript:S4036 — `npm` must come from PATH, and specifically from the SAME PATH
+  // `execute()` gives the real client-coverage spawn (node_modules/.bin first). A probe resolved
+  // differently from the command it predicts would answer about a different npm, which is the
+  // whole failure mode this guard exists to close. There is no fixed path to harden to.
   const probe = spawnSync("npm", ["ls", "--workspace", target, "--depth", "0", "--json"], {
     cwd: root,
     encoding: "utf8",
     env: { ...process.env, PATH: LOCAL_BIN_PATH },
-  });
+  }); // NOSONAR
   if (probe.status === 0) return true;
   // npm's own words when a --workspace argument resolves to nothing. This is the ONLY failure
   // that means "not a workspace"; any other nonzero exit means npm could not answer, which is a
