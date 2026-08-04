@@ -1,0 +1,134 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aios.dev/contracts/debt-patrol-report-v1.schema.json",
+  "title": "AIOS report-only debt patrol artifact v1",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "producer",
+    "policy_version",
+    "report_only",
+    "immutable",
+    "run",
+    "target",
+    "policy",
+    "evidence",
+    "findings",
+    "finding_set_fingerprint",
+    "delivery",
+    "capabilities",
+    "generated_at",
+    "report_fingerprint"
+  ],
+  "properties": {
+    "schema_version": { "const": "1" },
+    "producer": { "const": "aios-workspace/debt-patrol" },
+    "policy_version": { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+$" },
+    "report_only": { "const": true },
+    "immutable": { "const": true },
+    "run": {
+      "type": "object",
+      "required": ["id", "attempt", "event_name", "schedule_name", "provisional", "calibration_eligible", "automatic_filing_eligible"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "attempt": { "type": "integer", "minimum": 1 },
+        "event_name": { "enum": ["schedule", "workflow_dispatch"] },
+        "schedule_name": { "enum": ["daily", "weekly", "manual"] },
+        "provisional": { "type": "boolean" },
+        "calibration_eligible": { "type": "boolean" },
+        "automatic_filing_eligible": { "const": false }
+      },
+      "additionalProperties": false
+    },
+    "target": {
+      "type": "object",
+      "required": ["repository", "slug", "default_branch", "resolved_sha", "revalidated_sha", "exact_head_verified"],
+      "properties": {
+        "repository": { "type": "string", "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$" },
+        "slug": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,62}$" },
+        "default_branch": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "resolved_sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "revalidated_sha": { "type": ["string", "null"], "pattern": "^[0-9a-f]{40}$" },
+        "exact_head_verified": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+    "policy": {
+      "type": "object",
+      "required": ["decision", "reason_codes", "decision_fingerprint", "budget_minutes", "open_pr_cap", "observed_open_pr_count"],
+      "properties": {
+        "decision": { "enum": ["run", "stop"] },
+        "reason_codes": { "type": "array", "uniqueItems": true, "items": { "type": "string", "pattern": "^[a-z0-9_]+$" } },
+        "decision_fingerprint": { "$ref": "#/$defs/fingerprint" },
+        "budget_minutes": { "type": "integer", "minimum": 5, "maximum": 60 },
+        "open_pr_cap": { "type": "integer", "minimum": 0, "maximum": 100 },
+        "observed_open_pr_count": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "evidence": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "required": ["rubric_version", "profile_id", "profile_version", "measured_at", "score_pct", "status", "evidence_status", "quality_gate", "scanner_automation_eligible"],
+          "properties": {
+            "rubric_version": { "type": "string", "minLength": 1, "maxLength": 40 },
+            "profile_id": { "type": "string", "minLength": 1, "maxLength": 80 },
+            "profile_version": { "type": "string", "minLength": 1, "maxLength": 80 },
+            "measured_at": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?(Z|[+-]\\d{2}:\\d{2})$" },
+            "score_pct": { "type": "number", "minimum": 0, "maximum": 100 },
+            "status": { "enum": ["pass", "warn", "fail"] },
+            "evidence_status": { "enum": ["complete", "partial", "missing", "stale", "error"] },
+            "quality_gate": { "enum": ["pass", "fail", "unknown"] },
+            "scanner_automation_eligible": { "type": "boolean" }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "findings": {
+      "type": "array",
+      "maxItems": 500,
+      "items": { "$ref": "#/$defs/finding" }
+    },
+    "finding_set_fingerprint": { "$ref": "#/$defs/fingerprint" },
+    "delivery": {
+      "type": "object",
+      "required": ["team_brain"],
+      "properties": { "team_brain": { "enum": ["succeeded", "failed", "skipped"] } },
+      "additionalProperties": false
+    },
+    "capabilities": {
+      "type": "object",
+      "required": ["source_write", "pull_request_write", "linear_write", "auto_merge"],
+      "properties": {
+        "source_write": { "const": false },
+        "pull_request_write": { "const": false },
+        "linear_write": { "const": false },
+        "auto_merge": { "const": false }
+      },
+      "additionalProperties": false
+    },
+    "generated_at": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?(Z|[+-]\\d{2}:\\d{2})$" },
+    "report_fingerprint": { "$ref": "#/$defs/fingerprint" }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "fingerprint": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "finding": {
+      "type": "object",
+      "required": ["fingerprint", "check_id", "axis", "kind", "severity", "evidence_status", "remediation_tier"],
+      "properties": {
+        "fingerprint": { "$ref": "#/$defs/fingerprint" },
+        "check_id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$" },
+        "axis": { "type": "string", "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$" },
+        "kind": { "enum": ["quality_issue", "evidence_gap"] },
+        "severity": { "enum": ["low", "medium", "high", "critical"] },
+        "evidence_status": { "enum": ["complete", "partial", "missing", "stale", "error"] },
+        "remediation_tier": { "const": 0 }
+      },
+      "additionalProperties": false
+    }
+  }
+}

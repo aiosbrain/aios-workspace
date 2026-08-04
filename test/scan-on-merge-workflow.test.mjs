@@ -21,6 +21,11 @@ const fetchScript = readFileSync(fetchScriptPath, "utf8");
 const scanWithHealthPath = fileURLToPath(
   new URL("../.github/scripts/scan_with_health.py", import.meta.url)
 );
+const scaffoldScanWithHealthPath = fileURLToPath(
+  new URL("../scaffold/.github/scripts/scan_with_health.py", import.meta.url)
+);
+const scanWithHealth = readFileSync(scanWithHealthPath, "utf8");
+const scaffoldScanWithHealth = readFileSync(scaffoldScanWithHealthPath, "utf8");
 
 const CHECKOUT_SHA = "3d3c42e5aac5ba805825da76410c181273ba90b1";
 const SETUP_NODE_SHA = "820762786026740c76f36085b0efc47a31fe5020";
@@ -185,6 +190,19 @@ test("health upload failures are not retried with a destructive plain upload", (
   }
 });
 
+test("repository and scaffold scanners preserve the exact-head fail-closed mode", () => {
+  for (const [name, contents] of [
+    ["repository", scanWithHealth],
+    ["scaffold", scaffoldScanWithHealth],
+  ]) {
+    assert.match(contents, /"--expected-head-sha"/, name);
+    assert.match(contents, /len\(args\.expected_head_sha\) != 40/, name);
+    assert.match(contents, /health\["head_sha"\] != args\.expected_head_sha/, name);
+    assert.match(contents, /scan_sha != args\.expected_head_sha/, name);
+    assert.match(contents, /exact-head patrol refused upload/, name);
+  }
+});
+
 test("health transport accepts closed v1/v1.0/v2 shapes and rejects extra fields", () => {
   const dir = mkdtempSync(path.join(tmpdir(), "scan-with-health-"));
   const probe = `
@@ -228,23 +246,28 @@ print(json.dumps(module.load_health(sys.argv[2])))
     automation_eligible: false,
     findings: [],
   };
-  const load = (name, health) => {
+  const load = (scriptPath, name, health) => {
     const fixture = path.join(dir, `${name}.json`);
     writeFileSync(fixture, `${JSON.stringify(health)}\n`);
-    const result = spawnSync("python3", ["-c", probe, scanWithHealthPath, fixture], {
+    const result = spawnSync("python3", ["-c", probe, scriptPath, fixture], {
       encoding: "utf8",
     });
     assert.equal(result.status, 0, result.stderr);
     return JSON.parse(result.stdout);
   };
   try {
-    assert.deepEqual(load("v1", base), base);
-    assert.deepEqual(load("v1.0", { ...base, schema_version: "1.0" }), {
-      ...base,
-      schema_version: "1.0",
-    });
-    assert.deepEqual(load("v2", v2), v2);
-    assert.equal(load("v2-extra", { ...v2, path: "secret/file" }), null);
+    for (const [name, scriptPath] of [
+      ["repository", scanWithHealthPath],
+      ["scaffold", scaffoldScanWithHealthPath],
+    ]) {
+      assert.deepEqual(load(scriptPath, `${name}-v1`, base), base);
+      assert.deepEqual(load(scriptPath, `${name}-v1.0`, { ...base, schema_version: "1.0" }), {
+        ...base,
+        schema_version: "1.0",
+      });
+      assert.deepEqual(load(scriptPath, `${name}-v2`, v2), v2);
+      assert.equal(load(scriptPath, `${name}-v2-extra`, { ...v2, path: "secret/file" }), null);
+    }
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
