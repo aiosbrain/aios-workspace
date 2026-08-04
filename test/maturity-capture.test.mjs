@@ -29,12 +29,12 @@ function ws() {
   return mkdtempSync(path.join(tmpdir(), "maturity-hook-"));
 }
 
-function runHook(dir, payload, { rawInput } = {}) {
+function runHook(dir, payload, { rawInput, env } = {}) {
   const input = rawInput !== undefined ? rawInput : JSON.stringify(payload);
   try {
     execFileSync("node", [HOOK], {
       input,
-      env: { ...process.env, CLAUDE_PROJECT_DIR: dir },
+      env: { ...process.env, CLAUDE_PROJECT_DIR: dir, ...env },
       stdio: ["pipe", "pipe", "pipe"],
     });
     return 0;
@@ -316,4 +316,28 @@ test("computeSessionRecord: empty events → zero-safe ratios", () => {
   assert.equal(signals.tokens_per_task, 0);
   assert.equal(signals.subagent_usage, 0);
   assert.deepEqual(counts.distinct_tools, []);
+});
+
+test("transcript read cap is env-configurable (AIOS_MATURITY_TRANSCRIPT_MAX_MB)", () => {
+  // The cap was a fixed 10 MB that silently dropped the largest, highest-signal sessions. It is now
+  // configurable (default 50 MB). Prove BOTH directions with ONE transcript so the assertion can't
+  // pass vacuously: a cap below its size skips it; the default captures it.
+  const dir = ws();
+  try {
+    const tp = transcript(dir, { turns: 2 });
+    const sizeMb = statSync(tp).size / (1024 * 1024);
+    assert.ok(sizeMb < 50, "fixture must be under the default cap for the capture leg to be meaningful");
+
+    // A cap far below the fixture's size → skipped, no store written.
+    assert.equal(runHook(dir, { hook_event_name: "SessionEnd", session_id: "cap-skip", cwd: dir, transcript_path: tp }, { env: { AIOS_MATURITY_TRANSCRIPT_MAX_MB: "0.00001" } }), 0);
+    assert.ok(!existsSync(path.join(dir, STORE_REL)), "a cap below the transcript size must skip capture");
+
+    // Default cap (unset) → the same transcript is captured.
+    assert.equal(runHook(dir, { hook_event_name: "SessionEnd", session_id: "cap-keep", cwd: dir, transcript_path: tp }), 0);
+    const { sessions } = fold(dir);
+    assert.equal(sessions.size, 1, "default cap captures a normal transcript");
+    assert.ok(sessions.get("cap-keep"), "the captured record is the default-cap run");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
