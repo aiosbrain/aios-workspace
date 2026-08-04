@@ -145,7 +145,25 @@ the PR gate disagree about what a clean review looks like.
 
 **Activation.** The workflow is inert as a *gate* until an admin adds `review-evidence` to the
 required status checks on `main`. Until then it still runs and still shows red or green on the
-PR; it just does not block. Adding the context is the one step this PR cannot do for itself.
+PR; it just does not block. Adding the context is the one step this PR cannot do for itself —
+doing it before the gate is on `main` would leave every open PR pending forever, because a
+required context that no workflow can produce never resolves.
+
+The admin step, once this is merged (read the current rule first; the write replaces the whole
+list of contexts, so it must be re-sent with `review-evidence` appended):
+
+```bash
+gh api repos/aiosbrain/aios-workspace/branches/main/protection/required_status_checks \
+  --jq '{strict, contexts}'
+gh api -X PATCH repos/aiosbrain/aios-workspace/branches/main/protection/required_status_checks \
+  -f 'contexts[]=unit tests (npm test)' \
+  -f 'contexts[]=lint + format' \
+  -f 'contexts[]=leak-gate + secrets + harness checks' \
+  -f 'contexts[]=review-evidence'
+```
+
+Removing it again is the same call without the last line — a deliberate, attributable act, which
+is the point. There is no way to disable the gate from inside a pull request.
 
 **Triggers.** `pull_request` (opened, synchronize, reopened, ready_for_review, labeled,
 unlabeled), `pull_request_review`, and `issue_comment`. The last one is why the verdict is a
