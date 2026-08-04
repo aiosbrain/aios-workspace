@@ -32,6 +32,19 @@ import path from "node:path";
 export const DEGRADED_MARKER = "coverage-degraded.json";
 
 /**
+ * Written INSIDE `coverage/shard-<k>/` when that shard's suite run failed.
+ *
+ * Sharded mode splits "run the suite" (`--shard`) from "produce the artifact" (`--merge`) across
+ * two processes, so the merge cannot observe a suite failure directly — raw V8 data from a failed
+ * shard is indistinguishable from a passing one. The sentinel is the only channel between them,
+ * and it lives in the shard directory because that directory IS the CI artifact.
+ *
+ * Deliberately NOT a `.json` name: `collectShardFiles` feeds every `*.json` in a shard directory
+ * to `c8 report`, which would choke on a file that is not V8 coverage data.
+ */
+export const SHARD_FAILED_SENTINEL = "shard-failed.marker";
+
+/**
  * Every artifact a consumer might read as "this repo's coverage", and the name its degraded
  * counterpart is preserved under. BOTH entries matter: merge-coverage.mjs writes the summary and
  * the lcov, and scan-on-merge.yml names both as what the scanner picks up — quarantining only
@@ -42,6 +55,39 @@ export const CANONICAL_ARTIFACTS = [
   ["coverage-summary.json", "coverage-summary.degraded.json"],
   ["lcov.info", "lcov.degraded.info"],
 ];
+
+/** Record that this shard's suite run failed, inside the directory the merge will read. */
+export function markShardFailed(shardDir, reason) {
+  mkdirSync(shardDir, { recursive: true });
+  writeFileSync(path.join(shardDir, SHARD_FAILED_SENTINEL), `${reason}\n`);
+}
+
+/**
+ * Refuse to merge shard data when any shard's suite run failed.
+ *
+ * A SHARD THAT FAILED IS A RUN THAT DID NOT COMPLETE, and its raw V8 data is indistinguishable
+ * from a passing shard's. Merge mode never runs the suite itself, so the sentinel is the only way
+ * it can know. In CI this is belt-and-braces — the shard job's upload step is success()-gated and
+ * the `coverage` job `needs: coverage-shard`, so failed-shard data never reaches the merge. It
+ * bites on the LOCAL sharded path, where nothing stops you running the shards by hand, ignoring
+ * one that failed, and merging anyway; and it is what keeps the artifact honest if that upload is
+ * ever changed to `if: always()` for debuggability.
+ *
+ * Marks as well as throws: merge mode does NOT wipe coverage/, so a summary/lcov from an earlier
+ * run may still be sitting at the canonical names, and throwing alone would leave that stale,
+ * complete-looking pair as the answer to "what is this repo's coverage".
+ */
+export function refuseMergeIfShardsFailed(root, shardDirs) {
+  const failed = shardDirs
+    .filter((dir) => existsSync(path.join(dir, SHARD_FAILED_SENTINEL)))
+    .map((dir) => path.relative(root, dir));
+  if (!failed.length) return;
+  markCoverageDegraded(root, `shard suite run failed in: ${failed.join(", ")}`, failed);
+  throw new Error(
+    `run-coverage: refusing to merge — the suite failed in ${failed.join(", ")}; ` +
+      "re-run those shards rather than publishing a number built from a partial run"
+  );
+}
 
 /**
  * Move the canonical artifacts aside so NOTHING is left at the names consumers read.

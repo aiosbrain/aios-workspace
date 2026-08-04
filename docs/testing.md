@@ -53,14 +53,18 @@ split as the test lanes instead of re-running the whole suite:
   `coverage/coverage-baseline-candidate.json`. It fails closed if any shard's data is missing.
 - With no flags it performs the single full Node run under c8, then the merge.
 
-If the client pass fails, the full run still merges the ROOT data (losing it entirely is worse)
-but **publishes nothing**: it writes `coverage/coverage-degraded.json` and moves the partial
-results to `coverage/coverage-summary.degraded.json` + `coverage/lcov.degraded.info`, so nothing
-is left at the canonical names. A root-only summary is indistinguishable from a complete one and
-clears every floor, so publishing it would under-report coverage silently and forever; an absent
-artifact reads as "no report", which is visibly wrong and gets fixed. The command still exits
-nonzero. To recover, fix the underlying failure and re-run — do not delete the marker or rename
-the files back. See `scripts/coverage-degraded.mjs`.
+**A run that did not complete publishes nothing.** If the Node suite fails — or a workspace
+coverage pass fails — the full run still merges whatever data exists (losing it entirely is
+worse), then writes `coverage/coverage-degraded.json` and moves the partial results to
+`coverage/coverage-summary.degraded.json` + `coverage/lcov.degraded.info`, so **nothing is left
+at the canonical names**. A partial summary is indistinguishable from a complete one and clears
+every floor, so publishing it would under-report coverage silently and forever; an absent
+artifact reads as "no report", which is visibly wrong and gets fixed. The marker's `reason` says
+which half failed. The command still exits nonzero.
+
+In sharded mode a failed `--shard` run drops a `shard-failed.marker` in its shard directory, and
+`--merge` refuses to build a number from it. To recover, fix the underlying failure and re-run —
+do not delete the marker or rename the files back. See `scripts/coverage-degraded.mjs`.
 
 Coverage floors are generated on the Ubuntu CI runner so platform-specific skips cannot make a
 locally generated floor fail in CI. Every coverage run uploads

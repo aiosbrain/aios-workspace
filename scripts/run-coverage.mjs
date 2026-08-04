@@ -27,7 +27,12 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildBaseline } from "./check-coverage.mjs";
-import { clearCoverageDegraded, markCoverageDegraded } from "./coverage-degraded.mjs";
+import {
+  clearCoverageDegraded,
+  refuseMergeIfShardsFailed,
+  markCoverageDegraded,
+  markShardFailed,
+} from "./coverage-degraded.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const C8 = path.join(ROOT, "node_modules", "c8", "bin", "c8.js");
@@ -221,8 +226,12 @@ async function runNodeSuiteUnderC8(
  *
  * @param {() => Promise<void>} runSuite
  * @param {() => Promise<void>} merge
+ * @param {(suiteError: ?Error) => void} [afterMerge] — runs once the artifact is on disk and
+ *   BEFORE the suite failure is re-thrown. This is the only point where a caller can still act
+ *   on what the merge produced; re-throwing first is what previously made a suite failure skip
+ *   the degradation handling entirely.
  */
-export async function mergeThenPropagate(runSuite, merge) {
+export async function mergeThenPropagate(runSuite, merge, afterMerge = () => {}) {
   let suiteError;
   try {
     await runSuite();
@@ -239,6 +248,8 @@ export async function mergeThenPropagate(runSuite, merge) {
     if (!suiteError) throw mergeError;
     console.error(`coverage artifact unavailable after suite failure: ${mergeError.message}`);
   }
+
+  afterMerge(suiteError ?? null);
 
   if (suiteError) throw suiteError;
 }
@@ -262,11 +273,22 @@ export async function runFull({ root = ROOT, exec = execute } = {}) {
     // destroying the ROOT coverage number. Root coverage is still real data and the dashboard
     // should get it; the client failure is re-thrown after the merge, so the command still exits
     // nonzero.
+    //
+    // CURRENTLY UNREACHABLE, DELIBERATELY KEPT. Since the GUI cut (#549) there is no
+    // `gui/client/package.json`, so `runClientCoverageIfPresent` skips without calling `run()`
+    // and `clientError` can never be non-null. The code that makes it reachable again — the
+    // predicate, the runner, the whole branch — is still here, and this finding has already
+    // survived two rounds by being fixed only for the case someone happened to hit first.
+    const failures = [];
     let clientError = null;
     try {
       await runClientCoverageIfPresent(() => runClientCoverage(exec, root), root);
     } catch (error) {
       clientError = error;
+      failures.push({
+        missing: CLIENT_WORKSPACE,
+        reason: `client coverage failed: ${error.message}`,
+      });
       console.error(
         `run-coverage: client coverage FAILED (${error.message}) — continuing so the root ` +
           "artifact is still produced; this failure is re-thrown after the merge."
@@ -286,26 +308,35 @@ export async function runFull({ root = ROOT, exec = execute } = {}) {
     // c8 writes its report even when the wrapped process exits nonzero (verified), so the raw
     // data for everything that DID execute is already on disk by the time we get here. Produce
     // the artifact, THEN propagate the failure — the gate keeps failing exactly as before.
+    //
+    // BUT NOTHING MAY BE LEFT AT THE CANONICAL NAME WHENEVER THE RUN DID NOT COMPLETE — see
+    // scripts/coverage-degraded.mjs. The TRIGGER IS "the run did not complete", not "the client
+    // pass failed": a failing Node suite reaches this with c8 data for only the tests that ran,
+    // an arbitrary fraction of ~2,500, which is the same finding with a far larger blast radius
+    // than the ~1,929-line client case. It goes in `afterMerge` because `mergeThenPropagate`
+    // re-throws a suite failure itself, so anything after that call is unreachable on this
+    // path — which is exactly how the suite case went unguarded while the client case was
+    // fixed twice.
     await mergeThenPropagate(
       () => runNodeSuiteUnderC8(tempDirectory, [], [], exec, root),
-      () => exec(process.execPath, ["scripts/merge-coverage.mjs"], { cwd: root })
+      () => exec(process.execPath, ["scripts/merge-coverage.mjs"], { cwd: root }),
+      (suiteError) => {
+        // Listed first: when both failed it is the more informative reason, matching the error
+        // `mergeThenPropagate` re-throws.
+        if (suiteError) {
+          failures.unshift({
+            missing: "node suite (partial c8 data)",
+            reason: `node suite failed: ${suiteError.message}`,
+          });
+        }
+        if (!failures.length) return;
+        markCoverageDegraded(
+          root,
+          failures.map((f) => f.reason).join("; "),
+          failures.map((f) => f.missing)
+        );
+      }
     );
-
-    // AND NOTHING MAY BE LEFT AT THE CANONICAL NAME WHEN IT IS INCOMPLETE. Producing the data
-    // rather than losing it is right, but a root-only summary is shape-identical AND
-    // plausibility-identical to a complete one — and scan-on-merge.yml runs this mode under
-    // `|| true`, so the error re-thrown below is DISCARDED and the number would be published
-    // anyway. Nothing downstream can tell "we measured 81.87%" from "we measured part of it and
-    // the rest failed", and it clears every floor either way. So `markCoverageDegraded` both
-    // writes the marker (for consumers that call readCoverageReport) and moves the summary and
-    // lcov to `.degraded` names (for consumers that only ever stat the canonical path — the
-    // brain scanner among them). Done AFTER the merge, so it acts on what actually landed on
-    // disk. No clear is needed on the way in: this mode wipes coverage/ wholesale above.
-    if (clientError) {
-      markCoverageDegraded(root, `client coverage failed: ${clientError.message}`, [
-        CLIENT_WORKSPACE,
-      ]);
-    }
 
     // Reached only when the suite passed; mergeThenPropagate re-throws a suite failure itself,
     // and that is the more informative error when both fail.
@@ -318,16 +349,25 @@ export async function runFull({ root = ROOT, exec = execute } = {}) {
 async function runShard(shard, { root = ROOT, exec = execute } = {}) {
   await ensureLoopBuiltStrict(exec, root);
   const shardDir = shardDirectory(shard.index, root);
+  // Wholesale wipe, so a sentinel from this shard's previous run cannot outlive it.
   rmSync(shardDir, { recursive: true, force: true });
   // c8 collects raw V8 data into the shard directory; --reporter=none skips
   // report generation — the merge step is the only report/gate producer.
-  await runNodeSuiteUnderC8(
-    shardDir,
-    [`--shard=${shard.raw}`],
-    ["--reporter=none", "--clean=false"],
-    exec,
-    root
-  );
+  try {
+    await runNodeSuiteUnderC8(
+      shardDir,
+      [`--shard=${shard.raw}`],
+      ["--reporter=none", "--clean=false"],
+      exec,
+      root
+    );
+  } catch (error) {
+    // Record the failure WHERE THE MERGE WILL SEE IT, then fail as before. c8 has already
+    // written partial data for whatever ran, and that data is indistinguishable from a complete
+    // shard — so without this the merge would happily build a plausible number out of it.
+    markShardFailed(shardDir, error.message);
+    throw error;
+  }
   console.log(`run-coverage: shard ${shard.raw} raw coverage in ${path.relative(root, shardDir)}`);
 }
 
@@ -374,6 +414,12 @@ export function collectShardFiles(total, root = ROOT) {
 export async function runMerge(total, { root = ROOT, exec = execute } = {}) {
   const paths = coveragePaths(root);
   const files = collectShardFiles(total, root);
+
+  refuseMergeIfShardsFailed(
+    root,
+    Array.from({ length: total }, (_, i) => shardDirectory(i + 1, root))
+  );
+
   rmSync(path.join(paths.dir, "root"), { recursive: true, force: true });
   rmSync(path.join(root, "gui", "client", "coverage"), { recursive: true, force: true });
   rmSync(paths.summary, { force: true });

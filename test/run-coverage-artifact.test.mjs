@@ -61,16 +61,20 @@ function recorderWithLcov(root) {
   return rec;
 }
 
-/** Drive the full mode with a client pass that fails, and return whatever it threw. */
-async function runWithFailingClient(root, rec) {
+const isClientPass = (command, args) => command === "npm" && args.includes("gui/client");
+const isNodeSuite = (args) => args.some((a) => String(a).endsWith("test-suite.mjs"));
+
+/** Drive a mode with an `exec` that fails on selected commands, and return whatever it threw. */
+async function runWith(root, rec, argv, shouldFail) {
   const failing = async (command, args, options) => {
-    if (command === "npm" && args.includes("gui/client")) throw new Error("client coverage boom");
+    const boom = shouldFail(command, args);
+    if (boom) throw new Error(boom);
     return rec.exec(command, args, options);
   };
   const original = console.error;
   console.error = () => {};
   try {
-    await main([], { root, exec: failing });
+    await main(argv, { root, exec: failing });
     return null;
   } catch (caught) {
     return caught;
@@ -78,6 +82,12 @@ async function runWithFailingClient(root, rec) {
     console.error = original;
   }
 }
+
+const runWithFailingClient = (root, rec) =>
+  runWith(root, rec, [], (c, a) => isClientPass(c, a) && "client coverage boom");
+
+const runWithFailingSuite = (root, rec, argv = []) =>
+  runWith(root, rec, argv, (_c, a) => isNodeSuite(a) && "17 tests failed");
 
 test("a degraded full run leaves NOTHING at the canonical coverage names", async () => {
   const root = makeRoot({ manifest: true, registered: true });
@@ -115,6 +125,130 @@ test("a degraded full run leaves NOTHING at the canonical coverage names", async
     ]);
 
     // 5. And the consequence that matters for consumers that DO call our JS.
+    assert.equal(
+      silenceErrors(() => readCoverageReport(root)),
+      null
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a FAILING NODE SUITE degrades the artifact exactly like a failed client pass", async () => {
+  // THE CASE THAT SURVIVED THE GUI CUT, and the larger one. `mergeThenPropagate` catches a suite
+  // failure, merges anyway, and RE-THROWS — so everything after that call was unreachable on this
+  // path, which is how the suite case stayed unguarded while the client case was fixed twice.
+  // scan-on-merge.yml discards the throw, so what got published was a number computed over
+  // whatever fraction of ~2,500 tests happened to run before the failure.
+  const root = makeRoot();
+  const rec = recorderWithLcov(root);
+  const thrown = await runWithFailingSuite(root, rec);
+  try {
+    assert.match(
+      thrown?.message ?? "",
+      /17 tests failed/,
+      "the suite failure must still propagate"
+    );
+
+    for (const name of CANONICAL) {
+      assert.equal(existsSync(at(root, name)), false, `${name} must not be left behind`);
+    }
+    for (const name of QUARANTINED) {
+      assert.ok(existsSync(at(root, name)), `${name} must hold the partial data`);
+    }
+    assert.equal(
+      JSON.parse(readFileSync(at(root, "coverage-summary.degraded.json"), "utf8")).total.lines.pct,
+      80,
+      "the preserved copy must be the real partial measurement"
+    );
+
+    const marker = JSON.parse(readFileSync(at(root, "coverage-degraded.json"), "utf8"));
+    assert.match(marker.reason, /node suite failed: 17 tests failed/);
+    assert.deepEqual(marker.missing, ["node suite (partial c8 data)"]);
+    assert.deepEqual(marker.preserved, [
+      "coverage/coverage-summary.degraded.json",
+      "coverage/lcov.degraded.info",
+    ]);
+
+    assert.equal(
+      silenceErrors(() => readCoverageReport(root)),
+      null
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("the marker's reason distinguishes a suite failure from a workspace failure", async () => {
+  // Whoever reads the marker has to know which half of the run died. When BOTH fail the suite is
+  // named first, matching the error mergeThenPropagate re-throws as the more informative one.
+  const root = makeRoot({ manifest: true, registered: true });
+  const rec = recorderWithLcov(root);
+  const thrown = await runWith(
+    root,
+    rec,
+    [],
+    (c, a) =>
+      (isClientPass(c, a) && "client coverage boom") || (isNodeSuite(a) && "17 tests failed")
+  );
+  try {
+    assert.match(thrown?.message ?? "", /17 tests failed/);
+    const marker = JSON.parse(readFileSync(at(root, "coverage-degraded.json"), "utf8"));
+    assert.match(marker.reason, /^node suite failed: 17 tests failed; client coverage failed: /);
+    assert.deepEqual(marker.missing, ["node suite (partial c8 data)", "gui/client"]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a failing SHARD records a sentinel the merge can see", async () => {
+  const root = makeRoot();
+  const rec = recorder(root);
+  const thrown = await runWithFailingSuite(root, rec, ["--shard", "2/3"]);
+  try {
+    assert.match(thrown?.message ?? "", /17 tests failed/, "the shard must still fail");
+    assert.ok(
+      existsSync(path.join(root, "coverage", "shard-2", "shard-failed.marker")),
+      "the failure must be recorded where the merge will read it"
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("MERGE refuses to publish a number built from a failed shard", async () => {
+  // Sharded mode splits "run the suite" from "produce the artifact" across two processes, so the
+  // merge cannot observe the failure directly — a failed shard's raw V8 data is indistinguishable
+  // from a passing one's. And because this mode does not wipe coverage/, a stale complete-looking
+  // summary from an earlier run would otherwise stay behind as the answer.
+  const root = makeRoot();
+  const rec = recorder(root);
+  try {
+    mkdirSync(path.join(root, "coverage"), { recursive: true });
+    writeFileSync(at(root, "coverage-summary.json"), SUMMARY);
+    writeFileSync(at(root, "lcov.info"), LCOV);
+    writeFileSync(
+      path.join(root, "coverage", "shard-1", "shard-failed.marker"),
+      "17 tests failed\n"
+    );
+
+    let thrown = null;
+    const original = console.error;
+    console.error = () => {};
+    try {
+      await main(["--merge", "1"], { root, exec: rec.exec });
+    } catch (caught) {
+      thrown = caught;
+    } finally {
+      console.error = original;
+    }
+
+    assert.match(thrown?.message ?? "", /refusing to merge/, "the merge must fail closed");
+    for (const name of CANONICAL) {
+      assert.equal(existsSync(at(root, name)), false, `stale ${name} must not survive`);
+    }
+    const marker = JSON.parse(readFileSync(at(root, "coverage-degraded.json"), "utf8"));
+    assert.match(marker.reason, /shard suite run failed in: coverage\/shard-1/);
     assert.equal(
       silenceErrors(() => readCoverageReport(root)),
       null
