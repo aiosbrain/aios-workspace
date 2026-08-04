@@ -41,7 +41,9 @@ history.
 - Both targets stop when observed open pull requests exceed 12.
 - Manual dispatch can select either repository or both, but every manual artifact is provisional.
 
-Cron strings exist once in policy data and are asserted byte-for-byte against the workflow.
+Cron strings are declared in policy data and repeated in the workflow `on: schedule` block, which
+GitHub Actions requires. A test asserts the two copies match byte-for-byte, so a schedule change
+must edit both files.
 Budget, target opt-in, coverage command, default branch, and open-PR cap are closed validated
 fields. Invalid or unknown configuration prevents plan creation.
 

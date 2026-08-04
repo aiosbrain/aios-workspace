@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { readFile, writeFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 import { isExactSha, stableDigest } from "./policy.mjs";
 
 function argsFor(argv) {
@@ -14,17 +15,26 @@ function argsFor(argv) {
 }
 
 async function liveHead(repository, branch, token) {
-  const response = await fetch(
-    `https://api.github.com/repos/${repository}/git/ref/heads/${encodeURIComponent(branch)}`,
-    {
-      headers: {
-        accept: "application/vnd.github+json",
-        authorization: `Bearer ${token}`,
-        "user-agent": "aios-debt-patrol/1",
-        "x-github-api-version": "2022-11-28",
-      },
-    }
-  );
+  let response;
+  try {
+    response = await fetch(
+      `https://api.github.com/repos/${repository}/git/ref/heads/${encodeURIComponent(branch)}`,
+      {
+        headers: {
+          accept: "application/vnd.github+json",
+          authorization: `Bearer ${token}`,
+          "user-agent": "aios-debt-patrol/1",
+          "x-github-api-version": "2022-11-28",
+        },
+        signal: AbortSignal.timeout(15_000),
+      }
+    );
+  } catch (error) {
+    const reason = ["AbortError", "TimeoutError"].includes(error.name)
+      ? "github_timeout"
+      : "github_network_error";
+    throw new Error(reason, { cause: error });
+  }
   if (!response.ok) throw new Error(`github_http_${response.status}`);
   return (await response.json())?.object?.sha;
 }
@@ -85,7 +95,8 @@ async function main() {
     if (!token) throw new Error("GitHub token is required for live head revalidation");
     try {
       observedSha = await liveHead(args.repository, args.branch, token);
-    } catch {
+    } catch (error) {
+      console.error(`head revalidation failed: ${error.message}`);
       observedSha = null;
     }
   }
@@ -101,7 +112,7 @@ async function main() {
   if (result.decision !== "run") process.exitCode = 2;
 }
 
-if (process.argv[1] === new URL(import.meta.url).pathname) {
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
   try {
     await main();
   } catch (error) {

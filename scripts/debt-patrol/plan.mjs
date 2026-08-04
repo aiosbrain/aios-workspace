@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { appendFile, readFile, writeFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 import { buildPatrolPlan, validatePatrolConfig } from "./policy.mjs";
 
 function argsFor(argv) {
@@ -13,8 +14,9 @@ function argsFor(argv) {
   return parsed;
 }
 
-async function githubJson(url, token) {
+async function githubJson(url, token, timeoutMs = 15_000) {
   const response = await fetch(url, {
+    signal: AbortSignal.timeout(timeoutMs),
     headers: {
       accept: "application/vnd.github+json",
       authorization: `Bearer ${token}`,
@@ -98,7 +100,7 @@ async function main() {
   }
 }
 
-if (process.argv[1] === new URL(import.meta.url).pathname) {
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
   try {
     await main();
   } catch (error) {

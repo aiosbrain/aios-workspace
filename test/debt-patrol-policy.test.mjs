@@ -237,36 +237,35 @@ test("plan and revalidation CLIs persist immutable exact-head artifacts", () => 
   const revalidationPath = path.join(dir, "revalidation.json");
   writeFileSync(observationsPath, `${JSON.stringify(observations)}\n`);
   try {
-    const planRun = spawnSync(
-      process.execPath,
-      [
-        PLAN_SCRIPT,
-        "--config",
-        path.join(ROOT, "config/debt-patrol.v1.json"),
-        "--output",
-        planPath,
-        "--github-output",
-        githubOutputPath,
-        "--event",
-        "workflow_dispatch",
-        "--repository",
-        "all",
-        "--workflow-ref",
-        "refs/heads/main",
-        "--enabled",
-        "1",
-        "--paused",
-        "0",
-        "--observations",
-        observationsPath,
-      ],
-      { encoding: "utf8" }
-    );
+    const planArgs = [
+      PLAN_SCRIPT,
+      "--config",
+      path.join(ROOT, "config/debt-patrol.v1.json"),
+      "--output",
+      planPath,
+      "--github-output",
+      githubOutputPath,
+      "--event",
+      "workflow_dispatch",
+      "--repository",
+      "all",
+      "--workflow-ref",
+      "refs/heads/main",
+      "--enabled",
+      "1",
+      "--paused",
+      "0",
+      "--observations",
+      observationsPath,
+    ];
+    const planRun = spawnSync(process.execPath, planArgs, { encoding: "utf8" });
     assert.equal(planRun.status, 0, planRun.stderr);
     const plan = JSON.parse(readFileSync(planPath, "utf8"));
     assert.equal(plan.matrix.include.length, 2);
     assert.ok(plan.matrix.include.every((entry) => entry.provisional));
     assert.match(readFileSync(githubOutputPath, "utf8"), /has_runs=true/);
+    const immutablePlanRun = spawnSync(process.execPath, planArgs, { encoding: "utf8" });
+    assert.notEqual(immutablePlanRun.status, 0, "existing plan artifact must not be overwritten");
 
     const revalidateRun = spawnSync(
       process.execPath,

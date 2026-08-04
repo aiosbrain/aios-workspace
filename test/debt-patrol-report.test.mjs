@@ -180,6 +180,27 @@ test("finding-set fingerprint is stable across run metadata", () => {
   assert.equal(first.findings[0].fingerprint, second.findings[0].fingerprint);
 });
 
+test("malformed and excess findings produce a bounded stopped report", () => {
+  const findings = Array.from({ length: 501 }, (_, index) => ({
+    ...health.findings[0],
+    fingerprint: index.toString(16).padStart(64, "0"),
+  }));
+  findings.push({ ...health.findings[0], fingerprint: null });
+  const report = buildPatrolReport({
+    decision: decision(),
+    revalidation,
+    health: { ...health, findings },
+    delivery: "succeeded",
+    run,
+    generated_at: "2026-08-04T12:04:00.000Z",
+  });
+  assert.equal(validate(report), true, JSON.stringify(validate.errors));
+  assert.equal(report.findings.length, 500);
+  assert.equal(report.policy.decision, "stop");
+  assert.ok(report.policy.reason_codes.includes("health_findings_invalid"));
+  assert.ok(report.policy.reason_codes.includes("health_findings_truncated"));
+});
+
 test("report CLI reads bounded inputs and writes a schema-valid redacted artifact", () => {
   const dir = mkdtempSync(path.join(tmpdir(), "debt-patrol-report-cli-"));
   const revalidationPath = path.join(dir, "revalidation.json");

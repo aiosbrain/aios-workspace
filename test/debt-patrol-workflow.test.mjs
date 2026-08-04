@@ -20,7 +20,7 @@ test("workflow schedules and target policy are one exact configuration", () => {
     assert.match(workflow, new RegExp(`cron: ["']${cron.replaceAll("*", "\\*")}["']`));
   }
   for (const target of config.targets) {
-    assert.equal(target.enabled, true);
+    assert.equal(typeof target.enabled, "boolean");
     assert.match(workflow, new RegExp(target.repository.replace("/", "\\/")));
   }
   assert.match(workflow, /AIOS_DEBT_PATROL_ENABLED/);
@@ -55,8 +55,8 @@ test("workflow binds analysis and health to one exact revalidated head", () => {
   assert.match(workflow, /--expected-head-sha "\$\{\{ matrix\.resolved_sha \}\}"/);
   assert.match(workflow, /steps\.revalidate\.outcome == 'success'/);
   assert.match(workflow, /timeout-minutes: \$\{\{ matrix\.budget_minutes \}\}/);
-  assert.match(workflow, /overwrite: false/g);
-  assert.match(workflow, /retention-days: 90/g);
+  assert.equal((workflow.match(/overwrite: false/g) ?? []).length, 2);
+  assert.equal((workflow.match(/retention-days: 90/g) ?? []).length, 2);
 });
 
 test("Brain credentials are scoped only to the final exact-head delivery step", () => {

@@ -1,6 +1,9 @@
 #!/usr/bin/env node
 import { readFile, writeFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 import { stableDigest } from "./policy.mjs";
+
+const MAX_FINDINGS = 500;
 
 function argsFor(argv) {
   const parsed = {};
@@ -17,14 +20,28 @@ async function jsonIf(path) {
   if (!path) return null;
   try {
     return JSON.parse(await readFile(path, "utf8"));
-  } catch {
+  } catch (error) {
+    console.error(`unusable artifact ${path}: ${error.message}`);
     return null;
   }
 }
 
 function redactedFindings(health) {
-  if (!Array.isArray(health?.findings)) return [];
-  return health.findings
+  if (!health) return { findings: [], reasonCodes: [] };
+  if (!Array.isArray(health.findings)) {
+    return { findings: [], reasonCodes: ["health_findings_invalid"] };
+  }
+  const valid = health.findings.filter(
+    (finding) =>
+      /^[0-9a-f]{64}$/.test(finding?.fingerprint ?? "") &&
+      /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(finding?.check_id ?? "") &&
+      /^[a-z0-9][a-z0-9_-]{0,63}$/.test(finding?.axis ?? "") &&
+      ["quality_issue", "evidence_gap"].includes(finding?.kind) &&
+      ["low", "medium", "high", "critical"].includes(finding?.severity) &&
+      ["complete", "partial", "missing", "stale", "error"].includes(finding?.evidence_status) &&
+      finding?.remediation_tier === 0
+  );
+  const findings = valid
     .map((finding) => ({
       fingerprint: finding.fingerprint,
       check_id: finding.check_id,
@@ -34,16 +51,30 @@ function redactedFindings(health) {
       evidence_status: finding.evidence_status,
       remediation_tier: finding.remediation_tier,
     }))
-    .sort((a, b) => a.fingerprint.localeCompare(b.fingerprint, "en"));
+    .sort((a, b) => a.fingerprint.localeCompare(b.fingerprint, "en"))
+    .slice(0, MAX_FINDINGS);
+  const reasonCodes = [];
+  if (valid.length !== health.findings.length) reasonCodes.push("health_findings_invalid");
+  if (valid.length > MAX_FINDINGS) reasonCodes.push("health_findings_truncated");
+  return { findings, reasonCodes };
 }
 
-function reportReasonCodes({ decision, revalidation, health, healthMatches, exactHead, delivery }) {
+function reportReasonCodes({
+  decision,
+  revalidation,
+  health,
+  healthMatches,
+  exactHead,
+  delivery,
+  findingReasonCodes,
+}) {
   const codes = [...(decision.reason_codes ?? [])];
   if (revalidation) codes.push(...(revalidation.reason_codes ?? []));
   else if (!exactHead) codes.push("revalidation_artifact_missing");
   if (!health) codes.push("health_artifact_missing");
   else if (!healthMatches) codes.push("health_head_mismatch");
   if (delivery !== "succeeded") codes.push(`brain_delivery_${delivery}`);
+  codes.push(...findingReasonCodes);
   return [...new Set(codes)].sort((a, b) => a.localeCompare(b, "en"));
 }
 
@@ -63,7 +94,7 @@ function evidenceFor(health) {
 }
 
 export function buildPatrolReport({ decision, revalidation, health, delivery, run, generated_at }) {
-  const findings = redactedFindings(health);
+  const { findings, reasonCodes: findingReasonCodes } = redactedFindings(health);
   const healthMatches = health?.head_sha === decision.resolved_sha;
   const exactHead = revalidation?.decision === "run" && revalidation.exact_head === true;
   const scheduled = decision.provisional === false;
@@ -75,6 +106,7 @@ export function buildPatrolReport({ decision, revalidation, health, delivery, ru
     healthMatches,
     exactHead,
     delivery,
+    findingReasonCodes,
   });
   const calibrationEligible =
     decision.decision === "run" &&
@@ -161,7 +193,7 @@ async function main() {
   await writeFile(args.output, `${JSON.stringify(report, null, 2)}\n`, { flag: "wx" });
 }
 
-if (process.argv[1] === new URL(import.meta.url).pathname) {
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
   try {
     await main();
   } catch (error) {
