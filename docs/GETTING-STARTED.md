@@ -1,6 +1,6 @@
 # Getting started — zero to your first push
 
-A linear, copy-pasteable path from a fresh clone to **your first `aios push` landing
+A linear, copy-pasteable path from the current stable release to **your first `aios push` landing
 on the team's Team Brain**, then on to contributing to the platform itself.
 
 Written for a new team member. Our team slug is **`aios`**. Where a step needs a
@@ -10,16 +10,29 @@ person to act on the brain side, that person is **John** (the brain admin).
 
 ## 1. Where things live (read this first)
 
+Start from the immutable public release used for onboarding:
+
+```bash
+git clone --branch v0.10.0 --depth 1 \
+  https://github.com/aiosbrain/aios-workspace.git aios-toolkit
+cd aios-toolkit
+```
+
+Do not remove `--branch v0.10.0` for a normal install. A plain clone checks out
+the moving `main` branch, which is the pre-release development surface for
+contributors. Merging to `main` does not make a change part of the supported
+install; publishing a release tag does.
+
 There are **two separate folders** in this story, and mixing them up is the #1 way
 people get stuck. Neither is optional — you need both, but you only ever *work* in
 the second one.
 
-**Folder A — the toolkit you just cloned (`aios-workspace`).** This is a shared
+**Folder A — the tagged toolkit you just cloned (`aios-toolkit`).** This is a shared
 program, not your personal space. You run one command from here, and never touch
 most of it again day-to-day.
 
 ```
-aios-workspace/                 ← you are here after `git clone` + `cd`
+aios-toolkit/                   ← you are here after the stable clone + `cd`
 ├── scripts/
 │   ├── scaffold-project.sh     ← the ONE command that builds your real workspace (§5)
 │   └── aios.mjs                ← the `aios` CLI (status/push/pull/query), run via `npm run aios`
@@ -67,7 +80,7 @@ of it is a template.
   folder itself to a human poking around — it is not workspace setup
   instructions.
 
-If you remember one thing from this section: **you clone the toolkit once, run
+If you remember one thing from this section: **you clone a released toolkit, run
 one command, and then live in the folder that command creates.**
 
 ---
@@ -135,7 +148,7 @@ This is the one command from **folder A** (the toolkit) that builds **folder B**
 (your real workspace) — see §1 if that distinction is still fuzzy.
 
 You're an employee/contributor (not a client-facing consultant), so use
-`--context employee`. From a clone of this toolkit:
+`--context employee`. From the tagged toolkit checkout:
 
 ```bash
 scripts/scaffold-project.sh --context employee \

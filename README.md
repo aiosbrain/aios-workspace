@@ -53,22 +53,40 @@ aios-workspace/
 └── docs/            architecture · feature-set · workflows · brain-api (sync contract)
 ```
 
-## Install via npm
+## Install the current stable workspace
 
-From v0.9.1 (pending first publish) the `aios` CLI ships as an independent npm
-package, so you can scaffold and drive a workspace without cloning this repo:
+For onboarding, clone the immutable public release rather than the moving `main`
+branch:
 
 ```bash
-npm install -g @aiosbrain/aios   # CLI + scaffold + validators (no GUI)
+git clone --branch v0.10.0 --depth 1 \
+  https://github.com/aiosbrain/aios-workspace.git aios-toolkit
+cd aios-toolkit
+```
+
+Then use `scripts/scaffold-project.sh` as shown below. A plain `git clone` checks
+out `main`; that is the development surface for contributors and can contain
+merged work that has not passed release promotion yet.
+
+The CLI is also distributed on npm under the stable `latest` dist-tag:
+
+```bash
+npm install -g @aiosbrain/aios@latest
 aios --help
 ```
 
-The npm package carries the sync client, the workspace scaffold
+The npm package carries the sync client, workspace scaffold
 (`scripts/scaffold-project.sh`), the OGR validators (`validation/`), the
 governance hooks, and the pinned contracts (`docs/brain-api.md`,
-`docs/ENGINEERING-CONSTITUTION.md`). The GUI, desktop app, tests, and examples
-stay in this repo — clone it for those. The unscoped `aios` package on npm is an
-unrelated project.
+`docs/ENGINEERING-CONSTITUTION.md`). For the current onboarding flow, keep the
+tagged toolkit checkout as the source used to scaffold and update workspaces;
+the global package is a convenient CLI distribution, not a replacement for
+that checkout. The unscoped `aios` package on npm is unrelated.
+
+Release-tag checkouts do not follow `main`. When a later release is published,
+fetch and check out that exact tag, then apply it deliberately from your
+workspace with `aios update --from /path/to/aios-toolkit --no-pull`. Release
+notes will name the tag and any migration steps.
 
 ## Quickstart
 
@@ -77,8 +95,8 @@ unrelated project.
 > brief, the asks queue + attention mode, the weekly loop, syncing to the brain, measuring yourself
 > (AM), gating specs, and the agent pipeline. Start there.
 >
-> **New contributor?** [`docs/GETTING-STARTED.md`](docs/GETTING-STARTED.md) is the
-> step-by-step path from a fresh clone to your first `aios push` live on the Team Brain.
+> **New user?** [`docs/GETTING-STARTED.md`](docs/GETTING-STARTED.md) is the
+> step-by-step stable-release path to your first `aios push` live on the Team Brain.
 
 Scaffold your workspace — pick the context that matches how you work:
 
