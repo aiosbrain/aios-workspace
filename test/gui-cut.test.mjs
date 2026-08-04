@@ -42,6 +42,7 @@ test("no tracked file lives under gui/ or src-tauri/", () => {
 
 test("the npm workspace set no longer includes the cut trees", () => {
   const manifest = JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf8"));
+  const lockfile = JSON.parse(readFileSync(path.join(ROOT, "package-lock.json"), "utf8"));
   const workspaces = Array.isArray(manifest.workspaces)
     ? manifest.workspaces
     : (manifest.workspaces?.packages ?? []);
@@ -52,6 +53,16 @@ test("the npm workspace set no longer includes the cut trees", () => {
   // A script pointing into the other repo would fail only when someone ran it.
   for (const [name, body] of Object.entries(manifest.scripts ?? {})) {
     assert.doesNotMatch(body, CUT, `package.json script "${name}" still references a cut tree`);
+  }
+  for (const key of Object.keys(lockfile.packages ?? {})) {
+    assert.doesNotMatch(key, CUT, `package-lock.json package "${key}" references a cut tree`);
+  }
+  for (const [name, entry] of Object.entries(lockfile.packages ?? {})) {
+    assert.doesNotMatch(
+      entry?.name ?? "",
+      /^@aios-workspace\/gui-(?:client|server)$/,
+      `${name} is GUI-only`
+    );
   }
 });
 
@@ -65,6 +76,7 @@ test("no build or CI config still points at the cut trees", () => {
     "scripts/boundaries.json",
     "scripts/size-caps.json",
     "scripts/ci-changed-lanes.mjs",
+    "scripts/check-coverage.mjs",
     "scripts/run-mutation.mjs",
     "scripts/test-suite.mjs",
     ".github/workflows/ci.yml",

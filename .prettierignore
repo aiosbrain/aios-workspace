@@ -13,4 +13,4 @@ package-lock.json
 **/__fixtures__
 # skill-scan bait fixtures (intentionally crafted; scanned for exact patterns)
 **/skill-scan-fixtures
-# generated / locked skill library + vendored skill assets (lock-marketplace --check guards these)
+# generated / locked skill library + vendored skill assets

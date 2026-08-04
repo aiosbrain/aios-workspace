@@ -148,11 +148,8 @@ test("coverage diff pathspecs include source files at every directory depth", ()
     ":(glob)scripts/**/*.mjs",
     ":(glob)hooks/**/*.mjs",
     ":(glob)validation/**/*.mjs",
-    ":(glob)gui/server/**/*.mjs",
     ":(glob)packages/**/*.mjs",
     ":(glob)src/**/*.ts",
-    ":(glob)gui/client/src/**/*.ts",
-    ":(glob)gui/client/src/**/*.tsx",
   ]);
 });
 
@@ -162,36 +159,24 @@ test("coverage diff args pin the a/ b/ prefixes against a diff.noprefix git conf
   assert.ok(coverageDiffArgs("merge-base-sha").includes("--default-prefix"));
 });
 
-test(".d.ts declaration files are never coverage sources, inside or outside gui/client", () => {
-  for (const file of [
-    "src/operator-loop/types.d.ts",
-    "src/global.d.ts",
-    "gui/client/src/lib/example.d.ts",
-    "gui/client/src/vite-env.d.ts",
-  ]) {
+test(".d.ts declaration files are never coverage sources", () => {
+  for (const file of ["src/operator-loop/types.d.ts", "src/global.d.ts"]) {
     assert.equal(isCoverageSource(file), false, file);
   }
 });
 
-test("coverage source classification matches the root and client instrumentation scopes", () => {
+test("coverage source classification matches the core instrumentation scope", () => {
   for (const file of [
     "scripts/nested/example.mjs",
     "hooks/example.mjs",
     "validation/example.mjs",
-    "gui/server/nested/example.mjs",
     "src/nested/example.ts",
-    "gui/client/src/lib/example.ts",
-    "gui/client/src/components/Example.tsx",
   ]) {
     assert.equal(isCoverageSource(file), true, file);
   }
   for (const file of [
     "test/example.test.mjs",
-    "gui/server/example.test.mjs",
-    "gui/client/src/lib/example.test.ts",
-    "gui/client/src/lib/example.d.ts",
     "scripts/check-coverage.mjs",
-    "scripts/run-rust-tests.mjs",
     "scripts/ensure-loop-built.mjs",
     "scaffold/example.js",
   ]) {

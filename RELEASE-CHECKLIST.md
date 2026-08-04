@@ -18,11 +18,11 @@ made public later. Before flipping it public, complete every item below.
       differs from the copyright holder.
 - [ ] **Lock repo names + topology** (see `CLAUDE.md` §2c and `RESOLVER.md`) — largely decided and
       in transition: shared hubs are published as public npm `@aiosbrain/foundation`;
-      the GUI is cut (filtered history) to `github.com/aiosbrain/aios-workspace-gui`,
-      with the in-tree `gui/` + `src-tauri/` authoritative until deletion PR AIO-612;
+      the GUI is now authoritative at `github.com/aiosbrain/aios-workspace-gui`, and its former
+      in-tree `gui/` + `src-tauri/` copies were removed in AIO-612;
       the devtools command set is cut to `github.com/aiosbrain/aios-devtools`,
       and the in-tree implementations were removed in AIO-662 with an exact package
-      pin, migration preflight, and rollback path. Remaining: complete AIO-612.
+      pin, migration preflight, and rollback path.
 - [ ] **Secret scan** clean: `validation/check-secrets.sh .`
 - [ ] **Docs drift guard** clean: `npm run check:docs` confirms the V1 hub's
       machine inventories match code/specs.

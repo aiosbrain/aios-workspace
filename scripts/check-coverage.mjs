@@ -13,11 +13,8 @@ const SOURCE_PATHSPECS = [
   ":(glob)scripts/**/*.mjs",
   ":(glob)hooks/**/*.mjs",
   ":(glob)validation/**/*.mjs",
-  ":(glob)gui/server/**/*.mjs",
   ":(glob)packages/**/*.mjs",
   ":(glob)src/**/*.ts",
-  ":(glob)gui/client/src/**/*.ts",
-  ":(glob)gui/client/src/**/*.tsx",
 ];
 // Test/coverage/build-lane infrastructure: excluded from instrumentation in
 // .c8rc.json and exempt from the missing-LCOV fail-closed check. Keep this
@@ -28,7 +25,6 @@ const COVERAGE_TOOL_FILES = new Set([
   "scripts/merge-coverage.mjs",
   "scripts/check-coverage.mjs",
   "scripts/run-mutation.mjs",
-  "scripts/run-rust-tests.mjs",
   "scripts/ensure-loop-built.mjs",
 ]);
 
@@ -158,9 +154,7 @@ export function isCoverageSource(file) {
   // the fail-closed missing-LCOV check).
   if (/\.d\.ts$/.test(normalized)) return false;
   return (
-    /^(?:scripts|hooks|validation|gui\/server)\/.+\.mjs$/.test(normalized) ||
-    /^src\/.+\.ts$/.test(normalized) ||
-    /^gui\/client\/src\/.+\.tsx?$/.test(normalized)
+    /^(?:scripts|hooks|validation)\/.+\.mjs$/.test(normalized) || /^src\/.+\.ts$/.test(normalized)
   );
 }
 
