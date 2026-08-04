@@ -34,7 +34,7 @@ function redactedFindings(health) {
       evidence_status: finding.evidence_status,
       remediation_tier: finding.remediation_tier,
     }))
-    .sort((a, b) => a.fingerprint.localeCompare(b.fingerprint));
+    .sort((a, b) => a.fingerprint.localeCompare(b.fingerprint, "en"));
 }
 
 function reportReasonCodes({ decision, revalidation, health, healthMatches, exactHead, delivery }) {
@@ -44,7 +44,7 @@ function reportReasonCodes({ decision, revalidation, health, healthMatches, exac
   if (!health) codes.push("health_artifact_missing");
   else if (!healthMatches) codes.push("health_head_mismatch");
   if (delivery !== "succeeded") codes.push(`brain_delivery_${delivery}`);
-  return [...new Set(codes)].sort();
+  return [...new Set(codes)].sort((a, b) => a.localeCompare(b, "en"));
 }
 
 function evidenceFor(health) {
