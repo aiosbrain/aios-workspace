@@ -102,8 +102,10 @@ async function main() {
 }
 
 if (process.argv[1] === new URL(import.meta.url).pathname) {
-  main().catch((error) => {
+  try {
+    await main();
+  } catch (error) {
     console.error(error.message);
     process.exitCode = 1;
-  });
+  }
 }

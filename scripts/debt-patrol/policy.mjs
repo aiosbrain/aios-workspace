@@ -137,10 +137,10 @@ function selectionReasons(target, context) {
 
 function observationReasons(target, observation) {
   if (observation?.error_code) return [observation.error_code];
-  const reasons = [];
-  if (observation?.default_branch !== target.default_branch)
-    reasons.push("default_branch_mismatch");
-  if (!SHA_RE.test(observation?.head_sha ?? "")) reasons.push("head_resolution_failed");
+  const reasons = [
+    ...(observation?.default_branch !== target.default_branch ? ["default_branch_mismatch"] : []),
+    ...(!SHA_RE.test(observation?.head_sha ?? "") ? ["head_resolution_failed"] : []),
+  ];
   if (!Number.isInteger(observation?.open_pr_count) || observation.open_pr_count < 0) {
     reasons.push("open_pr_count_unavailable");
   } else if (observation.open_pr_count > target.open_pr_cap) {

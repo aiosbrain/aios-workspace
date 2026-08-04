@@ -230,6 +230,7 @@ test("live observation normalizes GitHub success, HTTP failure, and transport fa
 
 test("plan and revalidation CLIs persist immutable exact-head artifacts", () => {
   const dir = mkdtempSync(path.join(tmpdir(), "debt-patrol-policy-cli-"));
+  const startedAt = new Date(Date.now() - 60_000).toISOString();
   const observationsPath = path.join(dir, "observations.json");
   const planPath = path.join(dir, "plan.json");
   const githubOutputPath = path.join(dir, "github-output.txt");
@@ -280,7 +281,7 @@ test("plan and revalidation CLIs persist immutable exact-head artifacts", () => 
         "--observed-sha",
         WORKSPACE_SHA,
         "--started-at",
-        "2026-08-04T12:00:00.000Z",
+        startedAt,
         "--budget-minutes",
         "30",
         "--output",
