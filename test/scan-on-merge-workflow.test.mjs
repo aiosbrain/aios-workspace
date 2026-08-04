@@ -181,6 +181,11 @@ test("core coverage is packed only on success and installed only after coverage 
   assert.match(coverageJob, /node scripts\/coverage-bundle\.mjs pack/);
   assert.match(coverageJob, /--out "\$RUNNER_TEMP\/coverage-bundle"/);
   assert.match(coverageJob, /name: coverage-bundle/);
+  assert.match(
+    coverageJob,
+    /Download the \\`coverage-bundle\\` artifact[\s\S]*root \\`coverage-baseline-candidate\.json\\`/
+  );
+  assert.doesNotMatch(coverageJob, /in the \\`coverage\\` artifact/);
   assert.match(coverageJob, /if-no-files-found: error/);
   assert.doesNotMatch(coverageJob, /if: always\(\)[\s\S]*upload/i);
   assert.match(

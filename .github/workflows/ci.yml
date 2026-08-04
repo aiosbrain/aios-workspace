@@ -328,7 +328,7 @@ jobs:
               | "| \(.key) | \($floor)% | \(.value)% |"
             ' "$candidate"
             echo
-            echo "Update \`coverage-baseline.json\` from \`coverage/coverage-baseline-candidate.json\` (in the \`coverage\` artifact) to lock in the gain."
+            echo "Download the \`coverage-bundle\` artifact and update \`coverage-baseline.json\` from its root \`coverage-baseline-candidate.json\` to lock in the gain."
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Pack exact-run coverage bundle
         run: |
