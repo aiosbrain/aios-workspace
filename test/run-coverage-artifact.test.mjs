@@ -152,26 +152,26 @@ test("directory-shaped canonical children are hidden by the parent rotation", ()
   }
 });
 
-test("a post-rename cleanup failure leaves direct scanner paths absent", async () => {
+test("a failed full preparation retains the complete rotated snapshot", async () => {
   const root = makeRoot();
   const rec = recorder(root);
   writeFileSync(at(root, "coverage-summary.json"), SUMMARY);
   writeFileSync(at(root, "lcov.info"), LCOV);
+  mkdirSync(at(root, "nested"), { recursive: true });
+  writeFileSync(at(root, "nested/evidence"), "old-tree\n");
   try {
-    await assert.rejects(
-      main([], {
-        root,
-        exec: rec.exec,
-        removeSnapshot: () => {
-          throw new Error("snapshot cleanup failed");
-        },
-      }),
-      /snapshot cleanup failed/
+    const prepError = await runWith(root, rec, [], (_command, args) =>
+      args.some((arg) => String(arg).endsWith("ensure-loop-built.mjs")) ? "tsc failed" : null
     );
+    assert.match(prepError?.message ?? "", /tsc failed/);
     assert.equal(existsSync(at(root, "coverage-summary.json")), false);
     assert.equal(existsSync(at(root, "lcov.info")), false);
     assert.equal(existsSync(path.join(root, "coverage")), false);
-    assert.equal(snapshots(root).length, 1, "the forensic snapshot should remain intact");
+    const [snapshot] = snapshots(root);
+    assert.ok(snapshot, "the forensic snapshot should remain intact");
+    assert.equal(readFileSync(path.join(root, snapshot, "coverage-summary.json"), "utf8"), SUMMARY);
+    assert.equal(readFileSync(path.join(root, snapshot, "lcov.info"), "utf8"), LCOV);
+    assert.equal(readFileSync(path.join(root, snapshot, "nested/evidence"), "utf8"), "old-tree\n");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

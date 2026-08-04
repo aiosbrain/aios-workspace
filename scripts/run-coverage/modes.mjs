@@ -51,14 +51,15 @@ function cleanupAfterPublication(root, cleanup) {
 export async function runFull({
   root = ROOT,
   exec = execute,
-  removeSnapshot = removeRotatedSnapshot,
   cleanup = cleanupSuccessfulCoverageRun,
 } = {}) {
   // FIRST filesystem operation: one same-filesystem rename hides every old canonical path
   // together. Snapshot cleanup happens only after that namespace boundary and cannot expose a
   // torn state even if it fails or the process is killed.
-  const coverageSnapshot = rotateCoverageDirectory(root);
-  removeSnapshot(coverageSnapshot);
+  rotateCoverageDirectory(root);
+  // Keep the complete snapshot until publication succeeds. Recursive deletion can fail after
+  // removing only some children; deferring it to the non-load-bearing success cleanup preserves
+  // an intact forensic tree on every failed preparation/suite/merge path.
   rmSync(path.join(root, "gui", "client", "coverage"), { recursive: true, force: true });
 
   await ensureLoopBuiltStrict(exec, root);

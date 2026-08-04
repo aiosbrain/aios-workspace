@@ -102,7 +102,11 @@ export const stagingDirectory = (root) => path.join(root, "coverage", STAGING_DI
 /** Whether a previous completed run still has a scanner-readable output in coverage/. */
 export function hasCanonicalCoverageOutputs(root) {
   const coverageDir = path.join(root, "coverage");
-  return COVERAGE_OUTPUTS.some(([, canonical]) => existsSync(path.join(coverageDir, canonical)));
+  // readCoverageReport() accepts the pre-normalized report at higher precedence than the two c8
+  // outputs. It is not produced by this runner, but if an earlier/external run left one behind a
+  // failed shard must not publish it as though it described the new shard series.
+  const scannerReadable = ["coverage-report.json", ...COVERAGE_OUTPUTS.map(([, name]) => name)];
+  return scannerReadable.some((name) => existsSync(path.join(coverageDir, name)));
 }
 
 function lstatIfPresent(target) {

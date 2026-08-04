@@ -12,6 +12,7 @@ import {
 import path from "node:path";
 import test from "node:test";
 import { COVERAGE_SNAPSHOT_PREFIX } from "../scripts/coverage-outputs.mjs";
+import { readCoverageReport } from "../scripts/coverage-report.mjs";
 import { main } from "../scripts/run-coverage.mjs";
 import { LCOV, SUMMARY, makeRoot, recorder } from "./run-coverage-guard-fixtures.mjs";
 
@@ -136,6 +137,30 @@ test("shard prep failure atomically hides canonical outputs from an earlier run"
     assert.ok(snapshot, "the complete previous measurement should remain forensic");
     assert.equal(readFileSync(path.join(root, snapshot, "coverage-summary.json"), "utf8"), SUMMARY);
     assert.equal(readFileSync(path.join(root, snapshot, "lcov.info"), "utf8"), LCOV);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("shard prep failure also hides a pre-normalized canonical report", async () => {
+  const root = makeRoot();
+  const rec = recorder(root);
+  const report = `${JSON.stringify({ lines_pct: 91, branches_pct: 90 })}\n`;
+  const prepFail = async (command, args, options) => {
+    if (args.some((arg) => String(arg).endsWith("ensure-loop-built.mjs"))) {
+      throw new Error("tsc failed");
+    }
+    return rec.exec(command, args, options);
+  };
+  try {
+    writeFileSync(at(root, "coverage-report.json"), report);
+
+    await assert.rejects(main(["--shard", "1/1"], { root, exec: prepFail }), /tsc failed/);
+    assert.equal(existsSync(at(root, "coverage-report.json")), false);
+    assert.equal(readCoverageReport(root), null);
+    const [snapshot] = snapshots(root);
+    assert.ok(snapshot);
+    assert.equal(readFileSync(path.join(root, snapshot, "coverage-report.json"), "utf8"), report);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
