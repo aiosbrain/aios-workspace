@@ -2,13 +2,15 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import {
-  EXEMPTION_LABEL,
+  EXEMPTION_MARKER,
   STATUS_CONTEXT,
   evaluateReviewEvidence,
   isEvidenceCandidate,
+  isExemptionCandidate,
+  validateExemptionBody,
   validateReviewBody,
 } from "../scripts/review-evidence.mjs";
-import { HEAD, STALE, attestation } from "./review-evidence-fixtures.mjs";
+import { HEAD, STALE, attestation, exemption } from "./review-evidence-fixtures.mjs";
 import {
   PARITY_CORPUS,
   decisions,
@@ -28,6 +30,12 @@ describe("review evidence — candidate detection", () => {
   it("treats a whole-line MERGE_READY as a candidate", () => {
     assert.equal(isEvidenceCandidate(attestation()), true);
     assert.equal(isEvidenceCandidate("  MERGE_READY  \ntrailing"), true);
+  });
+
+  it("recognises an exemption by its own marker", () => {
+    assert.equal(isExemptionCandidate(exemption()), true);
+    assert.equal(isExemptionCandidate(attestation()), false);
+    assert.equal(isEvidenceCandidate(exemption()), false);
   });
 
   it("ignores prose that merely mentions the token", () => {
@@ -90,26 +98,71 @@ describe("review evidence — the decision", () => {
     assert.equal(verdict.rejected.length, 1);
   });
 
-  it("honours an attributed exemption label", () => {
-    const verdict = evaluateReviewEvidence({
-      headSha: HEAD,
-      comments: [],
-      exemption: { label: EXEMPTION_LABEL, actor: "maintainer" },
-    });
+  it("honours an exemption comment that names the current head", () => {
+    const verdict = evaluateReviewEvidence({ headSha: HEAD, comments: [authored(exemption())] });
     assert.equal(verdict.ok, true);
     assert.equal(verdict.kind, "exempt");
-    assert.match(verdict.summary, /applied by @maintainer/);
+    assert.match(verdict.summary, /Exempt at 0123456 by @reviewer/);
   });
 
-  it("refuses an exemption nobody can be named for", () => {
+  // The whole point of the redesign: an exemption cannot be stale, because it either names the
+  // current head or it does not. No clock is consulted anywhere on this path.
+  it("refuses an exemption that names an older commit", () => {
+    const verdict = evaluateReviewEvidence({
+      headSha: HEAD,
+      comments: [authored(exemption(STALE))],
+    });
+    assert.equal(verdict.ok, false);
+    assert.match(verdict.rejected[0].reason, /candidate SHA exactly once/);
+  });
+
+  it("refuses an exemption from someone without write access", () => {
+    const verdict = evaluateReviewEvidence({
+      headSha: HEAD,
+      comments: [authored(exemption(), { authorized: false, author: "drive-by" })],
+    });
+    assert.equal(verdict.ok, false);
+    assert.match(verdict.rejected[0].reason, /write access/);
+  });
+
+  it("refuses an exemption with no stated reason", () => {
+    const verdict = evaluateReviewEvidence({
+      headSha: HEAD,
+      comments: [authored(exemption(HEAD, ""))],
+    });
+    assert.equal(verdict.ok, false);
+    assert.match(verdict.rejected[0].reason, /Exemption must not be empty/);
+  });
+
+  it("refuses a comment claiming to be both a review and an exemption", () => {
+    const hybrid = `${attestation()}\n\n${EXEMPTION_MARKER}`;
+    const verdict = evaluateReviewEvidence({ headSha: HEAD, comments: [authored(hybrid)] });
+    assert.equal(verdict.ok, false);
+    assert.match(verdict.rejected[0].reason, /may not carry both/);
+  });
+
+  it("applies the vendored visibility rules to exemptions too", () => {
+    const hidden = exemption().replace(
+      "- dependabot lockfile bump, no source change",
+      "- <details>x</details>"
+    );
+    assert.throws(() => validateExemptionBody(hidden, [HEAD]), /raw HTML/);
+    const linkRef = exemption().replace(
+      `- Exempt at ${HEAD}`,
+      `- Exempt at ${HEAD}\n[ref]: https://example.invalid`
+    );
+    assert.throws(() => validateExemptionBody(linkRef, [HEAD]), /link reference definition/);
+  });
+
+  it("refuses an exemption that never declares itself", () => {
     assert.throws(
-      () =>
-        evaluateReviewEvidence({
-          headSha: HEAD,
-          comments: [],
-          exemption: { label: EXEMPTION_LABEL, actor: "" },
-        }),
-      /not attributable/
+      () => validateExemptionBody(exemption().replace("\nREVIEW_EXEMPT", ""), [HEAD]),
+      /REVIEW_EXEMPT token/
+    );
+    assert.throws(() => validateExemptionBody(undefined, [HEAD]), /has no body/);
+    assert.throws(
+      () => validateExemptionBody(`## Verification\n- Exempt at ${HEAD}\n\nREVIEW_EXEMPT`, [HEAD]),
+      /exactly once and in order/
     );
   });
 
@@ -175,7 +228,8 @@ describe("review evidence — CLI surface", () => {
     );
     assert.match(report, /Review evidence — FAIL/);
     assert.match(report, new RegExp(`- Reviewed at ${HEAD}`));
-    assert.match(report, new RegExp(EXEMPTION_LABEL));
+    assert.match(report, new RegExp(EXEMPTION_MARKER));
+    assert.match(report, new RegExp(`- Exempt at ${HEAD}`));
   });
 
   it("cannot be made to forge a workflow command from data it does not control", () => {
@@ -217,56 +271,10 @@ describe("review evidence — CLI surface", () => {
     assert.doesNotMatch(report, /MERGE_READY/);
   });
 });
-describe("review evidence — accepted under the stated threat model", () => {
-  const authorised = (body) => ({ url: "u", author: "anyone-with-write", authorized: true, body });
-  const passes = (body) =>
-    evaluateReviewEvidence({ headSha: HEAD, comments: [authorised(body)] }).ok;
-
-  it("ACCEPTED: the PR author can attest to their own PR", () => {
-    // There is no author/attester comparison anywhere in the gate, by design: our reviews are
-    // posted under the same account that opened the PR.
-    assert.equal(passes(attestation()), true);
-  });
-
-  it("ACCEPTED: the head SHA may arrive inside a commit URL", () => {
-    assert.equal(
-      passes(
-        attestation(HEAD).replace(
-          `- Reviewed at ${HEAD}`,
-          `- https://github.com/o/r/commit/${HEAD}`
-        )
-      ),
-      true
-    );
-  });
-
-  it("ACCEPTED: an edited comment is indistinguishable from a freshly posted one", () => {
-    // GitHub exposes no "was this edited after the fact" signal the gate consults.
-    assert.equal(passes(attestation()), true);
-  });
-
-  it("ACCEPTED: a write-authorized bot or machine user can attest", () => {
-    const verdict = evaluateReviewEvidence({
-      headSha: HEAD,
-      comments: [{ url: "u", author: "some-bot[bot]", authorized: true, body: attestation() }],
-    });
-    assert.equal(verdict.ok, true);
-  });
-
-  it("NOT accepted: quoting an attestation does not attest", () => {
-    // Worth pinning because it is the one of these that fails: a blockquote breaks the `## `
-    // headings, so forwarding someone else's review by quoting it is not evidence.
-    const quoted = attestation()
-      .split("\n")
-      .map((line) => `> ${line}`)
-      .join("\n");
-    assert.equal(passes(quoted), false);
-  });
-});
 
 describe("review evidence — published contract", () => {
   it("pins the names the branch rule and the label depend on", () => {
     assert.equal(STATUS_CONTEXT, "review-evidence");
-    assert.equal(EXEMPTION_LABEL, "review-evidence-exempt");
+    assert.equal(EXEMPTION_MARKER, "REVIEW_EXEMPT");
   });
 });

@@ -9,7 +9,7 @@
  * when an evidence comment is posted, and `issue_comment` workflow runs are attributed to
  * the default branch's SHA, not the PR head — their check runs never land on the PR. A
  * status posted explicitly against `head.sha` does, from any trigger. The protected
- * context is therefore `review-evidence` (see EXEMPTION_LABEL/STATUS_CONTEXT).
+ * context is therefore `review-evidence` (see STATUS_CONTEXT).
  *
  * FAIL CLOSED, in three layers:
  *   1. Any error while gathering facts becomes a `failure` status, not a skip.
@@ -21,7 +21,6 @@
  * Usage:
  *   node scripts/validate-pr-review-evidence.mjs --repo owner/name --pr 123
  *     [--head-sha <sha>]              trust an explicit head (workflow passes the event's)
- *     [--clear-exemption-on-push]     remove the exemption label (used on `synchronize`)
  *     [--target-url <url>]            deep link recorded on the status
  *     [--no-status]                   evaluate and report only; post nothing (local dry run)
  */
@@ -29,7 +28,7 @@ import { appendFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { resolve } from "node:path";
 
-import { evaluateReviewEvidence, EXEMPTION_LABEL, STATUS_CONTEXT } from "./review-evidence.mjs";
+import { EXEMPTION_MARKER, evaluateReviewEvidence, STATUS_CONTEXT } from "./review-evidence.mjs";
 
 const API = process.env.GITHUB_API_URL || "https://api.github.com";
 // A cap, not a window: overflowing it throws rather than judging a truncated comment list.
@@ -51,7 +50,7 @@ export function forLog(value) {
 }
 
 export function parseArgs(argv) {
-  const flags = new Set(["clear-exemption-on-push", "no-status"]);
+  const flags = new Set(["no-status"]);
   const values = {};
   for (let index = 0; index < argv.length; index += 1) {
     const name = argv[index];
@@ -149,46 +148,6 @@ async function hasWriteAccess(repo, login, cache) {
 }
 
 /**
- * Resolve the exemption, if there is a LIVE one.
- *
- * The label's presence is the authorisation (GitHub already restricts labelling to write
- * access) and the `labeled` timeline event is the attribution — an exemption nobody can be
- * named for is theatre, so a label with no event fails rather than passing.
- *
- * Freshness is DERIVED, not maintained. The first version of this removed the label on
- * `synchronize` and trusted that removal to have happened; if that one API call failed
- * transiently, the stale label and its stale event survived and the next head went green
- * attributed to whoever labelled the PR *before* the push. Cleanup-on-failure is the wrong
- * shape: the safe answer has to fall out of the data. So the test is now a comparison —
- * the `labeled` event must be NEWER than the commit it is exempting. A label applied before
- * the current head simply does not qualify, whether or not any cleanup ever ran, and a
- * failed deletion is harmless because nothing depends on the deletion.
- *
- * `headCommittedAt` is the head commit's committer date, which an ordinary push sets to
- * push time. Under this gate's threat model (see the header of scripts/review-evidence.mjs:
- * every write-access actor is trusted) that is the right clock — it is not forgery-proof,
- * and is not meant to be.
- */
-async function resolveExemption(repo, number, labels, headCommittedAt) {
-  if (!labels.includes(EXEMPTION_LABEL)) return null;
-  const timeline = await paginate(repoPath(repo, "issues", number, "timeline"));
-  const labelled = timeline.filter(
-    (event) => event.event === "labeled" && event.label?.name === EXEMPTION_LABEL
-  );
-  const latest = labelled.at(-1);
-  const actor = latest?.actor?.login;
-  if (!actor) throw new Error(`${EXEMPTION_LABEL} is set but no 'labeled' event attributes it`);
-  const labelledAt = Date.parse(latest.created_at ?? "");
-  const commitAt = Date.parse(headCommittedAt ?? "");
-  // Unreadable on either side is indeterminate, and indeterminate is not an exemption.
-  if (!Number.isFinite(labelledAt) || !Number.isFinite(commitAt)) {
-    throw new Error(`${EXEMPTION_LABEL} cannot be dated against the current head`);
-  }
-  if (labelledAt <= commitAt) return { stale: true, label: EXEMPTION_LABEL, actor };
-  return { label: EXEMPTION_LABEL, actor };
-}
-
-/**
  * Step one, on its own, and deliberately the smallest possible request: identify the commit
  * this run is judging. Everything after this point can fail, and every one of those failures
  * has to be publishable AS a failure against this SHA — otherwise an error after the head was
@@ -200,20 +159,15 @@ export async function resolvePullRequestHead(repo, number, headShaOverride) {
   const pull = await request(repoPath(repo, "pulls", number));
   const headSha = headShaOverride || pull.head?.sha;
   if (!headSha) throw new Error("PR head SHA is unavailable");
-  return { headSha, labels: (pull.labels || []).map((label) => label.name) };
+  return { headSha };
 }
 
+// Exemptions are comments now, not labels, so there is exactly one thing to gather: everything
+// somebody said on this PR, and whether they had write access when they said it. The label
+// predicate, the timeline fetch and the `labeled`-event ordering are gone with the redesign —
+// see validateExemptionBody in scripts/review-evidence/selection.mjs for why.
 export async function gatherPullRequestFacts(repo, number, head) {
-  const { headSha, labels } = head;
-  const exemption = labels.includes(EXEMPTION_LABEL)
-    ? await resolveExemption(
-        repo,
-        number,
-        labels,
-        (await request(repoPath(repo, "commits", headSha)))?.commit?.committer?.date
-      )
-    : null;
-  if (exemption && !exemption.stale) return { headSha, comments: [], exemption };
+  const { headSha } = head;
 
   const [issueComments, reviews] = await Promise.all([
     paginate(repoPath(repo, "issues", number, "comments")),
@@ -240,7 +194,7 @@ export async function gatherPullRequestFacts(repo, number, head) {
       authorized: await hasWriteAccess(repo, comment.author, cache),
     });
   }
-  return { headSha, comments, exemption: exemption ?? null };
+  return { headSha, comments };
 }
 
 export function renderReport(verdict, { repo, number, headSha }) {
@@ -276,17 +230,41 @@ export function renderReport(verdict, { repo, number, headSha }) {
       "MERGE_READY",
       "```",
       "",
-      `Docs: docs/pr-review-evidence.md. Exempt a trivial PR with the \`${EXEMPTION_LABEL}\` label.`
+      "",
+      `A PR that genuinely needs no adversarial review is exempted the same way — same binding,`,
+      `different token — with a comment of:`,
+      "",
+      "```",
+      "## Exemption",
+      "- <why this PR does not need an adversarial review>",
+      "## Verification",
+      `- Exempt at ${headSha ?? "<head sha>"}`,
+      "",
+      EXEMPTION_MARKER,
+      "```",
+      "",
+      "Docs: docs/pr-review-evidence.md."
     );
   }
   return lines.join("\n");
 }
 
-async function postStatus(repo, headSha, verdict, targetUrl) {
+/**
+ * Publish the verdict, retrying a few times with backoff.
+ *
+ * This is the one thing the gate cannot make safe. The status IS the protected context, so a run
+ * that decides "red" and then cannot write it leaves whatever was published last standing — and
+ * if an earlier attestation went green on this same SHA, branch protection still sees green. We
+ * cannot publish red when publishing is what failed. So: retry, and if it still fails, be
+ * impossible to miss about it rather than exiting quietly non-zero. The residual is documented in
+ * docs/pr-review-evidence.md under "Known limits" instead of being left implied.
+ */
+export async function postStatus(repo, headSha, verdict, targetUrl, options = {}) {
+  const { attempts = 4, backoffMs = 1000, sleep = defaultSleep } = options;
   if (!/^[0-9a-f]{40}$/.test(headSha)) {
     throw new Error("refusing to post a status against a value that is not a commit SHA");
   }
-  await request(repoPath(repo, "statuses", headSha), {
+  const payload = {
     method: "POST",
     body: {
       state: verdict.ok ? "success" : "failure",
@@ -294,15 +272,28 @@ async function postStatus(repo, headSha, verdict, targetUrl) {
       description: verdict.summary.slice(0, 140),
       ...(targetUrl ? { target_url: targetUrl } : {}),
     },
-  });
+  };
+  let lastError;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      await request(repoPath(repo, "statuses", headSha), payload);
+      return attempt;
+    } catch (error) {
+      lastError = error;
+      if (attempt < attempts) await sleep(backoffMs * 2 ** (attempt - 1));
+    }
+  }
+  throw lastError;
 }
+
+const defaultSleep = (ms) => new Promise((done) => setTimeout(done, ms));
 
 /**
  * Exported so a test can drive the whole path — including the status write — against a
  * stubbed API. Returns what it decided and what it published; the CLI wrapper below is the
  * only thing that touches process state.
  */
-export async function run(argv) {
+export async function run(argv, { statusOptions } = {}) {
   const args = parseArgs(argv);
   const repo = args.repo;
   const number = args.pr;
@@ -346,14 +337,39 @@ export async function run(argv) {
     return { verdict, headSha, published: false, failed: true };
   }
   try {
-    await postStatus(repo, headSha, verdict, args["target-url"]);
+    await postStatus(repo, headSha, verdict, args["target-url"], statusOptions);
   } catch (error) {
-    console.error(
-      `::error::Could not publish the ${STATUS_CONTEXT} status: ${forLog(error.message)}`
-    );
+    announceUnpublishedVerdict(headSha, verdict, error);
     return { verdict, headSha, published: false, failed: true };
   }
   return { verdict, headSha, published: true };
+}
+
+/**
+ * The loudest thing a workflow run can say. A silent non-zero exit here would be indistinguishable
+ * from any other red job, and the point is that the RUN is red while the protected CONTEXT may not
+ * be — the one state where the gate's verdict and the branch rule disagree.
+ */
+function announceUnpublishedVerdict(headSha, verdict, error) {
+  const stale = verdict.ok ? "" : " AND THE PREVIOUS STATUS, IF ANY, STILL STANDS";
+  const lines = [
+    `::error title=review-evidence status NOT published::After several attempts GitHub would not accept the ${STATUS_CONTEXT} status for ${headSha}. This run decided "${forLog(verdict.summary)}"${stale}. Do not merge on the strength of a green ${STATUS_CONTEXT} until a later run publishes one. Last error: ${forLog(error.message)}`,
+    `::error::Re-run this workflow. If it keeps failing, the branch rule is protecting a context nobody can currently write.`,
+  ];
+  for (const line of lines) console.error(line);
+  if (process.env.GITHUB_STEP_SUMMARY) {
+    appendFileSync(
+      process.env.GITHUB_STEP_SUMMARY,
+      [
+        "",
+        `### ⚠️ ${STATUS_CONTEXT} status NOT published`,
+        "",
+        `The gate decided **${forLog(verdict.summary)}** for \`${headSha}\` and could not write it.`,
+        "Whatever status was published last is what branch protection can see. Re-run this workflow.",
+        "",
+      ].join("\n")
+    );
+  }
 }
 
 function gateError(error) {

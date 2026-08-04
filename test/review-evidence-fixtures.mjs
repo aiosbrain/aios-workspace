@@ -19,3 +19,14 @@ export function attestation(sha = HEAD, findings = "- no reportable findings") {
     "MERGE_READY",
   ].join("\n");
 }
+
+export function exemption(sha = HEAD, reason = "- dependabot lockfile bump, no source change") {
+  return [
+    "## Exemption",
+    reason,
+    "## Verification",
+    `- Exempt at ${sha}`,
+    "",
+    "REVIEW_EXEMPT",
+  ].join("\n");
+}

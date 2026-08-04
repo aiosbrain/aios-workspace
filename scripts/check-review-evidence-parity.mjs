@@ -2,7 +2,7 @@
 /**
  * check-review-evidence-parity.mjs — drift detector for the vendored review validator.
  *
- * `scripts/review-evidence.mjs` carries a copy of the hub's release-gate validator
+ * `scripts/review-evidence/body.mjs` carries a copy of the hub's release-gate validator
  * (johnellison/aios → scripts/validate-adversarial-review.mjs). Copies drift. This runs one
  * corpus through BOTH implementations and fails on any disagreement, so the release gate and
  * the PR gate can never quietly develop different opinions about what a clean review is.

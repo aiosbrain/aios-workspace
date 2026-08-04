@@ -58,8 +58,8 @@ A PR passes when **one** of these is true:
    - parses as a valid attestation (below), and
    - names the **current head SHA** in its `## Verification` section — exactly once, with no
      other 40-hex token in that section.
-2. The PR carries the **`review-evidence-exempt`** label, and that label is attributable to a
-   `labeled` timeline event.
+2. A comment on the PR, again by a user with **write access**, declares the commit **exempt**
+   and names the same current head SHA (`REVIEW_EXEMPT` instead of `MERGE_READY`).
 
 Everything else is a failure, including every case where the gate cannot tell.
 
@@ -107,34 +107,52 @@ happened with the relevant information already visible and simply not acted on. 
 output is another line of log is a gate that has already failed in exactly the way that
 produced #533 and #546. The escape hatches below exist so that blocking does not mean stuck.
 
-### 2. Exemptions: one label, no path filters
+### 2. Exemptions: the same binding, a different token
 
-**`review-evidence-exempt`.** A Dependabot bump or a typo fix should not need an adversarial
-review, but an exemption that is easy and invisible turns the gate into theatre. So:
+A Dependabot bump or a typo fix should not need an adversarial review, but an exemption that is
+easy and invisible turns the gate into theatre. An exemption is therefore a **comment** in a
+minimal fixed shape, posted by someone with write access, naming the current head:
 
-- It is a **label**, which appears in the PR timeline with the actor and the timestamp. Anyone
-  auditing later can see exactly who exempted what and when.
-- GitHub already restricts labelling to users with write access, so the label carries its own
-  authorisation — no separate permission check, no separate secret.
-- The gate **refuses an exemption it cannot attribute** to a `labeled` event. An anonymous
-  exemption is a hole, not an exemption.
-- **A push invalidates it, and that is derived rather than maintained.** The `labeled` event
-  must be **newer than the head commit it is exempting**; a label applied before the current
-  head simply does not qualify. It is reported as a named rejection ("exemption label predates
-  the current head"), not silently ignored.
+```
+## Exemption
+- dependabot lockfile bump, no source change
+## Verification
+- Exempt at <the 40-char head SHA>
 
-  The first version of this removed the label on `synchronize` and trusted that removal to have
-  happened. If that one API call failed transiently, the stale label and its stale event
-  survived, and the next head went green attributed to whoever labelled the PR *before* the
-  push — so the invariant the whole exemption design rests on did not hold. Cleanup-on-failure
-  is the wrong shape. Comparing two timestamps that are already in the data means a failed
-  deletion is harmless, because nothing depends on a deletion: the gate no longer mutates the
-  PR at all, and the workflow no longer needs `pull-requests: write`.
+REVIEW_EXEMPT
+```
 
-  The clock is the head commit's committer date, which an ordinary push sets to push time.
-  Under the threat model above that is the right clock — it is not forgery-proof and is not
-  meant to be. If either timestamp is unreadable, that is indeterminate, and indeterminate is
-  not an exemption.
+It is bound to the head exactly as review evidence is, validated by the same visibility rules
+(no raw HTML, no link reference definitions, no ambiguous fences) and the same exact-SHA binding.
+A reason is required and may not be empty. A comment carrying both tokens is rejected.
+
+**This started as a label, and the label was wrong — twice.** It is worth recording why, because
+the second attempt looked correct:
+
+1. *Label, cleared on push.* The workflow removed the label on `synchronize`. The answer depended
+   on that deletion having happened, so one transient API failure left the stale label and its
+   stale timeline event in place and the next head went green attributed to whoever labelled the
+   PR before the push. Cleanup-on-failure is the wrong shape.
+2. *Label, re-validated against the head commit's timestamp.* Deriving the answer from data was
+   the right instinct, but the clock was wrong. **A commit's committer date is arbitrary** — it
+   can be old, it can be in the future, and it never says *when this became the head*. A label
+   applied at 10:00 could still exempt a head pushed at 12:00 carrying an older committer date.
+
+A label cannot carry a SHA, so no amount of care makes a label-only exemption non-stale. Naming
+the commit removes the question instead of answering it: an exemption either names the current
+head or it does not. No clocks, no timeline ordering, no page-two event, no equal-timestamp edge,
+no force-push confusion — and the gate collapses to one idea instead of two:
+
+> **Something on this PR, posted by someone with write access, names this exact commit.**
+
+**What the label gave up, and why that is acceptable.** A label was filterable
+(`is:pr label:review-evidence-exempt`) and carried its own authorisation, since GitHub restricts
+labelling to write access. The comment form keeps the authorisation (the author's write access is
+checked the same way an attester's is) and keeps timeline visibility with actor and timestamp; it
+loses the one-query PR-list filter. Searching for `REVIEW_EXEMPT` across the repo's PRs is the
+replacement. That is a real, small cost, paid to delete an entire class of staleness bug — and
+the label path is gone from the code, so the `labeled`-event ordering and the label-name predicate
+cannot regress.
 
 Deliberately **not** implemented: path filters (`docs/**`, `*.md`), author allowlists, and
 auto-exempting bots. All three are invisible at review time and drift silently — a PR that is
@@ -144,8 +162,8 @@ auto-exempting bots. All three are invisible at review time and drift silently �
 
 There is **no bypass inside the gate**. Two documented routes out, in order of preference:
 
-1. **The label**, by anyone with write access. Cheap, visible, self-attributing. This is the
-   routine answer for trivial PRs.
+1. **The exemption comment**, by anyone with write access. Cheap, visible, self-attributing, and
+   bound to the commit it exempts. This is the routine answer for trivial PRs.
 2. **Repo admin override** at merge time ("merge without waiting for requirements"). GitHub
    records this on the PR timeline and in the organisation audit log, so it is attributable
    without any work on our side. Reserve it for gate outages — a GitHub API incident, an
@@ -243,6 +261,15 @@ GH_TOKEN=$(gh auth token) node scripts/validate-pr-review-evidence.mjs \
   that edits `.github/workflows/pr-review-evidence.yml` is therefore judged partly by its own
   version — visible in the diff, but not mechanically prevented. Moving to `pull_request_target`
   closes this and is only possible once the workflow exists on `main`.
+- **If GitHub refuses our status write, the last status stands.** The status *is* the protected
+  context, so a run that decides red and then cannot publish it leaves whatever was published
+  last in place — and if an earlier attestation went green on this same SHA, branch protection
+  still sees green. We cannot publish red when publishing is what failed, so this is narrowed
+  rather than closed: the write is retried four times with doubling backoff, and if it still
+  fails the run emits a titled `::error::` annotation naming the SHA, the verdict it could not
+  publish, and "do not merge on the strength of a green `review-evidence`", plus a matching block
+  in the job summary. The run is red and loud; the context may not be. Re-run the workflow — and
+  if it keeps failing, the branch rule is protecting a context nobody can currently write.
 - **Two runs for the same head can finish out of order**, and the later status write wins. Runs
   are serialised per PR and never cancelled (cancelling would let a `synchronize` run die before
   it cleared a stale exemption), but they are not ordered. Any subsequent event re-evaluates,
