@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
+import { once } from "node:events";
 import {
   existsSync,
   mkdirSync,
@@ -90,6 +91,60 @@ test("cleanup failure after promotion is non-load-bearing", async () => {
   }
 });
 
+test("SIGKILL during promotion cannot expose a partial canonical set", async () => {
+  const root = makeRoot();
+  mkdirSync(at(root, ".staged"), { recursive: true });
+  writeFileSync(at(root, ".staged/coverage-summary.json"), SUMMARY);
+  writeFileSync(at(root, ".staged/lcov.info"), LCOV);
+  const moduleUrl = new URL("../scripts/coverage-outputs.mjs", import.meta.url).href;
+  const child = spawn(
+    process.execPath,
+    [
+      "--input-type=module",
+      "--eval",
+      `import { promoteCoverageOutputs } from ${JSON.stringify(moduleUrl)};\n` +
+        `promoteCoverageOutputs(${JSON.stringify(root)}, { afterStagedRename: ({ promoted }) => {\n` +
+        `  if (promoted.length !== 1) return;\n` +
+        `  process.stdout.write("renamed-one\\n");\n` +
+        `  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0);\n` +
+        `} });`,
+    ],
+    { stdio: ["ignore", "pipe", "pipe"] }
+  );
+  try {
+    await new Promise((resolve, reject) => {
+      let output = "";
+      const timer = setTimeout(
+        () => reject(new Error("promotion acknowledgement timed out")),
+        5000
+      );
+      child.once("error", reject);
+      child.stdout.on("data", (chunk) => {
+        output += chunk;
+        if (!output.includes("renamed-one\n")) return;
+        clearTimeout(timer);
+        resolve();
+      });
+    });
+    child.kill("SIGKILL");
+    await once(child, "exit");
+
+    assert.equal(existsSync(path.join(root, "coverage")), false);
+    const [unpublished] = readdirSync(root).filter((entry) =>
+      entry.startsWith(".coverage-publish-")
+    );
+    assert.ok(unpublished);
+    assert.equal(
+      readFileSync(path.join(root, unpublished, "coverage-summary.json"), "utf8"),
+      SUMMARY
+    );
+    assert.equal(readFileSync(path.join(root, unpublished, ".staged/lcov.info"), "utf8"), LCOV);
+  } finally {
+    if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("a failed merge keeps rotated shards for an immediate retry", async () => {
   const root = makeRoot();
   const rec = recorder(root);
@@ -161,6 +216,36 @@ test("shard prep failure also hides a pre-normalized canonical report", async ()
     const [snapshot] = snapshots(root);
     assert.ok(snapshot);
     assert.equal(readFileSync(path.join(root, snapshot, "coverage-report.json"), "utf8"), report);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a successful shard keeps the prior whole-tree snapshot until merge publishes", async () => {
+  const root = makeRoot();
+  const rec = recorder(root);
+  writeFileSync(at(root, "coverage-summary.json"), SUMMARY);
+  writeFileSync(at(root, "lcov.info"), LCOV);
+  try {
+    await main(["--shard", "1/1"], {
+      root,
+      exec: rec.exec,
+      removeSnapshot: (snapshot) => {
+        rmSync(path.join(snapshot, "coverage-summary.json"));
+        throw new Error("whole-tree cleanup ran before merge");
+      },
+    });
+
+    const [snapshot] = snapshots(root);
+    assert.ok(snapshot);
+    assert.equal(readFileSync(path.join(root, snapshot, "coverage-summary.json"), "utf8"), SUMMARY);
+    assert.equal(readFileSync(path.join(root, snapshot, "lcov.info"), "utf8"), LCOV);
+    assert.ok(existsSync(at(root, "shard-1/coverage-fixture.json")));
+
+    await main(["--merge", "1"], { root, exec: rec.exec });
+    assert.ok(existsSync(at(root, "coverage-summary.json")));
+    assert.ok(existsSync(at(root, "lcov.info")));
+    assert.deepEqual(snapshots(root), []);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

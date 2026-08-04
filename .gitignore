@@ -11,6 +11,7 @@ __pycache__/
 dist/
 coverage/
 .coverage-stale-*
+.coverage-publish-*
 .stryker-tmp/
 reports/mutation/
 test/ux/evidence/

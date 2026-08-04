@@ -35,12 +35,10 @@
  * pre-syscall window as protected. Cleanup of the rotated snapshot is deliberately separate and
  * non-load-bearing.
  *
- * Promotion itself is several renames rather than one, because consumers require fixed filenames
- * and no single filesystem operation can create them all. That is safe here for a reason
- * specific to this ordering: promotion runs ONLY on the success path, so every staged file holds
- * a complete, correct measurement. A partial promotion can therefore expose only correct data —
- * the dangerous direction, exposing a partial measurement under a canonical name, cannot happen
- * at all. Promotion still rolls back and fails closed if a rename throws.
+ * Promotion uses the same parent-directory boundary in reverse. The fresh, unpublished coverage
+ * tree is renamed to an ignored sibling, staged files receive their canonical names there, and
+ * one final sibling rename publishes the complete tree. A catchable error or SIGKILL before that
+ * final syscall therefore leaves every fixed scanner path absent.
  *
  * The degradation marker below is EXPLANATORY, not load-bearing. It tells a human why there is
  * no number. Nothing depends on it having been written for the system to be safe.
@@ -61,6 +59,7 @@ import path from "node:path";
 /** Where a run assembles its outputs before they have earned the canonical names. */
 export const STAGING_DIR = ".staged";
 export const COVERAGE_SNAPSHOT_PREFIX = ".coverage-stale-";
+export const COVERAGE_PUBLISH_PREFIX = ".coverage-publish-";
 export const SHARD_SNAPSHOT_PREFIX = ".stale-shard-";
 
 /** Written alongside the outputs to say, in prose, why there is no publishable number. */
@@ -196,7 +195,7 @@ export function removeRotatedSnapshot(snapshot) {
 export function cleanupSuccessfulCoverageRun(root) {
   rmSync(stagingDirectory(root), { recursive: true, force: true });
   for (const entry of readdirSync(root)) {
-    if (entry.startsWith(COVERAGE_SNAPSHOT_PREFIX)) {
+    if (entry.startsWith(COVERAGE_SNAPSHOT_PREFIX) || entry.startsWith(COVERAGE_PUBLISH_PREFIX)) {
       rmSync(path.join(root, entry), { recursive: true, force: true });
     }
   }
@@ -210,19 +209,24 @@ export function cleanupSuccessfulCoverageRun(root) {
 }
 
 /**
- * Give the staged outputs the canonical names. THE LAST ACT OF A SUCCESSFUL RUN.
+ * Give the staged outputs the canonical names behind an unpublished parent, then publish that
+ * complete parent with one same-filesystem rename. THE LAST ACT OF A SUCCESSFUL RUN.
  *
  * Staged files that do not exist are skipped rather than invented: full mode produces no baseline
  * candidate, and a promotion that finds nothing simply publishes nothing — the safe direction.
  *
  * @returns {string[]} the canonical paths now published, repo-relative.
  */
-export function promoteCoverageOutputs(root) {
+export function promoteCoverageOutputs(
+  root,
+  { uuid = randomUUID, rename = renameSync, afterStagedRename = () => {} } = {}
+) {
   const dir = path.join(root, "coverage");
   const staged = stagingDirectory(root);
   const promoted = [];
   try {
     assertSafeCoverageStaging(root);
+    const available = [];
     for (const [stagedName, canonical] of COVERAGE_OUTPUTS) {
       const from = path.join(staged, stagedName);
       const stats = lstatIfPresent(from);
@@ -230,14 +234,21 @@ export function promoteCoverageOutputs(root) {
       if (stats.isSymbolicLink() || !stats.isFile()) {
         throw new Error(`${from} must be a regular file`);
       }
-      renameSync(from, path.join(dir, canonical));
-      promoted.push(`coverage/${canonical}`);
+      available.push([stagedName, canonical]);
     }
+    if (!available.length) return promoted;
+
+    const unpublished = path.join(root, `${COVERAGE_PUBLISH_PREFIX}${uuid()}`);
+    rename(dir, unpublished);
+    for (const [stagedName, canonical] of available) {
+      rename(path.join(unpublished, STAGING_DIR, stagedName), path.join(unpublished, canonical));
+      promoted.push(`coverage/${canonical}`);
+      afterStagedRename({ unpublished, stagedName, canonical, promoted: [...promoted] });
+    }
+    // The only operation that makes fixed scanner paths visible. Everything in the unpublished
+    // parent is already complete; a process death before this call leaves coverage/ absent.
+    rename(unpublished, dir);
   } catch (error) {
-    // Fail closed. Everything staged was correct, so what is already promoted is correct too —
-    // but a half-published set is not what "the run completed" means, and leaving it would
-    // reintroduce exactly the ambiguity this module exists to remove.
-    for (const name of promoted) rmSync(path.join(root, name), { force: true });
     throw new Error(`run-coverage: failed to publish the coverage outputs — ${error.message}`);
   }
   return promoted;

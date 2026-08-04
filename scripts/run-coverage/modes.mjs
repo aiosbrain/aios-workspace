@@ -164,7 +164,8 @@ export async function runShard(
   // that entire tree with the same one-rename boundary before strict prep; its shard data belongs
   // to the previous measurement and must not be mixed into this new shard series. Otherwise,
   // rotate only this shard so independently accumulated sibling shards remain available.
-  const shardSnapshot = hasCanonicalCoverageOutputs(root)
+  const rotatedWholeTree = hasCanonicalCoverageOutputs(root);
+  const shardSnapshot = rotatedWholeTree
     ? rotateCoverageDirectory(root)
     : rotateShardDirectory(shardDir);
   // c8 collects raw V8 data into the shard directory; --reporter=none skips
@@ -178,7 +179,10 @@ export async function runShard(
       exec,
       root
     );
-    removeSnapshot(shardSnapshot);
+    // A whole-tree snapshot contains the last published measurement. Keep it intact until the
+    // final merge publishes this shard series; merge success cleanup removes it. A same-shard
+    // raw-data snapshot can be discarded once its replacement shard succeeds.
+    if (!rotatedWholeTree) removeSnapshot(shardSnapshot);
   } catch (error) {
     // Record prep, suite, and post-rotation cleanup failures WHERE THE MERGE WILL SEE THEM. Never
     // replace the real error if writing the explanatory sentinel also fails.
