@@ -82,7 +82,8 @@ export function sha256(buf) {
 }
 
 // Walk a dir → sorted relative POSIX paths. Throws on ANY symlink (a fetched skill must be
-// plain files — a link could escape the tree). Mirrors lock-skill-library's walkFiles.
+// plain files — a link could escape the tree). Mirrors the walkFiles in
+// aios-workspace-gui's scripts/lock-skill-library.mjs (this repo's copy was retired in AIO-702).
 function walkFiles(root, rel = "") {
   const out = [];
   for (const name of readdirSync(path.join(root, rel)).sort()) {
