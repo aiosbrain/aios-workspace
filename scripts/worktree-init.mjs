@@ -13,7 +13,9 @@ import {
   mkdirSync,
   readFileSync,
   readlinkSync,
+  renameSync,
   rmSync,
+  statSync,
   symlinkSync,
   unlinkSync,
   writeFileSync,
@@ -33,6 +35,8 @@ function readJson(file, label) {
 
 const LOCK_WAIT_MS = 120_000;
 const LOCK_POLL_MS = 100;
+const RECLAIM_GUARD_STALE_MS = 5_000;
+const RECLAIM_GUARD_ATTEMPTS = 8;
 const EMPTY_WAIT_BUFFER = new Int32Array(new SharedArrayBuffer(4));
 
 /** Required packages npm must install, sourced from package-lock.json. */
@@ -75,18 +79,18 @@ function optionalPackageApplies(entry) {
   );
 }
 
-function binNames(manifest) {
-  if (typeof manifest.bin === "string") {
+function binNames(lockEntry, manifest) {
+  if (typeof lockEntry.bin === "string") {
     return [
       [
         String(manifest.name ?? "")
           .split("/")
           .pop(),
-        manifest.bin,
+        lockEntry.bin,
       ],
     ];
   }
-  return Object.entries(manifest.bin ?? {});
+  return Object.entries(lockEntry.bin ?? {});
 }
 
 function binDirectory(primary, lockKey) {
@@ -104,14 +108,13 @@ function installedPackageProblem(primary, lockKey, lockEntry) {
   try {
     const manifest = readJson(manifestPath, manifestPath);
     if (manifest.version !== lockEntry.version) return `${lockKey} (wrong version)`;
-    for (const [name, target] of binNames(manifest)) {
+    for (const [name, target] of binNames(lockEntry, manifest)) {
       if (!name || !existsSync(path.resolve(packageDir, target))) {
         return `${lockKey} (missing binary target ${name || "unnamed"})`;
       }
       const binDir = binDirectory(primary, lockKey);
-      const shimExists = [name, `${name}.cmd`, `${name}.ps1`].some((candidate) =>
-        existsSync(path.join(binDir, candidate))
-      );
+      const shims = process.platform === "win32" ? [`${name}.cmd`, `${name}.ps1`] : [name];
+      const shimExists = shims.some((candidate) => existsSync(path.join(binDir, candidate)));
       if (!shimExists) return `${lockKey} (missing .bin/${name})`;
     }
     return null;
@@ -211,9 +214,32 @@ function releaseOwnedFile(target, token) {
   if (readOwner(target)?.token === token) rmSync(target, { force: true });
 }
 
+function acquireReclaimGuard(guardPath) {
+  for (let attempt = 0; attempt < RECLAIM_GUARD_ATTEMPTS; attempt += 1) {
+    const token = randomUUID();
+    if (createOwnedFile(guardPath, token)) return token;
+    let info;
+    try {
+      info = statSync(guardPath);
+    } catch (error) {
+      if (error?.code === "ENOENT") continue;
+      return null;
+    }
+    if (Date.now() - info.mtimeMs < RECLAIM_GUARD_STALE_MS) return null;
+    const captured = `${guardPath}.dead.${process.pid}.${randomUUID()}`;
+    try {
+      renameSync(guardPath, captured);
+      rmSync(captured, { force: true });
+    } catch {
+      // Another waiter won the stale-guard recovery race; retry acquisition.
+    }
+  }
+  return null;
+}
+
 function reclaimDeadOwner(lockPath, guardPath) {
-  const guardToken = randomUUID();
-  if (!createOwnedFile(guardPath, guardToken)) return false;
+  const guardToken = acquireReclaimGuard(guardPath);
+  if (!guardToken) return false;
   try {
     const owner = readOwner(lockPath);
     if (owner && !processIsAlive(owner.pid)) {

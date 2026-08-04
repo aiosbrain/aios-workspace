@@ -14,6 +14,7 @@ import {
   readlinkSync,
   rmSync,
   symlinkSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { initializeWorktreeDependencies } from "../scripts/worktree-init.mjs";
@@ -38,7 +39,11 @@ function fixture({ installed = false } = {}) {
       lockfileVersion: 3,
       packages: {
         "": { devDependencies: { prettier: "^3.9.6" } },
-        "node_modules/prettier": { version: "3.9.6", dev: true },
+        "node_modules/prettier": {
+          version: "3.9.6",
+          dev: true,
+          bin: { prettier: "bin/prettier.cjs" },
+        },
         "node_modules/prettier-plugin-test": { version: "1.0.0", dev: true },
         "node_modules/platform-native-test": {
           version: "1.0.0",
@@ -68,7 +73,8 @@ function installPrettier(primary) {
   writeFileSync(path.join(packageDir, "bin", "prettier.cjs"), "#!/usr/bin/env node\n");
   const binDir = path.join(primary, "node_modules", ".bin");
   mkdirSync(binDir, { recursive: true });
-  writeFileSync(path.join(binDir, "prettier"), "#!/bin/sh\n");
+  const shim = process.platform === "win32" ? "prettier.cmd" : "prettier";
+  writeFileSync(path.join(binDir, shim), "#!/bin/sh\n");
   const transitive = path.join(primary, "node_modules", "prettier-plugin-test");
   mkdirSync(transitive, { recursive: true });
   writeFileSync(path.join(transitive, "package.json"), JSON.stringify({ version: "1.0.0" }));
@@ -126,8 +132,31 @@ test("matching root manifest still restores missing binary and transitive packag
   mkdirSync(packageDir, { recursive: true });
   writeFileSync(
     path.join(packageDir, "package.json"),
-    JSON.stringify({ name: "prettier", version: "3.9.6", bin: "./bin/prettier.cjs" })
+    JSON.stringify({ name: "prettier", version: "3.9.6" })
   );
+  let installCalls = 0;
+
+  initializeWorktreeDependencies({
+    primary,
+    worktree,
+    install: () => {
+      installCalls += 1;
+      installPrettier(primary);
+      return { status: 0 };
+    },
+  });
+
+  assert.equal(installCalls, 1);
+  assertSharedLink(primary, worktree);
+});
+
+test("a shim for the wrong host platform does not certify the install", () => {
+  const { primary, worktree } = fixture({ installed: true });
+  const binDir = path.join(primary, "node_modules", ".bin");
+  const usableShim = process.platform === "win32" ? "prettier.cmd" : "prettier";
+  const wrongShim = process.platform === "win32" ? "prettier" : "prettier.cmd";
+  rmSync(path.join(binDir, usableShim));
+  writeFileSync(path.join(binDir, wrongShim), "wrong platform\n");
   let installCalls = 0;
 
   initializeWorktreeDependencies({
@@ -216,6 +245,10 @@ test("concurrent hydrations safely reclaim a stale lock and install only once", 
     path.join(lockDir, "worktree-dependencies.lock"),
     `${JSON.stringify({ pid: 999_999_999, token: "dead-owner" })}\n`
   );
+  const reclaimGuard = path.join(lockDir, "worktree-dependencies.lock.reclaim");
+  writeFileSync(reclaimGuard, `${JSON.stringify({ pid: 999_999_998, token: "dead-reclaimer" })}\n`);
+  const staleTime = new Date(Date.now() - 10_000);
+  utimesSync(reclaimGuard, staleTime, staleTime);
   const fakeBin = path.join(path.dirname(primary), "concurrent-bin");
   mkdirSync(fakeBin);
   const calls = path.join(path.dirname(primary), "npm-calls");
@@ -233,7 +266,8 @@ fs.mkdirSync(path.join(pkg, "bin"), { recursive: true });
 fs.writeFileSync(path.join(pkg, "package.json"), JSON.stringify({ name: "prettier", version: "3.9.6", bin: "./bin/prettier.cjs" }));
 fs.writeFileSync(path.join(pkg, "bin", "prettier.cjs"), "");
 fs.mkdirSync(path.join(root, "node_modules", ".bin"), { recursive: true });
-fs.writeFileSync(path.join(root, "node_modules", ".bin", "prettier"), "");
+const shim = process.platform === "win32" ? "prettier.cmd" : "prettier";
+fs.writeFileSync(path.join(root, "node_modules", ".bin", shim), "");
 const transitive = path.join(root, "node_modules", "prettier-plugin-test");
 fs.mkdirSync(transitive, { recursive: true });
 fs.writeFileSync(path.join(transitive, "package.json"), JSON.stringify({ version: "1.0.0" }));
