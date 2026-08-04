@@ -64,7 +64,7 @@ which half failed. The command still exits nonzero.
 
 In sharded mode a failed `--shard` run drops a `shard-failed.marker` in its shard directory, and
 `--merge` refuses to build a number from it. To recover, fix the underlying failure and re-run —
-do not delete the marker or rename the files back. See `scripts/coverage-degraded.mjs`.
+do not delete the marker or rename the files back. See `scripts/coverage-outputs.mjs`.
 
 Coverage floors are generated on the Ubuntu CI runner so platform-specific skips cannot make a
 locally generated floor fail in CI. Every coverage run uploads

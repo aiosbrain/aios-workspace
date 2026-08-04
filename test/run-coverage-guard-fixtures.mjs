@@ -61,6 +61,8 @@ export function makeRoot({ manifest = false, registered = false } = {}) {
  * merge-coverage.mjs would write so `--merge` can finish. An UNGUARDED call site reaches this the
  * same way a guarded one does, so the recording is what proves the wiring.
  */
+export const LCOV = "TN:\nSF:scripts/a.mjs\nLF:10\nLH:8\nend_of_record\n";
+
 export function recorder(root) {
   const calls = [];
   return {
@@ -69,10 +71,15 @@ export function recorder(root) {
       calls.filter((c) => c.command === "npm" && c.args.includes("gui/client")).length,
     exec: async (command, args, options) => {
       calls.push({ command, args, options });
-      if (args.some((a) => String(a).endsWith("merge-coverage.mjs"))) {
-        mkdirSync(path.join(root, "coverage"), { recursive: true });
-        writeFileSync(path.join(root, "coverage", "coverage-summary.json"), SUMMARY);
-      }
+      if (!args.some((a) => String(a).endsWith("merge-coverage.mjs"))) return;
+      // Model the real merge-coverage.mjs: it writes BOTH outputs, and it writes them wherever
+      // `--out-dir` says. run-coverage points that at the staging directory, because the
+      // canonical names mean "a run completed" — see scripts/coverage-outputs.mjs.
+      const flag = args.indexOf("--out-dir");
+      const outDir = flag === -1 ? path.join(root, "coverage") : String(args[flag + 1]);
+      mkdirSync(outDir, { recursive: true });
+      writeFileSync(path.join(outDir, "coverage-summary.json"), SUMMARY);
+      writeFileSync(path.join(outDir, "lcov.info"), LCOV);
     },
   };
 }

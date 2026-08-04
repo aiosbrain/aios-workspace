@@ -2,18 +2,30 @@
 /**
  * Merge production-only c8 and Vitest reports into the stable PR artifacts.
  */
-import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = process.cwd();
 const ROOT_SUMMARY = path.join(ROOT, "coverage", "root", "coverage-summary.json");
 const CLIENT_SUMMARY = path.join(ROOT, "gui", "client", "coverage", "coverage-summary.json");
-const OUTPUT_SUMMARY = path.join(ROOT, "coverage", "coverage-summary.json");
 const ROOT_LCOV = path.join(ROOT, "coverage", "root", "lcov.info");
 const CLIENT_LCOV = path.join(ROOT, "gui", "client", "coverage", "lcov.info");
-const OUTPUT_LCOV = path.join(ROOT, "coverage", "lcov.info");
 const METRICS = ["lines", "statements", "functions", "branches"];
+
+/**
+ * Where to write. `run-coverage.mjs` passes a STAGING directory, because the canonical names mean
+ * "a run completed successfully" and this script runs long before that is known — see
+ * scripts/coverage-outputs.mjs. Defaults to `coverage/` so a bare `node scripts/merge-coverage.mjs`
+ * still behaves as it always did.
+ */
+function outputDirectory(argv) {
+  const index = argv.indexOf("--out-dir");
+  if (index === -1) return path.join(ROOT, "coverage");
+  const value = argv[index + 1];
+  if (!value || value.startsWith("--")) throw new Error("--out-dir requires a value");
+  return path.resolve(ROOT, value);
+}
 
 export function mergeTotals(a, b) {
   const merged = {};
@@ -67,7 +79,11 @@ const EMPTY_TOTAL = Object.freeze(
   Object.fromEntries(METRICS.map((m) => [m, { total: 0, covered: 0, skipped: 0, pct: 100 }]))
 );
 
-function main() {
+function main(argv = []) {
+  const outDir = outputDirectory(argv);
+  const OUTPUT_SUMMARY = path.join(outDir, "coverage-summary.json");
+  const OUTPUT_LCOV = path.join(outDir, "lcov.info");
+
   // Only the root report is required. The client report is OPTIONAL by design: `gui/` is being
   // cut to aiosbrain/aios-workspace-gui (AIO-612), and a hard requirement here meant the day the
   // in-tree GUI is deleted, `npm run test:coverage` throws → no coverage artifact → the scanner
@@ -88,6 +104,7 @@ function main() {
     ...(clientReport ? prefixSummaryFiles(clientReport, "gui/client") : {}),
     total,
   };
+  mkdirSync(outDir, { recursive: true });
   writeFileSync(OUTPUT_SUMMARY, `${JSON.stringify(merged, null, 2)}\n`);
 
   writeFileSync(OUTPUT_LCOV, readFileSync(ROOT_LCOV, "utf8"));
@@ -107,7 +124,7 @@ function main() {
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
-    main();
+    main(process.argv.slice(2));
   } catch (error) {
     console.error(error.message);
     process.exitCode = 1;

@@ -11,7 +11,7 @@
  *   3. coverage/lcov.info             — LF/LH, FNF/FNH, BRF/BRH aggregate parse.
  *
  * Precedence 0, ahead of all three: a `coverage/coverage-degraded.json` marker means the run
- * measured only part of the repo, and NO number is publishable — see scripts/coverage-degraded.mjs
+ * measured only part of the repo, and NO number is publishable — see scripts/coverage-outputs.mjs
  * for why, and for the second half of that guard (the artifacts are also moved off the canonical
  * filenames, which is what reaches consumers that never call this module).
  *
@@ -27,7 +27,7 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { DEGRADED_MARKER, readDegradedMarker } from "./coverage-degraded.mjs";
+import { DEGRADED_MARKER, readDegradedMarker } from "./coverage-outputs.mjs";
 
 const pct1 = (num, den) => (den > 0 ? Math.round((num / den) * 1000) / 10 : null);
 
