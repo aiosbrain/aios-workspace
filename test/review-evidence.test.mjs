@@ -134,6 +134,66 @@ describe("review evidence — the decision", () => {
     assert.match(verdict.rejected[0].reason, /Exemption must not be empty/);
   });
 
+  // The reason has to RENDER as something. `- ` is a non-empty string and an empty bullet, so
+  // `trim()` called it a reason while the reader sees nothing — the record looked filled in and
+  // said nothing, and no test noticed. Each case here is rejected for that reason alone; the
+  // gate has no opinion on what a good reason looks like beyond "the reader can see it".
+  it("refuses an exemption whose reason renders as nothing", () => {
+    const blank = [
+      "- ",
+      "-",
+      "*",
+      "+",
+      "1.",
+      "2)",
+      "   ",
+      "",
+      "- \u200b",
+      "- \u00ad\ufeff",
+      "- ...",
+      "- --",
+      "- **__**",
+      "- &#8203;",
+      "- \n- \n- ",
+    ];
+    for (const reason of blank) {
+      const verdict = evaluateReviewEvidence({
+        headSha: HEAD,
+        comments: [authored(exemption(HEAD, reason))],
+      });
+      assert.equal(
+        verdict.ok,
+        false,
+        `an empty-rendering reason must not pass: ${JSON.stringify(reason)}`
+      );
+      assert.match(verdict.rejected[0].reason, /Exemption must not be empty/);
+    }
+  });
+
+  // The other half of the same fix: rejecting things that render as nothing must not start
+  // rejecting things that render as something. A reason is content in any script.
+  it("accepts any reason a reader can actually see", () => {
+    const real = [
+      "- dependabot lockfile bump, no source change",
+      "-  typo in a comment",
+      "* readme only",
+      "1. version bump",
+      "- 依存関係の更新のみ",
+      "- ЛОГОТИП",
+      "- 0",
+      "- ...and nothing else changed",
+      "- **bold reason**",
+      "no list marker at all",
+    ];
+    for (const reason of real) {
+      const verdict = evaluateReviewEvidence({
+        headSha: HEAD,
+        comments: [authored(exemption(HEAD, reason))],
+      });
+      assert.equal(verdict.ok, true, `a visible reason must pass: ${JSON.stringify(reason)}`);
+    }
+  });
+
   it("refuses a comment claiming to be both a review and an exemption", () => {
     const hybrid = `${attestation()}\n\n${EXEMPTION_MARKER}`;
     const verdict = evaluateReviewEvidence({ headSha: HEAD, comments: [authored(hybrid)] });

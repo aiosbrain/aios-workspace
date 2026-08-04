@@ -86,6 +86,12 @@ Enforced, and worth knowing before you write one:
 - **No `Critical` or `High` anywhere** in the governed text. A `Medium` is allowed only as
   `- [RESOLVED] Medium …` and only if the line does not also say it is still open.
 - `## Verification` must contain the head SHA and nothing else that looks like a SHA.
+- **The `- Reviewed at` wording is ergonomics, not a rule.** The binding is the SHA: the section
+  must contain the head SHA exactly once and no other SHA-shaped token, and how you phrase the
+  line around it is up to you — a bare SHA or a commit URL satisfies it just as well. This is
+  intended. Requiring the phrase too would add a second, weaker rule that a reviewer could
+  satisfy while naming the wrong commit, and would reject correct evidence over wording. The same
+  applies to `- Exempt at` in an exemption.
 - Severity words are read *after* HTML-entity decoding, zero-width stripping, NFKC
   normalisation and emphasis stripping, so `Crit&#8203;ical` and `Crit*ical*` still block.
 - Fenced code and whole-line HTML comments are treated as invisible; raw HTML, link reference
@@ -123,8 +129,20 @@ REVIEW_EXEMPT
 ```
 
 It is bound to the head exactly as review evidence is, validated by the same visibility rules
-(no raw HTML, no link reference definitions, no ambiguous fences) and the same exact-SHA binding.
-A reason is required and may not be empty. A comment carrying both tokens is rejected.
+(no raw HTML, no link reference definitions, no ambiguous fences) and the same exact-SHA binding —
+and, as above, the `- Exempt at` phrasing is ergonomics: the SHA is what binds.
+
+**A reason is required, and it must render as something.** `- ` is a non-empty string and an empty
+bullet, so a plain `trim()` check called it a reason while the reader saw nothing — the record
+looked filled in and stated nothing. A bare list marker (`-`, `*`, `+`, `1.`, `1)`),
+punctuation-only content, whitespace, zero-width characters and emphasis marks around nothing are
+all rejected; the emptiness test reuses the same normalisation the severity scan uses, so there is
+one notion of "invisible" in the codebase rather than two. Beyond "the reader can see it" the gate
+has **no opinion on what a reason says** — no minimum length, no word count, no format, no
+taxonomy. Under the threat model this is an audit-trail property, not a barrier: anyone with write
+access is already trusted to exempt, and someone determined to skip the reason just types a word.
+
+A comment carrying both tokens is rejected.
 
 **This started as a label, and the label was wrong — twice.** It is worth recording why, because
 the second attempt looked correct:

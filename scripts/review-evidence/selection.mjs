@@ -44,6 +44,7 @@
  */
 import {
   SHA_PATTERN,
+  normalizeForScan,
   validateCandidateShaBinding,
   validateReviewBody,
   visibleMarkdown,
@@ -94,6 +95,31 @@ export const isExemptionCandidate = (body) => hasMarker(body, EXEMPTION_MARKER);
  * vendored `validateCandidateShaBinding`, so the head must appear exactly once and no other
  * SHA-shaped token may ride along.
  */
+// A bare list marker: `-`, `*`, `+`, `1.` or `1)`, with nothing after it that renders.
+const LIST_MARKER = /^[ \t]*(?:[-*+]|\d+[.)])[ \t]*/;
+
+/**
+ * Does this section render as nothing?
+ *
+ * `- ` is a non-empty string and an empty bullet, so `reason.trim()` said "there is a reason"
+ * about a record that shows the reader nothing — the exemption looked filled in while stating
+ * none. Under this gate's threat model that is an audit-trail defect rather than a bypass
+ * (anyone with write access is already trusted to exempt, and could simply type a word), but a
+ * record that can be blank while looking complete is exactly the kind of thing this gate exists
+ * to not do.
+ *
+ * `normalizeForScan` is the vendored normalisation the severity scan already uses — it decodes
+ * entities, strips zero-width and other format characters, applies NFKC and removes emphasis
+ * marks. Reusing it keeps ONE notion of "invisible" in this codebase rather than inventing a
+ * second one here. After that and the list marker, a line has to carry at least one letter or
+ * digit in any script; punctuation alone is not a reason, and CJK is.
+ */
+function rendersEmpty(section) {
+  return !section
+    .split("\n")
+    .some((line) => /[\p{L}\p{N}]/u.test(normalizeForScan(line).replace(LIST_MARKER, "")));
+}
+
 export function validateExemptionBody(body, candidateShas) {
   if (typeof body !== "string") throw new Error("exemption comment has no body");
   const visible = visibleMarkdown(body);
@@ -108,7 +134,7 @@ export function validateExemptionBody(body, candidateShas) {
     );
   }
   const reason = visible.slice(headings[0].index + headings[0][0].length, headings[1].index);
-  if (!reason.trim()) throw new Error("exemption section Exemption must not be empty");
+  if (rendersEmpty(reason)) throw new Error("exemption section Exemption must not be empty");
   validateCandidateShaBinding(
     visible.slice(headings[1].index + headings[1][0].length),
     candidateShas
