@@ -29,12 +29,14 @@ function ws() {
   return mkdtempSync(path.join(tmpdir(), "maturity-hook-"));
 }
 
-function runHook(dir, payload, { rawInput } = {}) {
+function runHook(dir, payload, { rawInput, env, unsetEnv = [] } = {}) {
   const input = rawInput !== undefined ? rawInput : JSON.stringify(payload);
+  const childEnv = { ...process.env, CLAUDE_PROJECT_DIR: dir, ...env };
+  for (const name of unsetEnv) delete childEnv[name];
   try {
     execFileSync("node", [HOOK], {
       input,
-      env: { ...process.env, CLAUDE_PROJECT_DIR: dir },
+      env: childEnv,
       stdio: ["pipe", "pipe", "pipe"],
     });
     return 0;
@@ -46,7 +48,7 @@ function runHook(dir, payload, { rawInput } = {}) {
 // Build a realistic Claude transcript: two human turns, each followed by an assistant turn that
 // carries usage + tool_use blocks (Bash = verify tool, Read = diversity), plus tool_result turns
 // including one error. `turns` controls how many prompt/assistant pairs (grows event_count).
-function transcript(dir, { turns = 2 } = {}) {
+function transcript(dir, { turns = 2, paddingBytes = 0 } = {}) {
   const p = path.join(dir, "transcript.jsonl");
   const lines = [];
   for (let i = 0; i < turns; i++) {
@@ -62,7 +64,7 @@ function transcript(dir, { turns = 2 } = {}) {
           cache_creation_input_tokens: 30,
         },
         content: [
-          { type: "text", text: "on it" },
+          { type: "text", text: i === 0 && paddingBytes > 0 ? "x".repeat(paddingBytes) : "on it" },
           { type: "tool_use", name: "Bash", input: {} },
           { type: "tool_use", name: "Read", input: {} },
         ],
@@ -316,4 +318,108 @@ test("computeSessionRecord: empty events → zero-safe ratios", () => {
   assert.equal(signals.tokens_per_task, 0);
   assert.equal(signals.subagent_usage, 0);
   assert.deepEqual(counts.distinct_tools, []);
+});
+
+test("transcript read cap is env-configurable (AIOS_MATURITY_TRANSCRIPT_MAX_MB)", () => {
+  // The cap was a fixed 10 MB that silently dropped the largest, highest-signal sessions. It is now
+  // configurable (default 50 MB). Prove BOTH directions with ONE transcript so the assertion can't
+  // pass vacuously: a cap below its size skips it; the default captures it.
+  const dir = ws();
+  try {
+    const tp = transcript(dir, { turns: 2, paddingBytes: 11 * 1024 * 1024 });
+    const sizeMb = statSync(tp).size / (1024 * 1024);
+    assert.ok(
+      sizeMb > 10 && sizeMb < 50,
+      "fixture must be between the old 10 MB cap and the new 50 MB default"
+    );
+
+    // A cap below the fixture's size → skipped, no store written.
+    assert.equal(
+      runHook(
+        dir,
+        { hook_event_name: "SessionEnd", session_id: "cap-skip", cwd: dir, transcript_path: tp },
+        { env: { AIOS_MATURITY_TRANSCRIPT_MAX_MB: "10" } }
+      ),
+      0
+    );
+    assert.ok(
+      !existsSync(path.join(dir, STORE_REL)),
+      "a cap below the transcript size must skip capture"
+    );
+
+    // Default cap (unset) → the same transcript is captured.
+    assert.equal(
+      runHook(
+        dir,
+        { hook_event_name: "SessionEnd", session_id: "cap-keep", cwd: dir, transcript_path: tp },
+        { unsetEnv: ["AIOS_MATURITY_TRANSCRIPT_MAX_MB"] }
+      ),
+      0
+    );
+    const { sessions } = fold(dir);
+    assert.equal(sessions.size, 1, "default cap captures a normal transcript");
+    assert.ok(sessions.get("cap-keep"), "the captured record is the default-cap run");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+function assertInvalidCapFallsBack(value, label) {
+  const dir = ws();
+  try {
+    const tp = transcript(dir);
+    assert.equal(
+      runHook(
+        dir,
+        {
+          hook_event_name: "SessionEnd",
+          session_id: `${label}-cap`,
+          cwd: dir,
+          transcript_path: tp,
+        },
+        { env: { AIOS_MATURITY_TRANSCRIPT_MAX_MB: value } }
+      ),
+      0
+    );
+    const { sessions } = fold(dir);
+    assert.ok(sessions.has(`${label}-cap`), `${label} override must use the safe default`);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+for (const [label, value] of [
+  ["negative", "-1"],
+  ["zero", "0"],
+  ["malformed", "not-a-number"],
+]) {
+  test(`${label} transcript cap falls back to the 50 MB default`, () => {
+    assertInvalidCapFallsBack(value, label);
+  });
+}
+
+test("non-finite transcript cap falls back to the 50 MB default", () => {
+  const dir = ws();
+  try {
+    const tp = transcript(dir, { turns: 1, paddingBytes: 51 * 1024 * 1024 });
+    assert.equal(
+      runHook(
+        dir,
+        {
+          hook_event_name: "SessionEnd",
+          session_id: "infinite-cap",
+          cwd: dir,
+          transcript_path: tp,
+        },
+        { env: { AIOS_MATURITY_TRANSCRIPT_MAX_MB: "Infinity" } }
+      ),
+      0
+    );
+    assert.ok(
+      !existsSync(path.join(dir, STORE_REL)),
+      "a non-finite override must not disable the safe default cap"
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

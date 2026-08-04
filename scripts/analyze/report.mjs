@@ -97,7 +97,7 @@ function plainStat(key, s) {
     case "autonomy":
       return `${pct(s.delegation_ratio)} of work was delegated to sub-agents; ${pct(s.subagent_usage)} of sessions used one`;
     case "learning":
-      return `${fmtNum(s.tool_diversity, 1)} distinct tools per session (a proxy for your toolbelt; capped at 3 — logs can't see CLAUDE.md/skill growth)`;
+      return `${fmtNum(s.tool_diversity, 1)} distinct tool interfaces per session (tool breadth only — skill use and cross-session compounding are not yet observed)`;
     case "cost_governance":
       return `$${fmtNum(s.cost_per_task)} and ${fmtTokens(s.tokens_per_task)} fresh tokens per task`;
     default:
@@ -123,6 +123,13 @@ export function renderText(result, color, contextHealth, codebaseHealth) {
   for (const [key, label] of Object.entries(AXIS_LABELS)) {
     const score = placement.axes[key];
     L.push(`  ${label.padEnd(22)} ${bar(score)} ${fmtNum(score, 1)}  ${AXIS_GUIDE[key].gloss}`);
+    if (key === "learning") {
+      L.push(
+        c.dim(
+          `    Current signal: ${fmtNum(signals.tool_diversity, 1)} distinct tool interfaces per session; skill use and cross-session compounding are not yet observed.`
+        )
+      );
+    }
   }
   // Cognitive ergonomics — SHADOW band (AIO-190 Phase A). Rendered beside the
   // axes but deliberately NOT a maturity axis: uncalibrated, local-only, never

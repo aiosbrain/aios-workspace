@@ -10,7 +10,7 @@
 
 import { existsSync } from "node:fs";
 
-import { renderText, toJson, buildPushPayload } from "../scripts/analyze/report.mjs";
+import { renderText, renderReport, toJson, buildPushPayload } from "../scripts/analyze/report.mjs";
 import { AXIS_GUIDE, ergonomicsTip } from "../scripts/analyze/guidance.mjs";
 import { AXIS_LABELS, placement, contextHealthCard } from "../scripts/analyze/aem.mjs";
 import { AXIS_LABEL_ERGONOMICS, MIN_BASELINE_DAYS } from "../scripts/analyze/ergonomics.mjs";
@@ -85,6 +85,62 @@ const TOP = resultFrom([
     tokens_per_task: 1,
   }),
 ]);
+
+// ── learning guidance names the measurement honestly ───────────────────────
+
+console.log("renderText — learning measurement honesty");
+const LEARNING_WEAKEST = {
+  ...RICH,
+  placement: {
+    ...RICH.placement,
+    weakest: "learning",
+    axes: { ...RICH.placement.axes, learning: 1 },
+  },
+};
+const learningText = renderText(LEARNING_WEAKEST);
+check(
+  "primary learning guidance is skill-oriented, not an unconditional CLAUDE.md rule",
+  learningText.includes("check which installed skill triggers match") &&
+    !learningText.includes("When you correct the agent on something, add that rule to CLAUDE.md")
+);
+check(
+  "default report identifies tool interfaces and disclaims observed compounding",
+  learningText.includes("distinct tool interfaces per session") &&
+    learningText.includes("skill use and cross-session compounding are not yet observed")
+);
+check(
+  "deep-dive report uses the same honest tool-breadth framing",
+  renderReport(LEARNING_WEAKEST).includes(
+    "tool breadth only — skill use and cross-session compounding are not yet observed"
+  )
+);
+check(
+  "structured learning action audits skill reuse before proposing project rules",
+  (() => {
+    const actions = toJson(RICH).presentation.axis_guide.learning.actions;
+    return (
+      actions.some(
+        (action) =>
+          action.kind === "chat" &&
+          action.prompt.includes("installed skills") &&
+          action.prompt.includes("CLAUDE.md rule only when evidence")
+      ) && !actions.some((action) => action.kind === "edit" && action.target === "CLAUDE.md")
+    );
+  })()
+);
+check(
+  "learning proxy disclaimer remains visible when another axis is weakest",
+  (() => {
+    const nonLearningWeakest = {
+      ...RICH,
+      placement: { ...RICH.placement, weakest: "cost_governance" },
+    };
+    const matches = renderText(nonLearningWeakest).match(
+      /skill use and cross-session compounding are not yet observed/g
+    );
+    return matches?.length === 1;
+  })()
+);
 
 // ── the CE line + shadow marker ─────────────────────────────────────────────
 

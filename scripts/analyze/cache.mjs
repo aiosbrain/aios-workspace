@@ -68,7 +68,10 @@ import { makeEvent } from "./normalize.mjs";
 import { parseClaude, parseJsonl } from "./parse-claude.mjs";
 import { recordsToEvents as codexRecordsToEvents, createCtx } from "./parse-codex.mjs";
 
-export const CACHE_VERSION = 1;
+// v2 reparses Codex entries after current custom-tool and subagent attribution
+// support was added; otherwise unchanged transcript files would retain v1's
+// assistant-only events indefinitely.
+export const CACHE_VERSION = 2;
 const NL = 0x0a;
 
 /** Machine-global cache dir (transcripts are machine-global). Env-overridable. */
