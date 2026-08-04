@@ -40,6 +40,17 @@ function fixture({ installed = false } = {}) {
         "": { devDependencies: { prettier: "^3.9.6" } },
         "node_modules/prettier": { version: "3.9.6", dev: true },
         "node_modules/prettier-plugin-test": { version: "1.0.0", dev: true },
+        "node_modules/platform-native-test": {
+          version: "1.0.0",
+          optional: true,
+          os: [process.platform],
+          cpu: [process.arch],
+        },
+        "node_modules/other-platform-test": {
+          version: "1.0.0",
+          optional: true,
+          os: [`!${process.platform}`],
+        },
       },
     })
   );
@@ -61,6 +72,9 @@ function installPrettier(primary) {
   const transitive = path.join(primary, "node_modules", "prettier-plugin-test");
   mkdirSync(transitive, { recursive: true });
   writeFileSync(path.join(transitive, "package.json"), JSON.stringify({ version: "1.0.0" }));
+  const native = path.join(primary, "node_modules", "platform-native-test");
+  mkdirSync(native, { recursive: true });
+  writeFileSync(path.join(native, "package.json"), JSON.stringify({ version: "1.0.0" }));
 }
 
 function assertSharedLink(primary, worktree) {
@@ -130,9 +144,35 @@ test("matching root manifest still restores missing binary and transitive packag
   assertSharedLink(primary, worktree);
 });
 
+test("missing host-applicable optional native package triggers restoration", () => {
+  const { primary, worktree } = fixture({ installed: true });
+  rmSync(path.join(primary, "node_modules", "platform-native-test"), {
+    recursive: true,
+    force: true,
+  });
+  let installCalls = 0;
+
+  initializeWorktreeDependencies({
+    primary,
+    worktree,
+    install: () => {
+      installCalls += 1;
+      installPrettier(primary);
+      return { status: 0 };
+    },
+  });
+
+  assert.equal(installCalls, 1);
+  assertSharedLink(primary, worktree);
+});
+
 test("forced restore failure exits non-zero and leaves no misleading link", () => {
   const { primary, worktree } = fixture();
-  symlinkSync(path.join(primary, "node_modules"), path.join(worktree, "node_modules"), "dir");
+  symlinkSync(
+    path.join(path.dirname(primary), "moved-primary", "node_modules"),
+    path.join(worktree, "node_modules"),
+    "dir"
+  );
   const fakeBin = path.join(path.dirname(primary), "fake-bin");
   mkdirSync(fakeBin);
   const fakeNpm = path.join(fakeBin, "npm");
@@ -164,10 +204,18 @@ function finished(child) {
   });
 }
 
-test("concurrent hydrations serialize the primary restore and the waiter rechecks", async () => {
+test("concurrent hydrations safely reclaim a stale lock and install only once", async () => {
   const { primary, worktree } = fixture();
   const secondWorktree = path.join(path.dirname(primary), "worktree-two");
+  const thirdWorktree = path.join(path.dirname(primary), "worktree-three");
   mkdirSync(secondWorktree);
+  mkdirSync(thirdWorktree);
+  const lockDir = path.join(primary, ".aios");
+  mkdirSync(lockDir);
+  writeFileSync(
+    path.join(lockDir, "worktree-dependencies.lock"),
+    `${JSON.stringify({ pid: 999_999_999, token: "dead-owner" })}\n`
+  );
   const fakeBin = path.join(path.dirname(primary), "concurrent-bin");
   mkdirSync(fakeBin);
   const calls = path.join(path.dirname(primary), "npm-calls");
@@ -189,6 +237,9 @@ fs.writeFileSync(path.join(root, "node_modules", ".bin", "prettier"), "");
 const transitive = path.join(root, "node_modules", "prettier-plugin-test");
 fs.mkdirSync(transitive, { recursive: true });
 fs.writeFileSync(path.join(transitive, "package.json"), JSON.stringify({ version: "1.0.0" }));
+const native = path.join(root, "node_modules", "platform-native-test");
+fs.mkdirSync(native, { recursive: true });
+fs.writeFileSync(path.join(native, "package.json"), JSON.stringify({ version: "1.0.0" }));
 `
   );
   chmodSync(fakeNpm, 0o755);
@@ -206,11 +257,20 @@ fs.writeFileSync(path.join(transitive, "package.json"), JSON.stringify({ version
     env,
     stdio: ["ignore", "ignore", "pipe"],
   });
-  const [firstResult, secondResult] = await Promise.all([finished(first), finished(second)]);
+  const third = spawn(process.execPath, args(thirdWorktree), {
+    env,
+    stdio: ["ignore", "ignore", "pipe"],
+  });
+  const [firstResult, secondResult, thirdResult] = await Promise.all([
+    finished(first),
+    finished(second),
+    finished(third),
+  ]);
 
-  assert.deepEqual([firstResult.status, secondResult.status], [0, 0]);
-  assert.equal(firstResult.stderr + secondResult.stderr, "");
+  assert.deepEqual([firstResult.status, secondResult.status, thirdResult.status], [0, 0, 0]);
+  assert.equal(firstResult.stderr + secondResult.stderr + thirdResult.stderr, "");
   assert.equal(readFileSync(calls, "utf8").trim().split("\n").length, 1);
   assertSharedLink(primary, worktree);
   assertSharedLink(primary, secondWorktree);
+  assertSharedLink(primary, thirdWorktree);
 });

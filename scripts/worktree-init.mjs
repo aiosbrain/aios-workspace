@@ -8,18 +8,18 @@
 import path from "node:path";
 import {
   existsSync,
+  linkSync,
   lstatSync,
   mkdirSync,
   readFileSync,
   readlinkSync,
-  renameSync,
   rmSync,
-  statSync,
   symlinkSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { spawnSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 
 function readJson(file, label) {
@@ -42,8 +42,37 @@ export function lockedDependencies(primary) {
   const lock = readJson(lockPath, lockPath);
   if (!lock.packages?.[""]) throw new Error(`${lockPath} has no root packages entry`);
   return Object.entries(lock.packages)
-    .filter(([key, entry]) => key.startsWith("node_modules/") && !entry?.optional)
+    .filter(
+      ([key, entry]) =>
+        key.startsWith("node_modules/") && (!entry?.optional || optionalPackageApplies(entry))
+    )
     .sort(([left], [right]) => left.localeCompare(right));
+}
+
+function constraintMatches(values, current) {
+  if (!Array.isArray(values) || values.length === 0) return true;
+  const positives = values.filter((value) => !String(value).startsWith("!"));
+  return !values.includes(`!${current}`) && (positives.length === 0 || positives.includes(current));
+}
+
+function currentLibc() {
+  if (process.platform !== "linux") return null;
+  try {
+    return process.report.getReport().header.glibcVersionRuntime ? "glibc" : "musl";
+  } catch {
+    return null;
+  }
+}
+
+function optionalPackageApplies(entry) {
+  const constrained = entry.os || entry.cpu || entry.libc;
+  if (!constrained) return false;
+  const libc = currentLibc();
+  return (
+    constraintMatches(entry.os, process.platform) &&
+    constraintMatches(entry.cpu, process.arch) &&
+    (!entry.libc || (libc !== null && constraintMatches(entry.libc, libc)))
+  );
 }
 
 function binNames(manifest) {
@@ -100,11 +129,15 @@ export function missingLockedDependencies(primary) {
 }
 
 function runNpmCi(primary) {
-  return spawnSync("npm", ["ci", "--include=dev", "--no-audit", "--no-fund"], {
-    cwd: primary,
-    stdio: "inherit",
-    shell: process.platform === "win32",
-  });
+  return spawnSync(
+    "npm",
+    ["ci", "--include=dev", "--include=optional", "--no-audit", "--no-fund"],
+    {
+      cwd: primary,
+      stdio: "inherit",
+      shell: process.platform === "win32",
+    }
+  );
 }
 
 function restoreSharedDependencies(primary, missing, install) {
@@ -125,14 +158,14 @@ function restoreSharedDependencies(primary, missing, install) {
     const detail = result?.error?.message ?? `exit ${result?.status ?? "unknown"}`;
     throw new Error(
       `npm ci could not restore shared dependencies (${detail}). ` +
-        `Run \`npm ci --include=dev\` in ${primary}, then retry worktree hydration.`
+        `Run \`npm ci --include=dev --include=optional\` in ${primary}, then retry worktree hydration.`
     );
   }
   const stillMissing = missingLockedDependencies(primary) ?? [];
   if (stillMissing.length > 0) {
     throw new Error(
       `npm ci completed but shared dependencies are still incomplete: ${summarizeMissing(stillMissing)}. ` +
-        `Run \`npm ci --include=dev\` in ${primary}, then retry worktree hydration.`
+        `Run \`npm ci --include=dev --include=optional\` in ${primary}, then retry worktree hydration.`
     );
   }
 }
@@ -152,64 +185,74 @@ function processIsAlive(pid) {
   }
 }
 
-function lockIsStale(lockPath) {
+function readOwner(lockPath) {
   try {
-    const owner = readJson(path.join(lockPath, "owner.json"), "dependency lock owner");
-    return !processIsAlive(owner.pid);
+    return readJson(lockPath, "dependency lock owner");
   } catch {
-    try {
-      return Date.now() - statSync(lockPath).mtimeMs > 2_000;
-    } catch {
-      return false;
-    }
+    return null;
   }
 }
 
-function removeStaleLock(lockPath) {
-  if (!lockIsStale(lockPath)) return false;
-  const quarantine = `${lockPath}.stale-${process.pid}-${Date.now()}`;
+function createOwnedFile(target, token) {
+  const scratch = `${target}.tmp.${process.pid}.${randomUUID()}`;
+  writeFileSync(scratch, `${JSON.stringify({ pid: process.pid, token })}\n`, { mode: 0o600 });
   try {
-    renameSync(lockPath, quarantine);
+    linkSync(scratch, target);
+    return true;
   } catch (error) {
-    if (error?.code === "ENOENT") return true;
+    if (error?.code === "EEXIST") return false;
     throw error;
+  } finally {
+    rmSync(scratch, { force: true });
   }
-  rmSync(quarantine, { recursive: true, force: true });
-  return true;
+}
+
+function releaseOwnedFile(target, token) {
+  if (readOwner(target)?.token === token) rmSync(target, { force: true });
+}
+
+function reclaimDeadOwner(lockPath, guardPath) {
+  const guardToken = randomUUID();
+  if (!createOwnedFile(guardPath, guardToken)) return false;
+  try {
+    const owner = readOwner(lockPath);
+    if (owner && !processIsAlive(owner.pid)) {
+      rmSync(lockPath, { force: true });
+      return true;
+    }
+    return false;
+  } finally {
+    releaseOwnedFile(guardPath, guardToken);
+  }
 }
 
 function acquireInstallLock(primary) {
   const lockPath = path.join(primary, ".aios", "worktree-dependencies.lock");
+  const guardPath = `${lockPath}.reclaim`;
   mkdirSync(path.dirname(lockPath), { recursive: true });
   const deadline = Date.now() + LOCK_WAIT_MS;
   while (true) {
-    try {
-      mkdirSync(lockPath);
-      writeFileSync(
-        path.join(lockPath, "owner.json"),
-        `${JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() })}\n`
-      );
-      return () => rmSync(lockPath, { recursive: true, force: true });
-    } catch (error) {
-      if (error?.code !== "EEXIST") throw error;
-      if (removeStaleLock(lockPath)) continue;
-      if (Date.now() >= deadline) {
-        throw new Error(
-          `timed out waiting for the shared dependency install lock at ${lockPath}; ` +
-            "retry worktree hydration after the other install finishes"
-        );
-      }
-      Atomics.wait(EMPTY_WAIT_BUFFER, 0, 0, LOCK_POLL_MS);
+    const token = randomUUID();
+    if (createOwnedFile(lockPath, token)) {
+      return () => releaseOwnedFile(lockPath, token);
     }
+    const owner = readOwner(lockPath);
+    if (owner && !processIsAlive(owner.pid) && reclaimDeadOwner(lockPath, guardPath)) continue;
+    if (Date.now() >= deadline) {
+      throw new Error(
+        `timed out waiting for the shared dependency install lock at ${lockPath}; ` +
+          "retry worktree hydration after the other install finishes"
+      );
+    }
+    Atomics.wait(EMPTY_WAIT_BUFFER, 0, 0, LOCK_POLL_MS);
   }
 }
 
 function detachIncompleteSharedLink(primary, worktree) {
-  const source = path.join(primary, "node_modules");
   const destination = path.join(worktree, "node_modules");
   try {
     if (!lstatSync(destination).isSymbolicLink()) return;
-    if (path.resolve(worktree, readlinkSync(destination)) === source) unlinkSync(destination);
+    unlinkSync(destination);
   } catch (error) {
     if (error?.code !== "ENOENT") throw error;
   }
