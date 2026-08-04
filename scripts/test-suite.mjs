@@ -103,7 +103,12 @@ export function discoverNodeTests() {
 
 export function discoverTestInventory() {
   const node = discoverNodeTests();
-  return { node, all: [...node].sort() };
+  // `all` used to be the sorted union of the Node and client roots. The client half left with
+  // gui/client (AIO-612), so it is now a copy of an already-sorted list — no re-sort. A bare
+  // .sort() here is also a real defect, not just redundancy: it sorts by UTF-16 code unit, which
+  // is only correct for these paths by accident, and SonarCloud flags it (javascript:S2871).
+  // A copy, not an alias, so a caller mutating one cannot silently reorder the other.
+  return { node, all: [...node] };
 }
 
 function parsePositiveInt(raw, label) {
