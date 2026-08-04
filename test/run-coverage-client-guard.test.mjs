@@ -3,13 +3,20 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import {
   clientWorkspaceStatus,
   hasClientWorkspace,
   isResolvedWorkspace,
   main,
 } from "../scripts/run-coverage.mjs";
+import {
+  install,
+  makeParityMembers,
+  makeRoot,
+  npmResolvesClient,
+  recorder,
+} from "./run-coverage-guard-fixtures.mjs";
 
 /**
  * AIO-612. `gui/` is being cut to aiosbrain/aios-workspace-gui. `runFull` and `runMerge` both call
@@ -22,112 +29,86 @@ import {
  * `test_coverage_pct: null`. So the suite has to prove BOTH modes skip, at the real call sites.
  */
 
-const METRIC = { total: 10, covered: 8, skipped: 0, pct: 80 };
-const SUMMARY = JSON.stringify({
-  "scripts/a.mjs": { lines: METRIC },
-  total: { lines: METRIC, statements: METRIC, functions: METRIC, branches: METRIC },
-});
-
-/**
- * A fixture repo root: shard data for `--merge 1`, and optionally a gui/client workspace.
- *
- * `registered` writes the lockfile entry npm would write, because that is what the guard reads.
- * The lockfile-vs-npm parity test below proves the shape is npm's own rather than one we invented.
- */
-function makeRoot({ manifest = false, registered = false } = {}) {
-  const root = mkdtempSync(path.join(tmpdir(), "run-cov-guard-"));
-  mkdirSync(path.join(root, "coverage", "shard-1"), { recursive: true });
-  writeFileSync(path.join(root, "coverage", "shard-1", "coverage-1.json"), "{}");
-  writeFileSync(
-    path.join(root, "package.json"),
-    JSON.stringify({
-      name: "fixture",
-      workspaces: registered ? ["gui/server", "gui/client"] : ["gui/server"],
-    })
-  );
-  writeFileSync(
-    path.join(root, "package-lock.json"),
-    JSON.stringify({
-      name: "fixture",
-      lockfileVersion: 3,
-      packages: {
-        "": { name: "fixture" },
-        "gui/server": { name: "@fixture/server" },
-        // npm writes BOTH a member entry keyed by path and an install-tree link keyed by
-        // node_modules/<name>. Only the first means "this is a workspace".
-        "node_modules/@fixture/server": { resolved: "gui/server", link: true },
-        ...(registered
-          ? {
-              "gui/client": { name: "@fixture/client" },
-              "node_modules/@fixture/client": { resolved: "gui/client", link: true },
-            }
-          : {}),
-      },
-    })
-  );
-  if (manifest) {
-    mkdirSync(path.join(root, "gui", "client"), { recursive: true });
-    writeFileSync(path.join(root, "gui", "client", "package.json"), '{"name":"client"}');
-  }
-  return root;
-}
-
-/**
- * Stand-in for the real spawn. Records every command the mode issues, and writes the summary
- * merge-coverage.mjs would write so `--merge` can finish. An UNGUARDED call site reaches this the
- * same way a guarded one does, so the recording is what proves the wiring.
- */
-function recorder(root) {
-  const calls = [];
-  return {
-    calls,
-    clientRuns: () =>
-      calls.filter((c) => c.command === "npm" && c.args.includes("gui/client")).length,
-    exec: async (command, args) => {
-      calls.push({ command, args });
-      if (args.some((a) => String(a).endsWith("merge-coverage.mjs"))) {
-        mkdirSync(path.join(root, "coverage"), { recursive: true });
-        writeFileSync(path.join(root, "coverage", "coverage-summary.json"), SUMMARY);
-      }
-    },
-  };
-}
-
-test("isResolvedWorkspace reads the lockfile, and answers no when it cannot", () => {
+test("isResolvedWorkspace answers from npm, and defaults to RUN when npm cannot answer", () => {
   const live = makeRoot({ manifest: true, registered: true });
   const dereg = makeRoot({ manifest: true, registered: false });
-  const noLock = makeRoot({ manifest: true, registered: true });
-  rmSync(path.join(noLock, "package-lock.json"));
-  const badLock = makeRoot({ manifest: true, registered: true });
-  writeFileSync(path.join(badLock, "package-lock.json"), "{ not json");
+  const broken = makeRoot({ manifest: true, registered: true });
+  writeFileSync(path.join(broken, "package.json"), "{ not json");
   try {
     assert.equal(isResolvedWorkspace(live, "gui/client"), true);
     assert.equal(isResolvedWorkspace(live, "gui/server"), true);
     assert.equal(isResolvedWorkspace(dereg, "gui/client"), false);
-    // An install-tree link is not the member entry.
-    assert.equal(isResolvedWorkspace(live, "node_modules/@fixture/client"), false);
-    // No lockfile / unparseable lockfile => "not a workspace". That skips the client pass and
-    // shrinks the reported total, which trips the ratchet on the merge lane — loud. Defaulting
-    // the other way would run a spawn that fails and, in runFull, fail silently.
-    assert.equal(isResolvedWorkspace(noLock, "gui/client"), false);
-    assert.equal(isResolvedWorkspace(badLock, "gui/client"), false);
+    // THE DIRECTION THAT MATTERS. npm cannot answer here at all. Returning false would skip the
+    // client pass, and in runFull that skip is swallowed by scan-on-merge.yml's `|| true` — a
+    // silent under-report. Worse, it would not even go red on the merge lane: root-only coverage
+    // is 81.87% against a 79.7% floor, so the ratchet still passes. Only npm's explicit
+    // "No workspaces found" is allowed to mean absence; everything else runs the real command
+    // and lets the real error surface.
+    assert.equal(isResolvedWorkspace(broken, "gui/client"), true);
   } finally {
-    for (const d of [live, dereg, noLock, badLock]) rmSync(d, { recursive: true, force: true });
+    for (const d of [live, dereg, broken]) rmSync(d, { recursive: true, force: true });
+  }
+});
+
+test("a STALE lockfile cannot resurrect the false positive (AIO-612)", () => {
+  // The design this replaces read `package-lock.json`'s packages[] entry, on the argument that
+  // `npm ci` fails when the lockfile and manifest disagree. MEASURED: it does not. Both `npm ci`
+  // and `npm install` exit 0 and KEEP the stale member entry, while `npm run --workspace` exits
+  // 1 — which is precisely the state AIO-612 PR-B passes through, and precisely the
+  // null-coverage incident. Asking npm live is immune; this test is what keeps it that way.
+  const root = makeRoot({ manifest: true, registered: true });
+  try {
+    execFileSync("npm", ["install", "--package-lock-only", "--no-audit", "--no-fund"], {
+      cwd: root,
+      stdio: "pipe",
+    });
+    const lock = JSON.parse(readFileSync(path.join(root, "package-lock.json"), "utf8"));
+    assert.ok(lock.packages?.["gui/client"], "precondition: the lockfile records gui/client");
+
+    // Deregister in the manifest only — no reinstall. The lockfile still lists gui/client.
+    writeFileSync(
+      path.join(root, "package.json"),
+      JSON.stringify({
+        name: "fixture",
+        version: "1.0.0",
+        private: true,
+        workspaces: ["gui/server"],
+      })
+    );
+    const stillStale = JSON.parse(readFileSync(path.join(root, "package-lock.json"), "utf8"));
+    assert.ok(stillStale.packages?.["gui/client"], "the stale entry is still there");
+
+    let npmResolves;
+    try {
+      execFileSync("npm", ["ls", "--workspace", "gui/client", "--depth", "0"], {
+        cwd: root,
+        stdio: "pipe",
+      });
+      npmResolves = true;
+    } catch {
+      npmResolves = false;
+    }
+    assert.equal(npmResolves, false, "npm does not resolve the deregistered workspace");
+    assert.equal(clientWorkspaceStatus(root), "deregistered");
+    assert.equal(hasClientWorkspace(root), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
   }
 });
 
 /**
- * PARITY WITH REAL NPM — the test that makes the oracle claim honest.
+ * PARITY WITH REAL NPM — the test that keeps the guard honest.
  *
- * A hand-rolled glob matcher stood here and was wrong in both directions: `["gui/*",
- * "!gui/client"]` read as present when npm resolves nothing (false positive → the null-coverage
- * incident), and `gui/client/**`, `gui/{client,server}`, `gui/@(client|server)`, `gui/clien?`,
- * `gui/clien[t]` all read as absent when npm accepts them (false negative → ~1.9k lines silently
- * dropped from the denominator). Both classes came out of adversarial review.
+ * Two predecessors failed here, both found by adversarial review:
+ *   - a hand-rolled glob matcher: read `["gui/*", "!gui/client"]` as present when npm resolves
+ *     nothing (the null-coverage incident), and rejected `gui/client/**`, `gui/{client,server}`,
+ *     `gui/@(client|server)`, `gui/clien?`, `gui/clien[t]`, which npm accepts (~1.9k lines
+ *     silently dropped from the denominator).
+ *   - reading `package-lock.json`: goes stale, and lockfile v1 has no `packages` key at all.
  *
- * So this asserts agreement with npm itself rather than with our reading of npm: for each
- * registration form, generate a real lockfile, then ask npm to run a script in the workspace and
- * compare its exit status with the predicate.
+ * So this compares against npm itself, and deliberately covers the LOCKFILE STATES the previous
+ * revision's parity test missed — it regenerated a fresh v3 lockfile every time, which is exactly
+ * the one state where the broken design worked.
  */
 test(
   "clientWorkspaceStatus agrees with real npm across every registration form",
@@ -166,37 +147,14 @@ test(
     for (const workspaces of CASES) {
       const root = mkdtempSync(path.join(tmpdir(), "run-cov-npm-parity-"));
       try {
-        for (const member of ["client", "server"]) {
-          mkdirSync(path.join(root, "gui", member), { recursive: true });
-          writeFileSync(
-            path.join(root, "gui", member, "package.json"),
-            JSON.stringify({ name: `@fixture/${member}`, version: "1.0.0", scripts: { probe: "" } })
-          );
-        }
+        makeParityMembers(root);
         writeFileSync(
           path.join(root, "package.json"),
           JSON.stringify({ name: "fixture", version: "1.0.0", private: true, workspaces })
         );
-        // Lockfile only: no network, no node_modules, but npm's real workspace resolution.
-        try {
-          execFileSync("npm", ["install", "--package-lock-only", "--no-audit", "--no-fund"], {
-            cwd: root,
-            stdio: "pipe",
-          });
-        } catch {
-          /* npm may refuse to write a lockfile; the predicate must then answer "not a workspace" */
-        }
+        install(root);
 
-        let npmResolves;
-        try {
-          execFileSync("npm", ["run", "probe", "--workspace", "gui/client"], {
-            cwd: root,
-            stdio: "pipe",
-          });
-          npmResolves = true;
-        } catch {
-          npmResolves = false;
-        }
+        const npmResolves = npmResolvesClient(root);
 
         assert.equal(
           clientWorkspaceStatus(root) === "present",
@@ -204,6 +162,83 @@ test(
           `workspaces ${JSON.stringify(workspaces)}: guard says ` +
             `${clientWorkspaceStatus(root)}, npm ${npmResolves ? "resolves" : "does NOT resolve"} ` +
             `gui/client (npm ${npmVersion})`
+        );
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    }
+  }
+);
+
+/**
+ * The lockfile sweep, split out from the registration sweep above.
+ *
+ * A valid registration must read as present in EVERY lockfile state — including the ones that
+ * broke the read-the-lockfile design. The previous revision's parity test regenerated a fresh v3
+ * lockfile every time, which is exactly the single state where that design worked.
+ */
+test(
+  "clientWorkspaceStatus agrees with npm regardless of lockfile state",
+  { timeout: 300_000 },
+  (t) => {
+    let npmVersion;
+    try {
+      npmVersion = execFileSync("npm", ["--version"], { encoding: "utf8" }).trim();
+    } catch {
+      return t.skip("npm is not runnable in this environment");
+    }
+
+    const LOCK_STATES = [
+      ["fresh v3 lockfile", (root) => install(root)],
+      ["no lockfile at all", () => {}],
+      [
+        "unparseable lockfile",
+        (root) => writeFileSync(path.join(root, "package-lock.json"), "{ not json"),
+      ],
+      [
+        "v1 lockfile (no packages key)",
+        (root) => {
+          install(root);
+          const lp = path.join(root, "package-lock.json");
+          const d = JSON.parse(readFileSync(lp, "utf8"));
+          writeFileSync(
+            lp,
+            JSON.stringify({
+              name: d.name,
+              version: d.version,
+              lockfileVersion: 1,
+              dependencies: {},
+            })
+          );
+        },
+      ],
+    ];
+
+    for (const [label, prepare] of LOCK_STATES) {
+      const root = mkdtempSync(path.join(tmpdir(), "run-cov-lockstate-"));
+      try {
+        makeParityMembers(root);
+        writeFileSync(
+          path.join(root, "package.json"),
+          JSON.stringify({
+            name: "fixture",
+            version: "1.0.0",
+            private: true,
+            workspaces: ["gui/client", "gui/server"],
+          })
+        );
+        prepare(root);
+
+        assert.equal(
+          npmResolvesClient(root),
+          true,
+          `${label}: npm should still resolve a registered workspace`
+        );
+        assert.equal(
+          clientWorkspaceStatus(root),
+          "present",
+          `${label}: guard says ${clientWorkspaceStatus(root)} but npm resolves gui/client ` +
+            `(npm ${npmVersion}). A predicate that reads the lockfile fails here.`
         );
       } finally {
         rmSync(root, { recursive: true, force: true });
@@ -300,6 +335,95 @@ test("merge mode still writes the baseline candidate when the client pass is ski
       readFileSync(path.join(root, "coverage", "coverage-baseline-candidate.json"), "utf8")
     );
     assert.ok(candidate, "coverage-baseline-candidate.json must still be written");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+/* ----------------------------------------------------------------------------------------------
+ * Findings from the adversarial review at 0f9dec9. Each of these had a demonstrated path back to
+ * the null-coverage incident, so each gets a test rather than only a fix.
+ * ------------------------------------------------------------------------------------------- */
+
+test("absence is detected even when npm routes the error to STDOUT (AIO-612)", () => {
+  // MEASURED on npm 10.9.4: with NPM_CONFIG_LOGLEVEL=silent, `npm ls --workspace <x> --json`
+  // exits 1 with `{"error":{"summary":"No workspaces found: ..."}}` on STDOUT and an EMPTY
+  // stderr. A guard reading only stderr calls that "npm could not answer", returns present, runs
+  // the deleted workspace, and in runFull the failure is swallowed by `|| true`. An operator's
+  // npm loglevel must not be able to switch this guard off.
+  const root = makeRoot({ manifest: true, registered: false });
+  try {
+    const silent = { ...process.env, NPM_CONFIG_LOGLEVEL: "silent" };
+    const probe = spawnSync("npm", ["ls", "--workspace", "gui/client", "--depth", "0", "--json"], {
+      cwd: root,
+      encoding: "utf8",
+      env: silent,
+    });
+    assert.notEqual(probe.status, 0, "precondition: npm rejects the deregistered workspace");
+    assert.equal(probe.stderr.trim(), "", "precondition: silent loglevel leaves stderr empty");
+    assert.match(probe.stdout, /No workspaces found/, "precondition: the message is on stdout");
+
+    const previous = process.env.NPM_CONFIG_LOGLEVEL;
+    process.env.NPM_CONFIG_LOGLEVEL = "silent";
+    try {
+      assert.equal(isResolvedWorkspace(root, "gui/client"), false);
+      assert.equal(clientWorkspaceStatus(root), "deregistered");
+    } finally {
+      if (previous === undefined) delete process.env.NPM_CONFIG_LOGLEVEL;
+      else process.env.NPM_CONFIG_LOGLEVEL = previous;
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("full mode still writes the artifact when the client pass FAILS (AIO-612)", async () => {
+  // The guard returns true whenever npm cannot give a definitive answer, so a client failure
+  // unrelated to the cut (a malformed gui/client/package.json is enough) can still reach the real
+  // command. That used to throw straight out of runFull, so merge-coverage.mjs never ran and NO
+  // artifact was written — the same null-coverage outcome by a different route. Root coverage is
+  // real data; the dashboard should get it. The failure must still propagate.
+  const root = makeRoot({ manifest: true, registered: true });
+  const rec = recorder(root);
+  const failing = async (command, args, options) => {
+    if (command === "npm" && args.includes("gui/client")) throw new Error("client coverage boom");
+    return rec.exec(command, args, options);
+  };
+  const log = console.error;
+  console.error = () => {};
+  let threw = null;
+  try {
+    await main([], { root, exec: failing });
+  } catch (error) {
+    threw = error;
+  } finally {
+    console.error = log;
+  }
+  try {
+    assert.ok(threw, "a client-coverage failure must still fail the run");
+    assert.match(threw.message, /client coverage boom/);
+    assert.ok(
+      rec.calls.some((c) => c.args.some((a) => String(a).endsWith("merge-coverage.mjs"))),
+      "the coverage artifact must still be produced before the failure propagates"
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("an injected root also drives the executor's cwd (AIO-612)", async () => {
+  // Probing one tree while executing in another answers a question about a directory the command
+  // never touches. Every spawn runFull makes must carry the injected root.
+  const root = makeRoot({ manifest: true, registered: true });
+  const rec = recorder(root);
+  try {
+    await main([], { root, exec: rec.exec });
+    const withoutCwd = rec.calls.filter((c) => c.options?.cwd !== root);
+    assert.deepEqual(
+      withoutCwd.map((c) => `${c.command} ${c.args.join(" ")}`),
+      [],
+      "every spawn must run in the injected root"
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
