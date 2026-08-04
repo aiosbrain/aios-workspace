@@ -6,7 +6,8 @@ name: Publish to npm (Trusted Publishing / OIDC)
 #
 # Manual dispatch only, with an explicit version input that must EXACTLY match the chosen
 # package's package.json on the chosen ref — publishing is a deliberate act, never a side
-# effect of a merge, and the input guards against dispatching the wrong ref.
+# effect of a merge. The workspace package additionally requires the exact immutable
+# `v<version>` tag, so a workflow dispatch from `main` cannot change the stable channel.
 #
 # One-time setup on npmjs.com (web UI — cannot be scripted), per package:
 #   npmjs.com → the package → Settings → Trusted Publisher → GitHub Actions:
@@ -66,8 +67,10 @@ jobs:
             echo "dir=." >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Name + version guard (manifest must be the selected package at the input version)
+      - name: Name + version + release-ref guard
         env:
+          GIT_REF: ${{ github.ref }}
+          GIT_REF_TYPE: ${{ github.ref_type }}
           INPUT_PACKAGE: ${{ inputs.package }}
           INPUT_VERSION: ${{ inputs.version }}
           PKG_DIR: ${{ steps.pkg.outputs.dir }}
@@ -82,6 +85,17 @@ jobs:
           if [ "$INPUT_VERSION" != "$PKG_VERSION" ]; then
             echo "::error::input version '$INPUT_VERSION' != $PKG_NAME version '$PKG_VERSION' on this ref — bump package.json (with a CHANGELOG entry) first."
             exit 1
+          fi
+          if [ "$INPUT_PACKAGE" = "aios" ]; then
+            EXPECTED_REF="refs/tags/v$PKG_VERSION"
+            if [[ "$PKG_VERSION" == *-* ]]; then
+              echo "::error::$PKG_NAME@$PKG_VERSION is a prerelease version and must not publish to npm's stable latest channel."
+              exit 1
+            fi
+            if [ "$GIT_REF_TYPE" != "tag" ] || [ "$GIT_REF" != "$EXPECTED_REF" ]; then
+              echo "::error::$PKG_NAME@$PKG_VERSION is the stable workspace package and may only publish from exact tag '$EXPECTED_REF' (got '$GIT_REF')."
+              exit 1
+            fi
           fi
           echo "Publishing $PKG_NAME@$PKG_VERSION"
 
