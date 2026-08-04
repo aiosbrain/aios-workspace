@@ -11,6 +11,16 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # EVERY job below carries an explicit `timeout-minutes`. GitHub's default is 360
+  # (six hours), so a job that hangs — a leaked HTTP listener or child process keeping
+  # the Node process alive after the tests already passed — holds a runner for six hours
+  # while the check still renders as "in progress". That is exactly what happened on
+  # PR #549: `Coverage shard (2/3)` and `Node tests (2/3)` each burned five hours, twice.
+  # The values are set from observed p100 durations of recent successful runs (see the
+  # PR body for the table); they are generous multiples, sized so a slow runner never
+  # flakes but a hang is loud in minutes instead of hours. When a lane legitimately gets
+  # slower, raise its number here deliberately — do not delete it.
+  #
   # Path filtering is applied at JOB level (`if:`), never at workflow level
   # (`on.pull_request.paths`). A skipped JOB still reports a check run; a workflow
   # that never triggers leaves the three protected contexts pending forever and no PR
@@ -29,6 +39,7 @@ jobs:
   changes:
     name: Detect changed lanes
     runs-on: ubuntu-latest
+    timeout-minutes: 10 # observed p100 0.7 min (a gh api call + one node script)
     outputs:
       code: ${{ steps.detect.outputs.code }}
       rust: ${{ steps.detect.outputs.rust }}
@@ -56,6 +67,7 @@ jobs:
   docs-drift:
     name: Docs drift guard
     runs-on: ubuntu-latest
+    timeout-minutes: 10 # observed p100 0.7 min
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -66,6 +78,7 @@ jobs:
   context-health:
     name: Context health guard
     runs-on: ubuntu-latest
+    timeout-minutes: 10 # observed p100 0.5 min
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -76,6 +89,7 @@ jobs:
   constitution:
     name: Constitution guards (domain isolation + boundaries + size)
     runs-on: ubuntu-latest
+    timeout-minutes: 15 # observed p100 1.5 min (npm ci + the health scorer's gh calls)
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -100,6 +114,7 @@ jobs:
   guard:
     name: leak-gate + secrets + harness checks
     runs-on: ubuntu-latest
+    timeout-minutes: 15 # observed p100 1.8 min (three scaffolds + validators + eval smoke)
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -185,6 +200,7 @@ jobs:
   lint:
     name: lint + format
     runs-on: ubuntu-latest
+    timeout-minutes: 10 # observed p100 1.6 min
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -200,6 +216,7 @@ jobs:
   node-tests:
     name: Node tests (${{ matrix.shard }}/3)
     runs-on: ubuntu-latest
+    timeout-minutes: 20 # observed p100 2.6 min per shard
     strategy:
       fail-fast: false
       matrix:
@@ -217,6 +234,7 @@ jobs:
   coverage-shard:
     name: Coverage shard (${{ matrix.shard }}/3)
     runs-on: ubuntu-latest
+    timeout-minutes: 25 # observed p100 8.2 min for the slowest shard
     strategy:
       fail-fast: false
       matrix:
@@ -247,6 +265,7 @@ jobs:
     # full ~254-file suite no longer runs unsharded on the PR critical path.
     name: Corrected coverage ratchet
     runs-on: ubuntu-latest
+    timeout-minutes: 20 # observed p100 2.9 min (download + merge + ratchet)
     needs: coverage-shard
     steps:
       - uses: actions/checkout@v7
@@ -329,6 +348,7 @@ jobs:
     # validates + runs offline `aios status` from the installed location only.
     name: npm pack golden path
     runs-on: ubuntu-latest
+    timeout-minutes: 10 # observed p100 1.3 min
     needs: changes
     if: needs.changes.outputs.code != 'false'
     steps:
@@ -376,6 +396,7 @@ jobs:
     name: unit tests (npm test)
     if: always()
     runs-on: ubuntu-latest
+    timeout-minutes: 10 # observed p100 0.1 min (one jq over `needs`)
     # The `needs` list below is the SINGLE source of truth for the mandatory
     # lanes: the step iterates ${{ toJSON(needs) }}, so adding a lane here makes
     # it blocking automatically — there is no env-var mapping or shell list to

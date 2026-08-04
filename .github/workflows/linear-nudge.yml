@@ -23,6 +23,7 @@ jobs:
     name: check referenced Linear issue is resolved
     if: github.event.pull_request.merged == true
     runs-on: ubuntu-latest
+    timeout-minutes: 10 # observed p100 0.2 min
     env:
       LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
       PR_TITLE: ${{ github.event.pull_request.title }}

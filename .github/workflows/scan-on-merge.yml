@@ -31,6 +31,7 @@ jobs:
   scan:
     name: codebase readiness scan → brain
     runs-on: ubuntu-latest
+    timeout-minutes: 20 # observed p100 6.0 min (full readiness scan + brain POST)
     if: github.repository == 'aiosbrain/aios-workspace'
     steps:
       # Keep credentials away from checkout, dependency installation, builds, and coverage.
