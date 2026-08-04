@@ -90,6 +90,12 @@ function assertSharedLink(primary, worktree) {
   assert.equal(path.resolve(worktree, readlinkSync(link)), path.join(primary, "node_modules"));
 }
 
+function registerWorktree(primary, worktree, name) {
+  const metadata = path.join(primary, ".git", "worktrees", name);
+  mkdirSync(metadata, { recursive: true });
+  writeFileSync(path.join(metadata, "gitdir"), `${path.join(worktree, ".git")}\n`);
+}
+
 function hydrationWorker(root) {
   const worker = path.join(root, "hydrate-with-test-installer.mjs");
   writeFileSync(
@@ -139,6 +145,7 @@ test("missing dev dependency is restored in the primary before linking", () => {
     primary,
     worktree,
     install: () => {
+      assert.ok(existsSync(path.join(primary, ".aios", "worktree-dependencies.lock.reclaim")));
       assert.equal(
         existsSync(path.join(worktree, "node_modules")),
         false,
@@ -150,6 +157,7 @@ test("missing dev dependency is restored in the primary before linking", () => {
   });
 
   assert.equal(result.status, "linked");
+  assert.ok(!existsSync(path.join(primary, ".aios", "worktree-dependencies.lock.reclaim")));
   assertSharedLink(primary, worktree);
 });
 
@@ -172,7 +180,6 @@ test("matching root manifest still restores missing binary and transitive packag
       return { status: 0 };
     },
   });
-
   assert.equal(installCalls, 1);
   assertSharedLink(primary, worktree);
 });
@@ -195,7 +202,6 @@ test("a shim for the wrong host platform does not certify the install", () => {
       return { status: 0 };
     },
   });
-
   assert.equal(installCalls, 1);
   assertSharedLink(primary, worktree);
 });
@@ -245,6 +251,52 @@ test("missing host-applicable optional native package triggers restoration", () 
   assertSharedLink(primary, worktree);
 });
 
+test("restoration detaches and relinks registered shared worktrees after validation", () => {
+  const { primary, worktree } = fixture({ installed: true });
+  const secondWorktree = path.join(path.dirname(primary), "worktree-two");
+  mkdirSync(secondWorktree);
+  registerWorktree(primary, worktree, "first");
+  initializeWorktreeDependencies({ primary, worktree, install: () => assert.fail() });
+  rmSync(path.join(primary, "node_modules", "prettier-plugin-test"), {
+    recursive: true,
+    force: true,
+  });
+  initializeWorktreeDependencies({
+    primary,
+    worktree: secondWorktree,
+    install: () => {
+      assert.throws(() => lstatSync(path.join(worktree, "node_modules")), { code: "ENOENT" });
+      installPrettier(primary);
+      return { status: 0 };
+    },
+  });
+  assertSharedLink(primary, worktree);
+  assertSharedLink(primary, secondWorktree);
+});
+
+test("failed restoration leaves registered shared worktrees safely detached", () => {
+  const { primary, worktree } = fixture({ installed: true });
+  const secondWorktree = path.join(path.dirname(primary), "worktree-two");
+  mkdirSync(secondWorktree);
+  registerWorktree(primary, worktree, "first");
+  initializeWorktreeDependencies({ primary, worktree, install: () => assert.fail() });
+  rmSync(path.join(primary, "node_modules", "prettier-plugin-test"), {
+    recursive: true,
+    force: true,
+  });
+  assert.throws(
+    () =>
+      initializeWorktreeDependencies({
+        primary,
+        worktree: secondWorktree,
+        install: () => ({ status: 47 }),
+      }),
+    /npm ci could not restore shared dependencies \(exit 47\)/
+  );
+  assert.throws(() => lstatSync(path.join(worktree, "node_modules")), { code: "ENOENT" });
+  assert.throws(() => lstatSync(path.join(secondWorktree, "node_modules")), { code: "ENOENT" });
+});
+
 test("forced restore failure exits non-zero and leaves no misleading link", () => {
   const { primary, worktree } = fixture();
   symlinkSync(
@@ -259,7 +311,6 @@ test("forced restore failure exits non-zero and leaves no misleading link", () =
       encoding: "utf8",
     }
   );
-
   assert.equal(result.status, 1);
   assert.match(
     result.stderr,

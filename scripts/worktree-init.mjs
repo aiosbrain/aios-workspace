@@ -13,6 +13,7 @@ import {
   linkSync,
   lstatSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   readlinkSync,
   rmSync,
@@ -142,7 +143,9 @@ function runNpmCi(primary) {
   const nodeDir = path.dirname(process.execPath);
   const npmCli = [
     path.resolve(nodeDir, "../lib/node_modules/npm/bin/npm-cli.js"),
+    path.resolve(nodeDir, "../libexec/lib/node_modules/npm/bin/npm-cli.js"),
     path.resolve(nodeDir, "node_modules/npm/bin/npm-cli.js"),
+    path.resolve(nodeDir, "../../../../lib/node_modules/npm/bin/npm-cli.js"),
   ].find((candidate) => existsSync(candidate));
   if (!npmCli) {
     return {
@@ -164,6 +167,7 @@ function runNpmCi(primary) {
 function restoreSharedDependencies(primary, missing, install) {
   const nodeModules = path.join(primary, "node_modules");
   const restoreMarker = path.join(primary, ".aios", "worktree-dependencies.restore-required");
+  const installGuard = path.join(primary, ".aios", "worktree-dependencies.lock.reclaim");
   try {
     if (lstatSync(nodeModules).isSymbolicLink()) {
       throw new Error("the primary checkout's node_modules is itself a symlink");
@@ -172,31 +176,42 @@ function restoreSharedDependencies(primary, missing, install) {
     if (error?.code !== "ENOENT") throw error;
   }
 
-  console.log(
-    `[aios] shared node_modules is incomplete (${summarizeMissing(missing)}); restoring with npm ci …`
-  );
-  mkdirSync(path.dirname(restoreMarker), { recursive: true });
-  writeFileSync(
-    restoreMarker,
-    `${JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() })}\n`,
-    { mode: 0o600 }
-  );
-  const result = install(primary);
-  if (result?.error || result?.status !== 0) {
-    const detail = result?.error?.message ?? `exit ${result?.status ?? "unknown"}`;
+  const guardToken = acquireReclaimGuard(installGuard);
+  if (!guardToken) {
     throw new Error(
-      `npm ci could not restore shared dependencies (${detail}). ` +
-        `Run \`npm ci --include=dev --include=optional\` in ${primary}, then retry worktree hydration.`
+      `cannot safely restore shared dependencies while the reclaim guard exists at ${installGuard}; ` +
+        "after confirming no dependency install is running, remove that guard and retry hydration"
     );
   }
-  const stillMissing = missingLockedDependencies(primary) ?? [];
-  if (stillMissing.length > 0) {
-    throw new Error(
-      `npm ci completed but shared dependencies are still incomplete: ${summarizeMissing(stillMissing)}. ` +
-        `Run \`npm ci --include=dev --include=optional\` in ${primary}, then retry worktree hydration.`
+  try {
+    console.log(
+      `[aios] shared node_modules is incomplete (${summarizeMissing(missing)}); restoring with npm ci …`
     );
+    mkdirSync(path.dirname(restoreMarker), { recursive: true });
+    writeFileSync(
+      restoreMarker,
+      `${JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() })}\n`,
+      { mode: 0o600 }
+    );
+    const result = install(primary);
+    if (result?.error || result?.status !== 0) {
+      const detail = result?.error?.message ?? `exit ${result?.status ?? "unknown"}`;
+      throw new Error(
+        `npm ci could not restore shared dependencies (${detail}). ` +
+          `Run \`npm ci --include=dev --include=optional\` in ${primary}, then retry worktree hydration.`
+      );
+    }
+    const stillMissing = missingLockedDependencies(primary) ?? [];
+    if (stillMissing.length > 0) {
+      throw new Error(
+        `npm ci completed but shared dependencies are still incomplete: ${summarizeMissing(stillMissing)}. ` +
+          `Run \`npm ci --include=dev --include=optional\` in ${primary}, then retry worktree hydration.`
+      );
+    }
+    rmSync(restoreMarker, { force: true });
+  } finally {
+    releaseOwnedFile(installGuard, guardToken);
   }
-  rmSync(restoreMarker, { force: true });
 }
 
 function summarizeMissing(missing) {
@@ -302,6 +317,48 @@ function detachIncompleteSharedLink(worktree) {
   }
 }
 
+function registeredWorktrees(primary) {
+  const registry = path.join(primary, ".git", "worktrees");
+  let entries;
+  try {
+    entries = readdirSync(registry, { withFileTypes: true });
+  } catch (error) {
+    if (error?.code === "ENOENT") return [];
+    throw new Error(
+      `cannot inspect registered worktrees under ${registry}: ${error.message || error}`
+    );
+  }
+  return entries
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => path.join(registry, entry.name, "gitdir"))
+    .map((gitdir) => {
+      try {
+        return path.dirname(readFileSync(gitdir, "utf8").trim());
+      } catch (error) {
+        throw new Error(
+          `cannot read registered worktree metadata ${gitdir}: ${error.message || error}`
+        );
+      }
+    });
+}
+
+function detachRegisteredSharedLinks(primary) {
+  const source = path.join(primary, "node_modules");
+  const detached = [];
+  for (const worktree of registeredWorktrees(primary)) {
+    const destination = path.join(worktree, "node_modules");
+    try {
+      if (!lstatSync(destination).isSymbolicLink()) continue;
+      if (path.resolve(worktree, readlinkSync(destination)) !== source) continue;
+      unlinkSync(destination);
+      detached.push(worktree);
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+    }
+  }
+  return detached;
+}
+
 function linkNodeModules(primary, worktree) {
   const source = path.join(primary, "node_modules");
   const destination = path.join(worktree, "node_modules");
@@ -344,7 +401,11 @@ export function initializeWorktreeDependencies({ primary, worktree, install = ru
       "worktree-dependencies.restore-required"
     );
     if (missing.length || existsSync(restoreMarker)) {
+      const detachedWorktrees = detachRegisteredSharedLinks(resolvedPrimary);
       restoreSharedDependencies(resolvedPrimary, missing, install);
+      for (const detachedWorktree of detachedWorktrees) {
+        linkNodeModules(resolvedPrimary, detachedWorktree);
+      }
     }
     return linkNodeModules(resolvedPrimary, resolvedWorktree);
   } finally {
