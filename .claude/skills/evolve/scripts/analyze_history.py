@@ -31,16 +31,26 @@ CORRECTION_RE = re.compile(
     re.IGNORECASE,
 )
 
+SECRET_KEY_NAME = (
+    r"[A-Za-z0-9_-]*(?:api[_-]?key|token|password|secret)[A-Za-z0-9_-]*"
+)
+SECRET_KEY = (
+    rf'(?:"{SECRET_KEY_NAME}"|\'{SECRET_KEY_NAME}\'|'
+    rf"(?<![A-Za-z0-9_-]){SECRET_KEY_NAME}(?![A-Za-z0-9_-]))"
+)
+
 SECRET_PATTERNS = (
     re.compile(r"\b(?:sk|rk)-[A-Za-z0-9_-]{16,}\b"),
     re.compile(r"\bgh[pousr]_[A-Za-z0-9]{20,}\b"),
     re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{12,}\b"),
     re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]{12,}"),
-    re.compile(
-        r"(?i)[A-Za-z0-9_-]*(?:api[_-]?key|token|password|secret)"
-        r"[A-Za-z0-9_-]*\s*[:=]\s*"
-        r"['\"]?[A-Za-z0-9._~+/=-]{12,}['\"]?"
-    ),
+    # Assignment values are deliberately redacted without minimum-length or
+    # character-class guesses. Quoted values may contain whitespace and
+    # punctuation; an unquoted value is conservatively treated as the rest of
+    # its line because whitespace cannot identify a trustworthy endpoint.
+    re.compile(rf"(?i){SECRET_KEY}\s*[:=]\s*\"(?:\\.|[^\"\\])*\""),
+    re.compile(rf"(?i){SECRET_KEY}\s*[:=]\s*'(?:\\.|[^'\\])*'"),
+    re.compile(rf"(?i){SECRET_KEY}\s*[:=]\s*[^\r\n]*"),
     re.compile(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b"),
 )
 

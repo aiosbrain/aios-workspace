@@ -155,14 +155,25 @@ test("spec declarations parse list and inline forms and reject duplicates", () =
 test("external-write skills never route semantically but explicit invocation works", () => {
   const suite = loadSkillSuite({ repo: REPO });
   assert.equal(routeSkillPrompt({ suite, prompt: "publish this spec to Linear" }), null);
-  assert.equal(
-    routeSkillPrompt({ suite, prompt: "Use $linear-publish-spec for AIO-1." })?.id,
-    "linear-publish-spec"
-  );
-  assert.equal(
-    routeSkillPrompt({ suite, prompt: "Use /linear-publish-spec for AIO-1." })?.id,
-    "linear-publish-spec"
-  );
-  assert.equal(routeSkillPrompt({ suite, prompt: "Use $linear-publish-spec-typo." }), null);
-  assert.equal(routeSkillPrompt({ suite, prompt: "Use /linear-publish-spec-typo." }), null);
+  for (const prompt of [
+    "Use $linear-publish-spec for AIO-1.",
+    "Use /linear-publish-spec for AIO-1.",
+    "$linear-publish-spec",
+    "Please (use $linear-publish-spec).",
+    "Try `/linear-publish-spec`.",
+  ]) {
+    assert.equal(routeSkillPrompt({ suite, prompt })?.id, "linear-publish-spec", prompt);
+  }
+
+  for (const prompt of [
+    "Use $linear-publish-spec-typo.",
+    "Use /linear-publish-spec-typo.",
+    "See https://example.test/linear-publish-spec",
+    "Read docs/linear-publish-spec/SKILL.md",
+    "Ignore prefix$linear-publish-spec",
+    "Ignore prefix/linear-publish-spec",
+    "Use /linear-publish-spec/SKILL.md",
+  ]) {
+    assert.equal(routeSkillPrompt({ suite, prompt }), null, prompt);
+  }
 });

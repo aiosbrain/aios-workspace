@@ -98,7 +98,10 @@
         "evaluate the issue",
         "repair the local candidate",
         "Use $linear-publish-spec-typo for AIO-1.",
-        "Use /linear-publish-spec-typo for AIO-1."
+        "Use /linear-publish-spec-typo for AIO-1.",
+        "See https://example.test/linear-publish-spec",
+        "Read docs/linear-publish-spec/SKILL.md",
+        "Ignore prefix$linear-publish-spec"
       ],
       "overlap": [
         "publish this spec to Linear after review this spec",

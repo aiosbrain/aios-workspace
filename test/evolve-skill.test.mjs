@@ -8,6 +8,15 @@ import { fileURLToPath } from "node:url";
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const analyzer = path.join(repo, ".claude/skills/evolve/scripts/analyze_history.py");
+const assignedSecrets = [
+  "short!",
+  "https://secret.example.test/a?x=1&y=two#fragment",
+  "quoted value with spaces, punctuation!?",
+  "single quoted value: []{} / punctuation",
+  "unquoted whitespace value with punctuation !@#$%",
+  "json-key-short!",
+  "single-quoted-key-short!",
+];
 
 function writeJsonl(file, rows) {
   mkdirSync(path.dirname(file), { recursive: true });
@@ -41,7 +50,14 @@ function buildFixture(root) {
       ts: 2_000_000_000,
       text:
         "Review this pull request; token=abcdefghijklmnopqrstuvwxyz " +
-        "DB_PASSWORD=database-password-value authToken=camel-case-token-value " +
+        "DB_PASSWORD=database-password-value authToken=camel-case-token-value\n" +
+        `password=${assignedSecrets[0]}\n` +
+        `api_key=${assignedSecrets[1]}\n` +
+        `serviceToken="${assignedSecrets[2]}" trailing-safe-text\n` +
+        `client_secret='${assignedSecrets[3]}' trailing-safe-text\n` +
+        `password = ${assignedSecrets[4]}\n` +
+        `"api_key": "${assignedSecrets[5]}" quoted-key-trailing-safe-text\n` +
+        `'password': '${assignedSecrets[6]}' quoted-key-trailing-safe-text\n` +
         `AWS_ACCESS_KEY_ID=${awsAccessKey} standalone ${awsSessionKey}`,
     },
     { session_id: "other-session", ts: 2_000_000_001, text: "Unrelated task" },
@@ -147,6 +163,11 @@ test("evolve reports skill, routing, archive, redaction, and catalog evidence", 
     );
     assert.ok(!report.sessions[0].prompts[0].text.includes(awsAccessKey));
     assert.ok(!report.sessions[0].prompts[0].text.includes(awsSessionKey));
+    for (const secret of assignedSecrets) {
+      assert.ok(!stdout.includes(secret), `report leaked assigned secret: ${secret}`);
+    }
+    assert.match(report.sessions[0].prompts[0].text, /trailing-safe-text/);
+    assert.match(report.sessions[0].prompts[0].text, /quoted-key-trailing-safe-text/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
