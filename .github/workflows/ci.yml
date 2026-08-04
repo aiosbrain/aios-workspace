@@ -134,8 +134,6 @@ jobs:
 
       # All test files, including skill/runtime contracts, run exactly once in
       # the sharded Node suite. Keep only unique static/security checks here.
-      - name: Marketplace lock check
-        run: node scripts/lock-marketplace.mjs --check
 
       - name: Scaffold smoke test + validate (project profile)
         run: |

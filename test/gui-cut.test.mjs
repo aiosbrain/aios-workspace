@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -90,12 +90,48 @@ test("every ci.yml needs: entry names a job that exists", () => {
   // Not strictly about the cut, but this is how the cut could break the workflow outright: a
   // `needs:` naming a removed job makes ci.yml invalid, and dropping a lane from test-gate's
   // list makes it silently non-blocking, because `skipped` counts as passing there.
-  const workflow = readFileSync(path.join(ROOT, ".github/workflows/ci.yml"), "utf8");
-  const jobs = [...workflow.matchAll(/^ {2}([a-z][a-z0-9-]*):$/gm)].map((m) => m[1]);
-  for (const m of workflow.matchAll(/^ {4}needs:\n((?: {6}- .+\n)+)/gm)) {
-    for (const need of m[1].split("\n").map((l) => l.replace(/^ {6}- /, "").trim())) {
-      if (!need) continue;
-      assert.ok(jobs.includes(need), `ci.yml needs "${need}", which is not a job`);
+  const lines = readFileSync(path.join(ROOT, ".github/workflows/ci.yml"), "utf8").split("\n");
+  const jobs = lines
+    .filter((l) => /^ {2}[a-z][a-z0-9-]*:$/.test(l))
+    .map((l) => l.trim().slice(0, -1));
+  // Scanned line by line rather than with one nested-quantifier regex: `(?:...+\n)+` over a whole
+  // file is a catastrophic-backtracking shape, and this is clearer about what it accepts anyway.
+  let inNeeds = false;
+  for (const line of lines) {
+    if (/^ {4}needs:$/.test(line)) {
+      inNeeds = true;
+      continue;
+    }
+    if (!inNeeds) continue;
+    const entry = /^ {6}- (\S+)\s*$/.exec(line);
+    if (!entry) {
+      inNeeds = false;
+      continue;
+    }
+    assert.ok(jobs.includes(entry[1]), `ci.yml needs "${entry[1]}", which is not a job`);
+  }
+});
+
+test("every workflow step invokes a script that still exists", () => {
+  // This one is here because it was MISSED. `scripts/lock-marketplace.mjs` was deleted while
+  // ci.yml's "Marketplace lock check" step still ran it, and the cut-path assertions above did
+  // not catch it — the step names a `scripts/` path, not a `gui/` one. CI found it instead.
+  //
+  // Deleting a script is the easy half; the reference that outlives it is the half that breaks a
+  // required check. A path check is the general form of the specific thing that went wrong.
+  const workflows = readdirSync(path.join(ROOT, ".github/workflows")).filter((f) =>
+    /\.ya?ml$/.test(f)
+  );
+  const missing = [];
+  for (const file of workflows) {
+    const body = readFileSync(path.join(ROOT, ".github/workflows", file), "utf8");
+    for (const m of body.matchAll(/(?:node|bash|sh)\s+((?:scripts|validation|hooks)\/[\w./-]+)/g)) {
+      if (!existsSync(path.join(ROOT, m[1]))) missing.push(`${file} -> ${m[1]}`);
     }
   }
+  assert.deepEqual(
+    missing,
+    [],
+    `workflow step(s) invoke a script that does not exist:\n  ${missing.join("\n  ")}`
+  );
 });

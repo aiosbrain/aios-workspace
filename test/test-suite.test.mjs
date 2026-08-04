@@ -105,13 +105,22 @@ test("aggregate CI gate preserves the protected branch context", () => {
   // `needs:` names only jobs that exist — a needs entry pointing at a removed job makes the whole
   // workflow invalid, and a lane dropped from the list becomes silently non-blocking because
   // `skipped` counts as passing.
-  const jobNames = [...workflow.matchAll(/^ {2}([a-z][a-z0-9-]*):$/gm)].map((m) => m[1]);
-  const gateNeeds = /test-gate:\n(?:.|\n)*?\n {4}needs:\n((?: {6}- .+\n)+)/.exec(workflow);
-  assert.ok(gateNeeds, "test-gate must declare a needs: list");
-  const needs = gateNeeds[1]
-    .split("\n")
-    .map((line) => line.replace(/^ {6}- /, "").trim())
-    .filter(Boolean);
+  const lines = workflow.split("\n");
+  const jobNames = lines
+    .filter((l) => /^ {2}[a-z][a-z0-9-]*:$/.test(l))
+    .map((l) => l.trim().slice(0, -1));
+  // Line-scanned rather than one big regex: `(?:.|\n)*?` plus a nested `(...+\n)+` over the whole
+  // file is a catastrophic-backtracking shape.
+  const gateStart = lines.findIndex((l) => l === "  test-gate:");
+  assert.ok(gateStart >= 0, "ci.yml must define a test-gate job");
+  const needsStart = lines.findIndex((l, i) => i > gateStart && /^ {4}needs:$/.test(l));
+  assert.ok(needsStart > gateStart, "test-gate must declare a needs: list");
+  const needs = [];
+  for (let i = needsStart + 1; i < lines.length; i += 1) {
+    const entry = /^ {6}- (\S+)\s*$/.exec(lines[i]);
+    if (!entry) break;
+    needs.push(entry[1]);
+  }
   for (const need of needs) {
     assert.ok(jobNames.includes(need), `test-gate needs "${need}", which is not a job in ci.yml`);
   }
