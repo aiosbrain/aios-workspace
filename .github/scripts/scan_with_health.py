@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """scan_with_health.py — `aios-ingest scan` with `metrics.codebase_health` attached (AIO-608).
 
-Used ONLY by the opt-in path of .github/workflows/scan-on-merge.yml (repo variable
-AIOS_PUSH_CODEBASE_HEALTH=1). It reuses the ingestion sidecar's own analyzer + client
+Used by the opt-in scan-on-merge path and the report-only scheduled debt patrol. It reuses the
+ingestion sidecar's own analyzer + client
 (installed from aios-team-brain in the preceding workflow step) so the brain receives the
 SAME full-metrics payload `aios-ingest scan` would send, plus the contract-shaped
 `codebase_health` object produced by scripts/codebase-health/push-payload.mjs. A sparse
@@ -12,6 +12,10 @@ health-only payload is never sent — the brain 422s it and the metrics upsert R
 Health is opt-in ENRICHMENT, never a gate: if the health file is unreadable, off-contract,
 or describes a different head, the attachment is skipped with a warning and the base scan
 is pushed anyway — base telemetry must never be lost to a health problem.
+
+The scheduled patrol passes --expected-head-sha. In that mode health becomes fail-closed: the
+health object, analyzer checkout, and pre-resolved default-branch head must all agree before any
+upload. This leaves the historical scan-on-merge behavior backward-compatible.
 
 Auth is identical to `aios-ingest scan`: BrainSettings.from_env() (BRAIN_URL / AIOS_API_KEY /
 AIOS_TEAM) + optional GITHUB_TOKEN for enrichment. No new credentials, no flags for secrets.
@@ -98,9 +102,21 @@ def main() -> None:
         required=True,
         help="contract-shaped codebase_health JSON (push-payload.mjs output)",
     )
+    ap.add_argument(
+        "--expected-head-sha",
+        default="",
+        help="fail closed unless health and analyzer both match this exact 40-char SHA",
+    )
     args = ap.parse_args()
 
     health = load_health(args.health_json)
+    if args.expected_head_sha and (
+        len(args.expected_head_sha) != 40
+        or any(ch not in "0123456789abcdef" for ch in args.expected_head_sha)
+    ):
+        ap.error("--expected-head-sha must be a 40-character lowercase hexadecimal SHA")
+    if args.expected_head_sha and health is None:
+        raise SystemExit("exact-head patrol refused upload: health evidence is unavailable")
 
     settings = BrainSettings.from_env()
     token = os.environ.get("GITHUB_TOKEN")  # read from env only; never logged
@@ -114,6 +130,13 @@ def main() -> None:
 
     if health is not None:
         scan_sha = payload["metrics"].get("head_sha")
+        if args.expected_head_sha and (
+            health["head_sha"] != args.expected_head_sha
+            or scan_sha != args.expected_head_sha
+        ):
+            raise SystemExit(
+                "exact-head patrol refused upload: expected, health, and scanned SHAs differ"
+            )
         if health["head_sha"] != scan_sha:
             _skip(
                 f"health head_sha {health['head_sha']} != scanned head_sha {scan_sha} "

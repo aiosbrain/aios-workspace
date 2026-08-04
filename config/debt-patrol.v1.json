@@ -1,0 +1,31 @@
+{
+  "schema_version": "1",
+  "policy_version": "1.0.0",
+  "producer_default_branch": "main",
+  "schedule_crons": {
+    "daily": "17 3 * * 1-6",
+    "weekly": "17 3 * * 0"
+  },
+  "targets": [
+    {
+      "repository": "aiosbrain/aios-workspace",
+      "slug": "aios-workspace",
+      "default_branch": "main",
+      "enabled": true,
+      "schedules": ["daily"],
+      "budget_minutes": 30,
+      "open_pr_cap": 12,
+      "coverage_script": "test:coverage"
+    },
+    {
+      "repository": "aiosbrain/aios-team-brain",
+      "slug": "aios-team-brain",
+      "default_branch": "main",
+      "enabled": true,
+      "schedules": ["weekly"],
+      "budget_minutes": 30,
+      "open_pr_cap": 12,
+      "coverage_script": "coverage"
+    }
+  ]
+}

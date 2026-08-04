@@ -1,6 +1,6 @@
 # AIOS Code Maintenance Loop
 
-**Status:** Phase 0 implementation boundary (AIO-610)
+**Status:** Phase 1 report-only producer boundary (AIO-610, AIO-787)
 
 **North Star:** Background maintenance measurably reduces change risk, agent rework, reviewer
 effort, and the cost of future development.
@@ -52,6 +52,16 @@ standards of their own.
 - Rank debt by risk, reachability, churn, recurrence, agent friction, confidence, remediation
   cost, and review cost.
 - Backtest rankings against historical changes and incidents.
+
+The managed producer is defined by
+[`debt-patrol.yml`](../../.github/workflows/debt-patrol.yml) and
+[`config/debt-patrol.v1.json`](../../config/debt-patrol.v1.json). It resolves the default-branch
+SHA before checkout, analyzes that detached commit, and re-resolves the branch immediately before
+upload. A moving head, elapsed budget, missing opt-in, engaged pause, schedule mismatch, or
+open-PR-cap breach stops the run. Scheduled artifacts may enter calibration only when exact-head
+revalidation, complete evidence, and Team Brain delivery all succeed. Manual runs are always
+provisional. Operational controls and artifact interpretation are documented in
+[`debt-patrol-operations.md`](debt-patrol-operations.md).
 
 ### Phase 2 — low-risk remediation pilot
 
@@ -110,9 +120,16 @@ No tier auto-merges during the initial program.
 Raw issue count is not the North Star. The program succeeds only when future changes become safer
 and cheaper.
 
-## Phase 0 safety boundary
+## Phase 0/1 safety boundary
 
 Phase 0 is read-only detection and contract work. It does not schedule agents, modify source in
 the background, create remediation PRs, or merge. Missing/stale/error evidence produces an
 `unknown` gate and `automation_eligible: false`. Findings contain metadata only; path-level and
 source-level evidence remains local/admin-tier.
+
+Phase 1 schedules the same read-only detector and delivers the existing full scan payload. It adds
+policy and report artifacts, not a remediation worker. Workflow permissions remain read-only;
+every artifact declares source, pull-request, Linear, and merge capabilities false. The scanner's
+historical automation-eligibility reading is preserved as evidence but never grants the patrol a
+writer. Four trusted scheduled artifacts per opted-in repository are still required before the
+separate Phase 2 admission decision.

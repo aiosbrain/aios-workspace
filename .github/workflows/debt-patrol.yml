@@ -1,0 +1,218 @@
+name: report-only debt patrol
+
+# Phase 1 producer (AIO-787). This workflow reads exact merged heads, sends the existing full
+# codebase payload to Team Brain, and preserves a redacted report artifact. It has no source,
+# pull-request, Linear, or merge writer. Repository variables are deliberately fail-closed:
+#   AIOS_DEBT_PATROL_ENABLED=1  — explicit producer opt-in
+#   AIOS_DEBT_PATROL_PAUSED=0   — explicit pause release
+# With either variable absent, the plan artifact records a stop and no target job is scheduled.
+
+on:
+  schedule:
+    - cron: "17 3 * * 1-6" # daily targets, Monday-Saturday
+    - cron: "17 3 * * 0" # weekly targets, Sunday
+  workflow_dispatch:
+    inputs:
+      repository:
+        description: Target to inspect (manual artifacts are always provisional)
+        required: true
+        default: all
+        type: choice
+        options:
+          - all
+          - aiosbrain/aios-workspace
+          - aiosbrain/aios-team-brain
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: debt-patrol-${{ github.event_name }}-${{ github.event.schedule || inputs.repository || 'all' }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    name: resolve exact heads and policy
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+      has_runs: ${{ steps.plan.outputs.has_runs }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Build fail-closed patrol plan
+        id: plan
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PATROL_ENABLED: ${{ vars.AIOS_DEBT_PATROL_ENABLED }}
+          PATROL_PAUSED: ${{ vars.AIOS_DEBT_PATROL_PAUSED }}
+          REQUESTED_REPOSITORY: ${{ inputs.repository }}
+        run: >-
+          node scripts/debt-patrol/plan.mjs
+          --config config/debt-patrol.v1.json
+          --output "$RUNNER_TEMP/debt-patrol-plan.v1.json"
+          --github-output "$GITHUB_OUTPUT"
+          --event "$GITHUB_EVENT_NAME"
+          --schedule "${{ github.event.schedule }}"
+          --repository "${REQUESTED_REPOSITORY:-all}"
+          --workflow-ref "$GITHUB_REF"
+          --enabled "${PATROL_ENABLED:-}"
+          --paused "${PATROL_PAUSED:-}"
+          --github-token-env GITHUB_TOKEN
+
+      - name: Preserve immutable policy artifact
+        if: always() && steps.plan.outcome == 'success'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.0
+        with:
+          name: debt-patrol-plan-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/debt-patrol-plan.v1.json
+          if-no-files-found: error
+          overwrite: false
+          include-hidden-files: false
+          retention-days: 90
+
+  scan:
+    name: ${{ matrix.slug }} exact-head patrol
+    needs: prepare
+    if: needs.prepare.outputs.has_runs == 'true'
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ matrix.budget_minutes }}
+    steps:
+      - name: Checkout trusted patrol producer
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: .patrol/manager
+          persist-credentials: false
+
+      - name: Checkout target at the pre-resolved default-branch SHA
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ matrix.repository }}
+          ref: ${{ matrix.resolved_sha }}
+          fetch-depth: 0
+          path: .patrol/target
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: |
+            .patrol/manager/package-lock.json
+            .patrol/target/package-lock.json
+
+      - name: Prepare the read-only scorer and target evidence
+        env:
+          COVERAGE_SCRIPT: ${{ matrix.coverage_script }}
+        run: |
+          npm ci --ignore-scripts --prefix .patrol/manager
+          if npm ci --ignore-scripts --prefix .patrol/target; then
+            npm --prefix .patrol/target run "$COVERAGE_SCRIPT" || true
+          else
+            echo "target dependency install failed — health evidence will fail closed."
+            exit 1
+          fi
+
+      - name: Fetch immutable Team Brain scanner source
+        run: bash .patrol/manager/.github/scripts/fetch-brain-scanner.sh .patrol/scanner
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Install hash-locked scanner dependencies
+        run: >-
+          python -m pip install --only-binary=:all: --require-hashes
+          -r .patrol/manager/.github/scripts/brain-scanner-requirements.txt
+
+      - name: Compute redacted v2 health evidence
+        run: |
+          node .patrol/manager/scripts/aios.mjs codebase-health .patrol/target --json \
+            > "$RUNNER_TEMP/codebase-health.v2.json"
+          node .patrol/manager/scripts/codebase-health/push-payload.mjs \
+            "$RUNNER_TEMP/codebase-health.v2.json" \
+            > "$RUNNER_TEMP/codebase-health.contract.json"
+
+      - name: Revalidate moving head and elapsed budget before upload
+        id: revalidate
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: >-
+          node .patrol/manager/scripts/debt-patrol/revalidate.mjs
+          --repository "${{ matrix.repository }}"
+          --branch "${{ matrix.default_branch }}"
+          --expected-sha "${{ matrix.resolved_sha }}"
+          --started-at "${{ matrix.planned_at }}"
+          --budget-minutes "${{ matrix.budget_minutes }}"
+          --output "$RUNNER_TEMP/debt-patrol-revalidation.v1.json"
+          --github-token-env GITHUB_TOKEN
+
+      - name: Deliver existing full scan payload to Team Brain
+        id: deliver
+        if: steps.revalidate.outcome == 'success'
+        continue-on-error: true
+        env:
+          AIOS_API_KEY: ${{ secrets.AIOS_API_KEY }}
+          BRAIN_URL: ${{ secrets.AIOS_BRAIN_URL }}
+          AIOS_TEAM: ${{ secrets.AIOS_TEAM }}
+          GITHUB_TOKEN: ${{ github.token }}
+          PYTHONPATH: .patrol/scanner/ingestion
+        run: >-
+          python .patrol/manager/.github/scripts/scan_with_health.py
+          --path .patrol/target
+          --slug "${{ matrix.slug }}"
+          --full-name "${{ matrix.repository }}"
+          --health-json "$RUNNER_TEMP/codebase-health.contract.json"
+          --expected-head-sha "${{ matrix.resolved_sha }}"
+
+      - name: Build redacted final report
+        if: always()
+        env:
+          PATROL_DECISION_JSON: ${{ toJSON(matrix) }}
+          DELIVERY_OUTCOME: ${{ steps.deliver.outcome }}
+        run: |
+          case "$DELIVERY_OUTCOME" in
+            success) delivery=succeeded ;;
+            failure) delivery=failed ;;
+            *) delivery=skipped ;;
+          esac
+          node .patrol/manager/scripts/debt-patrol/report.mjs \
+            --decision-env PATROL_DECISION_JSON \
+            --revalidation "$RUNNER_TEMP/debt-patrol-revalidation.v1.json" \
+            --health "$RUNNER_TEMP/codebase-health.contract.json" \
+            --delivery "$delivery" \
+            --run-id "$GITHUB_RUN_ID" \
+            --run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --event "$GITHUB_EVENT_NAME" \
+            --policy-version "1.0.0" \
+            --output "$RUNNER_TEMP/debt-patrol-report.v1.json"
+
+      - name: Preserve immutable patrol artifact
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.0
+        with:
+          name: debt-patrol-${{ matrix.slug }}-${{ matrix.resolved_sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/debt-patrol-report.v1.json
+          if-no-files-found: error
+          overwrite: false
+          include-hidden-files: false
+          retention-days: 90
+
+      - name: Enforce fail-closed delivery result
+        if: always()
+        env:
+          REVALIDATION_OUTCOME: ${{ steps.revalidate.outcome }}
+          DELIVERY_OUTCOME: ${{ steps.deliver.outcome }}
+        run: |
+          if [ "$REVALIDATION_OUTCOME" != success ] || [ "$DELIVERY_OUTCOME" != success ]; then
+            echo "patrol stopped: revalidation=$REVALIDATION_OUTCOME delivery=$DELIVERY_OUTCOME"
+            exit 1
+          fi
