@@ -20,9 +20,27 @@ if [[ "$main_worktree" == "$here" ]]; then
 fi
 
 scaffold="$main_worktree/scaffold"
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # ── symlinks (safe to share from primary) ──────────────────────────────────
-for name in node_modules .envrc .env.keys .env; do
+# node_modules is special: a partial install in the primary makes every linked
+# worktree partial too. Verify the lockfile-declared root dependencies and, when
+# needed, restore the primary with npm ci BEFORE creating the shared link.
+if [[ -f "$script_dir/worktree-init.mjs" ]]; then
+  if ! command -v node >/dev/null 2>&1; then
+    echo "[aios] node is required to verify shared worktree dependencies; node_modules was not linked" >&2
+    exit 1
+  fi
+  node "$script_dir/worktree-init.mjs" --primary "$main_worktree" --worktree "$here"
+else
+  src="$main_worktree/node_modules"
+  if [[ -e "$src" && ! -e "$here/node_modules" ]]; then
+    ln -sfn "$src" "$here/node_modules"
+    echo "linked node_modules -> $src"
+  fi
+fi
+
+for name in .envrc .env.keys .env; do
   src="$main_worktree/$name"
   [[ -e "$src" ]] || continue
   if [[ -L "$here/$name" ]]; then
@@ -134,9 +152,13 @@ fi
 # primary's compiled better_sqlite3.node. If the active Node's ABI differs from
 # what that addon was built for (the classic ABI 127-vs-147 crash), the
 # operator-loop DB tests fail for an environment-only reason. Probe it now and
-# auto-rebuild or point at the pinned Node (.nvmrc) — best-effort, never aborts.
+# auto-rebuild or point at the pinned Node (.nvmrc). Do not stamp hydration as
+# ready when the shared native dependency is still unusable.
 if command -v node >/dev/null 2>&1 && [[ -f "$here/scripts/ensure-native-abi.mjs" ]]; then
-  (cd "$here" && node scripts/ensure-native-abi.mjs) || echo "native-abi: better-sqlite3 needs attention (see message above)"
+  if ! (cd "$here" && node scripts/ensure-native-abi.mjs); then
+    echo "native-abi: better-sqlite3 remains unusable; hydration was not marked ready" >&2
+    exit 1
+  fi
 fi
 
 # ── operator-loop build ─────────────────────────────────────────────────────
