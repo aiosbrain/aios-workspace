@@ -14,7 +14,6 @@ import {
   readlinkSync,
   rmSync,
   symlinkSync,
-  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { initializeWorktreeDependencies } from "../scripts/worktree-init.mjs";
@@ -74,7 +73,9 @@ function installPrettier(primary) {
   const binDir = path.join(primary, "node_modules", ".bin");
   mkdirSync(binDir, { recursive: true });
   const shim = process.platform === "win32" ? "prettier.cmd" : "prettier";
-  writeFileSync(path.join(binDir, shim), "#!/bin/sh\n");
+  const shimPath = path.join(binDir, shim);
+  writeFileSync(shimPath, "#!/bin/sh\n");
+  if (process.platform !== "win32") chmodSync(shimPath, 0o755);
   const transitive = path.join(primary, "node_modules", "prettier-plugin-test");
   mkdirSync(transitive, { recursive: true });
   writeFileSync(path.join(transitive, "package.json"), JSON.stringify({ version: "1.0.0" }));
@@ -173,6 +174,29 @@ test("a shim for the wrong host platform does not certify the install", () => {
   assertSharedLink(primary, worktree);
 });
 
+test(
+  "a non-executable POSIX shim does not certify the install",
+  { skip: process.platform === "win32" },
+  () => {
+    const { primary, worktree } = fixture({ installed: true });
+    chmodSync(path.join(primary, "node_modules", ".bin", "prettier"), 0o644);
+    let installCalls = 0;
+
+    initializeWorktreeDependencies({
+      primary,
+      worktree,
+      install: () => {
+        installCalls += 1;
+        installPrettier(primary);
+        return { status: 0 };
+      },
+    });
+
+    assert.equal(installCalls, 1);
+    assertSharedLink(primary, worktree);
+  }
+);
+
 test("missing host-applicable optional native package triggers restoration", () => {
   const { primary, worktree } = fixture({ installed: true });
   rmSync(path.join(primary, "node_modules", "platform-native-test"), {
@@ -233,6 +257,109 @@ function finished(child) {
   });
 }
 
+function waitForFile(file, timeoutMs = 5_000) {
+  const deadline = Date.now() + timeoutMs;
+  return new Promise((resolve, reject) => {
+    const poll = () => {
+      if (existsSync(file)) return resolve();
+      if (Date.now() >= deadline) return reject(new Error(`timed out waiting for ${file}`));
+      setTimeout(poll, 10);
+    };
+    poll();
+  });
+}
+
+test("a waiter repairs rather than linking files left by a failed active install", async () => {
+  const { primary, worktree } = fixture();
+  const secondWorktree = path.join(path.dirname(primary), "worktree-two");
+  mkdirSync(secondWorktree);
+  const fakeBin = path.join(path.dirname(primary), "interleaved-bin");
+  mkdirSync(fakeBin);
+  const calls = path.join(path.dirname(primary), "interleaved-npm-calls");
+  const ready = path.join(path.dirname(primary), "first-install-looks-complete");
+  const fakeNpm = path.join(fakeBin, "npm");
+  writeFileSync(
+    fakeNpm,
+    `#!/usr/bin/env node
+const fs = require("node:fs");
+const path = require("node:path");
+const callFile = process.env.AIOS_TEST_NPM_CALLS;
+const callNumber = fs.existsSync(callFile) ? fs.readFileSync(callFile, "utf8").trim().split("\\n").length + 1 : 1;
+fs.appendFileSync(callFile, "call\\n");
+const root = process.cwd();
+const pkg = path.join(root, "node_modules", "prettier");
+fs.mkdirSync(path.join(pkg, "bin"), { recursive: true });
+fs.writeFileSync(path.join(pkg, "package.json"), JSON.stringify({ name: "prettier", version: "3.9.6" }));
+fs.writeFileSync(path.join(pkg, "bin", "prettier.cjs"), "");
+fs.mkdirSync(path.join(root, "node_modules", ".bin"), { recursive: true });
+const shim = path.join(root, "node_modules", ".bin", process.platform === "win32" ? "prettier.cmd" : "prettier");
+fs.writeFileSync(shim, "");
+if (process.platform !== "win32") fs.chmodSync(shim, 0o755);
+const transitive = path.join(root, "node_modules", "prettier-plugin-test");
+fs.mkdirSync(transitive, { recursive: true });
+fs.writeFileSync(path.join(transitive, "package.json"), JSON.stringify({ version: "1.0.0" }));
+const native = path.join(root, "node_modules", "platform-native-test");
+fs.mkdirSync(native, { recursive: true });
+fs.writeFileSync(path.join(native, "package.json"), JSON.stringify({ version: "1.0.0" }));
+if (callNumber === 1) {
+  fs.writeFileSync(process.env.AIOS_TEST_INSTALL_READY, "ready\\n");
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 500);
+  process.exit(47);
+}
+`
+  );
+  chmodSync(fakeNpm, 0o755);
+  const env = {
+    ...process.env,
+    AIOS_TEST_INSTALL_READY: ready,
+    AIOS_TEST_NPM_CALLS: calls,
+    PATH: `${fakeBin}${path.delimiter}${process.env.PATH ?? ""}`,
+  };
+  const args = (target) => [WORKTREE_INIT, "--primary", primary, "--worktree", target];
+  const first = spawn(process.execPath, args(worktree), {
+    env,
+    stdio: ["ignore", "ignore", "pipe"],
+  });
+  await waitForFile(ready);
+  const second = spawn(process.execPath, args(secondWorktree), {
+    env,
+    stdio: ["ignore", "ignore", "pipe"],
+  });
+  const [firstResult, secondResult] = await Promise.all([finished(first), finished(second)]);
+
+  assert.equal(firstResult.status, 1);
+  assert.match(firstResult.stderr, /npm ci could not restore shared dependencies \(exit 47\)/);
+  assert.equal(secondResult.status, 0, secondResult.stderr);
+  assert.equal(readFileSync(calls, "utf8").trim().split("\n").length, 2);
+  assert.throws(() => lstatSync(path.join(worktree, "node_modules")), { code: "ENOENT" });
+  assertSharedLink(primary, secondWorktree);
+});
+
+test("a stale reclaim guard fails closed without deleting lock ownership", () => {
+  const { primary, worktree } = fixture();
+  const lockDir = path.join(primary, ".aios");
+  mkdirSync(lockDir);
+  const lock = path.join(lockDir, "worktree-dependencies.lock");
+  const guard = `${lock}.reclaim`;
+  const deadLockOwner = `${JSON.stringify({ pid: 999_999_999, token: "dead-owner" })}\n`;
+  const deadGuardOwner = `${JSON.stringify({ pid: 999_999_998, token: "dead-reclaimer" })}\n`;
+  writeFileSync(lock, deadLockOwner);
+  writeFileSync(guard, deadGuardOwner);
+
+  assert.throws(
+    () =>
+      initializeWorktreeDependencies({
+        primary,
+        worktree,
+        install: () => assert.fail("must not install without exclusive lock ownership"),
+      }),
+    /stale reclaim guard.*confirming no dependency install is running/s
+  );
+  assert.equal(readFileSync(lock, "utf8"), deadLockOwner);
+  assert.equal(readFileSync(guard, "utf8"), deadGuardOwner);
+  assert.throws(() => lstatSync(path.join(worktree, "node_modules")), { code: "ENOENT" });
+});
+
 test("concurrent hydrations safely reclaim a stale lock and install only once", async () => {
   const { primary, worktree } = fixture();
   const secondWorktree = path.join(path.dirname(primary), "worktree-two");
@@ -245,10 +372,6 @@ test("concurrent hydrations safely reclaim a stale lock and install only once", 
     path.join(lockDir, "worktree-dependencies.lock"),
     `${JSON.stringify({ pid: 999_999_999, token: "dead-owner" })}\n`
   );
-  const reclaimGuard = path.join(lockDir, "worktree-dependencies.lock.reclaim");
-  writeFileSync(reclaimGuard, `${JSON.stringify({ pid: 999_999_998, token: "dead-reclaimer" })}\n`);
-  const staleTime = new Date(Date.now() - 10_000);
-  utimesSync(reclaimGuard, staleTime, staleTime);
   const fakeBin = path.join(path.dirname(primary), "concurrent-bin");
   mkdirSync(fakeBin);
   const calls = path.join(path.dirname(primary), "npm-calls");
@@ -267,7 +390,9 @@ fs.writeFileSync(path.join(pkg, "package.json"), JSON.stringify({ name: "prettie
 fs.writeFileSync(path.join(pkg, "bin", "prettier.cjs"), "");
 fs.mkdirSync(path.join(root, "node_modules", ".bin"), { recursive: true });
 const shim = process.platform === "win32" ? "prettier.cmd" : "prettier";
-fs.writeFileSync(path.join(root, "node_modules", ".bin", shim), "");
+const shimPath = path.join(root, "node_modules", ".bin", shim);
+fs.writeFileSync(shimPath, "");
+if (process.platform !== "win32") fs.chmodSync(shimPath, 0o755);
 const transitive = path.join(root, "node_modules", "prettier-plugin-test");
 fs.mkdirSync(transitive, { recursive: true });
 fs.writeFileSync(path.join(transitive, "package.json"), JSON.stringify({ version: "1.0.0" }));

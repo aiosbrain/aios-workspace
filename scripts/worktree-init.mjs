@@ -7,15 +7,15 @@
 
 import path from "node:path";
 import {
+  accessSync,
+  constants as fsConstants,
   existsSync,
   linkSync,
   lstatSync,
   mkdirSync,
   readFileSync,
   readlinkSync,
-  renameSync,
   rmSync,
-  statSync,
   symlinkSync,
   unlinkSync,
   writeFileSync,
@@ -35,8 +35,6 @@ function readJson(file, label) {
 
 const LOCK_WAIT_MS = 120_000;
 const LOCK_POLL_MS = 100;
-const RECLAIM_GUARD_STALE_MS = 5_000;
-const RECLAIM_GUARD_ATTEMPTS = 8;
 const EMPTY_WAIT_BUFFER = new Int32Array(new SharedArrayBuffer(4));
 
 /** Required packages npm must install, sourced from package-lock.json. */
@@ -114,7 +112,16 @@ function installedPackageProblem(primary, lockKey, lockEntry) {
       }
       const binDir = binDirectory(primary, lockKey);
       const shims = process.platform === "win32" ? [`${name}.cmd`, `${name}.ps1`] : [name];
-      const shimExists = shims.some((candidate) => existsSync(path.join(binDir, candidate)));
+      const shimExists = shims.some((candidate) => {
+        const shim = path.join(binDir, candidate);
+        if (process.platform === "win32") return existsSync(shim);
+        try {
+          accessSync(shim, fsConstants.X_OK);
+          return true;
+        } catch {
+          return false;
+        }
+      });
       if (!shimExists) return `${lockKey} (missing .bin/${name})`;
     }
     return null;
@@ -145,6 +152,7 @@ function runNpmCi(primary) {
 
 function restoreSharedDependencies(primary, missing, install) {
   const nodeModules = path.join(primary, "node_modules");
+  const restoreMarker = path.join(primary, ".aios", "worktree-dependencies.restore-required");
   try {
     if (lstatSync(nodeModules).isSymbolicLink()) {
       throw new Error("the primary checkout's node_modules is itself a symlink");
@@ -155,6 +163,12 @@ function restoreSharedDependencies(primary, missing, install) {
 
   console.log(
     `[aios] shared node_modules is incomplete (${summarizeMissing(missing)}); restoring with npm ci …`
+  );
+  mkdirSync(path.dirname(restoreMarker), { recursive: true });
+  writeFileSync(
+    restoreMarker,
+    `${JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() })}\n`,
+    { mode: 0o600 }
   );
   const result = install(primary);
   if (result?.error || result?.status !== 0) {
@@ -171,9 +185,11 @@ function restoreSharedDependencies(primary, missing, install) {
         `Run \`npm ci --include=dev --include=optional\` in ${primary}, then retry worktree hydration.`
     );
   }
+  rmSync(restoreMarker, { force: true });
 }
 
 function summarizeMissing(missing) {
+  if (missing.length === 0) return "a previous restore did not complete";
   const visible = missing.slice(0, 5).join(", ");
   return missing.length > 5 ? `${visible}, and ${missing.length - 5} more` : visible;
 }
@@ -215,26 +231,8 @@ function releaseOwnedFile(target, token) {
 }
 
 function acquireReclaimGuard(guardPath) {
-  for (let attempt = 0; attempt < RECLAIM_GUARD_ATTEMPTS; attempt += 1) {
-    const token = randomUUID();
-    if (createOwnedFile(guardPath, token)) return token;
-    let info;
-    try {
-      info = statSync(guardPath);
-    } catch (error) {
-      if (error?.code === "ENOENT") continue;
-      return null;
-    }
-    if (Date.now() - info.mtimeMs < RECLAIM_GUARD_STALE_MS) return null;
-    const captured = `${guardPath}.dead.${process.pid}.${randomUUID()}`;
-    try {
-      renameSync(guardPath, captured);
-      rmSync(captured, { force: true });
-    } catch {
-      // Another waiter won the stale-guard recovery race; retry acquisition.
-    }
-  }
-  return null;
+  const token = randomUUID();
+  return createOwnedFile(guardPath, token) ? token : null;
 }
 
 function reclaimDeadOwner(lockPath, guardPath) {
@@ -263,7 +261,16 @@ function acquireInstallLock(primary) {
       return () => releaseOwnedFile(lockPath, token);
     }
     const owner = readOwner(lockPath);
-    if (owner && !processIsAlive(owner.pid) && reclaimDeadOwner(lockPath, guardPath)) continue;
+    if (owner && !processIsAlive(owner.pid)) {
+      if (reclaimDeadOwner(lockPath, guardPath)) continue;
+      const guardOwner = readOwner(guardPath);
+      if (existsSync(guardPath) && (!guardOwner || !processIsAlive(guardOwner.pid))) {
+        throw new Error(
+          `the shared dependency install lock has a stale reclaim guard at ${guardPath}; ` +
+            "after confirming no dependency install is running, remove that guard and retry hydration"
+        );
+      }
+    }
     if (Date.now() >= deadline) {
       throw new Error(
         `timed out waiting for the shared dependency install lock at ${lockPath}; ` +
@@ -274,7 +281,7 @@ function acquireInstallLock(primary) {
   }
 }
 
-function detachIncompleteSharedLink(primary, worktree) {
+function detachIncompleteSharedLink(worktree) {
   const destination = path.join(worktree, "node_modules");
   try {
     if (!lstatSync(destination).isSymbolicLink()) return;
@@ -309,20 +316,29 @@ function linkNodeModules(primary, worktree) {
 export function initializeWorktreeDependencies({ primary, worktree, install = runNpmCi }) {
   const resolvedPrimary = path.resolve(primary);
   const resolvedWorktree = path.resolve(worktree);
-  const missing = missingLockedDependencies(resolvedPrimary);
-  if (missing?.length) {
-    detachIncompleteSharedLink(resolvedPrimary, resolvedWorktree);
-    const releaseLock = acquireInstallLock(resolvedPrimary);
-    try {
-      const missingUnderLock = missingLockedDependencies(resolvedPrimary) ?? [];
-      if (missingUnderLock.length) {
-        restoreSharedDependencies(resolvedPrimary, missingUnderLock, install);
-      }
-    } finally {
-      releaseLock();
-    }
+  if (lockedDependencies(resolvedPrimary) === null) {
+    return linkNodeModules(resolvedPrimary, resolvedWorktree);
   }
-  return linkNodeModules(resolvedPrimary, resolvedWorktree);
+
+  // Never expose a worktree to node_modules while another process may be
+  // replacing it. Every final verification and link happens under one shared
+  // lock, including the fast path where the first scan looks complete.
+  detachIncompleteSharedLink(resolvedWorktree);
+  const releaseLock = acquireInstallLock(resolvedPrimary);
+  try {
+    const missing = missingLockedDependencies(resolvedPrimary) ?? [];
+    const restoreMarker = path.join(
+      resolvedPrimary,
+      ".aios",
+      "worktree-dependencies.restore-required"
+    );
+    if (missing.length || existsSync(restoreMarker)) {
+      restoreSharedDependencies(resolvedPrimary, missing, install);
+    }
+    return linkNodeModules(resolvedPrimary, resolvedWorktree);
+  } finally {
+    releaseLock();
+  }
 }
 
 function argumentValue(name) {
