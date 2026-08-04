@@ -29,10 +29,8 @@ import { createBrainClient } from "../scripts/brain-client.mjs";
 
 const REPO = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const AIOS = path.join(REPO, "scripts", "aios.mjs");
-const GUI_SERVER = path.join(REPO, "gui", "server", "index.mjs");
 const TEST_KEY = "aios_smoketest_secret-value";
 const TEST_TEAM = "test-team";
-const GUI_TOKEN = ["sync", "execution", "smoke"].join("-");
 
 function sha256(s) {
   return createHash("sha256").update(s, "utf8").digest("hex");
@@ -253,51 +251,6 @@ function runAios(args, cwd) {
   });
 }
 
-async function reservePort() {
-  const server = createServer();
-  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
-  const { port } = server.address();
-  await new Promise((resolve) => server.close(resolve));
-  return port;
-}
-
-async function startGui(repo) {
-  const port = await reservePort();
-  const child = spawn(process.execPath, [GUI_SERVER, "--repo", repo, "--port", String(port)], {
-    cwd: REPO,
-    env: {
-      ...process.env,
-      AIOS_API_KEY: TEST_KEY,
-      AIOS_MEMBER: "smoke-bot",
-      AIOS_GUI_TOKEN: GUI_TOKEN,
-    },
-  });
-  let stdout = "";
-  let stderr = "";
-  await new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => reject(new Error(`GUI start timed out: ${stderr}`)), 10_000);
-    child.stderr.on("data", (d) => (stderr += d));
-    child.stdout.on("data", (d) => {
-      stdout += d;
-      if (!stdout.includes(`127.0.0.1:${port}`)) return;
-      clearTimeout(timeout);
-      resolve();
-    });
-    child.once("exit", (code) => {
-      clearTimeout(timeout);
-      reject(new Error(`GUI exited ${code}: ${stderr || stdout}`));
-    });
-  });
-  return {
-    url: `http://127.0.0.1:${port}`,
-    close: () =>
-      new Promise((resolve) => {
-        child.once("exit", resolve);
-        child.kill("SIGTERM");
-      }),
-  };
-}
-
 test("aios push: team-tier item round-trips to the stub brain; admin tier is never sent (default-deny holds at the network layer)", async () => {
   const stub = await startStubBrain();
   const dir = makeWorkspace(stub.url);
@@ -331,7 +284,7 @@ test("aios push: team-tier item round-trips to the stub brain; admin tier is nev
   }
 });
 
-test("aios push: a Brain item rejection exits nonzero so GUI callers cannot report false success", async () => {
+test("aios push: a Brain item rejection exits nonzero so callers cannot report false success", async () => {
   const stub = await startStubBrain([], { rejectPushes: true });
   const dir = makeWorkspace(stub.url);
   try {
@@ -506,30 +459,6 @@ test("a current Brain malformed-row 422 is not mislabeled as a version mismatch"
     assert.match(result.stdout, /malformed evidence rows/);
     assert.doesNotMatch(result.stdout, /Brain API 1\.12 required/);
   } finally {
-    rmSync(dir, { recursive: true, force: true });
-    await stub.close();
-  }
-});
-
-test("GUI Team Brain sync returns ok:false when any Brain item is rejected", async () => {
-  const stub = await startStubBrain([], { rejectPushes: true });
-  const dir = makeWorkspace(stub.url);
-  const gui = await startGui(dir);
-  try {
-    const response = await fetch(`${gui.url}/api/push?token=${GUI_TOKEN}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ paths: ["2-work/team-ok.md"], dryRun: false }),
-    });
-    const body = await response.json();
-    assert.equal(response.status, 200);
-    assert.equal(body.ok, false);
-    assert.equal(body.dryRun, false);
-    assert.match(body.output, /fixture rejection/);
-    assert.match(body.output, /pushed 0\/1/);
-    assert.match(body.error, /Command failed/);
-  } finally {
-    await gui.close();
     rmSync(dir, { recursive: true, force: true });
     await stub.close();
   }

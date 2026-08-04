@@ -79,6 +79,7 @@ test("no build or CI config still points at the cut trees", () => {
     "scripts/check-coverage.mjs",
     "scripts/run-mutation.mjs",
     "scripts/test-suite.mjs",
+    "test/sync-execution-smoke.test.mjs",
     ".github/workflows/ci.yml",
     ".github/workflows/mutation.yml",
   ];
