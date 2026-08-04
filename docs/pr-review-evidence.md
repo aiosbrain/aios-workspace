@@ -132,15 +132,42 @@ It is bound to the head exactly as review evidence is, validated by the same vis
 (no raw HTML, no link reference definitions, no ambiguous fences) and the same exact-SHA binding —
 and, as above, the `- Exempt at` phrasing is ergonomics: the SHA is what binds.
 
-**A reason is required, and it must render as something.** `- ` is a non-empty string and an empty
-bullet, so a plain `trim()` check called it a reason while the reader saw nothing — the record
-looked filled in and stated nothing. A bare list marker (`-`, `*`, `+`, `1.`, `1)`),
-punctuation-only content, whitespace, zero-width characters and emphasis marks around nothing are
-all rejected; the emptiness test reuses the same normalisation the severity scan uses, so there is
-one notion of "invisible" in the codebase rather than two. Beyond "the reader can see it" the gate
-has **no opinion on what a reason says** — no minimum length, no word count, no format, no
-taxonomy. Under the threat model this is an audit-trail property, not a barrier: anyone with write
-access is already trusted to exempt, and someone determined to skip the reason just types a word.
+**A reason is required, and the requirement is deliberately trivial: the section must not be
+blank.** `String.trim()` on the raw text once a leading list marker (`-`, `*`, `+`, `1.`, `1)`) is
+stripped, and nothing else — no normalisation, no entity decoding, no character classes.
+
+**What that buys, stated plainly: the gate records that a reason was written. It does not verify
+the reason is meaningful, or even that it renders to anything.** `&nbsp;` passes. So does `x`.
+Both are equally uninformative, and neither is a security property. The security property is the
+SHA binding; none of this touches it.
+
+That is a retreat, and a deliberate one. Two earlier versions tried to compute whether the reason
+*renders as something a reader can see*: first `trim()` alone, which let a bare `- ` through; then
+a normalised letter-or-digit scan, which caught bare bullets but wrongly accepted Hangul fillers
+(`U+3164`, `U+115F`), `&ensp;`/`&zwnj;`/`&lrm;`/`&Tab;`, an empty inline link and a transparent
+image — and wrongly **rejected** `- 📝` and `- ✅!`. The second failure is the one that matters: a
+sole emoji is a real reason for a docs-only exemption, and blocking it is how a gate teaches people
+to route around it.
+
+The space of "ways to be invisible in Markdown, HTML entities and Unicode" is unbounded and owned
+by someone else; a rule enumerating it is always one round behind. Under the threat model the
+requirement was never load-bearing anyway — every actor with write access is already trusted to
+exempt, and anyone skipping the reason just types `x`. It is an audit-trail nicety, so it gets a
+trivial check and an honest promise instead of a fourth attempt at deciding what renders.
+
+Dropping the field entirely was considered. It is kept because a blank check still catches the one
+realistic accident — posting the template without filling it in — at the cost of one line, and
+because a section that is structurally required but may be empty is a stranger contract than one
+that must simply have something in it.
+
+This also removes a live coupling hazard: the previous version leaned on `normalizeForScan`, which
+exists to normalise *severity-search source text*, decodes only a small named-entity allowlist and
+does not model rendering at all. A future severity-driven edit to it could have silently changed
+what counts as an exemption reason. Nothing in the exemption path depends on the vendored module
+now.
+
+Beyond "not blank" the gate has **no opinion on what a reason says** — no minimum length, no word
+count, no format, no taxonomy.
 
 A comment carrying both tokens is rejected.
 

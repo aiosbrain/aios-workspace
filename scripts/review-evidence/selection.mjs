@@ -44,7 +44,6 @@
  */
 import {
   SHA_PATTERN,
-  normalizeForScan,
   validateCandidateShaBinding,
   validateReviewBody,
   visibleMarkdown,
@@ -95,29 +94,39 @@ export const isExemptionCandidate = (body) => hasMarker(body, EXEMPTION_MARKER);
  * vendored `validateCandidateShaBinding`, so the head must appear exactly once and no other
  * SHA-shaped token may ride along.
  */
-// A bare list marker: `-`, `*`, `+`, `1.` or `1)`, with nothing after it that renders.
+// The complete CommonMark list-marker set: `-`, `*`, `+`, and ordered `1.` / `1)`. Stripped so a
+// bullet with nothing after it does not read as content. If this set were ever wrong the effect
+// is that an unfilled template passes — never that a real reason is rejected.
 const LIST_MARKER = /^[ \t]*(?:[-*+]|\d+[.)])[ \t]*/;
 
 /**
- * Does this section render as nothing?
+ * Is the Exemption section blank? Plain `String.trim()` on the raw text, and nothing else.
  *
- * `- ` is a non-empty string and an empty bullet, so `reason.trim()` said "there is a reason"
- * about a record that shows the reader nothing — the exemption looked filled in while stating
- * none. Under this gate's threat model that is an audit-trail defect rather than a bypass
- * (anyone with write access is already trusted to exempt, and could simply type a word), but a
- * record that can be blank while looking complete is exactly the kind of thing this gate exists
- * to not do.
+ * This deliberately does NOT try to work out whether the reason renders as something a reader can
+ * see. Two earlier versions did — first `trim()` alone (which let `- ` through), then a normalised
+ * letter-or-digit scan (which caught bare bullets but wrongly accepted Hangul fillers, `&ensp;`,
+ * `&zwnj;`, an empty inline link and a transparent image, and wrongly REJECTED `- 📝` and `- ✅!`).
+ * That second failure is the one that matters: blocking a legitimate one-emoji reason for a
+ * docs-only exemption is how a gate teaches people to route around it.
  *
- * `normalizeForScan` is the vendored normalisation the severity scan already uses — it decodes
- * entities, strips zero-width and other format characters, applies NFKC and removes emphasis
- * marks. Reusing it keeps ONE notion of "invisible" in this codebase rather than inventing a
- * second one here. After that and the list marker, a line has to carry at least one letter or
- * digit in any script; punctuation alone is not a reason, and CJK is.
+ * The space of "ways to be invisible in Markdown, HTML entities and Unicode" is unbounded and
+ * someone else owns it. A rule that enumerates it will always be one round behind. And under this
+ * gate's threat model the requirement was never load-bearing anyway: every actor with write access
+ * is already trusted to exempt, and anyone skipping the reason just types `x`. This field is an
+ * audit-trail nicety, not a barrier, so it gets a trivial check and an honest promise.
+ *
+ * It also removes a live coupling hazard: `normalizeForScan` exists to normalise severity-search
+ * source text, decodes only a small named-entity allowlist and does not model rendering at all, so
+ * a future severity-driven edit to it could have silently changed what counts as an exemption
+ * reason. Nothing here depends on the vendored module now.
+ *
+ * What this buys: the gate records that a reason was written. What it does not: any guarantee the
+ * reason is meaningful, or that it renders to anything. `&nbsp;` passes. So does `x`. Both are
+ * equally uninformative and neither is a security property. The security property is the SHA
+ * binding below, which none of this touches.
  */
-function rendersEmpty(section) {
-  return !section
-    .split("\n")
-    .some((line) => /[\p{L}\p{N}]/u.test(normalizeForScan(line).replace(LIST_MARKER, "")));
+function statesNoReason(section) {
+  return !section.split("\n").some((line) => line.replace(LIST_MARKER, "").trim());
 }
 
 export function validateExemptionBody(body, candidateShas) {
@@ -134,7 +143,7 @@ export function validateExemptionBody(body, candidateShas) {
     );
   }
   const reason = visible.slice(headings[0].index + headings[0][0].length, headings[1].index);
-  if (rendersEmpty(reason)) throw new Error("exemption section Exemption must not be empty");
+  if (statesNoReason(reason)) throw new Error("exemption section Exemption must not be empty");
   validateCandidateShaBinding(
     visible.slice(headings[1].index + headings[1][0].length),
     candidateShas

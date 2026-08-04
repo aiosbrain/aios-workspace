@@ -134,44 +134,49 @@ describe("review evidence — the decision", () => {
     assert.match(verdict.rejected[0].reason, /Exemption must not be empty/);
   });
 
-  // The reason has to RENDER as something. `- ` is a non-empty string and an empty bullet, so
-  // `trim()` called it a reason while the reader sees nothing — the record looked filled in and
-  // said nothing, and no test noticed. Each case here is rejected for that reason alone; the
-  // gate has no opinion on what a good reason looks like beyond "the reader can see it".
-  it("refuses an exemption whose reason renders as nothing", () => {
-    const blank = [
-      "- ",
-      "-",
-      "*",
-      "+",
-      "1.",
-      "2)",
-      "   ",
-      "",
-      "- \u200b",
-      "- \u00ad\ufeff",
-      "- ...",
-      "- --",
-      "- **__**",
-      "- &#8203;",
-      "- \n- \n- ",
-    ];
+  // The Exemption section must not be blank. That is the whole requirement: `String.trim()` on
+  // the raw text once a list marker is stripped. Two earlier versions tried to decide whether the
+  // reason RENDERS as something, and both were wrong in the direction that matters — the second
+  // rejected `- 📝`, a perfectly good reason for a docs-only exemption. See statesNoReason.
+  it("refuses an exemption whose reason section is blank", () => {
+    const blank = ["", " ", "\t", "   \n  ", "-", "- ", "*", "+ ", "1.", "2)", "- \n* \n+ "];
     for (const reason of blank) {
       const verdict = evaluateReviewEvidence({
         headSha: HEAD,
         comments: [authored(exemption(HEAD, reason))],
       });
-      assert.equal(
-        verdict.ok,
-        false,
-        `an empty-rendering reason must not pass: ${JSON.stringify(reason)}`
-      );
+      assert.equal(verdict.ok, false, `a blank reason must not pass: ${JSON.stringify(reason)}`);
       assert.match(verdict.rejected[0].reason, /Exemption must not be empty/);
     }
   });
 
-  // The other half of the same fix: rejecting things that render as nothing must not start
-  // rejecting things that render as something. A reason is content in any script.
+  // The honest contract, pinned so nobody "fixes" it back into a rendering predicate. Every one
+  // of these is uninformative and every one passes, on purpose: the gate records that a reason
+  // was written, it does not verify the reason is meaningful or that it renders to anything. The
+  // security property is the SHA binding, which none of this touches.
+  it("does not promise the reason renders — these uninformative ones pass, deliberately", () => {
+    const uninformative = [
+      "- x",
+      "- &nbsp;",
+      "- \u3164",
+      "- \u115f",
+      "- &zwnj;",
+      "- \u200b",
+      "- .",
+    ];
+    for (const reason of uninformative) {
+      const verdict = evaluateReviewEvidence({
+        headSha: HEAD,
+        comments: [authored(exemption(HEAD, reason))],
+      });
+      assert.equal(verdict.ok, true, `not promised to be rejected: ${JSON.stringify(reason)}`);
+    }
+  });
+
+  // The other half: refusing blank sections must never start refusing real reasons. The last two
+  // entries are the ones the previous rendering predicate wrongly REJECTED — a sole emoji is a
+  // real reason for a docs-only exemption, and blocking it is how a gate teaches people to route
+  // around it.
   it("accepts any reason a reader can actually see", () => {
     const real = [
       "- dependabot lockfile bump, no source change",
@@ -184,6 +189,8 @@ describe("review evidence — the decision", () => {
       "- ...and nothing else changed",
       "- **bold reason**",
       "no list marker at all",
+      "- 📝",
+      "- ✅!",
     ];
     for (const reason of real) {
       const verdict = evaluateReviewEvidence({
