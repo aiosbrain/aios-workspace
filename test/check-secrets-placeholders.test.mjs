@@ -71,7 +71,10 @@ test("OGR03 still blocks nearby real-secret counterexamples", () => {
     assert.match(output, /OGR03 FAILED/);
     assert.match(output, /line 1: \[REDACTED\]/);
     assert.ok(!output.includes(opaque), "multi-rule diagnostics must not echo the opaque secret");
-    assert.ok(!output.includes(realisticSlack), "multi-rule diagnostics must not echo the Slack token");
+    assert.ok(
+      !output.includes(realisticSlack),
+      "multi-rule diagnostics must not echo the Slack token"
+    );
     assert.ok(!output.includes(uuid), "multi-rule diagnostics must not echo token-shaped UUIDs");
   } finally {
     rmSync(dir, { recursive: true, force: true });

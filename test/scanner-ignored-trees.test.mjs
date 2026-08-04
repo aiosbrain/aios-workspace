@@ -128,7 +128,10 @@ test("check-secrets: the same secret in an UNTRACKED, non-ignored file blocks", 
     assert.equal(code, 1, `expected a block, got:\n${out}`);
     assert.match(out, /2-work\/scratch\.md/);
     assert.match(out, /line 1: \[REDACTED\]/);
-    assert.ok(!out.includes(AWS_KEY), "untracked-file diagnostics must not echo the matched secret");
+    assert.ok(
+      !out.includes(AWS_KEY),
+      "untracked-file diagnostics must not echo the matched secret"
+    );
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
