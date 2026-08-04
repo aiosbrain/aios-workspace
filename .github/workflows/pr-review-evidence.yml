@@ -1,0 +1,93 @@
+name: PR review evidence
+
+# BLOCKING gate (AIO-777). A PR is mergeable only while a reviewer with write access has
+# posted an attestation naming the PR's CURRENT head SHA. A new push makes every earlier
+# attestation stale, so this goes red again until the new head is re-reviewed — which is
+# the whole point: the two incidents this exists for (#533, #546) were reviews that
+# outlived the commit they described.
+#
+# The verdict is published as the COMMIT STATUS `review-evidence` on the head SHA, not as
+# this job's check run. That is deliberate: `issue_comment` runs are attributed to the
+# default branch, so their check runs never appear on the PR — a status posted explicitly
+# against `head.sha` does, from every trigger below. Protect the `review-evidence` context
+# in the branch rule, not this job's name.
+#
+# Fail-closed by construction: an error posts `failure`; a crash posts nothing, leaving the
+# required context PENDING (still unmergeable); and a brand-new commit has no status at all.
+# Nothing here can produce `success` without the validator explicitly saying so.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review, labeled, unlabeled]
+  pull_request_review:
+    types: [submitted, edited, dismissed]
+  issue_comment:
+    types: [created, edited, deleted]
+
+permissions:
+  contents: read
+  statuses: write
+  # Only used to strip the exemption label on a push (see --clear-exemption-on-push).
+  pull-requests: write
+
+# Serialised per PR, and deliberately NOT `cancel-in-progress`. The `synchronize` run is the
+# one that clears a stale exemption label; cancelling it because a comment arrived a second
+# later would let an exemption survive a push, which is the one thing the exemption must not
+# do. The cost is that two runs for the same head can finish out of order and the later write
+# wins — a narrow window that any subsequent event corrects, and whose likely direction (a
+# stale red) is the safe one.
+concurrency:
+  group: review-evidence-${{ github.event.pull_request.number || github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  evidence:
+    name: Review evidence names the current head
+    # `issue_comment` fires for plain issues too; only pull requests have a head to bind to.
+    if: github.event_name != 'issue_comment' || github.event.issue.pull_request != null
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      PR: ${{ github.event.pull_request.number || github.event.issue.number }}
+    steps:
+      # The judging code comes from the BASE branch, never from the pull request, so a PR
+      # cannot edit the validator that decides whether it may merge.
+      - name: Check out the gate from the base branch
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}
+          persist-credentials: false
+
+      - name: Locate the validator
+        id: source
+        run: |
+          if test -f scripts/validate-pr-review-evidence.mjs; then
+            echo "dir=." >> "$GITHUB_OUTPUT"
+          else
+            echo "dir=pr-head" >> "$GITHUB_OUTPUT"
+            echo "::warning title=Review-evidence gate bootstrap::The base branch does not carry the gate yet, so this run judges with the pull request's own copy. This path is correct only for the PR that introduces the gate; every later PR is judged by the base-branch validator."
+          fi
+
+      - name: Bootstrap — judge with the PR's own copy (base branch has no gate yet)
+        if: steps.source.outputs.dir == 'pr-head'
+        uses: actions/checkout@v7
+        with:
+          ref: refs/pull/${{ env.PR }}/head
+          path: pr-head
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - name: Validate review evidence for the current head
+        working-directory: ${{ steps.source.outputs.dir }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          # A push invalidates an exemption exactly as it invalidates evidence.
+          CLEAR: ${{ (github.event_name == 'pull_request' && github.event.action == 'synchronize') && '--clear-exemption-on-push' || '' }}
+        run: |
+          node scripts/validate-pr-review-evidence.mjs \
+            --repo "$REPO" --pr "$PR" --target-url "$RUN_URL" $CLEAR
