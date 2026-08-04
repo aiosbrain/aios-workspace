@@ -32,8 +32,6 @@ jobs:
           - bugbot-security
           - update-safety
           - inbox-authorization
-          - runtime-capabilities
-          - client-auth-permissions
     steps:
       - uses: actions/checkout@v7
         with:
@@ -42,31 +40,6 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      # Incremental state exists ONLY for the Vitest client leg: the command
-      # runner reports no per-test info, so incremental mode there reuses stale
-      # verdicts when tests change (measured on the AIO-539 calibration) and is
-      # disabled in configFor. restore/save are split (instead of one
-      # actions/cache post step) so the save runs with `if: always()` — a
-      # failed campaign must not throw away its incremental JSON.
-      - uses: actions/cache/restore@v6
-        if: matrix.group == 'client-auth-permissions'
-        with:
-          # Cache ONLY the Stryker incremental state. run-mutation.mjs writes it
-          # to .stryker-tmp/<group>.json (incrementalFile); the generated
-          # .stryker-tmp/<group>.conf.json configs and per-run sandbox trees are
-          # excluded — caching all of .stryker-tmp/ swept whole sandboxes into a
-          # fresh per-sha cache entry every night.
-          # (Key prefix intentionally new so stale full-sandbox entries are
-          # never restored.)
-          path: |
-            .stryker-tmp/*.json
-            !.stryker-tmp/*.conf.json
-          # The group sits BEFORE the sha: with a plain suffix after the sha,
-          # the restore-keys prefix would match every leg's entries and could
-          # cross-restore another group's incremental state.
-          key: stryker-incremental-${{ runner.os }}-${{ github.ref_name }}-${{ matrix.group }}-${{ github.sha }}
-          restore-keys: |
-            stryker-incremental-${{ runner.os }}-${{ github.ref_name }}-${{ matrix.group }}-
       - run: npm ci
       # Expected-red leg (a red leg means "this group is genuinely not
       # measured tonight" — do not widen the timeout or drop files to silence
@@ -76,13 +49,6 @@ jobs:
       #     in-process fast and turns the leg green.
       - run: node scripts/run-mutation.mjs --nightly --group ${{ matrix.group }}
         timeout-minutes: 45
-      - uses: actions/cache/save@v6
-        if: always() && matrix.group == 'client-auth-permissions'
-        with:
-          path: |
-            .stryker-tmp/*.json
-            !.stryker-tmp/*.conf.json
-          key: stryker-incremental-${{ runner.os }}-${{ github.ref_name }}-${{ matrix.group }}-${{ github.sha }}
       - uses: actions/upload-artifact@v7
         if: always()
         with:

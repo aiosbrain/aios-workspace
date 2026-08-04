@@ -5,7 +5,8 @@
  * Every checked-in Node test under TEST_ROOTS is discovered recursively and
  * passed to one node:test invocation. node:test keeps file-level process
  * isolation while avoiding the startup cost of hundreds of serial Node
- * processes. GUI client tests are deliberately owned by Vitest.
+ * processes. The GUI client's Vitest suite left with the AIO-612 cut and now lives in
+ * aiosbrain/aios-workspace-gui; this discovers Node tests only.
  */
 import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync } from "node:fs";
@@ -14,13 +15,9 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-export const NODE_TEST_ROOTS = ["test", "gui/server", "scripts"];
-export const CLIENT_TEST_ROOT = "gui/client/src";
-// Extension sets are per runner: the Node roots execute .mjs/.js under node:test;
-// the client root is owned by gui/client's Vitest (which also runs .ts/.tsx).
-// test/test-suite.test.mjs imports these so its git-parity oracle can never
-// silently disagree with what each runner actually executes.
-export const CLIENT_TEST_FILE_RE = /\.test\.(?:mjs|js|ts|tsx)$/;
+export const NODE_TEST_ROOTS = ["test", "scripts"];
+// test/test-suite.test.mjs imports this so its git-parity oracle can never silently disagree
+// with what the runner actually executes.
 export const NODE_TEST_FILE_RE = /\.test\.(?:mjs|js)$/;
 // Test-looking sources a Node root can NOT execute — tracked files matching this
 // under a Node root fail discovery loudly instead of being silently unrun.
@@ -95,7 +92,7 @@ export function discoverNodeTests() {
     if (unrunnable.length) {
       throw new Error(
         "tracked Node-root test file(s) with an extension the Node runner cannot execute " +
-          `(convert to .mjs/.js or move under ${CLIENT_TEST_ROOT}/): ${unrunnable.join(", ")}`
+          `(convert to .mjs/.js): ${unrunnable.join(", ")}`
       );
     }
   }
@@ -104,14 +101,9 @@ export function discoverNodeTests() {
   ).sort();
 }
 
-export function discoverClientTests() {
-  return filterTracked(walk(CLIENT_TEST_ROOT, (name) => CLIENT_TEST_FILE_RE.test(name))).sort();
-}
-
 export function discoverTestInventory() {
   const node = discoverNodeTests();
-  const client = discoverClientTests();
-  return { node, client, all: [...node, ...client].sort() };
+  return { node, all: [...node].sort() };
 }
 
 function parsePositiveInt(raw, label) {
@@ -196,9 +188,7 @@ export function run(argv = process.argv.slice(2)) {
       process.stdout.write(`${JSON.stringify({ ...inventory, selected: files }, null, 2)}\n`);
     } else {
       for (const file of files) process.stdout.write(`${file}\n`);
-      process.stderr.write(
-        `discovered ${inventory.all.length} tests (${inventory.node.length} Node, ${inventory.client.length} client)\n`
-      );
+      process.stderr.write(`discovered ${inventory.all.length} Node tests\n`);
     }
     return 0;
   }

@@ -22,7 +22,7 @@ const SCRIPT = path.join(
 
 test("T1: a docs-only diff switches every filterable lane off", () => {
   const lanes = classifyChangedPaths(["docs/brain-api.md", "README.md", "LICENSE"]);
-  assert.deepEqual(lanes, { code: false, rust: false, client: false });
+  assert.deepEqual(lanes, { code: false });
 });
 
 test("T2: one non-inert path anywhere in the diff turns code back on", () => {
@@ -37,7 +37,7 @@ test("T3: scaffold markdown is shipped product, not inert docs", () => {
 
 test("T4: only root-level markdown is inert; nested markdown is not", () => {
   assert.equal(isInert("CLAUDE.md"), true);
-  assert.equal(isInert("gui/client/README.md"), false);
+  assert.equal(isInert("packages/foundation/README.md"), false);
 });
 
 test("T5: the docs/ prefix is anchored — a sibling directory is not inert", () => {
@@ -45,19 +45,8 @@ test("T5: the docs/ prefix is anchored — a sibling directory is not inert", ()
   assert.equal(isInert("examples/docs/thing.md"), false);
 });
 
-test("T6: src-tauri changes enable rust only", () => {
-  const lanes = classifyChangedPaths(["src-tauri/src/main.rs"]);
-  assert.deepEqual(lanes, { code: true, rust: true, client: false });
-});
-
-test("T7: gui changes enable client only", () => {
-  const lanes = classifyChangedPaths(["gui/client/src/App.tsx"]);
-  assert.deepEqual(lanes, { code: true, rust: false, client: true });
-});
-
-test("T8: the rust lane also watches its own runner script", () => {
-  assert.equal(classifyChangedPaths(["scripts/run-rust-tests.mjs"]).rust, true);
-});
+// T6-T8 covered the rust and client lanes. Both left with gui/ and src-tauri/ in the AIO-612
+// cut, and `code` is now the only filterable lane — see LANES in scripts/ci-changed-lanes.mjs.
 
 test("T9: shared build inputs enable every lane", () => {
   for (const shared of ["package.json", "package-lock.json", ".github/workflows/ci.yml"]) {
@@ -69,9 +58,9 @@ test("T9: shared build inputs enable every lane", () => {
   }
 });
 
-test("T10: a scripts-only change keeps code on but leaves rust and client off", () => {
+test("T10: a scripts-only change keeps the code lane on", () => {
   const lanes = classifyChangedPaths(["scripts/check-boundaries.mjs", "test/thing.test.mjs"]);
-  assert.deepEqual(lanes, { code: true, rust: false, client: false });
+  assert.deepEqual(lanes, { code: true });
 });
 
 test("T11: every ambiguous input fails OPEN", () => {
@@ -85,14 +74,14 @@ test("T11: every ambiguous input fails OPEN", () => {
 });
 
 test("T12: whitespace around a path does not hide it from a lane", () => {
-  assert.equal(classifyChangedPaths(["  src-tauri/Cargo.toml  "]).rust, true);
+  assert.equal(classifyChangedPaths(["  scripts/aios.mjs  "]).code, true);
 });
 
 test("T13: the CLI writes every lane to GITHUB_OUTPUT", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "aios-lanes-"));
   const paths = path.join(dir, "changed.txt");
   const out = path.join(dir, "gh-output");
-  fs.writeFileSync(paths, "gui/client/src/App.tsx\n");
+  fs.writeFileSync(paths, "scripts/aios.mjs\n");
   fs.writeFileSync(out, "");
 
   execFileSync(process.execPath, [SCRIPT, "--paths-from", paths], {
@@ -104,8 +93,7 @@ test("T13: the CLI writes every lane to GITHUB_OUTPUT", () => {
   for (const lane of LANES) {
     assert.match(written, new RegExp(`^${lane}=(true|false)$`, "m"), `${lane} must be written`);
   }
-  assert.match(written, /^client=true$/m);
-  assert.match(written, /^rust=false$/m);
+  assert.match(written, /^code=true$/m);
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
@@ -119,7 +107,7 @@ test("T15: the direct-run guard still fires when the path needs URL escaping", (
   const out = path.join(dir, "gh-output");
   const paths = path.join(dir, "changed.txt");
   fs.copyFileSync(SCRIPT, script);
-  fs.writeFileSync(paths, "src-tauri/src/main.rs\n");
+  fs.writeFileSync(paths, "scripts/aios.mjs\n");
   fs.writeFileSync(out, "");
 
   execFileSync(process.execPath, [script, "--paths-from", paths], {
@@ -129,7 +117,7 @@ test("T15: the direct-run guard still fires when the path needs URL escaping", (
 
   const written = fs.readFileSync(out, "utf8");
   assert.notEqual(written.trim(), "", "main() must run from a path containing a space");
-  assert.match(written, /^rust=true$/m);
+  assert.match(written, /^code=true$/m);
   fs.rmSync(dir, { recursive: true, force: true });
 });
 

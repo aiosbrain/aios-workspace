@@ -14,7 +14,6 @@ import { fileURLToPath } from "node:url";
 
 const RED = "\x1b[0;31m",
   GREEN = "\x1b[0;32m",
-  YELLOW = "\x1b[1;33m",
   NC = "\x1b[0m";
 const DIR = path.dirname(fileURLToPath(import.meta.url));
 let errors = 0;
@@ -52,42 +51,20 @@ const parsed = parseFlatYaml("version: 1\nagent_runtime: hermes\nagent_model: m\
 if (parsed.agent_runtime !== "hermes") fail("parseFlatYaml did not read agent_runtime");
 else ok("flat-yaml reads agent_runtime");
 
-// 3+4. GUI adapter registry + host-side write guard — validated through the CORE-OWNED contract
-// (packages/foundation/src/adapter-contract.mjs, AIO-600 C5) instead of inline assertions, so the
-// gui side runs the SAME checks in its own co-located test
-// (gui/server/runtime-adapters/adapter-contract.test.mjs) that travels with the repo cut.
-// Best-effort during the transition: skips with a note when gui/server is absent or its deps
-// aren't installed — the gui test is then the enforcing side.
-const { checkAdapterRegistry, checkGuardWrite } = await import(
-  path.join(DIR, "..", "packages", "foundation", "src", "adapter-contract.mjs")
-);
-try {
-  const reg = await import(path.join(DIR, "..", "gui", "server", "runtime-adapters", "index.mjs"));
-  const violations = checkAdapterRegistry(reg, { RUNTIMES, GUI_RUNTIMES });
-  for (const v of violations) fail(v);
-  if (!errors)
-    ok(
-      "GUI registry satisfies the adapter-registry contract (resolution, typed errors, config + model defaults)"
-    );
-} catch (e) {
-  console.log(
-    `  ${YELLOW}—${NC} GUI adapter resolution skipped (gui/server deps not installed): ${String(e.message).split("\n")[0]}`
-  );
-}
-
-// Write guard: reuses team-ops-guard.sh as the single governance source. Tested against this repo
-// (has hooks/team-ops-guard.sh). Needs jq + bash (the guard's own deps); skips with a note if absent.
-try {
-  const repoRoot = path.join(DIR, "..");
-  const { guardWrite } = await import(
-    path.join(repoRoot, "gui", "server", "runtime-adapters", "guard.mjs")
-  );
-  const violations = checkGuardWrite(guardWrite, repoRoot);
-  for (const v of violations) fail(v);
-  if (!errors) ok("guardWrite: clean allowed; secret / admin-tier / path-escape blocked");
-} catch (e) {
-  console.log(`  ${YELLOW}—${NC} guardWrite check skipped: ${String(e.message).split("\n")[0]}`);
-}
+// 3+4. GUI adapter registry + host-side write guard — NOT CHECKED HERE, BY DESIGN.
+//
+// These used to import gui/server/runtime-adapters/{index,guard}.mjs and validate them against
+// the core-owned contract in packages/foundation/src/adapter-contract.mjs (AIO-600 C5), skipping
+// with a note whenever gui/server was absent. AIO-612 moved gui/ to aiosbrain/aios-workspace-gui,
+// so that path can now NEVER resolve — the checks would skip on every single run, forever.
+//
+// A check that cannot succeed is worse than no check: it prints a reassuring "—" and looks like
+// coverage. The enforcing side is the GUI repo's own co-located
+// gui/server/runtime-adapters/adapter-contract.test.mjs, which runs the SAME contract functions.
+// This repo still OWNS the contract (adapter-contract.mjs stays here and the GUI repo consumes
+// it), so a contract change is still made here first — it is just verified there.
+//
+// If you are reinstating a check on the GUI registry, it belongs in aios-workspace-gui.
 
 console.log("================================================");
 if (errors === 0) {

@@ -1,26 +1,19 @@
 // Flat ESLint config (ESLint 9). Lint inputs are passed explicitly by the `lint`
-// npm script (`scripts validation gui/server gui/client/src src test`) — scaffold/** is NOT
+// npm script (`scripts validation src test packages`) — scaffold/** is NOT
 // linted (those are workspace templates, incl. the `.workflow.js` harnesses that rely on
 // runtime-injected globals), so no harness-global override is needed here.
-// TypeScript (src/operator-loop, src/timeline, gui/client/src) is linted with the
+// The React/Vite frontend blocks left with gui/client in the AIO-612 cut; that config now
+// lives in aiosbrain/aios-workspace-gui.
+// TypeScript (src/operator-loop, src/timeline) is linted with the
 // typescript-eslint recommended config in NON-type-checked mode (no tsc program) to keep
 // CI cheap (AIO-598).
 import js from "@eslint/js";
 import globals from "globals";
-import react from "eslint-plugin-react";
-import reactHooks from "eslint-plugin-react-hooks";
 import tseslint from "typescript-eslint";
 
 export default [
   {
-    ignores: [
-      "node_modules/**",
-      "**/dist/**",
-      "src-tauri/target/**",
-      "scaffold/**",
-      "examples/**",
-      "**/*.min.js",
-    ],
+    ignores: ["node_modules/**", "**/dist/**", "scaffold/**", "examples/**", "**/*.min.js"],
   },
   js.configs.recommended,
   {
@@ -60,39 +53,6 @@ export default [
       ],
       // warn: 1 pre-existing violation (src/operator-loop/connectors.ts) at TS-lint adoption (AIO-598).
       "prefer-const": "warn",
-    },
-  },
-  {
-    // React/Vite frontend (browser) — JS and TS variants.
-    files: ["gui/client/src/**/*.{js,jsx,ts,tsx}"],
-    plugins: { ...react.configs.flat.recommended.plugins, "react-hooks": reactHooks },
-    languageOptions: {
-      ecmaVersion: 2023,
-      sourceType: "module",
-      parserOptions: { ecmaFeatures: { jsx: true } },
-      globals: { ...globals.browser },
-    },
-    settings: { react: { version: "detect" } },
-    rules: {
-      ...react.configs.flat.recommended.rules,
-      ...reactHooks.configs.recommended.rules,
-      "react/react-in-jsx-scope": "off", // React 19 automatic JSX runtime
-      "react/prop-types": "off",
-      "react/no-unescaped-entities": "off", // noisy on prose copy; harmless entities
-    },
-  },
-  {
-    // Pre-existing violations in the newly-linted TSX cockpit (AIO-598): downgraded to warn,
-    // NOT disabled, so new code still gets flagged and the counts stay visible. JS/JSX files
-    // keep these at their recommended (error) severity.
-    files: ["gui/client/src/**/*.{ts,tsx}"],
-    rules: {
-      "react-hooks/set-state-in-effect": "warn", // 15 pre-existing at adoption
-      "react-hooks/refs": "warn", // 4 pre-existing at adoption
-      "react-hooks/purity": "warn", // 1 pre-existing at adoption
-      "react-hooks/immutability": "warn", // 1 pre-existing at adoption
-      "react-hooks/preserve-manual-memoization": "warn", // 1 pre-existing at adoption
-      "react/no-unknown-property": "warn", // 1 pre-existing (cmdk-input-wrapper attr) at adoption
     },
   },
   {

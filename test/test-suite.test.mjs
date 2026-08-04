@@ -5,9 +5,6 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import {
-  CLIENT_TEST_FILE_RE,
-  CLIENT_TEST_ROOT,
-  discoverClientTests,
   discoverNodeTests,
   discoverTestInventory,
   findUnrunnableNodeTests,
@@ -19,11 +16,10 @@ import {
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
-// Git-parity oracle: discovery must equal the *tracked* test files under each
-// runner's root, filtered by that runner's own extension set (Node roots run
-// .mjs/.js via node:test; the client root is Vitest's and also runs .ts/.tsx).
-// Untracked scratch files and gitignored artifacts are deliberately excluded on
-// both sides — tracked-ness is part of discovery itself.
+// Git-parity oracle: discovery must equal the *tracked* test files under the Node roots,
+// filtered by the runner's extension set (.mjs/.js via node:test). The client half of this
+// oracle left with gui/client in the AIO-612 cut. Untracked scratch files and gitignored
+// artifacts are deliberately excluded on both sides — tracked-ness is part of discovery itself.
 function trackedTests() {
   const tracked = execFileSync("git", ["ls-files", "-z", "--cached"], {
     cwd: ROOT,
@@ -35,10 +31,7 @@ function trackedTests() {
     (file) =>
       NODE_TEST_ROOTS.some((root) => file.startsWith(`${root}/`)) && NODE_TEST_FILE_RE.test(file)
   );
-  const client = tracked.filter(
-    (file) => file.startsWith(`${CLIENT_TEST_ROOT}/`) && CLIENT_TEST_FILE_RE.test(file)
-  );
-  return [...node, ...client].sort();
+  return [...node].sort();
 }
 
 test("every tracked test is discovered exactly once", () => {
@@ -47,24 +40,14 @@ test("every tracked test is discovered exactly once", () => {
   assert.deepEqual(inventory.all, trackedTests());
 });
 
-test("Node and client ownership are disjoint and every root contributes", () => {
+test("every Node root contributes discovered tests", () => {
   const node = discoverNodeTests();
-  const client = discoverClientTests();
   for (const root of NODE_TEST_ROOTS) {
     assert.ok(
       node.some((file) => file.startsWith(`${root}/`)),
       `expected Node root ${root}/ to contribute at least one discovered test`
     );
   }
-  assert.ok(client.length > 0, "expected the client root to contribute discovered tests");
-  assert.ok(
-    client.every((file) => file.startsWith(`${CLIENT_TEST_ROOT}/`)),
-    "client tests must live under the client root"
-  );
-  assert.deepEqual(
-    node.filter((file) => client.includes(file)),
-    []
-  );
 });
 
 test("a tracked Node-root test with an unrunnable extension fails loudly", () => {
@@ -74,14 +57,12 @@ test("a tracked Node-root test with an unrunnable extension fails loudly", () =>
   assert.deepEqual(
     findUnrunnableNodeTests([
       "test/foo.test.ts",
-      "gui/server/bar.test.tsx",
       "scripts/baz.test.cjs",
       "test/ok.test.mjs",
-      "gui/client/src/ok.test.ts",
       "test/node_modules/vendored.test.ts",
       "evals/outside-roots.test.ts",
     ]),
-    ["gui/server/bar.test.tsx", "scripts/baz.test.cjs", "test/foo.test.ts"]
+    ["scripts/baz.test.cjs", "test/foo.test.ts"]
   );
 });
 
@@ -111,11 +92,28 @@ test("package scripts use canonical discovery instead of enumerating tests", () 
   assert.doesNotMatch(manifest.scripts.test, /\.test\./);
   assert.equal(manifest.scripts.pretest, undefined);
   assert.match(manifest.scripts["pretest:node"], /ensure-native-abi\.mjs/);
-  assert.match(manifest.scripts["test:rust"], /run-rust-tests\.mjs/);
+  // The Rust/Tauri and GUI-client legs left with the AIO-612 cut; `test` is Node-only now.
+  assert.equal(manifest.scripts["test:rust"], undefined);
+  assert.equal(manifest.scripts["test:client"], undefined);
+  assert.doesNotMatch(manifest.scripts.test, /test:(?:rust|client)/);
 });
 
 test("aggregate CI gate preserves the protected branch context", () => {
   const workflow = readFileSync(path.join(ROOT, ".github/workflows/ci.yml"), "utf8");
   assert.match(workflow, /test-gate:\n(?:.|\n)*?name: unit tests \(npm test\)/);
-  assert.match(workflow, /AIOS_REQUIRE_RUST_TESTS: "1"/);
+  // The rust lane it used to assert on left with the AIO-612 cut. What still has to hold is that
+  // `needs:` names only jobs that exist — a needs entry pointing at a removed job makes the whole
+  // workflow invalid, and a lane dropped from the list becomes silently non-blocking because
+  // `skipped` counts as passing.
+  const jobNames = [...workflow.matchAll(/^ {2}([a-z][a-z0-9-]*):$/gm)].map((m) => m[1]);
+  const gateNeeds = /test-gate:\n(?:.|\n)*?\n {4}needs:\n((?: {6}- .+\n)+)/.exec(workflow);
+  assert.ok(gateNeeds, "test-gate must declare a needs: list");
+  const needs = gateNeeds[1]
+    .split("\n")
+    .map((line) => line.replace(/^ {6}- /, "").trim())
+    .filter(Boolean);
+  for (const need of needs) {
+    assert.ok(jobNames.includes(need), `test-gate needs "${need}", which is not a job in ci.yml`);
+  }
+  assert.ok(needs.length >= 9, `expected at least 9 mandatory lanes, got ${needs.length}`);
 });

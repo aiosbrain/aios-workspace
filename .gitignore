@@ -8,11 +8,8 @@ __pycache__/
 .env
 .envrc
 .env.local
-gui/.sessions/
-gui/client/dist/
 dist/
 coverage/
-gui/client/coverage/
 .stryker-tmp/
 reports/mutation/
 test/ux/evidence/

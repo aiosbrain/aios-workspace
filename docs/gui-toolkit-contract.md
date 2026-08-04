@@ -26,9 +26,10 @@ Nothing else. In particular: **zero imports of `scripts/**` from `gui/server/**`
 decoupling wave (clusters C1–C5, AIO-600) deletes them all. Never add a new one to
 keep a GUI import alive.
 
-This is the seam contract for the future `aios-workspace-gui` repo split (AIO-597):
-when `gui/` moves to its own repo, it must build against the published package + the
-installed CLI, with no filesystem reach into toolkit internals.
+This is the seam contract for `aios-workspace-gui` (AIO-597). The split is DONE: `gui/`
+moved to that repo and was deleted from core in AIO-612, so every `gui/**` path named
+below is a path in **that** repo, not this one. The GUI builds against the published
+package + the installed CLI, with no filesystem reach into toolkit internals.
 
 ---
 
