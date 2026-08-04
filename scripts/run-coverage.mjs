@@ -12,7 +12,7 @@
  *                    (coverage/coverage-summary.json + coverage/lcov.info) plus
  *                    the baseline candidate coverage/coverage-baseline-candidate.json.
  */
-import { spawn, spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import {
   copyFileSync,
   existsSync,
@@ -129,108 +129,25 @@ function execute(command, args, options = {}) {
 const CLIENT_WORKSPACE = "gui/client";
 
 function runClientCoverage(exec = execute, root = ROOT) {
-  return exec("npm", ["run", "test:coverage", "--workspace", CLIENT_WORKSPACE], { cwd: root });
+  // Use the client manifest as the coverage ownership signal, not the root workspace registry.
+  // During the GUI split those two pieces of metadata can change independently. `--prefix`
+  // continues to execute the present client even after it is deregistered, while a malformed
+  // client still fails the real command instead of being silently omitted from the denominator.
+  return exec("npm", ["--prefix", CLIENT_WORKSPACE, "run", "test:coverage"], { cwd: root });
 }
 
 /**
- * Is `target` a resolved npm workspace of `root`?
- *
- * ASKS NPM RATHER THAN PREDICTING IT. `package-lock.json` records the workspace set npm itself
- * resolved: every member gets a top-level `packages["<dir>"]` entry keyed by its path from the
- * root. Reading that is an oracle, not a reimplementation.
- *
- * The alternative — re-deriving the set from `package.json`'s `workspaces` globs — means
- * reimplementing minimatch, and a partial reimplementation is wrong in both directions:
- *
- *   - `["gui/*", "!gui/client"]` resolves to NO gui/client workspace, because npm reads the array
- *     as an ordered include/exclude set. Judging entries independently sees the include and says
- *     "present"; the spawn then fails, and in `runFull` that failure is swallowed by
- *     scan-on-merge.yml's `|| true`, so the scanner publishes `test_coverage_pct: null` behind a
- *     green CI. That is the exact incident this guard exists to prevent.
- *   - `gui/client/**`, `gui/{client,server}`, `gui/@(client|server)`, `gui/clien?` and
- *     `gui/clien[t]` are all valid registrations npm accepts. Missing any of them skips a live
- *     workspace and silently drops its ~1.9k lines from the coverage denominator.
- *
- * Both classes were found by adversarial review of the hand-rolled matcher.
- *
- * A SECOND design read `package-lock.json`'s `packages["<dir>"]` entry, which looked like an
- * oracle because npm writes it. It is not: it is a RECORD of a past resolution, and it goes
- * stale. MEASURED, not assumed — with a lockfile listing gui/client and a manifest that no
- * longer does, `npm ci` and `npm install` BOTH exit 0 and leave the stale entry in place, while
- * `npm run --workspace gui/client` exits 1. "npm ci fails on disagreement", that design's whole
- * safety argument, is false. PR-B passes through exactly that state. Lockfile v1 also has no
- * `packages` key at all, so a valid registration read as absent.
- *
- * So: ask npm, live, about the tree as it stands. Neither failure mode survives that, because it
- * IS npm's answer. Verified against `npm run --workspace` across 8 states including both
- * stale-lock cases, v1 lockfiles, no lockfile, negation and brace expansion — 8/8 agreement.
- * Costs ~0.35s, once per coverage run.
- *
- * WHY UNKNOWN MEANS "RUN IT". Only npm's explicit no-workspace signal returns false. Any other
- * failure — npm missing, a broken tree, an unreadable manifest — returns true, so the real
- * command runs and its real error surfaces. The tempting default is the opposite, and it is the
- * dangerous one: `runFull` is invoked by scan-on-merge.yml under `|| true`, so a wrongly-skipped
- * client pass is SILENT. And silent is not survivable here — root-only coverage measures 81.87%
- * against a 79.7% floor, so dropping gui/client's ~1,929 lines still clears the ratchet. Nothing
- * would go red; the dashboard would quietly under-report forever.
- *
- * @returns {boolean}
- */
-// npm's phrasing when a `--workspace` argument resolves to nothing.
-const NO_WORKSPACE_SIGNAL = /No workspaces found/i;
-
-export function isResolvedWorkspace(root, target) {
-  // NOSONAR javascript:S4036 — `npm` must come from PATH, and specifically from the SAME PATH
-  // `execute()` gives the real client-coverage spawn (node_modules/.bin first). A probe resolved
-  // differently from the command it predicts would answer about a different npm, which is the
-  // whole failure mode this guard exists to close. There is no fixed path to harden to.
-  const args = ["ls", "--workspace", target, "--depth", "0", "--json"];
-  const options = { cwd: root, encoding: "utf8", env: { ...process.env, PATH: LOCAL_BIN_PATH } };
-  const probe = spawnSync("npm", args, options); // NOSONAR javascript:S4036 — see above
-  if (probe.status === 0) return true;
-  // npm's own words when a --workspace argument resolves to nothing. This is the ONLY failure
-  // that means "not a workspace"; any other nonzero exit means npm could not answer, which is a
-  // different thing and must not be read as absence.
-  //
-  // BOTH STREAMS, because which one carries it depends on config. Measured on npm 10.9.4: with
-  // NPM_CONFIG_LOGLEVEL=silent the message goes to STDOUT as `{"error":{"summary":...}}` and
-  // stderr is EMPTY. Checking stderr alone reads that as "npm could not answer", returns true,
-  // and runs the deleted workspace — and in runFull that failure is swallowed by
-  // scan-on-merge.yml's `|| true`. A guard that only works at the default loglevel is not a
-  // guard; an operator's npm config should not be able to turn it off.
-  if (NO_WORKSPACE_SIGNAL.test(probe.stderr ?? "")) return false;
-  const stdout = probe.stdout ?? "";
-  if (NO_WORKSPACE_SIGNAL.test(stdout)) return false;
-  try {
-    if (NO_WORKSPACE_SIGNAL.test(JSON.parse(stdout)?.error?.summary ?? "")) return false;
-  } catch {
-    // Not JSON — the raw-text check above already covered it.
-  }
-  return true;
-}
-
-/**
- * Why `gui/client` cannot be covered here — or `"present"` when it can.
- *
- * TWO conditions, because either one alone is a false positive:
- *
- * - the manifest `gui/client/package.json` must exist. A bare `gui/client/` directory (stale
- *   build output, an untracked `coverage/` left behind after the sources go) is not a workspace;
- *   npm resolves `--workspace gui/client` through the manifest.
- * - npm must still resolve `gui/client` as a workspace (see `isResolvedWorkspace`, which asks npm
- *   rather than predicting it). AIO-612 PR-B deregisters the workspace at one stage and deletes
- *   the tree at a later one, so the repo passes THROUGH a state where the manifest is still on
- *   disk but npm already answers `No workspaces found: --workspace=gui/client` and exits 1. A
- *   manifest-only predicate returns true there, the command fails, and in `runFull` that failure
- *   is swallowed by scan-on-merge.yml's `|| true` — the exact null-coverage incident this guard
- *   exists to stop.
+ * Why `gui/client` cannot be covered here — or `"present"` when it can. The manifest is the
+ * authority: while it exists, its source remains part of this repository's coverage denominator
+ * even if root npm workspace metadata has already been changed. Once the GUI cut removes the
+ * manifest, root-only coverage is intentional. A bare leftover directory is not enough.
  *
  * @param {string} root
- * @returns {"present" | "no-manifest" | "deregistered"}
+ * @returns {"present" | "no-manifest"}
  */
 export function clientWorkspaceStatus(root = ROOT) {
   if (!existsSync(path.join(root, "gui", "client", "package.json"))) return "no-manifest";
-  return isResolvedWorkspace(root, CLIENT_WORKSPACE) ? "present" : "deregistered";
+  return "present";
 }
 
 export function hasClientWorkspace(root = ROOT) {
@@ -253,18 +170,10 @@ export function hasClientWorkspace(root = ROOT) {
  */
 export async function runClientCoverageIfPresent(run = runClientCoverage, root = ROOT) {
   const status = clientWorkspaceStatus(root);
-  if (status !== "present") {
+  if (status === "no-manifest") {
     // Same terminology as merge-coverage.mjs's "(root only — no gui/client report)" so the skip
-    // reads as a deliberate decision in CI output, not as a step that quietly did nothing. The
-    // reason is named because "deleted" and "still on disk but deregistered" want different
-    // follow-ups from whoever is reading the log.
-    console.log(
-      `run-coverage: skipping gui/client coverage (root only — ${
-        status === "no-manifest"
-          ? "no gui/client workspace"
-          : "gui/client is no longer a registered npm workspace"
-      })`
-    );
+    // reads as a deliberate decision in CI output, not as a step that quietly did nothing.
+    console.log("run-coverage: skipping gui/client coverage (root only — no gui/client manifest)");
     return false;
   }
   await run();
@@ -347,12 +256,11 @@ export async function runFull({ root = ROOT, exec = execute } = {}) {
     //
     // DEFERRED, for exactly the reason spelled out below about the Node suite. This call used to
     // throw straight out of runFull, so merge-coverage.mjs never ran and NO artifact was written
-    // at all — the same null-coverage outcome, reached by a different route. It is the direction
-    // the guard cannot fix: whenever `isResolvedWorkspace` cannot get a definitive answer it
-    // returns true and lets the real command run, so an unrelated client failure (a malformed
-    // gui/client/package.json is enough) destroyed the ROOT coverage number too. Root coverage is
-    // still real data and the dashboard should get it; the failure is re-thrown after the merge,
-    // so the command still exits nonzero.
+    // at all — the same null-coverage outcome, reached by a different route. A present but broken
+    // client (a malformed gui/client/package.json is enough) must still fail closed without
+    // destroying the ROOT coverage number. Root coverage is still real data and the dashboard
+    // should get it; the client failure is re-thrown after the merge, so the command still exits
+    // nonzero.
     let clientError = null;
     try {
       await runClientCoverageIfPresent(() => runClientCoverage(exec, root), root);
