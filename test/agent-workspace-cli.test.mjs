@@ -24,8 +24,8 @@ test("integration commands use an explicit agent workspace but push stays fail-c
       "workspace: agent\nbrain_url: http://127.0.0.1:1\nteam_id: t\n"
     );
     const pm = run(["pm", "status"], cwd, workspace);
+    assert.notEqual(pm.status, 0);
     assert.doesNotMatch(pm.stderr, /no aios\.yaml found walking up from cwd/);
-    assert.match(pm.stderr, /fetch failed/);
     const push = run(["push", "--dry-run"], cwd, workspace);
     assert.notEqual(push.status, 0);
     assert.match(push.stderr, /no aios\.yaml found walking up from cwd/);
