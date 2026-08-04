@@ -59,7 +59,7 @@ Referenced by `scripts/check-boundaries.mjs`; the fuller table is `CLAUDE.md` §
 | "Will the demo build actually run" | `.claude/skills/demo-preflight-buildcheck/SKILL.md` |
 | "Are these tests actually wired into CI" | `.claude/skills/test-ci-wiring-audit/SKILL.md` |
 | What skills are used or missed / audit skill routing or diversity / compound session learnings | `.claude/skills/evolve/SKILL.md` |
-| Shipped workspace skills (18) — decision/scope/maturity/sync/review | `scaffold/.claude/skills/INDEX.md` (generated catalog; edit skills there, they propagate via `aios update`) |
+| Shipped workspace skills (19) — decision/scope/maturity/sync/review | `scaffold/.claude/skills/INDEX.md` (generated catalog; edit skills there, they propagate via `aios update`) |
 | Unified Inbox domain (aios inbox CLI, journal, ranker, capability/reply-policy, Fly host, host ops) | Build contract: `docs/v1-operator-loop/domains/unified-inbox.md` (AIO-382/I-01). Orientation: `docs/v1-operator-loop/domains/unified-inbox-overview.md`. Host provisioning: `docs/v1-operator-loop/host/provisioning-runbook.md`. Data governance (retention/audit/redaction): `docs/v1-operator-loop/domains/inbox-governance/`. **Gate:** any change to inbox journal schema, tiers, or capability/reply-policy surfaces must respect the governance package + run `scripts/inbox-redaction-lint.mjs`. |
 
 ## Agent Roles
