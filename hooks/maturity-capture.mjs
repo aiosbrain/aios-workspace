@@ -17,7 +17,19 @@ import { computeSessionRecord } from "../scripts/analyze/metrics.mjs";
 import { appendSession } from "../scripts/analyze/maturity-store.mjs";
 
 const STDIN_MAX = 1_000_000;
-const TRANSCRIPT_MAX_BYTES = 10 * 1024 * 1024; // 10 MB read cap
+// Read cap: a transcript larger than this is skipped so a giant session can't blow the SessionEnd
+// budget. Configurable via AIOS_MATURITY_TRANSCRIPT_MAX_MB (default 50 MB). The old fixed 10 MB
+// silently dropped exactly the largest, highest-signal orchestration sessions (measured: heavy days
+// produce 11–13 MB transcripts). Parsing stays well under the hook timeout at this size; a transcript
+// that STILL exceeds the cap is skipped, same as before — the cap only sets where that line falls.
+const configuredTranscriptMaxMb = Number(process.env.AIOS_MATURITY_TRANSCRIPT_MAX_MB);
+const configuredTranscriptMaxBytes = configuredTranscriptMaxMb * 1024 * 1024;
+const TRANSCRIPT_MAX_BYTES =
+  Number.isFinite(configuredTranscriptMaxMb) &&
+  configuredTranscriptMaxMb > 0 &&
+  Number.isFinite(configuredTranscriptMaxBytes)
+    ? configuredTranscriptMaxBytes
+    : 50 * 1024 * 1024;
 
 // Slugify a cwd basename into a stable project id (lowercase, non-alphanumerics → "-").
 function projectSlug(cwd) {
