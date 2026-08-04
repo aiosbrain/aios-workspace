@@ -10,6 +10,13 @@ import {
   isResolvedWorkspace,
   main,
 } from "../scripts/run-coverage.mjs";
+import {
+  install,
+  makeParityMembers,
+  makeRoot,
+  npmResolvesClient,
+  recorder,
+} from "./run-coverage-guard-fixtures.mjs";
 
 /**
  * AIO-612. `gui/` is being cut to aiosbrain/aios-workspace-gui. `runFull` and `runMerge` both call
@@ -21,81 +28,6 @@ import {
  * `|| true` — an unguarded FULL is silently swallowed and the scanner publishes
  * `test_coverage_pct: null`. So the suite has to prove BOTH modes skip, at the real call sites.
  */
-
-const METRIC = { total: 10, covered: 8, skipped: 0, pct: 80 };
-const SUMMARY = JSON.stringify({
-  "scripts/a.mjs": { lines: METRIC },
-  total: { lines: METRIC, statements: METRIC, functions: METRIC, branches: METRIC },
-});
-
-/**
- * A fixture repo root: shard data for `--merge 1`, and optionally a gui/client workspace.
- *
- * The guard asks npm, so a fixture has to be a tree npm will actually resolve — no hand-written
- * lockfile can stand in. `registered` therefore controls the root `workspaces` array, which is
- * what npm reads. No lockfile is written at all: an earlier design read one, and the parity test
- * below covers why that was wrong.
- */
-function makeRoot({ manifest = false, registered = false } = {}) {
-  const root = mkdtempSync(path.join(tmpdir(), "run-cov-guard-"));
-  mkdirSync(path.join(root, "coverage", "shard-1"), { recursive: true });
-  writeFileSync(path.join(root, "coverage", "shard-1", "coverage-1.json"), "{}");
-  mkdirSync(path.join(root, "gui", "server"), { recursive: true });
-  writeFileSync(
-    path.join(root, "gui", "server", "package.json"),
-    JSON.stringify({ name: "@fixture/server", version: "1.0.0" })
-  );
-  writeFileSync(
-    path.join(root, "package.json"),
-    JSON.stringify({
-      name: "fixture",
-      version: "1.0.0",
-      private: true,
-      workspaces: registered ? ["gui/server", "gui/client"] : ["gui/server"],
-    })
-  );
-  if (manifest) {
-    mkdirSync(path.join(root, "gui", "client"), { recursive: true });
-    writeFileSync(
-      path.join(root, "gui", "client", "package.json"),
-      JSON.stringify({ name: "@fixture/client", version: "1.0.0" })
-    );
-  }
-  return root;
-}
-
-/**
- * Stand-in for the real spawn. Records every command the mode issues, and writes the summary
- * merge-coverage.mjs would write so `--merge` can finish. An UNGUARDED call site reaches this the
- * same way a guarded one does, so the recording is what proves the wiring.
- */
-function recorder(root) {
-  const calls = [];
-  return {
-    calls,
-    clientRuns: () =>
-      calls.filter((c) => c.command === "npm" && c.args.includes("gui/client")).length,
-    exec: async (command, args, options) => {
-      calls.push({ command, args, options });
-      if (args.some((a) => String(a).endsWith("merge-coverage.mjs"))) {
-        mkdirSync(path.join(root, "coverage"), { recursive: true });
-        writeFileSync(path.join(root, "coverage", "coverage-summary.json"), SUMMARY);
-      }
-    },
-  };
-}
-
-/** Generate a real lockfile: no network, no node_modules, but npm's real workspace resolution. */
-function install(root) {
-  try {
-    execFileSync("npm", ["install", "--package-lock-only", "--no-audit", "--no-fund"], {
-      cwd: root,
-      stdio: "pipe",
-    });
-  } catch {
-    /* npm may refuse to write a lockfile for an invalid registration; that is a valid state */
-  }
-}
 
 test("isResolvedWorkspace answers from npm, and defaults to RUN when npm cannot answer", () => {
   const live = makeRoot({ manifest: true, registered: true });
@@ -215,29 +147,14 @@ test(
     for (const workspaces of CASES) {
       const root = mkdtempSync(path.join(tmpdir(), "run-cov-npm-parity-"));
       try {
-        for (const member of ["client", "server"]) {
-          mkdirSync(path.join(root, "gui", member), { recursive: true });
-          writeFileSync(
-            path.join(root, "gui", member, "package.json"),
-            JSON.stringify({ name: `@fixture/${member}`, version: "1.0.0", scripts: { probe: "" } })
-          );
-        }
+        makeParityMembers(root);
         writeFileSync(
           path.join(root, "package.json"),
           JSON.stringify({ name: "fixture", version: "1.0.0", private: true, workspaces })
         );
         install(root);
 
-        let npmResolves;
-        try {
-          execFileSync("npm", ["run", "probe", "--workspace", "gui/client"], {
-            cwd: root,
-            stdio: "pipe",
-          });
-          npmResolves = true;
-        } catch {
-          npmResolves = false;
-        }
+        const npmResolves = npmResolvesClient(root);
 
         assert.equal(
           clientWorkspaceStatus(root) === "present",
@@ -300,13 +217,7 @@ test(
     for (const [label, prepare] of LOCK_STATES) {
       const root = mkdtempSync(path.join(tmpdir(), "run-cov-lockstate-"));
       try {
-        for (const member of ["client", "server"]) {
-          mkdirSync(path.join(root, "gui", member), { recursive: true });
-          writeFileSync(
-            path.join(root, "gui", member, "package.json"),
-            JSON.stringify({ name: `@fixture/${member}`, version: "1.0.0", scripts: { probe: "" } })
-          );
-        }
+        makeParityMembers(root);
         writeFileSync(
           path.join(root, "package.json"),
           JSON.stringify({
@@ -318,18 +229,8 @@ test(
         );
         prepare(root);
 
-        let npmResolves;
-        try {
-          execFileSync("npm", ["run", "probe", "--workspace", "gui/client"], {
-            cwd: root,
-            stdio: "pipe",
-          });
-          npmResolves = true;
-        } catch {
-          npmResolves = false;
-        }
         assert.equal(
-          npmResolves,
+          npmResolvesClient(root),
           true,
           `${label}: npm should still resolve a registered workspace`
         );
