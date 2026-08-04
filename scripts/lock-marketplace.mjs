@@ -275,8 +275,8 @@ function main() {
   const check = process.argv.includes("--check");
   if (check) {
     if (!existsSync(MARKETPLACE_JSON)) {
-      console.log("no marketplace.json — marketplace tier not registered");
-      return;
+      console.error(`marketplace.json missing: ${MARKETPLACE_JSON}`);
+      process.exit(1);
     }
     const cat = JSON.parse(readFileSync(MARKETPLACE_JSON, "utf8"));
     const problems = structuralCheck(cat);

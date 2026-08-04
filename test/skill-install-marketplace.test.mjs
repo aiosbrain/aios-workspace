@@ -17,7 +17,7 @@ import { mkdtempSync, mkdirSync, existsSync, writeFileSync, readFileSync, rmSync
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { hashDir, structuralCheck } from "../scripts/lock-marketplace.mjs";
 import {
   scanSkillById,
@@ -27,6 +27,7 @@ import {
 } from "../gui/server/skill-library.mjs";
 
 const DIR = path.dirname(fileURLToPath(import.meta.url));
+const ROOT = path.join(DIR, "..");
 const LIBRARY_DIR = path.join(DIR, "..", "gui", "server", "skill-library");
 const MARKETPLACE_JSON = path.join(LIBRARY_DIR, "marketplace.json");
 
@@ -96,6 +97,17 @@ function installCatalog(cat) {
 }
 
 try {
+  console.log("marketplace: required lock check fails closed when its catalog is absent");
+  {
+    rmSync(MARKETPLACE_JSON, { force: true });
+    const result = spawnSync(process.execPath, ["scripts/lock-marketplace.mjs", "--check"], {
+      cwd: ROOT,
+      encoding: "utf8",
+    });
+    check("missing marketplace.json exits non-zero", result.status !== 0);
+    installCatalog(goodCatalog);
+  }
+
   console.log("marketplace: catalog parses + passes structural check");
   {
     check("structural check clean", structuralCheck(goodCatalog).length === 0);
