@@ -278,7 +278,7 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Download shard coverage data
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.0
         with:
           pattern: coverage-shard-*
           path: coverage-shards
@@ -330,17 +330,155 @@ jobs:
             echo
             echo "Update \`coverage-baseline.json\` from \`coverage/coverage-baseline-candidate.json\` (in the \`coverage\` artifact) to lock in the gain."
           } >> "$GITHUB_STEP_SUMMARY"
-      - name: Upload coverage artifact
-        if: always()
-        uses: actions/upload-artifact@v7
+      - name: Pack exact-run coverage bundle
+        run: |
+          node scripts/coverage-bundle.mjs pack \
+            --source coverage \
+            --out "$RUNNER_TEMP/coverage-bundle" \
+            --repository "$GITHUB_REPOSITORY" \
+            --sha "$GITHUB_SHA" \
+            --run-id "$GITHUB_RUN_ID"
+      - name: Upload exact-run coverage bundle
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.0
         with:
-          name: coverage
-          path: |
-            coverage/coverage-summary.json
-            coverage/coverage-baseline-candidate.json
-            coverage/lcov.info
-          if-no-files-found: ignore
+          name: coverage-bundle
+          path: ${{ runner.temp }}/coverage-bundle
+          if-no-files-found: error
           retention-days: 7
+
+  scan:
+    name: codebase readiness scan → brain
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: coverage
+    permissions:
+      actions: read
+      contents: read
+    if: >-
+      always() &&
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/main' &&
+      github.repository == 'aiosbrain/aios-workspace'
+    steps:
+      # Keep credentials away from checkout, artifact handling, dependency installation,
+      # health computation, and scanner setup. Only this no-dependency probe and the final
+      # upload step receive the Brain secrets.
+      - name: Check Brain configuration
+        id: brain
+        env:
+          AIOS_API_KEY: ${{ secrets.AIOS_API_KEY }}
+          BRAIN_URL: ${{ secrets.AIOS_BRAIN_URL }}
+          AIOS_TEAM: ${{ secrets.AIOS_TEAM }}
+        run: |
+          if [[ -n "$AIOS_API_KEY" && -n "$BRAIN_URL" && -n "$AIOS_TEAM" ]]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # full history — the scanner reads the commit window
+          persist-credentials: false
+
+      - name: Start from a coverage-free scanner checkout
+        if: steps.brain.outputs.configured == 'true'
+        run: >-
+          rm -f -- coverage/coverage-summary.json
+          coverage/coverage-baseline-candidate.json coverage/lcov.info coverage-summary.json
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        if: steps.brain.outputs.configured == 'true'
+        with:
+          node-version: "22"
+
+      - name: Download this run's coverage bundle
+        id: coverage-download
+        if: steps.brain.outputs.configured == 'true' && needs.coverage.result == 'success'
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.0
+        with:
+          name: coverage-bundle
+          path: ${{ runner.temp }}/coverage-bundle
+
+      - name: Install this run's verified coverage bundle
+        id: coverage-install
+        if: >-
+          steps.brain.outputs.configured == 'true' &&
+          needs.coverage.result == 'success' &&
+          steps.coverage-download.outcome == 'success'
+        continue-on-error: true
+        run: |
+          node scripts/coverage-bundle.mjs install \
+            --bundle "$RUNNER_TEMP/coverage-bundle" \
+            --dest coverage \
+            --repository "$GITHUB_REPOSITORY" \
+            --sha "$GITHUB_SHA" \
+            --run-id "$GITHUB_RUN_ID"
+
+      - name: Explain and sanitize unavailable coverage
+        if: >-
+          always() &&
+          steps.brain.outputs.configured == 'true' &&
+          (needs.coverage.result != 'success' ||
+           steps.coverage-download.outcome == 'failure' ||
+           steps.coverage-install.outcome == 'failure')
+        env:
+          COVERAGE_RESULT: ${{ needs.coverage.result }}
+          DOWNLOAD_OUTCOME: ${{ steps.coverage-download.outcome }}
+          INSTALL_OUTCOME: ${{ steps.coverage-install.outcome }}
+        run: |
+          rm -f -- coverage/coverage-summary.json \
+            coverage/coverage-baseline-candidate.json coverage/lcov.info coverage-summary.json
+          echo "coverage unavailable: job=$COVERAGE_RESULT download=$DOWNLOAD_OUTCOME install=$INSTALL_OUTCOME; scanning with null coverage."
+
+      - name: Fetch the ingestion scanner from aios-team-brain
+        if: steps.brain.outputs.configured == 'true'
+        run: bash .github/scripts/fetch-brain-scanner.sh .brain-scanner
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        if: steps.brain.outputs.configured == 'true'
+        with:
+          python-version: "3.12"
+
+      - name: Install scanner runtime dependencies
+        if: steps.brain.outputs.configured == 'true'
+        run: >-
+          pip install --only-binary=:all: --require-hashes
+          -r .github/scripts/brain-scanner-requirements.txt
+
+      - name: Compute codebase health (opt-in; default OFF)
+        if: steps.brain.outputs.configured == 'true' && vars.AIOS_PUSH_CODEBASE_HEALTH == '1'
+        continue-on-error: true
+        run: |
+          npm ci --ignore-scripts
+          node scripts/aios.mjs codebase-health --json > "$RUNNER_TEMP/codebase-health.v1.json"
+          node scripts/codebase-health/push-payload.mjs "$RUNNER_TEMP/codebase-health.v1.json" \
+            > "$RUNNER_TEMP/codebase-health.contract.json"
+
+      - name: Scan this repo into the brain
+        if: steps.brain.outputs.configured == 'true'
+        env:
+          AIOS_API_KEY: ${{ secrets.AIOS_API_KEY }}
+          BRAIN_URL: ${{ secrets.AIOS_BRAIN_URL }}
+          AIOS_TEAM: ${{ secrets.AIOS_TEAM }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          AIOS_PUSH_CODEBASE_HEALTH: ${{ vars.AIOS_PUSH_CODEBASE_HEALTH }}
+          PYTHONPATH: .brain-scanner/ingestion
+        run: |
+          HEALTH_JSON="$RUNNER_TEMP/codebase-health.contract.json"
+          if [ "${AIOS_PUSH_CODEBASE_HEALTH:-}" = "1" ] && [ -s "$HEALTH_JSON" ]; then
+            python .github/scripts/scan_with_health.py \
+              --path . --slug aios-workspace --full-name "$GITHUB_REPOSITORY" \
+              --health-json "$HEALTH_JSON"
+          else
+            python -m aios_ingest.cli scan \
+              --path . --slug aios-workspace --full-name "$GITHUB_REPOSITORY"
+          fi
+
+      - name: Skip note
+        if: steps.brain.outputs.configured != 'true'
+        run: echo "scan secrets not configured (BRAIN_URL/AIOS_TEAM/AIOS_API_KEY) — skipping."
 
   pack-golden:
     # AIO-668: the @aiosbrain/aios npm package must stay repo-clone-independent.
