@@ -3,7 +3,8 @@
  * (AIO-605). Every evaluator COMPOSES an existing gate or committed config — it shells
  * the gate or reads its machine artifact, and re-implements none of its logic (the
  * spec's rejected-default rule). Each returns `{ value, detail, ok? }`:
- *   - `value: null` = skipped (input unavailable in this repo/environment) — never a failure.
+ *   - `value: null` = no metric value, with `evidence_status` distinguishing a genuinely missing
+ *     capability/artifact from an evaluator error. Neither is guessed into a passing reading.
  *   - gates set `ok` themselves (exit code); metric checks get `ok` from the rubric's
  *     `okWhen` in the orchestrator (thresholds stay in data).
  *   - `detail` is LOCAL text-mode evidence only; it never enters the JSON v1 object.
@@ -32,7 +33,16 @@ function readJsonIf(p) {
   }
 }
 
-const skip = (detail) => ({ value: null, detail: `${detail} (skipped)` });
+const skip = (detail) => ({
+  value: null,
+  detail: `${detail} (skipped)`,
+  evidence_status: "missing",
+});
+const failedEvidence = (detail) => ({
+  value: null,
+  detail: `${detail} (error)`,
+  evidence_status: "error",
+});
 
 /** Run a repo-local node gate script; ok = exit 0. Missing script/crash → skipped. */
 function runGate(repo, relScript, extraArgs = []) {
@@ -45,7 +55,7 @@ function runGate(repo, relScript, extraArgs = []) {
     maxBuffer: 32 * 1024 * 1024,
   });
   if (r.error || r.status === null)
-    return skip(`${relScript} did not run (${r.error?.code ?? "timeout"})`);
+    return failedEvidence(`${relScript} did not run (${r.error?.code ?? "timeout"})`);
   const ok = r.status === 0;
   const firstBad = ok
     ? ""
@@ -90,7 +100,7 @@ function checkModularityBreaches(repo) {
   // stdout means the metrics source itself was unavailable.
   const parsed = readJsonSafe(r.stdout);
   if (!Array.isArray(parsed?.breaches)) {
-    return skip("OGR13 metrics unavailable (no parseable --json output)");
+    return failedEvidence("OGR13 metrics unavailable (no parseable --json output)");
   }
   return {
     value: parsed.breaches.length,
@@ -123,6 +133,7 @@ function checkCoverageLines(repo) {
   return {
     value: report.lines_pct,
     detail: `line coverage ${report.lines_pct}% (${report.source}, measured ${report.measured_at})`,
+    observed_at: report.measured_at,
   };
 }
 
@@ -200,26 +211,32 @@ function runEslint(repo) {
 
 function checkTsBuild(repo) {
   const pkg = readJsonIf(path.join(repo, "package.json"));
-  if (typeof pkg?.scripts?.["build:loop"] !== "string") return skip("no build:loop script");
+  const script =
+    typeof pkg?.scripts?.["build:loop"] === "string"
+      ? "build:loop"
+      : typeof pkg?.scripts?.typecheck === "string"
+        ? "typecheck"
+        : null;
+  if (!script) return skip("no build:loop or typecheck script");
   if (!existsSync(path.join(repo, "node_modules", "typescript"))) {
     return skip("typescript not installed");
   }
-  const r = spawnSync("npm", ["run", "build:loop"], {
+  const r = spawnSync("npm", ["run", script], {
     cwd: repo,
     encoding: "utf8",
     timeout: HEAVY_TIMEOUT_MS,
     maxBuffer: 32 * 1024 * 1024,
   });
-  if (r.error || r.status === null) return skip("build:loop did not run");
+  if (r.error || r.status === null) return failedEvidence(`${script} did not run`);
   const ok = r.status === 0;
-  return { ok, value: ok, detail: `npm run build:loop exit ${r.status}` };
+  return { ok, value: ok, detail: `npm run ${script} exit ${r.status}` };
 }
 
 // ── docs parity ──────────────────────────────────────────────────────────────
 
 function checkDocsDrift(repo) {
-  if (!existsSync(path.join(repo, "docs", "v1-operator-loop", "README.md"))) {
-    return skip("no docs/v1-operator-loop/README.md drift surface");
+  if (!existsSync(path.join(repo, "scripts", "check-docs-drift.mjs"))) {
+    return skip("no scripts/check-docs-drift.mjs");
   }
   return runGate(repo, path.join("scripts", "check-docs-drift.mjs"));
 }
@@ -279,7 +296,8 @@ function checkCiWallClock(repo) {
     ],
     { cwd: repo, encoding: "utf8", timeout: 15_000 }
   );
-  if (r.error || r.status !== 0) return skip("gh run data unavailable (offline / no auth)");
+  if (r.error || r.status !== 0)
+    return failedEvidence("gh run data unavailable (offline / no auth)");
   const runs = readJsonSafe(r.stdout);
   if (!Array.isArray(runs)) return skip("gh returned no run list");
   const minutes = runs
@@ -293,6 +311,11 @@ function checkCiWallClock(repo) {
   return {
     value,
     detail: `median CI wall-clock ${value}m over ${minutes.length} successful run(s)`,
+    observed_at: runs
+      .filter((run) => run.conclusion === "success")
+      .map((run) => run.updatedAt)
+      .sort()
+      .at(-1),
   };
 }
 

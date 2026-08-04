@@ -13,11 +13,11 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".."
 const fixtureDir = path.join(repoRoot, "test", "fixtures", "fake-workspace");
 const checkContextScript = path.join(repoRoot, "scripts", "check-context.mjs");
 const BRAIN_API_LABELS =
-  "# AIOS Team Brain — API Contract\n\n**Version: 1.16** is the shipped member-facing Brain API (`/api/v1`). **Document revision: 1.16**\nalso carries the separately negotiated internal Executor gateway contract **1.10**;\n";
+  "# AIOS Team Brain — API Contract\n\n**Version: 1.17** is the shipped member-facing Brain API (`/api/v1`). **Document revision: 1.17**\nalso carries the separately negotiated internal Executor gateway contract **1.10**;\n";
 const CANONICAL_CLAUDE_PIN =
-  "## 4. The pinned sync contract — do not drift ⚠️\n\n**`docs/brain-api.md` is the single pinned contract (document revision **1.16**, member-facing API **1.16**, internal gateway **1.10**, major `/api/v1`)** between this toolkit and\nthe Team Brain. Both sides build against it. **Any change to the sync protocol is a versioned change\nin that file first**\n";
+  "## 4. The pinned sync contract — do not drift ⚠️\n\n**`docs/brain-api.md` is the single pinned contract (document revision **1.17**, member-facing API **1.17**, internal gateway **1.10**, major `/api/v1`)** between this toolkit and\nthe Team Brain. Both sides build against it. **Any change to the sync protocol is a versioned change\nin that file first**\n";
 const CANONICAL_CONSTITUTION_PIN =
-  "## Quick reference\n\n| Sync protocol | [`docs/brain-api.md`](./brain-api.md) (v1.16) |\n";
+  "## Quick reference\n\n| Sync protocol | [`docs/brain-api.md`](./brain-api.md) (v1.17) |\n";
 
 /** Copy the fixture into a fresh tmpdir so a test can mutate it without touching the checked-in fixture. */
 function copyFixture(prefix) {
@@ -255,7 +255,7 @@ test("repo mode: stale constitution brain-api quick reference hard-fails", () =>
 test("version labels: missing constitution cannot pass", () => {
   const readFile = (filePath) => {
     if (filePath.endsWith("brain-api.md")) return BRAIN_API_LABELS;
-    if (filePath.endsWith("CLAUDE.md")) return "Pinned brain-api contract: v1.16\n";
+    if (filePath.endsWith("CLAUDE.md")) return "Pinned brain-api contract: v1.17\n";
     throw Object.assign(new Error("missing"), { code: "ENOENT" });
   };
   assert.equal(checkVersionLabels("/repo", readFile).ok, false);
@@ -296,18 +296,18 @@ test("version labels: only one exact governed CLAUDE.md pin can satisfy validati
   assert.equal(checkVersionLabels("/repo", inertFenceMarkerReadFile).ok, true);
 
   const nearMisses = [
-    "Unrelated brain-api tooling release: v1.16\n",
-    "Pinned brain-api contract: v1.16\n",
-    "`docs/brain-api.md` is the single pinned contract (document revision **1.16**, member-facing API **1.16**, internal gateway **1.10**, major `/api/v1`)** between this toolkit and\n",
-    "**`docs/brain-api.md` is the single pinned contract (document revision **1.16**, malformed suffix\n",
+    "Unrelated brain-api tooling release: v1.17\n",
+    "Pinned brain-api contract: v1.17\n",
+    "`docs/brain-api.md` is the single pinned contract (document revision **1.17**, member-facing API **1.17**, internal gateway **1.10**, major `/api/v1`)** between this toolkit and\n",
+    "**`docs/brain-api.md` is the single pinned contract (document revision **1.17**, malformed suffix\n",
     exactPin.split("\nthe Team Brain.")[0] + "\n",
-    exactPin.replace("member-facing API **1.16**", "member-facing API **9.9**"),
+    exactPin.replace("member-facing API **1.17**", "member-facing API **9.9**"),
     exactPin.replace("internal gateway **1.10**", "internal gateway **9.9**"),
     exactPin
-      .replace("member-facing API **1.16**", "member-facing API **1.10**")
-      .replace("internal gateway **1.10**", "internal gateway **1.16**"),
+      .replace("member-facing API **1.17**", "member-facing API **1.10**")
+      .replace("internal gateway **1.10**", "internal gateway **1.17**"),
     `${exactPin}${exactPin}`,
-    `${exactPin.replace("1.16", "1.15")}Unrelated brain-api tooling release: v1.16\n`,
+    `${exactPin.replace("1.17", "1.16")}Unrelated brain-api tooling release: v1.17\n`,
   ];
 
   for (const [index, claudeText] of nearMisses.entries()) {
@@ -329,7 +329,7 @@ test("version labels: duplicate constitution rows fail closed", () => {
     return [
       "## Quick reference",
       "",
-      "| Sync protocol | [`docs/brain-api.md`](./brain-api.md) (v1.16) |",
+      "| Sync protocol | [`docs/brain-api.md`](./brain-api.md) (v1.17) |",
       "| Sync protocol | [`docs/brain-api.md`](./brain-api.md) (v1.10) |",
       "",
     ].join("\n");

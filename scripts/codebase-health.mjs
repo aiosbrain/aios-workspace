@@ -24,6 +24,7 @@
 
 import { readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -46,6 +47,107 @@ export const DEFAULT_RUBRIC_PATH = path.join(
   "validation",
   "codebase-health.rubric.json"
 );
+
+const EVIDENCE_STATES = new Set(["complete", "partial", "missing", "stale", "error"]);
+
+function defaultProfile(rubric) {
+  return {
+    id: "aios.codebase-health.default",
+    version: "1.0.0",
+    required_checks: [
+      ...new Set([
+        ...rubric.invariants,
+        ...rubric.axes.map((axis) => axis.bandMetric).filter(Boolean),
+      ]),
+    ],
+    stale_after_days: {},
+  };
+}
+
+/** Load a repository capability profile. Repos without one retain the strict rubric-derived default. */
+export function loadHealthProfile(repoPath, rubric, profilePath) {
+  const candidate =
+    profilePath ?? path.join(repoPath, "validation", "codebase-health.profile.json");
+  let profile;
+  try {
+    profile = JSON.parse(readFileSync(candidate, "utf8"));
+  } catch (error) {
+    if (profilePath || error?.code !== "ENOENT") throw error;
+    return defaultProfile(rubric);
+  }
+  const profileId = /^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/;
+  const staleAfterDays = profile.stale_after_days ?? {};
+  if (
+    !profileId.test(profile.id) ||
+    !profileId.test(profile.version) ||
+    !Array.isArray(profile.required_checks) ||
+    profile.required_checks.some((id) => typeof id !== "string") ||
+    typeof staleAfterDays !== "object" ||
+    staleAfterDays === null ||
+    Array.isArray(staleAfterDays)
+  ) {
+    throw new Error(`codebase-health profile ${candidate} is missing id/version/required_checks`);
+  }
+  const known = new Set(Object.keys(rubric.checks));
+  const unknown = profile.required_checks.filter((id) => !known.has(id));
+  if (unknown.length)
+    throw new Error(`codebase-health profile ${candidate} has unknown checks: ${unknown}`);
+  for (const [id, days] of Object.entries(staleAfterDays)) {
+    if (!known.has(id) || !Number.isFinite(days) || days < 0) {
+      throw new Error(`codebase-health profile ${candidate} has invalid staleness for ${id}`);
+    }
+  }
+  return { ...profile, stale_after_days: staleAfterDays };
+}
+
+function evidenceState(result, staleAfterDays) {
+  const explicit = result.evidence_status;
+  let state = EVIDENCE_STATES.has(explicit)
+    ? explicit
+    : result.value == null
+      ? "missing"
+      : "complete";
+  if (state === "complete" && result.observed_at && Number.isFinite(staleAfterDays)) {
+    const ageMs = Date.now() - Date.parse(result.observed_at);
+    if (Number.isFinite(ageMs) && ageMs > staleAfterDays * 86_400_000) state = "stale";
+  }
+  return state;
+}
+
+function aggregateEvidence(requiredChecks) {
+  if (requiredChecks.length === 0) return "complete";
+  const states = requiredChecks.map((check) => check.evidence_status);
+  if (states.every((state) => state === "complete")) return "complete";
+  if (states.includes("error")) return "error";
+  if (states.every((state) => state === "missing")) return "missing";
+  if (states.includes("stale") && states.every((state) => ["complete", "stale"].includes(state))) {
+    return "stale";
+  }
+  return "partial";
+}
+
+function findingFingerprint(rubric, profile, check) {
+  return createHash("sha256")
+    .update([rubric.id, rubric.version, profile.id, check.id].join("\0"))
+    .digest("hex");
+}
+
+function findingsFor(rubric, profile, checks) {
+  return checks
+    .filter(
+      (check) => (check.required && check.evidence_status !== "complete") || check.ok === false
+    )
+    .map((check) => ({
+      fingerprint: findingFingerprint(rubric, profile, check),
+      check_id: check.id,
+      axis: check.axis,
+      kind:
+        check.required && check.evidence_status !== "complete" ? "evidence_gap" : "quality_issue",
+      severity: rubric.invariants.includes(check.id) || check.required ? "high" : "medium",
+      evidence_status: check.evidence_status,
+      remediation_tier: 0,
+    }));
+}
 
 /** Load + minimally validate the rubric (throws on a malformed rubric — it is a contract). */
 export function loadHealthRubric(rubricPath = DEFAULT_RUBRIC_PATH) {
@@ -78,18 +180,24 @@ function okFromRubric(spec, value) {
 /**
  * Compute codebase health for `repoPath`.
  * @param {string} repoPath
- * @param {{mode?: "full"|"cheap", rubricPath?: string}} opts
+ * @param {{mode?: "full"|"cheap", rubricPath?: string, profilePath?: string}} opts
  *   mode "cheap" (the analyze shadow-card path) skips the expensive evaluators
  *   (eslint, tsc, gh, graph metrics) — those checks report null (skipped).
  */
 export async function computeCodebaseHealth(repoPath, opts = {}) {
   const rubric = loadHealthRubric(opts.rubricPath);
+  const profile = loadHealthProfile(repoPath, rubric, opts.profilePath);
   const evaluated = await evaluateChecks(repoPath, rubric, { mode: opts.mode ?? "full" });
+  const requiredIds = new Set(profile.required_checks);
 
   const checks = [];
   for (const [id, spec] of Object.entries(rubric.checks)) {
     if (id === "invariant_gate_failures") continue; // derived below
-    const r = evaluated.get(id) ?? { value: null, detail: "not evaluated (skipped)" };
+    const r = evaluated.get(id) ?? {
+      value: null,
+      detail: "not evaluated (skipped)",
+      evidence_status: "missing",
+    };
     const ok =
       spec.kind === "gate"
         ? r.value === null
@@ -103,6 +211,8 @@ export async function computeCodebaseHealth(repoPath, opts = {}) {
       ok,
       value: r.value ?? null,
       detail: r.detail,
+      required: requiredIds.has(id),
+      evidence_status: evidenceState(r, profile.stale_after_days[id]),
     });
   }
 
@@ -126,6 +236,8 @@ export async function computeCodebaseHealth(repoPath, opts = {}) {
           : value === 0
             ? `all ${live.length} enumerated invariant gate(s) pass`
             : `failing: ${failedInvariants.join(", ")}`,
+      required: requiredIds.has("invariant_gate_failures"),
+      evidence_status: live.length === 0 ? "missing" : "complete",
     });
   }
 
@@ -133,18 +245,35 @@ export async function computeCodebaseHealth(repoPath, opts = {}) {
   for (const axis of rubric.axes) {
     const axisChecks = checks.filter((c) => c.axis === axis.key);
     const liveChecks = axisChecks.filter((c) => c.value !== null);
+    const requiredAxisChecks = axisChecks.filter((c) => c.required);
     axes[axis.key] = {
       band: axisBand(axis, rubric, axisChecks),
       passed: liveChecks.filter((c) => c.ok).length,
       total: liveChecks.length,
+      evidence_status: aggregateEvidence(
+        requiredAxisChecks.length > 0 ? requiredAxisChecks : axisChecks
+      ),
     };
   }
 
   const score = scorePct(axes, rubric);
   const status = statusFor(score, rubric);
+  const requiredChecks = checks.filter((check) => check.required);
+  const evidence_status = aggregateEvidence(requiredChecks);
+  const requiredFailure = requiredChecks.some(
+    (check) => check.evidence_status === "complete" && check.ok === false
+  );
+  const quality_gate = requiredFailure
+    ? "fail"
+    : evidence_status === "complete"
+      ? "pass"
+      : "unknown";
+  const automation_eligible =
+    opts.mode === "full" && quality_gate === "pass" && status !== "critical";
+  const findings = findingsFor(rubric, profile, checks);
   const skipped = checks.filter((c) => c.value === null).length;
   const summary =
-    `${status} — ${score === null ? "unscored" : `${score}%`}` +
+    `${status} — ${score === null ? "unscored" : `${score}%`} · evidence ${evidence_status}` +
     ` (${rubric.axes.filter((a) => axes[a.key].band !== null).length}/${rubric.axes.length} axes scored` +
     `${skipped ? `, ${skipped} check(s) skipped` : ""})` +
     (failedInvariants.length ? ` · failing invariants: ${failedInvariants.join(", ")}` : "");
@@ -152,11 +281,17 @@ export async function computeCodebaseHealth(repoPath, opts = {}) {
   return {
     rubric_id: rubric.id,
     rubric_version: rubric.version,
+    profile_id: profile.id,
+    profile_version: profile.version,
     mode: opts.mode ?? "full",
     checks,
     axes,
     score_pct: score,
     status,
+    evidence_status,
+    quality_gate,
+    automation_eligible,
+    findings,
     failed_invariant_ids: failedInvariants,
     summary,
     // Local-only coaching (never in the JSON v1 object): the metric moves that
@@ -171,20 +306,32 @@ export async function computeCodebaseHealth(repoPath, opts = {}) {
  */
 export function toHealthJson(result, repoPath) {
   return {
-    schema_version: 1,
+    schema_version: 2,
     rubric_version: result.rubric_version,
+    profile_id: result.profile_id,
+    profile_version: result.profile_version,
     head_sha: headSha(repoPath),
     measured_at: new Date().toISOString().slice(0, 10),
     score_pct: result.score_pct,
     status: result.status,
+    evidence_status: result.evidence_status,
+    quality_gate: result.quality_gate,
+    automation_eligible: result.automation_eligible,
     axes: Object.fromEntries(
       Object.entries(result.axes).map(([key, a]) => [
         key,
-        { band: a.band, passed: a.passed, total: a.total },
+        { band: a.band, passed: a.passed, total: a.total, evidence_status: a.evidence_status },
       ])
     ),
     failed_invariant_ids: result.failed_invariant_ids,
-    checks: result.checks.map((c) => ({ id: c.id, ok: c.ok, value: c.value })),
+    checks: result.checks.map((c) => ({
+      id: c.id,
+      ok: c.ok,
+      value: c.value,
+      required: c.required,
+      evidence_status: c.evidence_status,
+    })),
+    findings: result.findings,
   };
 }
 
@@ -201,7 +348,9 @@ export function renderCodebaseHealth(result, target, colors = {}) {
     const bandTxt = a.band === null ? "–" : `${a.band}/4`;
     lines.push(
       `  ${label.padEnd(22)} ${BAND_BAR(a.band)} ${bandTxt.padEnd(4)} ` +
-        (a.total ? `(${a.passed}/${a.total} checks ok)` : "(skipped — no inputs here)")
+        (a.total
+          ? `(${a.passed}/${a.total} checks ok; evidence ${a.evidence_status})`
+          : `(no inputs; evidence ${a.evidence_status})`)
     );
   }
   lines.push("");
@@ -212,7 +361,9 @@ export function renderCodebaseHealth(result, target, colors = {}) {
         : chk.ok
           ? id(colors.green, "✓")
           : id(colors.red, "✗");
-    lines.push(`  ${mark} ${chk.title} — ${chk.detail}`);
+    lines.push(
+      `  ${mark} ${chk.title} [${chk.evidence_status}${chk.required ? ", required" : ""}] — ${chk.detail}`
+    );
   }
   lines.push(`\n  Codebase health: ${result.summary}`);
   const blockers = result.next_moves ?? [];
