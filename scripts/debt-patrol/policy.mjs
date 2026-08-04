@@ -150,17 +150,18 @@ function observationReasons(target, observation) {
 }
 
 function decisionFor(config, target, context, observation) {
-  const reason_codes = [];
   const schedule_name = scheduleNameFor(config, context);
-  if (context.producer_enabled !== true) reason_codes.push("producer_opt_in_missing");
-  if (context.producer_unpaused !== true)
-    reason_codes.push("producer_pause_not_explicitly_disabled");
-  if (context.workflow_ref !== `refs/heads/${config.producer_default_branch}`)
-    reason_codes.push("producer_ref_not_default_branch");
-  if (!target.enabled) reason_codes.push("target_not_opted_in");
-  reason_codes.push(...scheduleReasons(target, context, schedule_name));
-  reason_codes.push(...selectionReasons(target, context));
-  reason_codes.push(...observationReasons(target, observation));
+  const reason_codes = [
+    ...(context.producer_enabled !== true ? ["producer_opt_in_missing"] : []),
+    ...(context.producer_unpaused !== true ? ["producer_pause_not_explicitly_disabled"] : []),
+    ...(context.workflow_ref !== `refs/heads/${config.producer_default_branch}`
+      ? ["producer_ref_not_default_branch"]
+      : []),
+    ...(!target.enabled ? ["target_not_opted_in"] : []),
+    ...scheduleReasons(target, context, schedule_name),
+    ...selectionReasons(target, context),
+    ...observationReasons(target, observation),
+  ];
 
   const provisional = context.event_name !== "schedule";
   const core = {
