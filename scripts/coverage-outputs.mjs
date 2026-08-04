@@ -48,6 +48,7 @@
 import { randomUUID } from "node:crypto";
 import {
   existsSync,
+  lstatSync,
   mkdirSync,
   readFileSync,
   readdirSync,
@@ -97,6 +98,41 @@ export const COVERAGE_OUTPUTS = [
 ];
 
 export const stagingDirectory = (root) => path.join(root, "coverage", STAGING_DIR);
+
+function lstatIfPresent(target) {
+  try {
+    return lstatSync(target);
+  } catch (error) {
+    if (error.code === "ENOENT") return null;
+    throw error;
+  }
+}
+
+/**
+ * Reject symlinks and non-regular nodes anywhere the merge helper or promoter will write/read.
+ * Lexically resolving to coverage/.staged is not enough: `.staged -> .` redirects the helper's
+ * writes straight to scanner-readable canonical names.
+ */
+export function assertSafeCoverageStaging(root) {
+  const coverageDir = path.join(root, "coverage");
+  const staged = stagingDirectory(root);
+  for (const [target, kind] of [
+    [coverageDir, "coverage directory"],
+    [staged, "staging directory"],
+  ]) {
+    const stats = lstatIfPresent(target);
+    if (stats && (stats.isSymbolicLink() || !stats.isDirectory())) {
+      throw new Error(`run-coverage: unsafe ${kind}: ${target} must be a real directory`);
+    }
+  }
+  for (const [stagedName] of COVERAGE_OUTPUTS) {
+    const target = path.join(staged, stagedName);
+    const stats = lstatIfPresent(target);
+    if (stats && (stats.isSymbolicLink() || !stats.isFile())) {
+      throw new Error(`run-coverage: unsafe staged output: ${target} must be a regular file`);
+    }
+  }
+}
 
 /**
  * Rotate a directory to a unique sibling in one namespace-changing operation.
@@ -176,9 +212,14 @@ export function promoteCoverageOutputs(root) {
   const staged = stagingDirectory(root);
   const promoted = [];
   try {
+    assertSafeCoverageStaging(root);
     for (const [stagedName, canonical] of COVERAGE_OUTPUTS) {
       const from = path.join(staged, stagedName);
-      if (!existsSync(from)) continue;
+      const stats = lstatIfPresent(from);
+      if (!stats) continue;
+      if (stats.isSymbolicLink() || !stats.isFile()) {
+        throw new Error(`${from} must be a regular file`);
+      }
       renameSync(from, path.join(dir, canonical));
       promoted.push(`coverage/${canonical}`);
     }

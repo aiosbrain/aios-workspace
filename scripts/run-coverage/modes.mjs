@@ -32,13 +32,26 @@ import {
   runClientCoverage,
   runClientCoverageIfPresent,
   runNodeSuiteUnderC8,
+  selectShardCoverageRoot,
   shardDirectory,
 } from "./runtime.mjs";
+
+function cleanupAfterPublication(root, cleanup) {
+  try {
+    cleanup(root);
+  } catch (error) {
+    // Publication is already complete and correct. Cleanup is deliberately non-load-bearing: a
+    // residue warning must not turn a successful run into a failed command after canonical paths
+    // have appeared.
+    console.error(`run-coverage: published coverage; deferred cleanup failed: ${error.message}`);
+  }
+}
 
 export async function runFull({
   root = ROOT,
   exec = execute,
   removeSnapshot = removeRotatedSnapshot,
+  cleanup = cleanupSuccessfulCoverageRun,
 } = {}) {
   // FIRST filesystem operation: one same-filesystem rename hides every old canonical path
   // together. Snapshot cleanup happens only after that namespace boundary and cannot expose a
@@ -134,7 +147,7 @@ export async function runFull({
     if (clientError) throw clientError;
 
     promoteCoverageOutputs(root);
-    cleanupSuccessfulCoverageRun(root);
+    cleanupAfterPublication(root, cleanup);
   } finally {
     rmSync(tempDirectory, { recursive: true, force: true });
   }
@@ -175,13 +188,13 @@ export async function runShard(
 
 export async function runMerge(
   total,
-  { root = ROOT, exec = execute, removeSnapshot = removeRotatedSnapshot } = {}
+  { root = ROOT, exec = execute, cleanup = cleanupSuccessfulCoverageRun } = {}
 ) {
   const paths = coveragePaths(root);
   // FIRST filesystem operation: rotate the whole tree. The immutable snapshot is the shard input;
   // every report, marker, staging file, and promoted output below belongs to a fresh coverage/.
   const coverageSnapshot = rotateCoverageDirectory(root);
-  const shardSource = coverageSnapshot ?? paths.dir;
+  const shardSource = selectShardCoverageRoot(root, coverageSnapshot);
   const shardDirs = Array.from({ length: total }, (_, i) =>
     shardDirectory(i + 1, root, shardSource)
   );
@@ -190,8 +203,8 @@ export async function runMerge(
   const tempDirectory = mkdtempSync(path.join(tmpdir(), "aios-c8-merge-"));
   try {
     for (const file of files) copyFileSync(file.source, path.join(tempDirectory, file.name));
-    // The snapshot is no longer load-bearing only after every accepted V8 file is in temp.
-    removeSnapshot(coverageSnapshot);
+    // Keep the rotated source until publication succeeds. The temp copy is disposable; the
+    // ignored snapshot is what makes a report/merge/promotion failure retryable.
 
     rmSync(path.join(paths.dir, "root"), { recursive: true, force: true });
     rmSync(path.join(root, "gui", "client", "coverage"), { recursive: true, force: true });
@@ -217,7 +230,7 @@ export async function runMerge(
     );
 
     const published = promoteCoverageOutputs(root);
-    cleanupSuccessfulCoverageRun(root);
+    cleanupAfterPublication(root, cleanup);
     console.log(`run-coverage: merged ${total} shard(s) → ${published.join(", ")}`);
   } finally {
     rmSync(tempDirectory, { recursive: true, force: true });

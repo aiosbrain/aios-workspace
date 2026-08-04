@@ -5,7 +5,7 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { STAGING_DIR } from "./coverage-outputs.mjs";
+import { STAGING_DIR, assertSafeCoverageStaging } from "./coverage-outputs.mjs";
 
 const ROOT = process.cwd();
 const ROOT_SUMMARY = path.join(ROOT, "coverage", "root", "coverage-summary.json");
@@ -87,6 +87,7 @@ const EMPTY_TOTAL = Object.freeze(
 
 function main(argv = []) {
   const outDir = outputDirectory(argv);
+  assertSafeCoverageStaging(ROOT);
   const OUTPUT_SUMMARY = path.join(outDir, "coverage-summary.json");
   const OUTPUT_LCOV = path.join(outDir, "lcov.info");
 
@@ -111,6 +112,7 @@ function main(argv = []) {
     total,
   };
   mkdirSync(outDir, { recursive: true });
+  assertSafeCoverageStaging(ROOT);
   writeFileSync(OUTPUT_SUMMARY, `${JSON.stringify(merged, null, 2)}\n`);
 
   writeFileSync(OUTPUT_LCOV, readFileSync(ROOT_LCOV, "utf8"));

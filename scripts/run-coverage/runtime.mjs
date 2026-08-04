@@ -7,9 +7,10 @@
  * this holds what both of those need. No behaviour changed in the move.
  */
 import { spawn } from "node:child_process";
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, lstatSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { COVERAGE_OUTPUTS, COVERAGE_SNAPSHOT_PREFIX } from "../coverage-outputs.mjs";
 
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 export const C8 = path.join(ROOT, "node_modules", "c8", "bin", "c8.js");
@@ -178,6 +179,61 @@ export async function mergeThenPropagate(runSuite, merge, afterMerge = () => {})
   if (suiteError) throw suiteError;
 }
 
+function realDirectoryEntries(directory) {
+  try {
+    const stats = lstatSync(directory);
+    if (stats.isSymbolicLink() || !stats.isDirectory()) return null;
+    return readdirSync(directory);
+  } catch (error) {
+    if (error.code === "ENOENT") return [];
+    throw error;
+  }
+}
+
+/**
+ * Pick the authoritative shard tree for a merge retry.
+ *
+ * A failed merge keeps its rotated shard snapshot. On retry, the newly rotated coverage tree may
+ * contain only partial reports/staging, so fall back to the newest older snapshot that still has
+ * shard directories. A current tree containing any shard entry is always authoritative (including
+ * failed/incomplete shards), and a tree containing canonical outputs proves an earlier merge did
+ * publish, so neither case may silently fall back to older data.
+ */
+export function selectShardCoverageRoot(root, currentSnapshot) {
+  const hasShardEntry = (entries) =>
+    entries?.some((entry) => {
+      const match = /^shard-(\d+)$/.exec(entry);
+      return match !== null && Number.parseInt(match[1], 10) >= 1;
+    });
+  const canonicalNames = new Set(COVERAGE_OUTPUTS.map(([, canonical]) => canonical));
+  if (currentSnapshot) {
+    const currentEntries = realDirectoryEntries(currentSnapshot);
+    if (
+      currentEntries === null ||
+      hasShardEntry(currentEntries) ||
+      currentEntries.some((entry) => canonicalNames.has(entry))
+    ) {
+      return currentSnapshot;
+    }
+  }
+
+  const candidates = readdirSync(root, { withFileTypes: true })
+    .filter(
+      (entry) =>
+        entry.isDirectory() &&
+        entry.name.startsWith(COVERAGE_SNAPSHOT_PREFIX) &&
+        path.join(root, entry.name) !== currentSnapshot
+    )
+    .map((entry) => {
+      const candidate = path.join(root, entry.name);
+      return { candidate, mtime: statSync(candidate).mtimeMs };
+    })
+    .sort((a, b) => b.mtime - a.mtime)
+    .find(({ candidate }) => hasShardEntry(realDirectoryEntries(candidate)));
+
+  return candidates?.candidate ?? currentSnapshot ?? path.join(root, "coverage");
+}
+
 export function collectShardFiles(total, root = ROOT, coverageRoot = path.join(root, "coverage")) {
   // The shard total is written in three places (ci.yml coverage-shard matrix,
   // `--shard k/N`, `--merge N`). If they drift, extra shard-<k> data beyond the
@@ -200,7 +256,11 @@ export function collectShardFiles(total, root = ROOT, coverageRoot = path.join(r
   const files = [];
   for (let index = 1; index <= total; index += 1) {
     const dir = shardDirectory(index, root, coverageRoot);
-    const entries = existsSync(dir) ? readdirSync(dir).filter((f) => f.endsWith(".json")) : [];
+    const directoryEntries = realDirectoryEntries(dir);
+    if (directoryEntries === null) {
+      throw new Error(`run-coverage: unsafe shard directory: ${path.relative(root, dir)}`);
+    }
+    const entries = directoryEntries.filter((f) => f.endsWith(".json"));
     if (!entries.length) {
       missing.push(path.relative(root, dir));
       continue;

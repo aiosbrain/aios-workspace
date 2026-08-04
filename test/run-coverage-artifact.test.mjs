@@ -243,7 +243,11 @@ test("MERGE reads shards from the rotated snapshot and writes only to fresh cove
       const tempDir = String(args[args.indexOf("--temp-directory") + 1]);
       copiedShardInput = readdirSync(tempDir).some((name) => name.startsWith("coverage-s1-"));
       assert.equal(existsSync(path.join(root, "coverage", "shard-1")), false);
-      assert.equal(snapshots(root).length, 0, "snapshot cleanup follows the completed copy");
+      assert.equal(
+        snapshots(root).length,
+        1,
+        "the retryable snapshot must survive until publication succeeds"
+      );
     }
     return rec.exec(command, args, options);
   };
