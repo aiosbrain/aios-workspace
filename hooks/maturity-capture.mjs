@@ -22,8 +22,14 @@ const STDIN_MAX = 1_000_000;
 // silently dropped exactly the largest, highest-signal orchestration sessions (measured: heavy days
 // produce 11–13 MB transcripts). Parsing stays well under the hook timeout at this size; a transcript
 // that STILL exceeds the cap is skipped, same as before — the cap only sets where that line falls.
-const TRANSCRIPT_MAX_MB = Number(process.env.AIOS_MATURITY_TRANSCRIPT_MAX_MB) || 50;
-const TRANSCRIPT_MAX_BYTES = TRANSCRIPT_MAX_MB * 1024 * 1024;
+const configuredTranscriptMaxMb = Number(process.env.AIOS_MATURITY_TRANSCRIPT_MAX_MB);
+const configuredTranscriptMaxBytes = configuredTranscriptMaxMb * 1024 * 1024;
+const TRANSCRIPT_MAX_BYTES =
+  Number.isFinite(configuredTranscriptMaxMb) &&
+  configuredTranscriptMaxMb > 0 &&
+  Number.isFinite(configuredTranscriptMaxBytes)
+    ? configuredTranscriptMaxBytes
+    : 50 * 1024 * 1024;
 
 // Slugify a cwd basename into a stable project id (lowercase, non-alphanumerics → "-").
 function projectSlug(cwd) {
