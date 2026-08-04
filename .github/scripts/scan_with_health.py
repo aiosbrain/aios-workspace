@@ -29,8 +29,8 @@ from aios_ingest.analyzers import analyze_repo
 from aios_ingest.brain_client import BrainClient
 from aios_ingest.config import BrainSettings
 
-# Mirrors docs/contract/codebase-payload-1.15.schema.json $defs.codebaseHealth.required.
-CONTRACT_FIELDS = {
+# Mirrors the closed v1 and v2 codebase-health contracts in docs/contract.
+V1_CONTRACT_FIELDS = {
     "schema_version",
     "rubric_version",
     "head_sha",
@@ -39,6 +39,19 @@ CONTRACT_FIELDS = {
     "dimensions",
     "failed_invariant_ids",
     "measured_at",
+}
+V2_CONTRACT_FIELDS = V1_CONTRACT_FIELDS | {
+    "profile_id",
+    "profile_version",
+    "evidence_status",
+    "quality_gate",
+    "automation_eligible",
+    "findings",
+}
+CONTRACT_FIELDS_BY_VERSION = {
+    "1": V1_CONTRACT_FIELDS,
+    "1.0": V1_CONTRACT_FIELDS,
+    "2": V2_CONTRACT_FIELDS,
 }
 
 
@@ -58,11 +71,16 @@ def load_health(path: str) -> dict | None:
     if not isinstance(health, dict):
         _skip("health JSON is not an object")
         return None
-    missing = CONTRACT_FIELDS - set(health)
-    extra = set(health) - CONTRACT_FIELDS
+    schema_version = str(health.get("schema_version", ""))
+    expected_fields = CONTRACT_FIELDS_BY_VERSION.get(schema_version)
+    if expected_fields is None:
+        _skip(f"health JSON has unsupported schema_version {schema_version!r}")
+        return None
+    missing = expected_fields - set(health)
+    extra = set(health) - expected_fields
     if missing or extra:
         _skip(
-            f"health JSON does not match the 1.15 contract "
+            f"health JSON does not match the closed v{schema_version} contract "
             f"(missing={sorted(missing)}, extra={sorted(extra)})"
         )
         return None

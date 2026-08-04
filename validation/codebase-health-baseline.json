@@ -1,44 +1,57 @@
 {
   "_comment": "Committed codebase-health baseline (AIO-605). Regenerate deliberately with `node scripts/check-codebase-health.mjs --write-baseline` after a structural change lands — never by hand. Compared ADVISORY-only by the CI step (always exit 0 in v0.9.0).",
-  "generated_at": "2026-07-30",
+  "generated_at": "2026-08-04",
+  "schema_version": 2,
   "rubric_version": "1.0.0",
+  "profile_id": "aios.workspace",
+  "profile_version": "1.0.0",
   "score_pct": 75,
   "status": "healthy",
+  "evidence_status": "partial",
+  "quality_gate": "unknown",
+  "automation_eligible": false,
   "axes": {
     "modularity": {
       "band": 2,
-      "passed": 1,
-      "total": 4
+      "passed": 2,
+      "total": 4,
+      "evidence_status": "complete"
     },
     "boundaries": {
       "band": 2,
       "passed": 2,
-      "total": 3
+      "total": 3,
+      "evidence_status": "complete"
     },
     "test_rigor": {
       "band": null,
       "passed": 0,
-      "total": 0
+      "total": 0,
+      "evidence_status": "missing"
     },
     "lint_type": {
       "band": 2,
       "passed": 2,
-      "total": 3
+      "total": 3,
+      "evidence_status": "complete"
     },
     "docs_parity": {
       "band": 4,
       "passed": 1,
-      "total": 1
+      "total": 1,
+      "evidence_status": "complete"
     },
     "invariants": {
       "band": 4,
       "passed": 2,
-      "total": 2
+      "total": 2,
+      "evidence_status": "complete"
     },
     "contributor_friction": {
       "band": 4,
-      "passed": 1,
-      "total": 2
+      "passed": 2,
+      "total": 2,
+      "evidence_status": "complete"
     }
   },
   "failed_invariant_ids": [],
@@ -46,92 +59,175 @@
     {
       "id": "file_size_gate",
       "ok": true,
-      "value": true
+      "value": true,
+      "required": true,
+      "evidence_status": "complete"
     },
     {
       "id": "size_grandfather_count",
       "ok": false,
-      "value": 63
+      "value": 57,
+      "required": false,
+      "evidence_status": "complete"
     },
     {
       "id": "size_grandfather_max",
       "ok": false,
-      "value": 2688
+      "value": 2688,
+      "required": false,
+      "evidence_status": "complete"
     },
     {
       "id": "modularity_breaches",
-      "ok": false,
-      "value": 3
+      "ok": true,
+      "value": 0,
+      "required": false,
+      "evidence_status": "complete"
     },
     {
       "id": "boundary_gate",
       "ok": true,
-      "value": true
+      "value": true,
+      "required": true,
+      "evidence_status": "complete"
     },
     {
       "id": "boundary_grandfather_count",
       "ok": false,
-      "value": 51
+      "value": 33,
+      "required": false,
+      "evidence_status": "complete"
     },
     {
       "id": "domain_isolation_gate",
       "ok": true,
-      "value": true
+      "value": true,
+      "required": true,
+      "evidence_status": "complete"
     },
     {
       "id": "coverage_lines_pct",
       "ok": true,
-      "value": null
+      "value": null,
+      "required": true,
+      "evidence_status": "missing"
     },
     {
       "id": "coverage_floor_headroom",
       "ok": true,
-      "value": null
+      "value": null,
+      "required": false,
+      "evidence_status": "missing"
     },
     {
       "id": "mutation_score_pct",
       "ok": true,
-      "value": null
+      "value": null,
+      "required": false,
+      "evidence_status": "missing"
     },
     {
       "id": "lint_gate",
       "ok": true,
-      "value": true
+      "value": true,
+      "required": true,
+      "evidence_status": "complete"
     },
     {
       "id": "eslint_warning_count",
       "ok": false,
-      "value": 288
+      "value": 272,
+      "required": false,
+      "evidence_status": "complete"
     },
     {
       "id": "ts_build_gate",
       "ok": true,
-      "value": true
+      "value": true,
+      "required": true,
+      "evidence_status": "complete"
     },
     {
       "id": "docs_drift_gate",
       "ok": true,
-      "value": true
+      "value": true,
+      "required": true,
+      "evidence_status": "complete"
     },
     {
       "id": "invariant_registry_missing_enforcers",
       "ok": true,
-      "value": 0
+      "value": 0,
+      "required": true,
+      "evidence_status": "complete"
     },
     {
       "id": "ci_wall_clock_minutes",
       "ok": true,
-      "value": 3.1
+      "value": 3.3,
+      "required": false,
+      "evidence_status": "complete"
     },
     {
       "id": "ratchet_debt_total",
-      "ok": false,
-      "value": 114
+      "ok": true,
+      "value": 90,
+      "required": false,
+      "evidence_status": "complete"
     },
     {
       "id": "invariant_gate_failures",
       "ok": true,
-      "value": 0
+      "value": 0,
+      "required": false,
+      "evidence_status": "complete"
+    }
+  ],
+  "findings": [
+    {
+      "fingerprint": "e2c659da76a9830e713b819c6bbdd013318450fe23963932f1c47b920369bf90",
+      "check_id": "size_grandfather_count",
+      "axis": "modularity",
+      "kind": "quality_issue",
+      "severity": "medium",
+      "evidence_status": "complete",
+      "remediation_tier": 0
+    },
+    {
+      "fingerprint": "2e492ad53ec94e06427ebe577e1c17d91ce5aeb75ac6bd7414eae126346ded3e",
+      "check_id": "size_grandfather_max",
+      "axis": "modularity",
+      "kind": "quality_issue",
+      "severity": "medium",
+      "evidence_status": "complete",
+      "remediation_tier": 0
+    },
+    {
+      "fingerprint": "af418d525c49fb461f0afe57e1a68e142480cef87bd3b22fa153079e8d81d58c",
+      "check_id": "boundary_grandfather_count",
+      "axis": "boundaries",
+      "kind": "quality_issue",
+      "severity": "medium",
+      "evidence_status": "complete",
+      "remediation_tier": 0
+    },
+    {
+      "fingerprint": "51c09ab9bd5de0adf574b5d6d239fef806665a5e6e4e01f53b2b190d1e5e5234",
+      "check_id": "coverage_lines_pct",
+      "axis": "test_rigor",
+      "kind": "evidence_gap",
+      "severity": "high",
+      "evidence_status": "missing",
+      "remediation_tier": 0
+    },
+    {
+      "fingerprint": "4a94ea76312021efc8f2a2883503539c78ada8a94eb978f73d19872559064406",
+      "check_id": "eslint_warning_count",
+      "axis": "lint_type",
+      "kind": "quality_issue",
+      "severity": "medium",
+      "evidence_status": "complete",
+      "remediation_tier": 0
     }
   ]
 }

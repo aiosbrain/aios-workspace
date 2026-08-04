@@ -170,6 +170,36 @@ object on `POST /api/v1/codebases`** (AIO-608) — additive within v1, scalars o
 full-raw-metrics-block rule. This spec defers entirely to `docs/brain-api.md` for its fields and
 adds only the producer-side derivation (from the JSON v1 object) and the default-OFF wiring.
 
+### Phase 0 maintenance-loop amendment (AIO-610, 2026-08-04)
+
+JSON v1 remains a historical, accepted wire shape. JSON **v2** is now the producer shape used
+for maintenance admission. It closes an epistemic hole in v1: a high observed score could coexist
+with missing lint, coverage, mutation, or other evidence and appear safe to an automated consumer.
+
+V2 separates three decisions that must never be conflated:
+
+- `status` is the health reading derived from evidence that actually ran;
+- `evidence_status` is `complete | partial | missing | stale | error` over the repository
+  profile's required checks;
+- `quality_gate` is `pass | fail | unknown`, and remains `unknown` unless required evidence is
+  complete. `automation_eligible` can be true only for a full-mode run with a passing gate and a
+  non-critical health reading.
+
+Each repository declares its current capability boundary in
+`validation/codebase-health.profile.json`. This prevents a Workspace-shaped rubric from treating
+missing Team Brain or shell/Python rails as healthy, while keeping the rubric and check ids shared.
+Profiles are versioned data and name required checks plus evidence-staleness limits.
+
+The redacted v2 payload adds `profile_id`, `profile_version`, epistemic state on every check and
+dimension, and a normalized `findings` array. Findings contain only a stable SHA-256 fingerprint,
+check/axis ids, kind, severity, evidence state, and remediation tier. They contain no paths,
+source, explanatory text, contributor identity, or secrets. The canonical machine schema is
+[`contract/codebase-health-v2.schema.json`](../../contract/codebase-health-v2.schema.json).
+
+V2 is the Phase 0 Finding Ledger boundary, not an autonomous repair implementation. Every
+finding ships with `remediation_tier: 0` (report-only). Scheduling, prioritization, sandboxed
+writers, PR generation, and auto-merge remain later phases.
+
 ## Scope
 
 **In:** coverage-report producer (folded AIO-531 prerequisite), rubric JSON, composed scorer +

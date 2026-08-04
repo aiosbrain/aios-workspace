@@ -12,6 +12,7 @@ import { spawnSync } from "node:child_process";
 // wrong one. Exercised by extracting the real function from the installer and sourcing it.
 
 const SCRIPT = fileURLToPath(new URL("../scripts/install-aios-shell.sh", import.meta.url));
+const SCAFFOLD_SCRIPT = fileURLToPath(new URL("../scripts/scaffold-project.sh", import.meta.url));
 
 /** The `aios()` function exactly as install-aios-shell.sh writes it into ~/.zshrc. */
 function aiosFunctionSource() {
@@ -95,4 +96,49 @@ test("falls back to the ~/Projects default when nothing is configured", () => {
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("installer persists the selected personal workspace for cross-repo agent commands", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "aios-shell-workspace-"));
+  const workspace = path.join(root, "Chetan Workspace & agent");
+  const rc = path.join(root, ".zshrc");
+  const zshenv = path.join(root, ".zshenv");
+  try {
+    mkdirSync(workspace, { recursive: true });
+    writeFileSync(path.join(workspace, "aios.yaml"), "workspace: chetan\n");
+    const install = spawnSync("bash", [SCRIPT, "--agent-workspace", workspace], {
+      encoding: "utf8",
+      env: { ...process.env, AIOS_SHELL_RC: rc, AIOS_AGENT_ENV_FILE: zshenv },
+    });
+    assert.equal(install.status, 0, install.stderr);
+    const zsh = process.platform === "darwin" ? "zsh" : "bash";
+    const source = spawnSync(
+      zsh,
+      zsh === "zsh"
+        ? ["-lc", 'print -r -- "$AIOS_AGENT_WORKSPACE"']
+        : ["-c", 'source "$AIOS_AGENT_ENV_FILE"; printf "%s\\n" "$AIOS_AGENT_WORKSPACE"'],
+      {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          AIOS_AGENT_WORKSPACE: "",
+          AIOS_AGENT_ENV_FILE: zshenv,
+          ZDOTDIR: root,
+        },
+      }
+    );
+    assert.equal(source.status, 0, source.stderr);
+    assert.equal(source.stdout.trim(), workspace);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("scaffold passes its resolved workspace directory to the shell installer", () => {
+  const scaffold = readFileSync(SCAFFOLD_SCRIPT, "utf8");
+  assert.match(
+    scaffold,
+    /cd "\$OUTPUT"[\s\S]*?install-aios-shell\.sh" --agent-workspace "\$PWD"/,
+    "relative --output paths must not be re-resolved beneath the newly created workspace"
+  );
 });

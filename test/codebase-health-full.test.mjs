@@ -157,7 +157,150 @@ test("full mode: every expensive evaluator reads its stubbed surface", async () 
   }
 });
 
-test("OGR13 with empty/unparseable stdout is skipped — only then unavailable", async () => {
+test("repository profile makes automation admission fail closed and explicit", async () => {
+  const repo = equippedRepo();
+  try {
+    write(
+      repo,
+      "validation/codebase-health.profile.json",
+      JSON.stringify({
+        id: "fixture.service",
+        version: "1.0.0",
+        required_checks: [
+          "file_size_gate",
+          "boundary_gate",
+          "domain_isolation_gate",
+          "coverage_lines_pct",
+          "lint_gate",
+          "ts_build_gate",
+          "docs_drift_gate",
+        ],
+        stale_after_days: {},
+      })
+    );
+    const full = await withStubPath(repo, () => computeCodebaseHealth(repo, { mode: "full" }));
+    assert.equal(full.evidence_status, "complete");
+    assert.equal(full.quality_gate, "pass");
+    assert.equal(full.automation_eligible, true);
+
+    const defaultFull = await withStubPath(repo, () => computeCodebaseHealth(repo));
+    assert.equal(defaultFull.mode, "full");
+    assert.equal(defaultFull.automation_eligible, true);
+
+    const cheap = await computeCodebaseHealth(repo, { mode: "cheap" });
+    assert.equal(cheap.evidence_status, "partial");
+    assert.equal(cheap.quality_gate, "unknown");
+    assert.equal(cheap.automation_eligible, false);
+    assert.ok(cheap.findings.some((finding) => finding.kind === "evidence_gap"));
+    assert.ok(cheap.findings.every((finding) => /^[0-9a-f]{64}$/.test(finding.fingerprint)));
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("a malformed committed profile fails closed instead of silently using defaults", async () => {
+  const repo = equippedRepo();
+  try {
+    write(repo, "validation/codebase-health.profile.json", "{not-json\n");
+    await assert.rejects(() => computeCodebaseHealth(repo, { mode: "full" }), SyntaxError);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("an empty required-check set fails closed", async () => {
+  const repo = equippedRepo();
+  try {
+    write(
+      repo,
+      "validation/codebase-health.profile.json",
+      JSON.stringify({
+        id: "fixture.service",
+        version: "1.0.0",
+        required_checks: [],
+        stale_after_days: {},
+      })
+    );
+    await assert.rejects(
+      () => computeCodebaseHealth(repo, { mode: "full" }),
+      /missing id\/version\/required_checks/
+    );
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("stale required evidence is observable and blocks automation", async () => {
+  const repo = equippedRepo();
+  try {
+    write(
+      repo,
+      "coverage/coverage-report.json",
+      JSON.stringify({ lines_pct: 84, measured_at: "2020-01-01" })
+    );
+    write(
+      repo,
+      "validation/codebase-health.profile.json",
+      JSON.stringify({
+        id: "fixture.service",
+        version: "1.0.0",
+        required_checks: ["coverage_lines_pct"],
+        stale_after_days: { coverage_lines_pct: 1 },
+      })
+    );
+    const result = await withStubPath(repo, () => computeCodebaseHealth(repo));
+    assert.equal(result.evidence_status, "stale");
+    assert.equal(result.quality_gate, "unknown");
+    assert.equal(result.automation_eligible, false);
+    assert.equal(
+      result.findings.find((finding) => finding.check_id === "coverage_lines_pct")?.evidence_status,
+      "stale"
+    );
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("invalid profile staleness policy fails closed", async () => {
+  const repo = equippedRepo();
+  try {
+    write(
+      repo,
+      "validation/codebase-health.profile.json",
+      JSON.stringify({
+        id: "fixture.service",
+        version: "1.0.0",
+        required_checks: ["coverage_lines_pct"],
+        stale_after_days: { coverage_lines_pct: "seven" },
+      })
+    );
+    await assert.rejects(() => computeCodebaseHealth(repo, { mode: "full" }), /invalid staleness/);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("full mode composes a repository typecheck script when build:loop is absent", async () => {
+  const repo = equippedRepo();
+  try {
+    write(
+      repo,
+      "package.json",
+      JSON.stringify({
+        name: "fixture",
+        scripts: { lint: "eslint .", typecheck: 'node -e "process.exit(0)"' },
+      })
+    );
+    const result = await withStubPath(repo, () => computeCodebaseHealth(repo, { mode: "full" }));
+    const check = result.checks.find((candidate) => candidate.id === "ts_build_gate");
+    assert.equal(check.ok, true);
+    assert.match(check.detail, /npm run typecheck exit 0/);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("OGR13 with empty/unparseable stdout is failed evidence", async () => {
   const repo = equippedRepo();
   try {
     write(repo, "validation/check-modularity.mjs", 'console.error("boom");\nprocess.exit(1);\n');
@@ -165,6 +308,7 @@ test("OGR13 with empty/unparseable stdout is skipped — only then unavailable",
     const check = result.checks.find((c) => c.id === "modularity_breaches");
     assert.equal(check.value, null);
     assert.equal(check.ok, true);
+    assert.equal(check.evidence_status, "error");
     assert.match(check.detail, /unavailable/);
   } finally {
     rmSync(repo, { recursive: true, force: true });
@@ -255,10 +399,10 @@ test("analyze renderText shows the codebase-health card + tip branches", async (
     assert.match(codebaseHealthTip("degraded"), /band moves/);
     assert.equal(codebaseHealthTip("healthy"), "");
 
-    // JSON v1 stays redacted for the equipped repo too.
+    // JSON v2 stays redacted for the equipped repo too.
     const json = toHealthJson(cbh, repo);
     for (const chk of json.checks) {
-      assert.deepEqual(Object.keys(chk), ["id", "ok", "value"]);
+      assert.deepEqual(Object.keys(chk), ["id", "ok", "value", "required", "evidence_status"]);
     }
     assert.equal(codebaseHealthCard(cbh).metrics.failed_invariants, 0);
   } finally {

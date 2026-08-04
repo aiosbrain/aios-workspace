@@ -14,6 +14,7 @@ jobs:
   work-key:
     name: PR references a brain task
     runs-on: ubuntu-latest
+    timeout-minutes: 10 # observed p100 0.1 min
     steps:
       - name: Check for an AIOS work-key
         run: |

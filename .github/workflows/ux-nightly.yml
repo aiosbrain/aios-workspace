@@ -19,6 +19,7 @@ jobs:
   ux:
     name: agentic UX harness (live, secret-gated)
     runs-on: ubuntu-latest
+    timeout-minutes: 30 # observed p100 8.7 min (live LLM harness)
     steps:
       - uses: actions/checkout@v7
 

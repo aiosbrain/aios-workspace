@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 
@@ -16,6 +18,9 @@ const fetchScriptPath = fileURLToPath(
   new URL("../.github/scripts/fetch-brain-scanner.sh", import.meta.url)
 );
 const fetchScript = readFileSync(fetchScriptPath, "utf8");
+const scanWithHealthPath = fileURLToPath(
+  new URL("../.github/scripts/scan_with_health.py", import.meta.url)
+);
 
 const CHECKOUT_SHA = "3d3c42e5aac5ba805825da76410c181273ba90b1";
 const SETUP_NODE_SHA = "820762786026740c76f36085b0efc47a31fe5020";
@@ -200,6 +205,71 @@ test("the repository-root coverage fallback is removed before every scanner bran
       sanitationIndex < invocation.index,
       `sanitation must precede scanner invocation: ${invocation[0].trim()}`
     );
+  }
+});
+
+test("health transport accepts closed v1/v1.0/v2 shapes and rejects extra fields", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "scan-with-health-"));
+  const probe = `
+import importlib.util, json, sys, types
+
+package = types.ModuleType("aios_ingest")
+analyzers = types.ModuleType("aios_ingest.analyzers")
+analyzers.analyze_repo = lambda *args, **kwargs: None
+client = types.ModuleType("aios_ingest.brain_client")
+client.BrainClient = object
+config = types.ModuleType("aios_ingest.config")
+config.BrainSettings = object
+sys.modules.update({
+    "aios_ingest": package,
+    "aios_ingest.analyzers": analyzers,
+    "aios_ingest.brain_client": client,
+    "aios_ingest.config": config,
+})
+spec = importlib.util.spec_from_file_location("scan_with_health", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+print(json.dumps(module.load_health(sys.argv[2])))
+`;
+  const base = {
+    schema_version: "1",
+    rubric_version: "1.1.0",
+    head_sha: "abc1234",
+    score_pct: 75,
+    status: "warn",
+    dimensions: { tests: { passed: 1, total: 2 } },
+    failed_invariant_ids: [],
+    measured_at: "2026-08-04T00:00:00Z",
+  };
+  const v2 = {
+    ...base,
+    schema_version: "2",
+    profile_id: "aios.workspace",
+    profile_version: "1.0.0",
+    evidence_status: "partial",
+    quality_gate: "unknown",
+    automation_eligible: false,
+    findings: [],
+  };
+  const load = (name, health) => {
+    const fixture = path.join(dir, `${name}.json`);
+    writeFileSync(fixture, `${JSON.stringify(health)}\n`);
+    const result = spawnSync("python3", ["-c", probe, scanWithHealthPath, fixture], {
+      encoding: "utf8",
+    });
+    assert.equal(result.status, 0, result.stderr);
+    return JSON.parse(result.stdout);
+  };
+  try {
+    assert.deepEqual(load("v1", base), base);
+    assert.deepEqual(load("v1.0", { ...base, schema_version: "1.0" }), {
+      ...base,
+      schema_version: "1.0",
+    });
+    assert.deepEqual(load("v2", v2), v2);
+    assert.equal(load("v2-extra", { ...v2, path: "secret/file" }), null);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
   }
 });
 

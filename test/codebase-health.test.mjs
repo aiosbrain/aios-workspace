@@ -206,6 +206,12 @@ test("a failing enumerated gate caps its axis and lands in failed_invariant_ids"
     assert.equal(gate.ok, false);
     assert.deepEqual(result.failed_invariant_ids, ["boundary_gate"]);
     assert.equal(findCheck(result, "invariant_gate_failures").value, 1);
+    assert.equal(
+      result.quality_gate,
+      "fail",
+      "a known required failure wins over missing evidence"
+    );
+    assert.equal(result.automation_eligible, false);
     // gateFailCap (rubric data) caps the boundaries band despite a healthy metric
     const rubric = loadHealthRubric();
     assert.equal(result.axes.boundaries.band, rubric.gateFailCap);
@@ -216,7 +222,7 @@ test("a failing enumerated gate caps its axis and lands in failed_invariant_ids"
 
 // ── JSON v1 redaction invariant ──────────────────────────────────────────────
 
-test("toHealthJson: exact v1 field set, scalars only, no paths anywhere", async () => {
+test("toHealthJson: exact v2 field set, redacted metadata only, no paths anywhere", async () => {
   const repo = syntheticRepo();
   try {
     const result = await computeCodebaseHealth(repo, { mode: "cheap" });
@@ -224,21 +230,31 @@ test("toHealthJson: exact v1 field set, scalars only, no paths anywhere", async 
     assert.deepEqual(Object.keys(json), [
       "schema_version",
       "rubric_version",
+      "profile_id",
+      "profile_version",
       "head_sha",
       "measured_at",
       "score_pct",
       "status",
+      "evidence_status",
+      "quality_gate",
+      "automation_eligible",
       "axes",
       "failed_invariant_ids",
       "checks",
+      "findings",
     ]);
-    assert.equal(json.schema_version, 1);
+    assert.equal(json.schema_version, 2);
     assert.deepEqual(Object.keys(json.axes), AXIS_KEYS);
     for (const axis of Object.values(json.axes)) {
-      assert.deepEqual(Object.keys(axis), ["band", "passed", "total"]);
+      assert.deepEqual(Object.keys(axis), ["band", "passed", "total", "evidence_status"]);
     }
     for (const chk of json.checks) {
-      assert.deepEqual(Object.keys(chk), ["id", "ok", "value"], "checks carry id/ok/value ONLY");
+      assert.deepEqual(
+        Object.keys(chk),
+        ["id", "ok", "value", "required", "evidence_status"],
+        "checks carry only redacted scalar admission metadata"
+      );
       assert.ok(
         chk.value === null || ["number", "boolean"].includes(typeof chk.value),
         `${chk.id} value must be a scalar`
@@ -349,7 +365,7 @@ test("toJson: codebase_health card present only when a scoring succeeded; placem
 
 // ── CLI wiring (registry descriptor, zero lines in aios.mjs) ─────────────────
 
-test("aios codebase-health --json emits the v1 object for an explicit path", () => {
+test("aios codebase-health --json emits the v2 object for an explicit path", () => {
   const repo = syntheticRepo();
   try {
     const r = spawnSync(process.execPath, [AIOS, "codebase-health", repo, "--json"], {
@@ -359,7 +375,9 @@ test("aios codebase-health --json emits the v1 object for an explicit path", () 
     });
     assert.equal(r.status, 0, r.stderr);
     const json = JSON.parse(r.stdout);
-    assert.equal(json.schema_version, 1);
+    assert.equal(json.schema_version, 2);
+    assert.equal(json.quality_gate, "unknown");
+    assert.equal(json.automation_eligible, false);
     assert.equal(typeof json.score_pct, "number");
     assert.deepEqual(Object.keys(json.axes), AXIS_KEYS);
   } finally {

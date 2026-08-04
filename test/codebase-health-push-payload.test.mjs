@@ -1,5 +1,5 @@
 // AIO-608 — mapper guard for scripts/codebase-health/push-payload.mjs: the pure
-// CLI-JSON-v1 → Brain API 1.15 `metrics.codebase_health` mapper the scan-on-merge
+// CLI-JSON-v1/v2 → Brain API `metrics.codebase_health` mapper the scan-on-merge
 // workflow uses on its opt-in path (AIOS_PUSH_CODEBASE_HEALTH=1).
 //
 // Sibling of test/codebase-payload-contract.test.mjs and reuses its oracle: the vendored
@@ -42,6 +42,9 @@ const fullCliRun = JSON.parse(
 const ajv = new Ajv2020({ allErrors: true, strict: true });
 const validatePayload = ajv.compile(schema);
 const validateHealth = ajv.compile(schema.$defs.codebaseHealth);
+const validateHealthV2 = ajv.compile(
+  JSON.parse(readFileSync(path.join(ROOT, "docs/contract/codebase-health-v2.schema.json"), "utf8"))
+);
 
 // A full valid metrics payload WITHOUT health, to embed mapper output into (never sparse).
 const carrier = contractFixtures.valid.find((f) => !f.payload.metrics.codebase_health).payload;
@@ -80,6 +83,34 @@ function syntheticCli() {
   };
 }
 
+function syntheticCliV2() {
+  return {
+    ...syntheticCli(),
+    schema_version: 2,
+    profile_id: "aios.workspace",
+    profile_version: "1.0.0",
+    evidence_status: "partial",
+    quality_gate: "unknown",
+    automation_eligible: false,
+    axes: {
+      modularity: { band: 2, passed: 1, total: 4, evidence_status: "complete" },
+      test_rigor: { band: null, passed: 0, total: 0, evidence_status: "missing" },
+      invariants: { band: 4, passed: 2, total: 2, evidence_status: "complete" },
+    },
+    findings: [
+      {
+        fingerprint: "a".repeat(64),
+        check_id: "coverage_lines_pct",
+        axis: "test_rigor",
+        kind: "evidence_gap",
+        severity: "high",
+        evidence_status: "missing",
+        remediation_tier: 0,
+      },
+    ],
+  };
+}
+
 test("full CLI-shape fixture maps to a contract-valid codebase_health object", () => {
   const health = toContractCodebaseHealth(fullCliRun);
   assertContractValid(health, "cli-run fixture");
@@ -112,6 +143,41 @@ test("synthetic run maps field-for-field to the contract shape", () => {
     failed_invariant_ids: ["file_size_gate", "OGR04.tier-coverage"],
     measured_at: "2026-07-30T00:00:00Z", // bare date widened to midnight UTC
   });
+});
+
+test("historical string schema version 1.0 remains backward compatible", () => {
+  const cli = syntheticCli();
+  cli.schema_version = "1.0";
+  const health = toContractCodebaseHealth(cli);
+  assertContractValid(health, "historical v1.0 fixture");
+  assert.equal(health.schema_version, "1.0");
+});
+
+test("v2 preserves epistemic state, capability profile, and normalized findings", () => {
+  const health = toContractCodebaseHealth(syntheticCliV2());
+  assert.equal(validateHealthV2(health), true, ajv.errorsText(validateHealthV2.errors));
+  assert.equal(health.schema_version, "2");
+  assert.equal(health.profile_id, "aios.workspace");
+  assert.equal(health.evidence_status, "partial");
+  assert.equal(health.quality_gate, "unknown");
+  assert.equal(health.automation_eligible, false);
+  assert.equal(health.dimensions.test_rigor.band, null);
+  assert.equal(health.dimensions.test_rigor.evidence_status, "missing");
+  assert.deepEqual(health.findings, syntheticCliV2().findings);
+});
+
+test("v2 rejects contradictory automation admission claims", () => {
+  const cli = syntheticCliV2();
+  cli.automation_eligible = true;
+  assert.throws(() => toContractCodebaseHealth(cli), /automation_eligible requires/);
+
+  cli.automation_eligible = false;
+  cli.quality_gate = "pass";
+  assert.throws(() => toContractCodebaseHealth(cli), /pass requires complete evidence/);
+
+  const contradictoryContract = toContractCodebaseHealth(syntheticCliV2());
+  contradictoryContract.automation_eligible = true;
+  assert.equal(validateHealthV2(contradictoryContract), false);
 });
 
 test("output carries exactly the 8 contract fields (closed object)", () => {

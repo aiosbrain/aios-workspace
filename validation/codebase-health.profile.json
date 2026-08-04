@@ -1,0 +1,18 @@
+{
+  "id": "aios.workspace",
+  "version": "1.0.0",
+  "description": "Evidence requirements for admitting aios-workspace findings to automated maintenance. Missing, stale, or errored required evidence keeps the quality gate unknown.",
+  "required_checks": [
+    "file_size_gate",
+    "boundary_gate",
+    "domain_isolation_gate",
+    "coverage_lines_pct",
+    "lint_gate",
+    "ts_build_gate",
+    "docs_drift_gate",
+    "invariant_registry_missing_enforcers"
+  ],
+  "stale_after_days": {
+    "coverage_lines_pct": 7
+  }
+}
