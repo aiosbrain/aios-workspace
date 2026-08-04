@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { spawn, spawnSync } from "node:child_process";
 import {
   chmodSync,
@@ -88,6 +88,32 @@ function assertSharedLink(primary, worktree) {
   const link = path.join(worktree, "node_modules");
   assert.ok(lstatSync(link).isSymbolicLink());
   assert.equal(path.resolve(worktree, readlinkSync(link)), path.join(primary, "node_modules"));
+}
+
+function hydrationWorker(root) {
+  const worker = path.join(root, "hydrate-with-test-installer.mjs");
+  writeFileSync(
+    worker,
+    `import { spawnSync } from "node:child_process";
+import { initializeWorktreeDependencies } from ${JSON.stringify(pathToFileURL(WORKTREE_INIT).href)};
+const [, , primary, worktree] = process.argv;
+try {
+  initializeWorktreeDependencies({
+    primary,
+    worktree,
+    install: (cwd) => spawnSync(process.execPath, [process.env.AIOS_TEST_INSTALL_SCRIPT], {
+      cwd,
+      env: process.env,
+      stdio: "inherit",
+    }),
+  });
+} catch (error) {
+  console.error(error.message || error);
+  process.exit(1);
+}
+`
+  );
+  return worker;
 }
 
 test("complete shared install links node_modules without reinstalling", () => {
@@ -226,25 +252,18 @@ test("forced restore failure exits non-zero and leaves no misleading link", () =
     path.join(worktree, "node_modules"),
     "dir"
   );
-  const fakeBin = path.join(path.dirname(primary), "fake-bin");
-  mkdirSync(fakeBin);
-  const fakeNpm = path.join(fakeBin, "npm");
-  writeFileSync(fakeNpm, "#!/bin/sh\nexit 47\n");
-  chmodSync(fakeNpm, 0o755);
-
   const result = spawnSync(
     process.execPath,
     [WORKTREE_INIT, "--primary", primary, "--worktree", worktree],
     {
       encoding: "utf8",
-      env: { ...process.env, PATH: `${fakeBin}${path.delimiter}${process.env.PATH ?? ""}` },
     }
   );
 
   assert.equal(result.status, 1);
   assert.match(
     result.stderr,
-    /npm ci could not restore shared dependencies \(exit 47\).*npm ci --include=dev/s
+    /npm ci could not restore shared dependencies \(exit \d+\).*npm ci --include=dev/s
   );
   assert.throws(() => lstatSync(path.join(worktree, "node_modules")), { code: "ENOENT" });
 });
@@ -273,16 +292,14 @@ test("a waiter repairs rather than linking files left by a failed active install
   const { primary, worktree } = fixture();
   const secondWorktree = path.join(path.dirname(primary), "worktree-two");
   mkdirSync(secondWorktree);
-  const fakeBin = path.join(path.dirname(primary), "interleaved-bin");
-  mkdirSync(fakeBin);
+  const worker = hydrationWorker(path.dirname(primary));
   const calls = path.join(path.dirname(primary), "interleaved-npm-calls");
   const ready = path.join(path.dirname(primary), "first-install-looks-complete");
-  const fakeNpm = path.join(fakeBin, "npm");
+  const fakeNpm = path.join(path.dirname(primary), "interleaved-install.mjs");
   writeFileSync(
     fakeNpm,
-    `#!/usr/bin/env node
-const fs = require("node:fs");
-const path = require("node:path");
+    `import fs from "node:fs";
+import path from "node:path";
 const callFile = process.env.AIOS_TEST_NPM_CALLS;
 const callNumber = fs.existsSync(callFile) ? fs.readFileSync(callFile, "utf8").trim().split("\\n").length + 1 : 1;
 fs.appendFileSync(callFile, "call\\n");
@@ -308,14 +325,13 @@ if (callNumber === 1) {
 }
 `
   );
-  chmodSync(fakeNpm, 0o755);
   const env = {
     ...process.env,
     AIOS_TEST_INSTALL_READY: ready,
+    AIOS_TEST_INSTALL_SCRIPT: fakeNpm,
     AIOS_TEST_NPM_CALLS: calls,
-    PATH: `${fakeBin}${path.delimiter}${process.env.PATH ?? ""}`,
   };
-  const args = (target) => [WORKTREE_INIT, "--primary", primary, "--worktree", target];
+  const args = (target) => [worker, primary, target];
   const first = spawn(process.execPath, args(worktree), {
     env,
     stdio: ["ignore", "ignore", "pipe"],
@@ -372,15 +388,13 @@ test("concurrent hydrations safely reclaim a stale lock and install only once", 
     path.join(lockDir, "worktree-dependencies.lock"),
     `${JSON.stringify({ pid: 999_999_999, token: "dead-owner" })}\n`
   );
-  const fakeBin = path.join(path.dirname(primary), "concurrent-bin");
-  mkdirSync(fakeBin);
+  const worker = hydrationWorker(path.dirname(primary));
   const calls = path.join(path.dirname(primary), "npm-calls");
-  const fakeNpm = path.join(fakeBin, "npm");
+  const fakeNpm = path.join(path.dirname(primary), "concurrent-install.mjs");
   writeFileSync(
     fakeNpm,
-    `#!/usr/bin/env node
-const fs = require("node:fs");
-const path = require("node:path");
+    `import fs from "node:fs";
+import path from "node:path";
 fs.appendFileSync(process.env.AIOS_TEST_NPM_CALLS, "call\\n");
 Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 300);
 const root = process.cwd();
@@ -401,13 +415,12 @@ fs.mkdirSync(native, { recursive: true });
 fs.writeFileSync(path.join(native, "package.json"), JSON.stringify({ version: "1.0.0" }));
 `
   );
-  chmodSync(fakeNpm, 0o755);
   const env = {
     ...process.env,
+    AIOS_TEST_INSTALL_SCRIPT: fakeNpm,
     AIOS_TEST_NPM_CALLS: calls,
-    PATH: `${fakeBin}${path.delimiter}${process.env.PATH ?? ""}`,
   };
-  const args = (target) => [WORKTREE_INIT, "--primary", primary, "--worktree", target];
+  const args = (target) => [worker, primary, target];
   const first = spawn(process.execPath, args(worktree), {
     env,
     stdio: ["ignore", "ignore", "pipe"],

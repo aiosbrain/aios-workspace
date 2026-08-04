@@ -139,13 +139,24 @@ export function missingLockedDependencies(primary) {
 }
 
 function runNpmCi(primary) {
+  const nodeDir = path.dirname(process.execPath);
+  const npmCli = [
+    path.resolve(nodeDir, "../lib/node_modules/npm/bin/npm-cli.js"),
+    path.resolve(nodeDir, "node_modules/npm/bin/npm-cli.js"),
+  ].find((candidate) => existsSync(candidate));
+  if (!npmCli) {
+    return {
+      error: new Error(`npm CLI was not found beside the active Node runtime at ${nodeDir}`),
+      status: null,
+    };
+  }
   return spawnSync(
-    "npm",
-    ["ci", "--include=dev", "--include=optional", "--no-audit", "--no-fund"],
+    process.execPath,
+    [npmCli, "ci", "--include=dev", "--include=optional", "--no-audit", "--no-fund"],
     {
       cwd: primary,
       stdio: "inherit",
-      shell: process.platform === "win32",
+      shell: false,
     }
   );
 }
