@@ -12,6 +12,7 @@ jobs:
   notify-brain:
     if: github.event.pull_request.merged == true
     runs-on: ubuntu-latest
+    timeout-minutes: 10 # observed p100 0.2 min
     env:
       AIOS_BRAIN_URL: ${{ secrets.AIOS_BRAIN_URL }}
       AIOS_API_KEY: ${{ secrets.AIOS_API_KEY }}

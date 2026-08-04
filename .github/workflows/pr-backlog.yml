@@ -14,6 +14,7 @@ jobs:
   report:
     name: stale PR backlog report
     runs-on: ubuntu-latest
+    timeout-minutes: 10 # observed p100 0.9 min
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
