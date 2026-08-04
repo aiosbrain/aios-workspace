@@ -27,7 +27,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildBaseline } from "./check-coverage.mjs";
-import { DEGRADED_MARKER } from "./coverage-report.mjs";
+import { clearCoverageDegraded, markCoverageDegraded } from "./coverage-degraded.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const C8 = path.join(ROOT, "node_modules", "c8", "bin", "c8.js");
@@ -128,27 +128,6 @@ function execute(command, args, options = {}) {
 }
 
 const CLIENT_WORKSPACE = "gui/client";
-
-/**
- * Record that the artifact just produced is INCOMPLETE. `scripts/coverage-report.mjs` refuses
- * to publish a number while this file exists, so a partial measurement surfaces as "no report"
- * instead of as a plausible, permanently low one. See the `runFull` call site for why that is
- * the safe direction.
- */
-export function markCoverageDegraded(root, reason, missing = [CLIENT_WORKSPACE]) {
-  const dir = path.join(root, "coverage");
-  mkdirSync(dir, { recursive: true });
-  writeFileSync(
-    path.join(dir, DEGRADED_MARKER),
-    `${JSON.stringify({ reason, missing }, null, 2)}\n`
-  );
-  console.error(`run-coverage: coverage marked DEGRADED — ${reason}`);
-}
-
-/** Drop any marker a previous run left, so one bad run cannot suppress every later good one. */
-export function clearCoverageDegraded(root) {
-  rmSync(path.join(root, "coverage", DEGRADED_MARKER), { force: true });
-}
 
 function runClientCoverage(exec = execute, root = ROOT) {
   // Use the client manifest as the coverage ownership signal, not the root workspace registry.
@@ -312,15 +291,20 @@ export async function runFull({ root = ROOT, exec = execute } = {}) {
       () => exec(process.execPath, ["scripts/merge-coverage.mjs"], { cwd: root })
     );
 
-    // AND THE ARTIFACT MUST SAY SO WHEN IT IS INCOMPLETE. Producing it rather than losing it is
-    // right, but a root-only summary is shape-identical AND plausibility-identical to a complete
-    // one — and scan-on-merge.yml runs this mode under `|| true`, so the error re-thrown below is
-    // DISCARDED and the number would be published anyway. Nothing downstream can tell "we
-    // measured 81.87%" from "we measured part of it and the rest failed", and it clears every
-    // floor either way. Written AFTER the merge so it describes what actually landed on disk.
-    // No clear is needed on the way in: this mode wipes coverage/ wholesale above.
+    // AND NOTHING MAY BE LEFT AT THE CANONICAL NAME WHEN IT IS INCOMPLETE. Producing the data
+    // rather than losing it is right, but a root-only summary is shape-identical AND
+    // plausibility-identical to a complete one — and scan-on-merge.yml runs this mode under
+    // `|| true`, so the error re-thrown below is DISCARDED and the number would be published
+    // anyway. Nothing downstream can tell "we measured 81.87%" from "we measured part of it and
+    // the rest failed", and it clears every floor either way. So `markCoverageDegraded` both
+    // writes the marker (for consumers that call readCoverageReport) and moves the summary and
+    // lcov to `.degraded` names (for consumers that only ever stat the canonical path — the
+    // brain scanner among them). Done AFTER the merge, so it acts on what actually landed on
+    // disk. No clear is needed on the way in: this mode wipes coverage/ wholesale above.
     if (clientError) {
-      markCoverageDegraded(root, `client coverage failed: ${clientError.message}`);
+      markCoverageDegraded(root, `client coverage failed: ${clientError.message}`, [
+        CLIENT_WORKSPACE,
+      ]);
     }
 
     // Reached only when the suite passed; mergeThenPropagate re-throws a suite failure itself,
