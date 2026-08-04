@@ -5,10 +5,17 @@ loosely based on [Keep a Changelog](https://keepachangelog.com/); dates are
 ISO-8601.
 
 This is the **individual workspace** repo. The Team Brain sync contract
-(`docs/brain-api.md`) is versioned separately; it is currently at **v1.16**
+(`docs/brain-api.md`) is versioned separately; it is currently at **v1.17**
 (additive within major `v1`). Entries predating a bump did not change the protocol.
 
 ## [Unreleased]
+
+### Added
+
+- **Code Maintenance Loop Phase 0 (AIO-610)** — codebase-health v2 distinguishes the observed
+  score from evidence completeness and automation admission, loads per-repository capability
+  profiles, and emits stable redacted findings for Team Brain. Missing, stale, or errored required
+  evidence now produces an `unknown` gate and can never admit background remediation.
 
 ## [0.10.1] — 2026-08-03
 

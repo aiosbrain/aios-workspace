@@ -142,7 +142,7 @@ file must exist and be reachable from `test:prepare` or a CI workflow. Rows mark
 
 | Concern | Source of truth |
 |---|---|
-| Sync protocol | [`docs/brain-api.md`](./brain-api.md) (v1.16) |
+| Sync protocol | [`docs/brain-api.md`](./brain-api.md) (v1.17) |
 | Design system | `aios-design/DESIGN.md` |
 | Engineering / workflow layer | **this file** |
 | Conventions & tiers | `scaffold/.claude/rules/` |

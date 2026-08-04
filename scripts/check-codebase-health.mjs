@@ -41,12 +41,19 @@ if (WRITE) {
     _comment:
       "Committed codebase-health baseline (AIO-605). Regenerate deliberately with `node scripts/check-codebase-health.mjs --write-baseline` after a structural change lands — never by hand. Compared ADVISORY-only by the CI step (always exit 0 in v0.9.0).",
     generated_at: current.measured_at,
+    schema_version: current.schema_version,
     rubric_version: current.rubric_version,
+    profile_id: current.profile_id,
+    profile_version: current.profile_version,
     score_pct: current.score_pct,
     status: current.status,
+    evidence_status: current.evidence_status,
+    quality_gate: current.quality_gate,
+    automation_eligible: current.automation_eligible,
     axes: current.axes,
     failed_invariant_ids: current.failed_invariant_ids,
     checks: current.checks,
+    findings: current.findings,
   };
   writeFileSync(BASELINE_PATH, JSON.stringify(baseline, null, 2) + "\n");
   console.log(
@@ -66,7 +73,8 @@ try {
 }
 
 console.log(
-  `codebase-health (ADVISORY): ${result.status} ${result.score_pct ?? "–"}%` +
+  `codebase-health (ADVISORY): ${result.status} ${result.score_pct ?? "–"}% · ` +
+    `evidence ${result.evidence_status} · gate ${result.quality_gate}` +
     (baseline
       ? `  (baseline: ${baseline.status} ${baseline.score_pct}% @ ${baseline.generated_at})`
       : "")

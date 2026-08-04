@@ -1,8 +1,8 @@
 /**
- * push-payload.mjs — pure mapper from the codebase-health CLI JSON v1 object
+ * push-payload.mjs — pure mapper from the codebase-health CLI JSON v1/v2 object
  * (`aios codebase-health --json`, scripts/codebase-health.mjs#toHealthJson) to the
- * Brain API 1.15 `metrics.codebase_health` contract object
- * (docs/contract/codebase-payload-1.15.schema.json → $defs.codebaseHealth). AIO-608.
+ * Brain API `metrics.codebase_health` contract object. V1 is pinned in
+ * docs/contract/codebase-payload-1.15.schema.json; v2 in codebase-health-v2.schema.json.
  *
  * Contract stance: the health object is CLOSED and every field is required, so this
  * mapper FAILS (throws) rather than ever emitting a partial object — a sparse or
@@ -45,6 +45,18 @@ const REQUIRED_CLI_FIELDS = [
   "failed_invariant_ids",
   "measured_at",
 ];
+const REQUIRED_V2_FIELDS = [
+  "profile_id",
+  "profile_version",
+  "evidence_status",
+  "quality_gate",
+  "automation_eligible",
+  "findings",
+];
+const EVIDENCE_STATES = new Set(["complete", "partial", "missing", "stale", "error"]);
+const QUALITY_GATES = new Set(["pass", "fail", "unknown"]);
+const FINDING_KIND = new Set(["quality_issue", "evidence_gap"]);
+const FINDING_SEVERITY = new Set(["low", "medium", "high", "critical"]);
 
 /** Thrown on any input that cannot map to a COMPLETE contract object. */
 export class HealthMappingError extends Error {}
@@ -52,7 +64,7 @@ export class HealthMappingError extends Error {}
 function fail(msg) {
   throw new HealthMappingError(
     `codebase_health mapping: ${msg} — refusing to emit a partial contract object ` +
-      "(the 1.15 contract requires all 8 fields; push the base payload without health instead)"
+      "(the Brain API contract requires a complete health object; push the base payload without health instead)"
   );
 }
 
@@ -63,26 +75,77 @@ function mapMeasuredAt(raw) {
   return fail(`measured_at "${raw}" is neither a bare date nor an ISO datetime`);
 }
 
-function mapDimensions(axes) {
+function mapDimension(key, axis, schemaVersion) {
+  if (!DIMENSION_KEY_RE.test(key)) fail(`axis key "${key}" violates the dimension-name pattern`);
+  if (typeof axis !== "object" || axis === null) fail(`axis "${key}" must be an object`);
+  if ((axis.band === null || axis.band === undefined) && schemaVersion !== "2") return null;
+  for (const field of ["passed", "total"]) {
+    if (!Number.isInteger(axis[field]) || axis[field] < 0) {
+      fail(`axis "${key}".${field} must be a non-negative integer, got ${axis[field]}`);
+    }
+  }
+  const dimension = { passed: axis.passed, total: axis.total };
+  if (schemaVersion !== "2") return dimension;
+  if (axis.band !== null && (!Number.isInteger(axis.band) || axis.band < 0 || axis.band > 4)) {
+    fail(`axis "${key}".band must be null or an integer in [0,4]`);
+  }
+  if (!EVIDENCE_STATES.has(axis.evidence_status)) {
+    fail(`axis "${key}".evidence_status is invalid`);
+  }
+  dimension.band = axis.band ?? null;
+  dimension.evidence_status = axis.evidence_status;
+  return dimension;
+}
+
+function mapDimensions(axes, schemaVersion) {
   if (typeof axes !== "object" || axes === null || Array.isArray(axes)) {
     fail("axes must be an object map");
   }
   const dimensions = {};
   for (const [key, axis] of Object.entries(axes)) {
-    if (!DIMENSION_KEY_RE.test(key)) fail(`axis key "${key}" violates the dimension-name pattern`);
-    if (typeof axis !== "object" || axis === null) fail(`axis "${key}" must be an object`);
-    if (axis.band === null || axis.band === undefined) continue; // skipped axis → omit
-    for (const field of ["passed", "total"]) {
-      if (!Number.isInteger(axis[field]) || axis[field] < 0) {
-        fail(`axis "${key}".${field} must be a non-negative integer, got ${axis[field]}`);
-      }
-    }
-    dimensions[key] = { passed: axis.passed, total: axis.total };
+    const dimension = mapDimension(key, axis, schemaVersion);
+    if (dimension) dimensions[key] = dimension;
   }
   if (Object.keys(dimensions).length === 0) {
     fail("every axis was skipped (null band) — the contract requires at least one dimension");
   }
   return dimensions;
+}
+
+function mapFindings(findings) {
+  if (!Array.isArray(findings) || findings.length > 500) {
+    fail("findings must be an array with at most 500 entries");
+  }
+  return findings.map((finding, index) => {
+    if (typeof finding !== "object" || finding === null || Array.isArray(finding)) {
+      fail(`findings[${index}] must be an object`);
+    }
+    if (!/^[0-9a-f]{64}$/.test(finding.fingerprint))
+      fail(`findings[${index}].fingerprint is invalid`);
+    if (!INVARIANT_ID_RE.test(finding.check_id)) fail(`findings[${index}].check_id is invalid`);
+    if (!DIMENSION_KEY_RE.test(finding.axis)) fail(`findings[${index}].axis is invalid`);
+    if (!FINDING_KIND.has(finding.kind)) fail(`findings[${index}].kind is invalid`);
+    if (!FINDING_SEVERITY.has(finding.severity)) fail(`findings[${index}].severity is invalid`);
+    if (!EVIDENCE_STATES.has(finding.evidence_status)) {
+      fail(`findings[${index}].evidence_status is invalid`);
+    }
+    if (
+      !Number.isInteger(finding.remediation_tier) ||
+      finding.remediation_tier < 0 ||
+      finding.remediation_tier > 3
+    ) {
+      fail(`findings[${index}].remediation_tier must be an integer in [0,3]`);
+    }
+    return {
+      fingerprint: finding.fingerprint,
+      check_id: finding.check_id,
+      axis: finding.axis,
+      kind: finding.kind,
+      severity: finding.severity,
+      evidence_status: finding.evidence_status,
+      remediation_tier: finding.remediation_tier,
+    };
+  });
 }
 
 // schema_version: only a string or FINITE number may stringify (String(null) → "null" and
@@ -117,10 +180,39 @@ function mapFailedInvariantIds(ids) {
   return [...ids];
 }
 
+function validateV2Admission(cli) {
+  if (!EVIDENCE_STATES.has(cli.evidence_status)) fail("evidence_status is invalid");
+  if (!QUALITY_GATES.has(cli.quality_gate)) fail("quality_gate is invalid");
+  if (typeof cli.automation_eligible !== "boolean") fail("automation_eligible must be boolean");
+  if (cli.quality_gate === "pass" && cli.evidence_status !== "complete") {
+    fail("quality_gate pass requires complete evidence");
+  }
+  if (cli.quality_gate === "unknown" && cli.evidence_status === "complete") {
+    fail("quality_gate unknown cannot claim complete evidence");
+  }
+  if (!cli.automation_eligible) return;
+  const safeToAutomate =
+    cli.quality_gate === "pass" && cli.evidence_status === "complete" && cli.status !== "critical";
+  if (!safeToAutomate) {
+    fail(
+      "automation_eligible requires a non-critical status, complete evidence, and a passing gate"
+    );
+  }
+}
+
+function validateV2Metadata(cli) {
+  for (const field of ["profile_id", "profile_version"]) {
+    if (typeof cli[field] !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/.test(cli[field])) {
+      fail(`${field} must be a short stable identifier`);
+    }
+  }
+  validateV2Admission(cli);
+}
+
 /**
- * Map one CLI JSON v1 object to the contract `codebase_health` object.
+ * Map one CLI JSON v1 or v2 object to the contract `codebase_health` object.
  * @param {object} cli  parsed output of `aios codebase-health --json`
- * @returns {object} contract-shaped object (exactly the 8 required fields)
+ * @returns {object} complete contract-shaped object for the requested schema version
  * @throws {HealthMappingError} on any input that cannot produce a complete object
  */
 export function toContractCodebaseHealth(cli) {
@@ -129,6 +221,14 @@ export function toContractCodebaseHealth(cli) {
   }
   const missing = REQUIRED_CLI_FIELDS.filter((f) => cli[f] === undefined);
   if (missing.length) fail(`input is missing field(s): ${missing.join(", ")}`);
+  const schemaVersion = mapSchemaVersion(cli.schema_version);
+  if (!["1", "1.0", "2"].includes(schemaVersion)) {
+    fail(`unsupported schema_version "${schemaVersion}"`);
+  }
+  if (schemaVersion === "2") {
+    const missingV2 = REQUIRED_V2_FIELDS.filter((field) => cli[field] === undefined);
+    if (missingV2.length) fail(`v2 input is missing field(s): ${missingV2.join(", ")}`);
+  }
 
   if (typeof cli.rubric_version !== "string" || !cli.rubric_version) {
     fail("rubric_version must be a non-empty string");
@@ -140,15 +240,28 @@ export function toContractCodebaseHealth(cli) {
     fail(`score_pct must be a number in [0,100], got ${cli.score_pct} (null = unscored run)`);
   }
 
-  return {
-    schema_version: mapSchemaVersion(cli.schema_version),
+  const mapped = {
+    schema_version: schemaVersion,
     rubric_version: cli.rubric_version,
     head_sha: cli.head_sha,
     score_pct: cli.score_pct,
     status: mapStatus(cli.status),
-    dimensions: mapDimensions(cli.axes),
+    dimensions: mapDimensions(cli.axes, schemaVersion),
     failed_invariant_ids: mapFailedInvariantIds(cli.failed_invariant_ids),
     measured_at: mapMeasuredAt(cli.measured_at),
+  };
+  if (schemaVersion !== "2") return mapped;
+
+  validateV2Metadata(cli);
+
+  return {
+    ...mapped,
+    profile_id: cli.profile_id,
+    profile_version: cli.profile_version,
+    evidence_status: cli.evidence_status,
+    quality_gate: cli.quality_gate,
+    automation_eligible: cli.automation_eligible,
+    findings: mapFindings(cli.findings),
   };
 }
 

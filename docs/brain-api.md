@@ -1,6 +1,6 @@
 # AIOS Team Brain — API Contract
 
-**Version: 1.16** is the shipped member-facing Brain API (`/api/v1`). **Document revision: 1.16**
+**Version: 1.17** is the shipped member-facing Brain API (`/api/v1`). **Document revision: 1.17**
 also carries the separately negotiated internal Executor gateway contract **1.10**; it does not
 claim unimplemented member-facing v1.10 routes. This document is the single pinned contract between the
 contributor repo (this toolkit's `aios` CLI) and the `aios-team-brain` service. Both
@@ -205,6 +205,11 @@ writeback/registration pulls), so a newer client still works against an older br
   runtime behavior changed.** This revision closes the shipped-but-undocumented gap found by the
   release conformance audit. The five managed-GitHub member routes below remain contract-first,
   governed deferrals and are not claimed as implemented by this revision.*
+- *2026-08-04 — **v1.17**: `metrics.codebase_health` accepts the backward-compatible v2 shape
+  used by Code Maintenance Loop Phase 0. V1 remains accepted verbatim. V2 adds a versioned
+  repository capability profile, explicit evidence completeness, a fail-closed quality-gate and
+  automation-admission verdict, per-dimension evidence state, and a redacted normalized finding
+  ledger. It grants no write/remediation authority; all Phase 0 findings are report-only.*
 
 ---
 
@@ -1706,6 +1711,18 @@ isolation is enforced in app code, with no DB backstop). Rate limit: 60/min per 
     (same posture as the `readiness_*` fields, `ce_band`, and `context_health`). Scalars only —
     **no file paths, no source text, no contributor identity** ever cross the boundary
     (`failed_invariant_ids` are short rubric ids, not paths or findings text).
+  - **V2 extension (document revision 1.17):** a sender may instead set
+    `schema_version: "2"`. V2 preserves the fields above and additionally requires
+    `profile_id`, `profile_version`, `evidence_status`, `quality_gate`,
+    `automation_eligible`, and `findings`. Every dimension also carries nullable `band` plus
+    `evidence_status`. A v2 finding is closed metadata only:
+    `{fingerprint, check_id, axis, kind, severity, evidence_status, remediation_tier}`. The
+    fingerprint is 64 lowercase hex; no path, source excerpt, detail text, owner, or contributor
+    identity is allowed. The canonical v2 object schema is
+    [`contract/codebase-health-v2.schema.json`](./contract/codebase-health-v2.schema.json).
+    `quality_gate` MUST be `unknown` whenever required evidence is not complete, and
+    `automation_eligible` is a producer admission verdict—not authority for the brain to mutate
+    a repository. V1 objects remain accepted without coercion.
 - Optional `contributions[]` and `issues[]` arrays carry per-author/day rollups and GitHub issues.
 
 **Response:** `201 { "status": "ok", "codebase_id": "uuid", "metrics_id": "uuid", ... }`
