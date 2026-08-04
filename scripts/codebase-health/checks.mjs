@@ -211,22 +211,22 @@ function runEslint(repo) {
 
 function checkTsBuild(repo) {
   const pkg = readJsonIf(path.join(repo, "package.json"));
-  const script =
-    typeof pkg?.scripts?.["build:loop"] === "string"
-      ? "build:loop"
-      : typeof pkg?.scripts?.typecheck === "string"
-        ? "typecheck"
-        : null;
+  let script = null;
+  if (typeof pkg?.scripts?.["build:loop"] === "string") script = "build:loop";
+  else if (typeof pkg?.scripts?.typecheck === "string") script = "typecheck";
   if (!script) return skip("no build:loop or typecheck script");
   if (!existsSync(path.join(repo, "node_modules", "typescript"))) {
     return skip("typescript not installed");
   }
-  const r = spawnSync("npm", ["run", script], {
+  // npm is the explicit repository toolchain here; PATH is operator/CI-controlled and is never
+  // extended from the scanned repository.
+  const options = {
     cwd: repo,
     encoding: "utf8",
     timeout: HEAVY_TIMEOUT_MS,
     maxBuffer: 32 * 1024 * 1024,
-  });
+  };
+  const r = spawnSync("npm", ["run", script], options); // NOSONAR javascript:S4036 — PATH is operator-controlled
   if (r.error || r.status === null) return failedEvidence(`${script} did not run`);
   const ok = r.status === 0;
   return { ok, value: ok, detail: `npm run ${script} exit ${r.status}` };
@@ -314,7 +314,7 @@ function checkCiWallClock(repo) {
     observed_at: runs
       .filter((run) => run.conclusion === "success")
       .map((run) => run.updatedAt)
-      .sort()
+      .sort((a, b) => Date.parse(a) - Date.parse(b))
       .at(-1),
   };
 }

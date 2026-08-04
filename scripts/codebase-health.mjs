@@ -102,11 +102,9 @@ export function loadHealthProfile(repoPath, rubric, profilePath) {
 
 function evidenceState(result, staleAfterDays) {
   const explicit = result.evidence_status;
-  let state = EVIDENCE_STATES.has(explicit)
-    ? explicit
-    : result.value == null
-      ? "missing"
-      : "complete";
+  let state = "complete";
+  if (EVIDENCE_STATES.has(explicit)) state = explicit;
+  else if (result.value == null) state = "missing";
   if (state === "complete" && result.observed_at && Number.isFinite(staleAfterDays)) {
     const ageMs = Date.now() - Date.parse(result.observed_at);
     if (Number.isFinite(ageMs) && ageMs > staleAfterDays * 86_400_000) state = "stale";
@@ -147,6 +145,25 @@ function findingsFor(rubric, profile, checks) {
       evidence_status: check.evidence_status,
       remediation_tier: 0,
     }));
+}
+
+function qualityGateFor(evidenceStatus, requiredFailure) {
+  if (requiredFailure) return "fail";
+  if (evidenceStatus === "complete") return "pass";
+  return "unknown";
+}
+
+function healthSummary({ status, score, evidenceStatus, rubric, axes, skipped, failedInvariants }) {
+  const scoreText = score === null ? "unscored" : `${score}%`;
+  const scoredAxes = rubric.axes.filter((axis) => axes[axis.key].band !== null).length;
+  const skippedText = skipped ? `, ${skipped} check(s) skipped` : "";
+  const invariantText = failedInvariants.length
+    ? ` · failing invariants: ${failedInvariants.join(", ")}`
+    : "";
+  return (
+    `${status} — ${scoreText} · evidence ${evidenceStatus}` +
+    ` (${scoredAxes}/${rubric.axes.length} axes scored${skippedText})${invariantText}`
+  );
 }
 
 /** Load + minimally validate the rubric (throws on a malformed rubric — it is a contract). */
@@ -263,20 +280,20 @@ export async function computeCodebaseHealth(repoPath, opts = {}) {
   const requiredFailure = requiredChecks.some(
     (check) => check.evidence_status === "complete" && check.ok === false
   );
-  const quality_gate = requiredFailure
-    ? "fail"
-    : evidence_status === "complete"
-      ? "pass"
-      : "unknown";
+  const quality_gate = qualityGateFor(evidence_status, requiredFailure);
   const automation_eligible =
     opts.mode === "full" && quality_gate === "pass" && status !== "critical";
   const findings = findingsFor(rubric, profile, checks);
   const skipped = checks.filter((c) => c.value === null).length;
-  const summary =
-    `${status} — ${score === null ? "unscored" : `${score}%`} · evidence ${evidence_status}` +
-    ` (${rubric.axes.filter((a) => axes[a.key].band !== null).length}/${rubric.axes.length} axes scored` +
-    `${skipped ? `, ${skipped} check(s) skipped` : ""})` +
-    (failedInvariants.length ? ` · failing invariants: ${failedInvariants.join(", ")}` : "");
+  const summary = healthSummary({
+    status,
+    score,
+    evidenceStatus: evidence_status,
+    rubric,
+    axes,
+    skipped,
+    failedInvariants,
+  });
 
   return {
     rubric_id: rubric.id,
@@ -337,6 +354,12 @@ export function toHealthJson(result, repoPath) {
 
 const BAND_BAR = (band) => (band === null ? "░░░░" : "█".repeat(band) + "░".repeat(4 - band));
 
+function checkMark(check, colors, colorize) {
+  if (check.value === null) return colorize(colors.yellow, "·");
+  if (check.ok) return colorize(colors.green, "✓");
+  return colorize(colors.red, "✗");
+}
+
 // Render a computeCodebaseHealth result for the CLI. `colors` is the caller's ANSI
 // helper object ({ bold, green, red, yellow } — each string→string), as in context-health.
 export function renderCodebaseHealth(result, target, colors = {}) {
@@ -355,12 +378,7 @@ export function renderCodebaseHealth(result, target, colors = {}) {
   }
   lines.push("");
   for (const chk of result.checks) {
-    const mark =
-      chk.value === null
-        ? id(colors.yellow, "·")
-        : chk.ok
-          ? id(colors.green, "✓")
-          : id(colors.red, "✗");
+    const mark = checkMark(chk, colors, id);
     lines.push(
       `  ${mark} ${chk.title} [${chk.evidence_status}${chk.required ? ", required" : ""}] — ${chk.detail}`
     );

@@ -75,31 +75,36 @@ function mapMeasuredAt(raw) {
   return fail(`measured_at "${raw}" is neither a bare date nor an ISO datetime`);
 }
 
+function mapDimension(key, axis, schemaVersion) {
+  if (!DIMENSION_KEY_RE.test(key)) fail(`axis key "${key}" violates the dimension-name pattern`);
+  if (typeof axis !== "object" || axis === null) fail(`axis "${key}" must be an object`);
+  if ((axis.band === null || axis.band === undefined) && schemaVersion !== "2") return null;
+  for (const field of ["passed", "total"]) {
+    if (!Number.isInteger(axis[field]) || axis[field] < 0) {
+      fail(`axis "${key}".${field} must be a non-negative integer, got ${axis[field]}`);
+    }
+  }
+  const dimension = { passed: axis.passed, total: axis.total };
+  if (schemaVersion !== "2") return dimension;
+  if (axis.band !== null && (!Number.isInteger(axis.band) || axis.band < 0 || axis.band > 4)) {
+    fail(`axis "${key}".band must be null or an integer in [0,4]`);
+  }
+  if (!EVIDENCE_STATES.has(axis.evidence_status)) {
+    fail(`axis "${key}".evidence_status is invalid`);
+  }
+  dimension.band = axis.band ?? null;
+  dimension.evidence_status = axis.evidence_status;
+  return dimension;
+}
+
 function mapDimensions(axes, schemaVersion) {
   if (typeof axes !== "object" || axes === null || Array.isArray(axes)) {
     fail("axes must be an object map");
   }
   const dimensions = {};
   for (const [key, axis] of Object.entries(axes)) {
-    if (!DIMENSION_KEY_RE.test(key)) fail(`axis key "${key}" violates the dimension-name pattern`);
-    if (typeof axis !== "object" || axis === null) fail(`axis "${key}" must be an object`);
-    if ((axis.band === null || axis.band === undefined) && schemaVersion !== "2") continue;
-    for (const field of ["passed", "total"]) {
-      if (!Number.isInteger(axis[field]) || axis[field] < 0) {
-        fail(`axis "${key}".${field} must be a non-negative integer, got ${axis[field]}`);
-      }
-    }
-    dimensions[key] = { passed: axis.passed, total: axis.total };
-    if (schemaVersion === "2") {
-      if (axis.band !== null && (!Number.isInteger(axis.band) || axis.band < 0 || axis.band > 4)) {
-        fail(`axis "${key}".band must be null or an integer in [0,4]`);
-      }
-      if (!EVIDENCE_STATES.has(axis.evidence_status)) {
-        fail(`axis "${key}".evidence_status is invalid`);
-      }
-      dimensions[key].band = axis.band ?? null;
-      dimensions[key].evidence_status = axis.evidence_status;
-    }
+    const dimension = mapDimension(key, axis, schemaVersion);
+    if (dimension) dimensions[key] = dimension;
   }
   if (Object.keys(dimensions).length === 0) {
     fail("every axis was skipped (null band) — the contract requires at least one dimension");
@@ -175,6 +180,35 @@ function mapFailedInvariantIds(ids) {
   return [...ids];
 }
 
+function validateV2Admission(cli) {
+  if (!EVIDENCE_STATES.has(cli.evidence_status)) fail("evidence_status is invalid");
+  if (!QUALITY_GATES.has(cli.quality_gate)) fail("quality_gate is invalid");
+  if (typeof cli.automation_eligible !== "boolean") fail("automation_eligible must be boolean");
+  if (cli.quality_gate === "pass" && cli.evidence_status !== "complete") {
+    fail("quality_gate pass requires complete evidence");
+  }
+  if (cli.quality_gate === "unknown" && cli.evidence_status === "complete") {
+    fail("quality_gate unknown cannot claim complete evidence");
+  }
+  if (!cli.automation_eligible) return;
+  const safeToAutomate =
+    cli.quality_gate === "pass" && cli.evidence_status === "complete" && cli.status !== "critical";
+  if (!safeToAutomate) {
+    fail(
+      "automation_eligible requires a non-critical status, complete evidence, and a passing gate"
+    );
+  }
+}
+
+function validateV2Metadata(cli) {
+  for (const field of ["profile_id", "profile_version"]) {
+    if (typeof cli[field] !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/.test(cli[field])) {
+      fail(`${field} must be a short stable identifier`);
+    }
+  }
+  validateV2Admission(cli);
+}
+
 /**
  * Map one CLI JSON v1 or v2 object to the contract `codebase_health` object.
  * @param {object} cli  parsed output of `aios codebase-health --json`
@@ -218,28 +252,7 @@ export function toContractCodebaseHealth(cli) {
   };
   if (schemaVersion !== "2") return mapped;
 
-  for (const field of ["profile_id", "profile_version"]) {
-    if (typeof cli[field] !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/.test(cli[field])) {
-      fail(`${field} must be a short stable identifier`);
-    }
-  }
-  if (!EVIDENCE_STATES.has(cli.evidence_status)) fail("evidence_status is invalid");
-  if (!QUALITY_GATES.has(cli.quality_gate)) fail("quality_gate is invalid");
-  if (typeof cli.automation_eligible !== "boolean") fail("automation_eligible must be boolean");
-  if (cli.quality_gate === "pass" && cli.evidence_status !== "complete") {
-    fail("quality_gate pass requires complete evidence");
-  }
-  if (cli.quality_gate === "unknown" && cli.evidence_status === "complete") {
-    fail("quality_gate unknown cannot claim complete evidence");
-  }
-  if (
-    cli.automation_eligible &&
-    (cli.quality_gate !== "pass" || cli.evidence_status !== "complete" || cli.status === "critical")
-  ) {
-    fail(
-      "automation_eligible requires a non-critical status, complete evidence, and a passing gate"
-    );
-  }
+  validateV2Metadata(cli);
 
   return {
     ...mapped,
