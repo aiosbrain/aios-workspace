@@ -27,6 +27,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildBaseline } from "./check-coverage.mjs";
+import { DEGRADED_MARKER } from "./coverage-report.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const C8 = path.join(ROOT, "node_modules", "c8", "bin", "c8.js");
@@ -127,6 +128,27 @@ function execute(command, args, options = {}) {
 }
 
 const CLIENT_WORKSPACE = "gui/client";
+
+/**
+ * Record that the artifact just produced is INCOMPLETE. `scripts/coverage-report.mjs` refuses
+ * to publish a number while this file exists, so a partial measurement surfaces as "no report"
+ * instead of as a plausible, permanently low one. See the `runFull` call site for why that is
+ * the safe direction.
+ */
+export function markCoverageDegraded(root, reason, missing = [CLIENT_WORKSPACE]) {
+  const dir = path.join(root, "coverage");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(
+    path.join(dir, DEGRADED_MARKER),
+    `${JSON.stringify({ reason, missing }, null, 2)}\n`
+  );
+  console.error(`run-coverage: coverage marked DEGRADED — ${reason}`);
+}
+
+/** Drop any marker a previous run left, so one bad run cannot suppress every later good one. */
+export function clearCoverageDegraded(root) {
+  rmSync(path.join(root, "coverage", DEGRADED_MARKER), { force: true });
+}
 
 function runClientCoverage(exec = execute, root = ROOT) {
   // Use the client manifest as the coverage ownership signal, not the root workspace registry.
@@ -289,6 +311,18 @@ export async function runFull({ root = ROOT, exec = execute } = {}) {
       () => runNodeSuiteUnderC8(tempDirectory, [], [], exec, root),
       () => exec(process.execPath, ["scripts/merge-coverage.mjs"], { cwd: root })
     );
+
+    // AND THE ARTIFACT MUST SAY SO WHEN IT IS INCOMPLETE. Producing it rather than losing it is
+    // right, but a root-only summary is shape-identical AND plausibility-identical to a complete
+    // one — and scan-on-merge.yml runs this mode under `|| true`, so the error re-thrown below is
+    // DISCARDED and the number would be published anyway. Nothing downstream can tell "we
+    // measured 81.87%" from "we measured part of it and the rest failed", and it clears every
+    // floor either way. Written AFTER the merge so it describes what actually landed on disk.
+    // No clear is needed on the way in: this mode wipes coverage/ wholesale above.
+    if (clientError) {
+      markCoverageDegraded(root, `client coverage failed: ${clientError.message}`);
+    }
+
     // Reached only when the suite passed; mergeThenPropagate re-throws a suite failure itself,
     // and that is the more informative error when both fail.
     if (clientError) throw clientError;
@@ -360,6 +394,11 @@ export async function runMerge(total, { root = ROOT, exec = execute } = {}) {
   rmSync(path.join(root, "gui", "client", "coverage"), { recursive: true, force: true });
   rmSync(paths.summary, { force: true });
   rmSync(paths.lcov, { force: true });
+  // Unlike runFull, this mode does NOT wipe coverage/ — it needs the shard data sitting in it.
+  // So a marker left by an earlier failed full run would survive here and suppress publication
+  // of a perfectly good merged artifact. A guard that fails permanently closed is its own
+  // outage, and the pressure would be to delete the marker by hand — exactly the habit to avoid.
+  clearCoverageDegraded(root);
 
   await runClientCoverageIfPresent(() => runClientCoverage(exec, root), root);
 

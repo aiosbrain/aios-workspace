@@ -101,6 +101,32 @@ function readLcov(file) {
 }
 
 /**
+ * The file `run-coverage.mjs` writes when it produces an artifact it already knows is
+ * incomplete. Named here because this module is the one that has to honour it.
+ */
+export const DEGRADED_MARKER = "coverage-degraded.json";
+
+/**
+ * @param {string} coverageDir
+ * @returns {?{reason:string, missing?:string[]}} null only when no marker is present.
+ */
+export function readDegradedMarker(coverageDir) {
+  const file = path.join(coverageDir, DEGRADED_MARKER);
+  if (!existsSync(file)) return null;
+  try {
+    const parsed = JSON.parse(readFileSync(file, "utf8"));
+    // A marker that exists but does not parse still means "something went wrong here". The
+    // reader must not be able to turn a broken marker into a clean bill of health — that is the
+    // same silent-success direction the marker exists to close.
+    return parsed && typeof parsed === "object"
+      ? { reason: String(parsed.reason ?? "reason not recorded"), missing: parsed.missing }
+      : { reason: "degradation marker is malformed" };
+  } catch {
+    return { reason: "degradation marker is unreadable" };
+  }
+}
+
+/**
  * Read the repo's normalized coverage, or null when no artifact exists.
  * @param {string} repoPath
  * @returns {?{source:string, lines_pct:number, statements_pct:?number,
@@ -108,6 +134,25 @@ function readLcov(file) {
  */
 export function readCoverageReport(repoPath) {
   const dir = path.join(repoPath, "coverage");
+
+  // A DEGRADED RUN HAS NO PUBLISHABLE NUMBER. When part of the measurement failed, what is on
+  // disk is real data for everything that DID run — and completely indistinguishable, in shape
+  // and in plausibility, from a complete measurement. Publishing it is the silent failure this
+  // guard exists to prevent: measured on this repo, root-only coverage reads 81.87% lines /
+  // 78.82% branches against floors of 79.70% / 71.50%, so every floor clears, nothing goes red,
+  // and the number under-reports indefinitely. `null` is the loud direction — the health check
+  // reports "no coverage artifact", which is visibly wrong and gets fixed. The artifact itself
+  // stays on disk for whoever investigates.
+  const degraded = readDegradedMarker(dir);
+  if (degraded) {
+    console.error(
+      `coverage-report: refusing to publish a degraded measurement — ${degraded.reason}. ` +
+        `The artifact in coverage/ is incomplete; fix the underlying failure rather than ` +
+        `deleting coverage/${DEGRADED_MARKER}.`
+    );
+    return null;
+  }
+
   const attempts = [
     [path.join(dir, "coverage-report.json"), readPreNormalized],
     [path.join(dir, "coverage-summary.json"), readIstanbulSummary],
