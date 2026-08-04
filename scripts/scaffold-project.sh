@@ -744,7 +744,7 @@ if [ -t 0 ] && [ -t 1 ] && [ -f "$REPO_ROOT/scripts/install-aios-shell.sh" ]; th
   read -r SHELL_ANS || SHELL_ANS=""
   case "${SHELL_ANS:-Y}" in
     [Nn]*) : ;;
-    *) bash "$REPO_ROOT/scripts/install-aios-shell.sh" || true ;;
+    *) bash "$REPO_ROOT/scripts/install-aios-shell.sh" --agent-workspace "$OUTPUT" || true ;;
   esac
 fi
 

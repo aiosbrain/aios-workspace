@@ -6,7 +6,8 @@
 #
 # Usage:
 #   scripts/install-aios-shell.sh           # install to ~/.zshrc
-#   scripts/install-aios-shell.sh --dry-run   # print the block only
+#   scripts/install-aios-shell.sh --agent-workspace <path> # also persist the personal workspace
+#   scripts/install-aios-shell.sh --dry-run # print the block only
 #   scripts/install-aios-shell.sh --uninstall
 
 set -euo pipefail
@@ -14,10 +15,44 @@ set -euo pipefail
 MARK_BEGIN="# >>> aios-shell begin >>>"
 MARK_END="# <<< aios-shell end <<<"
 TARGET="${AIOS_SHELL_RC:-$HOME/.zshrc}"
+dry_run=false
+uninstall=false
+agent_workspace=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --dry-run) dry_run=true ;;
+    --uninstall) uninstall=true ;;
+    --agent-workspace)
+      shift
+      agent_workspace="${1:-}"
+      [[ -n "$agent_workspace" ]] || { echo "--agent-workspace needs a path" >&2; exit 1; }
+      ;;
+    -h|--help)
+      sed -n '2,13p' "$0"
+      exit 0
+      ;;
+    *)
+      echo "unknown argument: $1" >&2
+      exit 1
+      ;;
+  esac
+  shift
+done
+
+if [[ -n "$agent_workspace" && ! -f "$agent_workspace/aios.yaml" ]]; then
+  echo "--agent-workspace must point to a stamped workspace with aios.yaml: $agent_workspace" >&2
+  exit 1
+fi
+
+workspace_export=""
+if [[ -n "$agent_workspace" ]]; then
+  workspace_export="export AIOS_AGENT_WORKSPACE=$(printf '%q' "$agent_workspace")"
+fi
 
 read -r -d '' BLOCK <<'EOF' || true
 # >>> aios-shell begin >>>
 # AIOS CLI — finds aios.yaml walking up from cwd; installed by aios-workspace/scripts/install-aios-shell.sh
+__AIOS_AGENT_WORKSPACE_EXPORT__
 aios() {
   local dir="$PWD"
   while [[ "$dir" != "/" ]]; do
@@ -56,19 +91,9 @@ aios() {
 }
 # <<< aios-shell end <<<
 EOF
-
-dry_run=false
-uninstall=false
-for arg in "$@"; do
-  case "$arg" in
-    --dry-run) dry_run=true ;;
-    --uninstall) uninstall=true ;;
-    -h|--help)
-      sed -n '2,12p' "$0"
-      exit 0
-      ;;
-  esac
-done
+block_prefix="${BLOCK%%__AIOS_AGENT_WORKSPACE_EXPORT__*}"
+block_suffix="${BLOCK#*__AIOS_AGENT_WORKSPACE_EXPORT__}"
+BLOCK="${block_prefix}${workspace_export}${block_suffix}"
 
 strip_block() {
   awk -v b="$MARK_BEGIN" -v e="$MARK_END" '

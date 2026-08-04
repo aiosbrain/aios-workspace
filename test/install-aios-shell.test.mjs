@@ -96,3 +96,26 @@ test("falls back to the ~/Projects default when nothing is configured", () => {
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("installer persists the selected personal workspace for cross-repo agent commands", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "aios-shell-workspace-"));
+  const workspace = path.join(root, "Chetan Workspace & agent");
+  const rc = path.join(root, ".zshrc");
+  try {
+    mkdirSync(workspace, { recursive: true });
+    writeFileSync(path.join(workspace, "aios.yaml"), "workspace: chetan\n");
+    const install = spawnSync("bash", [SCRIPT, "--agent-workspace", workspace], {
+      encoding: "utf8",
+      env: { ...process.env, AIOS_SHELL_RC: rc },
+    });
+    assert.equal(install.status, 0, install.stderr);
+    const source = spawnSync("zsh", ["-f", "-c", 'source "$RC"; print -r -- "$AIOS_AGENT_WORKSPACE"'], {
+      encoding: "utf8",
+      env: { ...process.env, RC: rc },
+    });
+    assert.equal(source.status, 0, source.stderr);
+    assert.equal(source.stdout.trim(), workspace);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
