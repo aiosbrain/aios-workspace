@@ -38,7 +38,7 @@ function workflowJob(contents, name) {
   const lines = contents.split("\n");
   const start = lines.findIndex((line) => line === `  ${name}:`);
   assert.notEqual(start, -1, `missing ${name} job`);
-  const relativeEnd = lines.slice(start + 1).findIndex((line) => /^ {2}[a-z0-9-]+:$/.test(line));
+  const relativeEnd = lines.slice(start + 1).findIndex((line) => /^ {2}[\w-]+:$/.test(line));
   const end = relativeEnd === -1 ? lines.length : start + 1 + relativeEnd;
   return lines.slice(start, end).join("\n");
 }
@@ -204,7 +204,8 @@ test("core coverage is packed only on success and installed only after coverage 
 
 test("coverage failure still reaches the core scanner with no readable coverage", () => {
   assert.match(coreScan, /name: Start from a coverage-free scanner checkout/);
-  assert.match(coreScan, /coverage-summary\.json[\s\S]*coverage-summary\.json/);
+  assert.match(coreScan, /(?:^|\s)coverage\/coverage-summary\.json(?:\s|$)/m);
+  assert.match(coreScan, /(?:^|\s)coverage-summary\.json(?:\s|$)/m);
   assert.match(coreScan, /name: Explain and sanitize unavailable coverage/);
   assert.match(coreScan, /needs\.coverage\.result != 'success'/);
   assert.match(coreScan, /scanning with null coverage/);
@@ -226,9 +227,23 @@ test("scaffold optional coverage is visibly nonblocking and sanitizes every fail
   assert.match(coverageStep, /no locked test:coverage suite — skipping/);
   assert.match(sanitizeStep, /always\(\)/);
   assert.match(sanitizeStep, /steps\.coverage\.outcome == 'failure'/);
-  assert.match(sanitizeStep, /coverage\/coverage-summary\.json/);
-  assert.match(sanitizeStep, /coverage-summary\.json/);
+  assert.match(sanitizeStep, /(?:^|\s)coverage\/coverage-summary\.json(?:\s|$)/m);
+  assert.match(sanitizeStep, /(?:^|\s)coverage-summary\.json(?:\s|$)/m);
   assert.match(sanitizeStep, /coverage\/lcov\.info/);
+});
+
+test("optional core health enrichment publishes only complete payloads", () => {
+  const healthStep = workflowSteps(coreScan).find((step) =>
+    /- name: Compute codebase health/.test(step)
+  );
+  assert.ok(healthStep);
+  assert.match(healthStep, /codebase-health\.v1\.json\.partial/);
+  assert.match(healthStep, /codebase-health\.contract\.json\.partial/);
+  assert.match(
+    healthStep,
+    /mv \\\n\s+"\$RUNNER_TEMP\/codebase-health\.contract\.json\.partial" \\\n\s+"\$RUNNER_TEMP\/codebase-health\.contract\.json"/
+  );
+  assert.doesNotMatch(healthStep, /> "\$RUNNER_TEMP\/codebase-health\.contract\.json"(?:\s|$)/m);
 });
 
 test("health upload failures are not retried with a destructive plain upload", () => {

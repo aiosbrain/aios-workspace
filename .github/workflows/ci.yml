@@ -452,9 +452,21 @@ jobs:
         continue-on-error: true
         run: |
           npm ci --ignore-scripts
-          node scripts/aios.mjs codebase-health --json > "$RUNNER_TEMP/codebase-health.v1.json"
+          rm -f -- \
+            "$RUNNER_TEMP/codebase-health.v1.json" \
+            "$RUNNER_TEMP/codebase-health.v1.json.partial" \
+            "$RUNNER_TEMP/codebase-health.contract.json" \
+            "$RUNNER_TEMP/codebase-health.contract.json.partial"
+          node scripts/aios.mjs codebase-health --json \
+            > "$RUNNER_TEMP/codebase-health.v1.json.partial"
+          mv \
+            "$RUNNER_TEMP/codebase-health.v1.json.partial" \
+            "$RUNNER_TEMP/codebase-health.v1.json"
           node scripts/codebase-health/push-payload.mjs "$RUNNER_TEMP/codebase-health.v1.json" \
-            > "$RUNNER_TEMP/codebase-health.contract.json"
+            > "$RUNNER_TEMP/codebase-health.contract.json.partial"
+          mv \
+            "$RUNNER_TEMP/codebase-health.contract.json.partial" \
+            "$RUNNER_TEMP/codebase-health.contract.json"
 
       - name: Scan this repo into the brain
         if: steps.brain.outputs.configured == 'true'
