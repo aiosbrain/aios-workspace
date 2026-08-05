@@ -20,6 +20,11 @@ evals/scratch/
 .env.keys
 # Root-level scratch exports from aios tools (not source of truth; regenerated)
 /.aio-*.md
+# Root-level agent review and handoff artifacts (local, never source of truth)
+/code-review-*.md
+/HANDOFF-*.md
+/HANDOVER-*.md
+/.debug-journal.md
 # Confidential leak-gate term set — local only, never commit (see scripts/leak-gate-terms.example.sh)
 leak-gate-terms.sh
 **/leak-gate-terms.sh
