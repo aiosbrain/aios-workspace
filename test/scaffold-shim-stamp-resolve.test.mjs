@@ -39,7 +39,8 @@ function reserveDir(prefix) {
 
 /** Run the shim from `workspace`, with both toolkit env vars scrubbed unless overridden. */
 function runShim(workspace, env = {}) {
-  const { AIOS_TOOLKIT_DIR, AIOS_TOOLKIT_CLI, ...rest } = process.env;
+  // Dropped by destructuring, never read — the point is what `rest` no longer carries.
+  const { AIOS_TOOLKIT_DIR: _dir, AIOS_TOOLKIT_CLI: _cli, ...rest } = process.env;
   const res = execFileSync(
     process.execPath,
     [path.join(workspace, "scripts", "aios.mjs"), "--no-such-command"],
@@ -95,7 +96,11 @@ test("a real scaffold produces a workspace whose shim resolves with no env and n
     // rejection proves the shim resolved and handed off. The old failure mode printed the
     // shim's own not-found error and never spawned anything.
     const out = runShimExpectingFailure(output);
-    assert.doesNotMatch(out, NOT_FOUND, "the shim did not resolve the checkout it was stamped from");
+    assert.doesNotMatch(
+      out,
+      NOT_FOUND,
+      "the shim did not resolve the checkout it was stamped from"
+    );
     assert.match(out, /unknown command/i);
   } finally {
     rmSync(output, discard);
