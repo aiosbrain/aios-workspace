@@ -33,9 +33,31 @@ export async function askCiWorkflow() {
   return /^y(es)?$/i.test(answer.trim());
 }
 
-export function checkGhCli() {
+/** Resolve gh from fixed, administrator-controlled install locations; never search PATH. */
+export function ghExecutable({
+  platform = process.platform,
+  env = process.env,
+  exists = existsSync,
+} = {}) {
+  const explicit = env.AIOS_GH_PATH;
+  if (explicit && path.isAbsolute(explicit) && exists(explicit)) return explicit;
+  const candidates =
+    platform === "win32"
+      ? ["C:\\Program Files\\GitHub CLI\\gh.exe"]
+      : ["/opt/homebrew/bin/gh", "/usr/local/bin/gh", "/usr/bin/gh"];
+  return candidates.find(exists) ?? null;
+}
+
+export function checkGhCli(opts = {}) {
+  const executable = ghExecutable(opts);
+  if (!executable)
+    return {
+      ok: false,
+      reason:
+        "GitHub CLI (`gh`) is not installed in a trusted location. Install it from https://cli.github.com/, then rerun this action.",
+    };
   try {
-    execFileSync("gh", ["--version"], { stdio: "ignore" });
+    execFileSync(executable, ["--version"], { stdio: "ignore" });
   } catch {
     return {
       ok: false,
@@ -44,7 +66,7 @@ export function checkGhCli() {
     };
   }
   try {
-    execFileSync("gh", ["auth", "status"], { stdio: "ignore" });
+    execFileSync(executable, ["auth", "status"], { stdio: "ignore" });
   } catch {
     return {
       ok: false,
