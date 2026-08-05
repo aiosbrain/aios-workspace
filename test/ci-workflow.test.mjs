@@ -10,6 +10,7 @@ import {
   ghExecutable,
   persistCiWorkflow,
 } from "../scripts/ci-workflow.mjs";
+import { cmdUpdate } from "../scripts/update.mjs";
 
 test("CI workflow preference distinguishes unset, explicit no, and explicit yes", () => {
   assert.equal(ciWorkflowState({}), null);
@@ -112,4 +113,21 @@ test("checkGhCli distinguishes missing, unusable, and unauthenticated GitHub CLI
     }),
     { ok: true }
   );
+});
+
+test("--with-ci-workflow selects CI in read-only update modes without writing aios.yaml", async () => {
+  for (const mode of ["--check", "--preview"]) {
+    const repo = mkdtempSync(path.join(tmpdir(), "aios-ci-readonly-"));
+    const file = path.join(repo, "aios.yaml");
+    try {
+      writeFileSync(file, "owner: tester\n");
+      const cfg = {};
+      const result = await cmdUpdate(repo, cfg, [mode, "--with-ci-workflow", "--from", "/missing"]);
+      assert.notEqual(result.exitStatus, 0, `${mode} must reject a missing toolkit source`);
+      assert.equal(cfg.ci_workflow, "true", `${mode} uses CI paths in memory`);
+      assert.equal(readFileSync(file, "utf8"), "owner: tester\n", `${mode} does not persist`);
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  }
 });

@@ -653,8 +653,8 @@ async function cmdUpdateInner(repo, cfg, args) {
 
   const noPull = args.includes("--no-pull") || preview;
   if (args.includes("--with-ci-workflow")) {
-    persistCiWorkflow(repo, true);
     cfg.ci_workflow = "true";
+    if (!check && !preview) persistCiWorkflow(repo, true);
   }
   const stash = args.includes("--stash");
   const noInstall = args.includes("--no-install");
