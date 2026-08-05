@@ -367,9 +367,10 @@ test("toJson: codebase_health card present only when a scoring succeeded; placem
 
 test("aios codebase-health --json emits the v2 object for an explicit path", () => {
   const repo = syntheticRepo();
+  const neutralCwd = mkdtempSync(path.join(tmpdir(), "codebase-health-cwd-"));
   try {
-    const r = spawnSync(process.execPath, [AIOS, "codebase-health", repo, "--json"], {
-      cwd: ROOT,
+    const r = spawnSync(process.execPath, [AIOS, "codebase-health", "--repo", repo, "--json"], {
+      cwd: neutralCwd,
       encoding: "utf8",
       timeout: 120_000,
     });
@@ -382,5 +383,6 @@ test("aios codebase-health --json emits the v2 object for an explicit path", () 
     assert.deepEqual(Object.keys(json.axes), AXIS_KEYS);
   } finally {
     rmSync(repo, { recursive: true, force: true });
+    rmSync(neutralCwd, { recursive: true, force: true });
   }
 });
