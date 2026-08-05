@@ -145,6 +145,9 @@ if [ -z "$CI_WORKFLOW" ] && [ -t 0 ] && [ -t 1 ]; then
   read -r CI_ANSWER || CI_ANSWER=""
   case "$CI_ANSWER" in [Yy]*) CI_WORKFLOW=true ;; *) CI_WORKFLOW=false ;; esac
 fi
+# A non-interactive scaffold cannot ask the human gate. Record its safe default so a later
+# interactive `aios update` does not unexpectedly reopen the setup question or re-manage CI.
+CI_WORKFLOW="${CI_WORKFLOW:-false}"
 
 # Team-for-context list (teammates have their OWN workspaces; this is context only).
 # The owner is always a member so identity resolution passes.
@@ -590,7 +593,7 @@ process_template "$SCAFFOLD/AGENTS.md.tmpl" "$OUTPUT/AGENTS.md"
 splice_sixbusiness "$OUTPUT/AGENTS.md" table
 process_template "$SCAFFOLD/RESOLVER.md.tmpl" "$OUTPUT/RESOLVER.md"
 process_template "$SCAFFOLD/aios.yaml.tmpl" "$OUTPUT/aios.yaml"
-[ -z "$CI_WORKFLOW" ] || echo "ci_workflow: $CI_WORKFLOW" >> "$OUTPUT/aios.yaml"
+echo "ci_workflow: $CI_WORKFLOW" >> "$OUTPUT/aios.yaml"
 process_template "$SCAFFOLD/package.json.tmpl" "$OUTPUT/package.json"
 mkdir -p "$OUTPUT/scripts" "$OUTPUT/bin"
 cp "$SCAFFOLD/scripts/aios.mjs" "$OUTPUT/scripts/aios.mjs"

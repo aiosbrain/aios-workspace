@@ -26,11 +26,11 @@ import { lsTree } from "../toolkit-merge.mjs";
  * from — so the sync skips them and tells the owner to commit or `git checkout --` first.
  * (Committed local edits are reconciled by the 3-way merge in toolkit-merge.mjs.)
  */
-export function dirtyManagedPaths(repo) {
+export function dirtyManagedPaths(repo, managedPaths = MANAGED_PATHS) {
   try {
     const out = execFileSync(
       "git",
-      ["-C", repo, "status", "--porcelain", "--", ...MANAGED_PATHS.map((e) => e.dest)],
+      ["-C", repo, "status", "--porcelain", "--", ...managedPaths.map((e) => e.dest)],
       { encoding: "utf8", env: gitEnv() }
     );
     const set = new Set();
@@ -157,8 +157,8 @@ function hasConflictMarkers(content) {
 /** Every entry bucket `conflictMarkerPathsChecked` scans — both MANAGED_PATHS (what apply
  *  actually vendors) and SEED_IF_ABSENT (what applySeeds copies) need the same protection;
  *  a marker in a seed-only source file was previously invisible to any conflict check. */
-function markerScanEntries() {
-  return [...MANAGED_PATHS, ...SEED_IF_ABSENT];
+function markerScanEntries(managedPaths) {
+  return [...managedPaths, ...SEED_IF_ABSENT];
 }
 
 /**
@@ -174,10 +174,10 @@ function markerScanEntries() {
  * like "found a marker". Only a genuinely absent manifest-entry root (this toolkit version
  * doesn't ship that bucket at all) is a normal, non-error skip.
  */
-export function conflictMarkerPaths(srcRoot) {
+export function conflictMarkerPaths(srcRoot, managedPaths = MANAGED_PATHS) {
   const paths = [];
   const errors = [];
-  for (const entry of markerScanEntries()) {
+  for (const entry of markerScanEntries(managedPaths)) {
     if (!existsSync(path.join(srcRoot, entry.src))) continue;
     let files;
     try {
@@ -246,9 +246,9 @@ export function deletionCandidates(toolkitDir, srcRoot, entry, baseSha) {
  * from the same helpers the write loop calls (`entryFiles`, `deletionCandidates`), so the
  * scanned set and the touched set cannot drift. Exported for tests.
  */
-export function plannedDestRels(srcDir, baseSha) {
+export function plannedDestRels(srcDir, baseSha, managedPaths = MANAGED_PATHS) {
   const out = [];
-  for (const entry of MANAGED_PATHS) {
+  for (const entry of managedPaths) {
     // Mirror mergeManaged's own entry guard EXACTLY: when an entry's src is absent from
     // the snapshot, the write loop skips the whole entry — writes AND deletions. Without
     // this guard the scan would enumerate baseSha "deletions" for an entry the loop never

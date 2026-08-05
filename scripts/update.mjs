@@ -354,7 +354,7 @@ function printMergeReport(color, r, { preview = false } = {}) {
  * --preview so a new signal (or a wording fix) lands in every mode at once instead of
  * drifting across three hand-built copies.
  */
-function assessReadOnlySource(srcDir, { pullOpts, io, skipRemote = false, repo = null }) {
+function assessReadOnlySource(srcDir, { pullOpts, io, skipRemote = false, repo = null, cfg = {} }) {
   const pullInfo = skipRemote
     ? null
     : pullToolkitCheckout(srcDir, { ...pullOpts, check: true, dryRun: true, noInstall: true }, io);
@@ -366,10 +366,11 @@ function assessReadOnlySource(srcDir, { pullOpts, io, skipRemote = false, repo =
   // whole change set exists to eliminate. Throwing (rather than folding into `reasons`)
   // matches the contract already set by `missingSeedPaths`, whose identical refusal has
   // always surfaced read-only as a structured `mode: "error"` result.
+  const managedPaths = managedPathsForConfig(cfg);
   if (repo)
-    for (const destRel of plannedDestRels(srcDir, readStampBaseSha(repo)))
+    for (const destRel of plannedDestRels(srcDir, readStampBaseSha(repo), managedPaths))
       assertDestPathSafe(repo, destRel);
-  const vs = vendorSafety(srcDir);
+  const vs = vendorSafety(srcDir, managedPaths);
   const sourceClean = pullInfo?.sourceClean ?? sourceCleanliness(srcDir);
   const remoteState = pullInfo?.remoteState ?? null;
   // Read-only counterpart of apply's dist/ rebuild (AIO-504): report — never perform — whether
@@ -420,15 +421,14 @@ async function cmdVendorApplyOnly(repo, cfg, args) {
   // passes this trivially.
   assertGitToolkitSource(srcDir);
   const force = args.includes("--force");
-
-  const vs = vendorSafety(srcDir);
+  const managedPaths = managedPathsForConfig(cfg);
+  const vs = vendorSafety(srcDir, managedPaths);
   if (!vs.safe) {
     throw new UpdateError(
       `the pinned toolkit snapshot has unresolved conflicts — ${vendorSafetyReason(vs)}.\n` +
         `  Refusing to vendor conflict markers into your workspace.`
     );
   }
-
   const sha = gitSha(srcDir); // srcDir IS the pinned snapshot — this trivially equals the pinned sha
   const meta = toolkitMeta(srcDir); // unmodified — reads the snapshot's own frozen files
   const stampPath = path.join(repo, VERSION_FILE);
@@ -447,16 +447,16 @@ async function cmdVendorApplyOnly(repo, cfg, args) {
   // loop: one bad destination there would leave every earlier file already vendored (a
   // partial apply with no stamp). Refusing up front, before the first write, keeps a
   // symlinked/escaping destination from ever producing a half-applied workspace.
-  for (const destRel of plannedDestRels(srcDir, baseSha)) assertDestPathSafe(repo, destRel);
-  const dirty = force ? new Set() : dirtyManagedPaths(repo);
-
+  for (const destRel of plannedDestRels(srcDir, baseSha, managedPaths))
+    assertDestPathSafe(repo, destRel);
+  const dirty = force ? new Set() : dirtyManagedPaths(repo, managedPaths);
   const shortSha = sha.slice(0, 12);
   console.log(color.dim(`  syncing toolkit ${meta.label} from ${stampSource} (${shortSha}) …`));
   const r = mergeManaged(srcDir, srcDir, repo, baseSha, {
     dirty,
     force,
     dryRun: false,
-    managedPaths: managedPathsForConfig(cfg),
+    managedPaths,
   });
 
   // Regenerate the derived catalogs from the just-synced skills so INDEX.md,
@@ -750,7 +750,7 @@ async function cmdUpdateInner(repo, cfg, args) {
   try {
     if (check) {
       // ephemeral (freshly cloned) sources are trivially current — no remote check needed.
-      const a = assessReadOnlySource(srcDir, { pullOpts, io, skipRemote: ephemeral, repo });
+      const a = assessReadOnlySource(srcDir, { pullOpts, io, skipRemote: ephemeral, repo, cfg });
       const { remoteState, sourceClean, vs } = a;
 
       const sha = gitSha(srcDir);
@@ -804,7 +804,7 @@ async function cmdUpdateInner(repo, cfg, args) {
       // preview never pulls (implies --no-pull) and never writes — it operates directly
       // against the live srcDir, same honest point-in-time scope as --check. No snapshot
       // is needed since nothing is ever written.
-      const a = assessReadOnlySource(srcDir, { pullOpts, io, skipRemote: ephemeral, repo });
+      const a = assessReadOnlySource(srcDir, { pullOpts, io, skipRemote: ephemeral, repo, cfg });
       const { remoteState, sourceClean, vs } = a;
       if (!vs.safe) {
         console.warn(
@@ -829,13 +829,14 @@ async function cmdUpdateInner(repo, cfg, args) {
         ? readFileSync(stampPath, "utf8").split(/\s/)[0]
         : undefined;
       const force = args.includes("--force");
-      const dirty = force ? new Set() : dirtyManagedPaths(repo);
+      const managedPaths = managedPathsForConfig(cfg);
+      const dirty = force ? new Set() : dirtyManagedPaths(repo, managedPaths);
 
       const r = mergeManaged(srcDir, srcDir, repo, baseSha, {
         dirty,
         force,
         dryRun: true,
-        managedPaths: managedPathsForConfig(cfg),
+        managedPaths,
       });
 
       const changedCount = printMergeReport(color, r, { preview: true });

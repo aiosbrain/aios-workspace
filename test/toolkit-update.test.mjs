@@ -13,7 +13,13 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 
 import { execFileSync } from "node:child_process";
-import { MANAGED_PATHS, PERSONAL_PATHS, SEED_IF_ABSENT } from "../scripts/toolkit-manifest.mjs";
+import {
+  CI_WORKFLOW_MANAGED_PATHS,
+  MANAGED_PATHS,
+  PERSONAL_PATHS,
+  SEED_IF_ABSENT,
+  managedPathsForConfig,
+} from "../scripts/toolkit-manifest.mjs";
 import { dirtyManagedPaths, mergeManaged, missingSeedPaths } from "../scripts/update.mjs";
 
 // The overlay/merge mechanics live in toolkit-merge.test.mjs; this file covers the
@@ -60,6 +66,41 @@ test("dirtyManagedPaths returns empty set outside a git repo (no guard, no throw
   try {
     assert.equal(dirtyManagedPaths(ws).size, 0);
   } finally {
+    rmSync(ws, { recursive: true, force: true });
+  }
+});
+
+test("CI workflow files are unmanaged when opted out and vendored only when explicitly enabled", () => {
+  const tk = mkdtempSync(path.join(tmpdir(), "aios-tk-ci-optin-"));
+  const ws = mkdtempSync(path.join(tmpdir(), "aios-ws-ci-optin-"));
+  const workflow = CI_WORKFLOW_MANAGED_PATHS.find(
+    (entry) => entry.dest === ".github/workflows/scan-on-merge.yml"
+  );
+  assert.ok(workflow, "scan-on-merge workflow is conditionally managed");
+  try {
+    mkdirSync(path.dirname(path.join(tk, workflow.src)), { recursive: true });
+    mkdirSync(path.dirname(path.join(ws, workflow.dest)), { recursive: true });
+    writeFileSync(path.join(tk, workflow.src), "upstream workflow\n");
+    writeFileSync(path.join(ws, workflow.dest), "existing workflow\n");
+
+    const optedOut = managedPathsForConfig({ ci_workflow: "false" });
+    assert.ok(!optedOut.some((entry) => entry.dest === workflow.dest));
+    assert.equal(dirtyManagedPaths(ws, optedOut).has(workflow.dest), false);
+    assert.deepEqual(mergeManaged(tk, tk, ws, undefined, { managedPaths: optedOut }).updated, []);
+    assert.equal(readFileSync(path.join(ws, workflow.dest), "utf8"), "existing workflow\n");
+
+    const optedIn = managedPathsForConfig({ ci_workflow: true });
+    assert.ok(optedIn.some((entry) => entry.dest === workflow.dest));
+    const fresh = mkdtempSync(path.join(tmpdir(), "aios-ws-ci-optin-fresh-"));
+    try {
+      const result = mergeManaged(tk, tk, fresh, undefined, { managedPaths: optedIn });
+      assert.ok(result.created.includes(workflow.dest));
+      assert.equal(readFileSync(path.join(fresh, workflow.dest), "utf8"), "upstream workflow\n");
+    } finally {
+      rmSync(fresh, { recursive: true, force: true });
+    }
+  } finally {
+    rmSync(tk, { recursive: true, force: true });
     rmSync(ws, { recursive: true, force: true });
   }
 });

@@ -25,9 +25,12 @@ export function persistCiWorkflow(repo, enabled) {
   return { enabled, changed: after !== before };
 }
 
-export async function askCiWorkflow() {
-  console.log(CI_WORKFLOW_EXPLANATION);
-  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+export async function askCiWorkflow({
+  log = console.log,
+  createInterface = readline.createInterface,
+} = {}) {
+  log(CI_WORKFLOW_EXPLANATION);
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
   const answer = await rl.question("Are you actively building a codebase with AI? [y/N] ");
   rl.close();
   return /^y(es)?$/i.test(answer.trim());
@@ -48,7 +51,7 @@ export function ghExecutable({
   return candidates.find(exists) ?? null;
 }
 
-export function checkGhCli(opts = {}) {
+export function checkGhCli({ execFile = execFileSync, ...opts } = {}) {
   const executable = ghExecutable(opts);
   if (!executable)
     return {
@@ -57,7 +60,7 @@ export function checkGhCli(opts = {}) {
         "GitHub CLI (`gh`) is not installed in a trusted location. Install it from https://cli.github.com/, then rerun this action.",
     };
   try {
-    execFileSync(executable, ["--version"], { stdio: "ignore" });
+    execFile(executable, ["--version"], { stdio: "ignore" });
   } catch {
     return {
       ok: false,
@@ -66,7 +69,7 @@ export function checkGhCli(opts = {}) {
     };
   }
   try {
-    execFileSync(executable, ["auth", "status"], { stdio: "ignore" });
+    execFile(executable, ["auth", "status"], { stdio: "ignore" });
   } catch {
     return {
       ok: false,
