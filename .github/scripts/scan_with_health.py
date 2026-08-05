@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """scan_with_health.py — `aios-ingest scan` with `metrics.codebase_health` attached (AIO-608).
 
-Used by the opt-in scan-on-merge path and the report-only scheduled debt patrol. It reuses the
+Used by the opt-in main-push scan path and the report-only scheduled debt patrol. It reuses the
 ingestion sidecar's own analyzer + client
 (installed from aios-team-brain in the preceding workflow step) so the brain receives the
 SAME full-metrics payload `aios-ingest scan` would send, plus the contract-shaped

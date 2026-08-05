@@ -1,15 +1,16 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 
-const workflowPath = fileURLToPath(
+const workflowPath = fileURLToPath(new URL("../.github/workflows/ci.yml", import.meta.url));
+const workflow = readFileSync(workflowPath, "utf8");
+const removedWorkflowPath = fileURLToPath(
   new URL("../.github/workflows/scan-on-merge.yml", import.meta.url)
 );
-const workflow = readFileSync(workflowPath, "utf8");
 const scaffoldWorkflowPath = fileURLToPath(
   new URL("../scaffold/.github/workflows/scan-on-merge.yml", import.meta.url)
 );
@@ -30,7 +31,20 @@ const scaffoldScanWithHealth = readFileSync(scaffoldScanWithHealthPath, "utf8");
 const CHECKOUT_SHA = "3d3c42e5aac5ba805825da76410c181273ba90b1";
 const SETUP_NODE_SHA = "820762786026740c76f36085b0efc47a31fe5020";
 const SETUP_PYTHON_SHA = "5fda3b95a4ea91299a34e894583c3862153e4b97";
+const DOWNLOAD_ARTIFACT_SHA = "3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c";
 const BRAIN_SHA = "8c29919236e602af63508abf5e988d4ab1d97eff";
+
+function workflowJob(contents, name) {
+  const lines = contents.split("\n");
+  const start = lines.findIndex((line) => line === `  ${name}:`);
+  assert.notEqual(start, -1, `missing ${name} job`);
+  const relativeEnd = lines.slice(start + 1).findIndex((line) => /^ {2}[\w-]+:$/.test(line));
+  const end = relativeEnd === -1 ? lines.length : start + 1 + relativeEnd;
+  return lines.slice(start, end).join("\n");
+}
+
+const coreScan = workflowJob(workflow, "scan");
+const coverageJob = workflowJob(workflow, "coverage");
 
 function workflowSteps(contents) {
   const lines = contents.split("\n");
@@ -40,21 +54,22 @@ function workflowSteps(contents) {
   );
 }
 
-test("scan-on-merge grants only read access to repository contents", () => {
-  assert.match(workflow, /permissions:\n {2}contents: read\n/);
-  assert.doesNotMatch(workflow, /(?:contents|actions|checks|packages|pull-requests): write/);
+test("the same-workflow core scanner grants only read access to repository contents", () => {
+  assert.match(coreScan, /permissions:\n {6}actions: read\n {6}contents: read\n/);
+  assert.doesNotMatch(coreScan, /(?:contents|actions|checks|packages|pull-requests): write/);
 });
 
-test("scan-on-merge pins every third-party action to an immutable commit", () => {
+test("the core scan job and scaffold pin every third-party action to an immutable commit", () => {
   assert.equal(
-    (workflow.match(new RegExp(`actions/checkout@${CHECKOUT_SHA}`, "g")) ?? []).length,
+    (coreScan.match(new RegExp(`actions/checkout@${CHECKOUT_SHA}`, "g")) ?? []).length,
     1
   );
-  assert.match(workflow, new RegExp(`actions/setup-node@${SETUP_NODE_SHA}`));
-  assert.match(workflow, new RegExp(`actions/setup-python@${SETUP_PYTHON_SHA}`));
+  assert.match(coreScan, new RegExp(`actions/setup-node@${SETUP_NODE_SHA}`));
+  assert.match(coreScan, new RegExp(`actions/setup-python@${SETUP_PYTHON_SHA}`));
+  assert.match(coreScan, new RegExp(`actions/download-artifact@${DOWNLOAD_ARTIFACT_SHA}`));
 
   for (const [name, contents] of [
-    ["repository", workflow],
+    ["repository", coreScan],
     ["scaffold", scaffoldWorkflow],
   ]) {
     const actionRefs = [...contents.matchAll(/uses:\s+[^\s@]+@([^\s#]+)/g)].map(
@@ -69,9 +84,9 @@ test("scan-on-merge pins every third-party action to an immutable commit", () =>
 });
 
 test("Team Brain scanner checkout uses the anonymous fetch script", () => {
-  assert.match(workflow, /run: bash \.github\/scripts\/fetch-brain-scanner\.sh \.brain-scanner/);
-  assert.doesNotMatch(workflow, /BRAIN_REPO_TOKEN/);
-  assert.doesNotMatch(workflow, /token:\s*["']{0,2}\s*$/m);
+  assert.match(coreScan, /run: bash \.github\/scripts\/fetch-brain-scanner\.sh \.brain-scanner/);
+  assert.doesNotMatch(coreScan, /BRAIN_REPO_TOKEN/);
+  assert.doesNotMatch(coreScan, /token:\s*["']{0,2}\s*$/m);
 });
 
 test("anonymous fetch is syntactically valid, sparse, credential-free, and fail-closed", () => {
@@ -92,13 +107,13 @@ test("anonymous fetch is syntactically valid, sparse, credential-free, and fail-
 });
 
 test("workspace checkout discards credentials", () => {
-  assert.equal((workflow.match(/persist-credentials: false/g) ?? []).length, 1);
+  assert.equal((coreScan.match(/persist-credentials: false/g) ?? []).length, 1);
   assert.equal((scaffoldWorkflow.match(/persist-credentials: false/g) ?? []).length, 1);
 });
 
 test("Brain secrets are scoped only to the configuration probe and final upload", () => {
   for (const [name, contents] of [
-    ["repository", workflow],
+    ["repository", coreScan],
     ["scaffold", scaffoldWorkflow],
   ]) {
     assert.doesNotMatch(contents, /^ {4}env:\n(?:^ {6}.+\n)+/m, `${name}: job env is forbidden`);
@@ -121,20 +136,23 @@ test("Brain secrets are scoped only to the configuration probe and final upload"
   }
 });
 
-test("secret-bearing scans can run only after a push to protected main", () => {
-  for (const contents of [workflow, scaffoldWorkflow]) {
-    assert.match(contents, /^on:\n {2}push:\n {4}branches: \[main\]$/m);
-    assert.doesNotMatch(contents, /workflow_dispatch/);
-    assert.doesNotMatch(contents, /pull_request(?:_target)?:/);
-  }
+test("the core scanner is same-workflow, canonical-repository main-push-only", () => {
+  assert.equal(existsSync(removedWorkflowPath), false);
+  assert.match(workflow, /^on:\n {2}pull_request:\n {2}push:\n {4}branches: \[main\]$/m);
+  assert.match(coreScan, /needs: coverage/);
+  assert.match(coreScan, /always\(\)/);
+  assert.match(coreScan, /github\.event_name == 'push'/);
+  assert.match(coreScan, /github\.ref == 'refs\/heads\/main'/);
+  assert.match(coreScan, /github\.repository == 'aiosbrain\/aios-workspace'/);
+  assert.match(scaffoldWorkflow, /^on:\n {2}push:\n {4}branches: \[main\]$/m);
+  assert.doesNotMatch(scaffoldWorkflow, /workflow_dispatch|pull_request(?:_target)?:/);
 });
 
 test("scanner dependencies are exact, hashed, binary-only, and scaffolded", () => {
-  assert.match(workflow, /npm ci --ignore-scripts/);
   assert.match(scaffoldWorkflow, /npm install -g @aiosbrain\/aios@0\.9\.1 --ignore-scripts/);
   assert.match(scaffoldWorkflow, /npm ci --ignore-scripts/);
   assert.doesNotMatch(scaffoldWorkflow, /npm ci \|\| npm install/);
-  for (const contents of [workflow, scaffoldWorkflow]) {
+  for (const contents of [coreScan, scaffoldWorkflow]) {
     assert.match(contents, /pip install --only-binary=:all: --require-hashes/);
     assert.doesNotMatch(contents, /pip install -e/);
   }
@@ -159,27 +177,78 @@ test("scanner dependencies are exact, hashed, binary-only, and scaffolded", () =
   );
 });
 
-test("optional coverage dependency failures do not abort the Brain scan", () => {
-  for (const [name, contents] of [
-    ["repository", workflow],
-    ["scaffold", scaffoldWorkflow],
-  ]) {
-    assert.match(
-      contents,
-      /if npm ci --ignore-scripts; then[\s\S]*?npm run test:coverage \|\| true/,
-      name
-    );
-    assert.match(
-      contents,
-      /else\n\s+echo "dependency install failed — continuing without a coverage report\."/,
-      name
-    );
-  }
+test("core coverage is packed only on success and installed only after coverage succeeds", () => {
+  assert.match(coverageJob, /node scripts\/coverage-bundle\.mjs pack/);
+  assert.match(coverageJob, /--out "\$RUNNER_TEMP\/coverage-bundle"/);
+  assert.match(coverageJob, /name: coverage-bundle/);
+  assert.match(
+    coverageJob,
+    /Download the \\`coverage-bundle\\` artifact[\s\S]*root \\`coverage-baseline-candidate\.json\\`/
+  );
+  assert.doesNotMatch(coverageJob, /in the \\`coverage\\` artifact/);
+  assert.match(coverageJob, /if-no-files-found: error/);
+  assert.doesNotMatch(coverageJob, /if: always\(\)[\s\S]*upload/i);
+  assert.match(
+    coreScan,
+    /name: Download this run's coverage bundle[\s\S]*needs\.coverage\.result == 'success'/
+  );
+  assert.match(
+    coreScan,
+    /name: Install this run's verified coverage bundle[\s\S]*needs\.coverage\.result == 'success'/
+  );
+  assert.match(coreScan, /--repository "\$GITHUB_REPOSITORY"/);
+  assert.match(coreScan, /--sha "\$GITHUB_SHA"/);
+  assert.match(coreScan, /--run-id "\$GITHUB_RUN_ID"/);
+  assert.doesNotMatch(coreScan, /npm run test:coverage/);
+});
+
+test("coverage failure still reaches the core scanner with no readable coverage", () => {
+  assert.match(coreScan, /name: Start from a coverage-free scanner checkout/);
+  assert.match(coreScan, /(?:^|\s)coverage\/coverage-summary\.json(?:\s|$)/m);
+  assert.match(coreScan, /(?:^|\s)coverage-summary\.json(?:\s|$)/m);
+  assert.match(coreScan, /name: Explain and sanitize unavailable coverage/);
+  assert.match(coreScan, /needs\.coverage\.result != 'success'/);
+  assert.match(coreScan, /scanning with null coverage/);
+  assert.match(coreScan, /name: Scan this repo into the brain/);
+});
+
+test("scaffold optional coverage is visibly nonblocking and sanitizes every failed output", () => {
+  const coverageStep = workflowSteps(scaffoldWorkflow).find((step) =>
+    /- name: Generate coverage/.test(step)
+  );
+  const sanitizeStep = workflowSteps(scaffoldWorkflow).find((step) =>
+    /- name: Sanitize failed coverage output/.test(step)
+  );
+  assert.ok(coverageStep);
+  assert.ok(sanitizeStep);
+  assert.match(coverageStep, /id: coverage/);
+  assert.match(coverageStep, /continue-on-error: true/);
+  assert.doesNotMatch(coverageStep, /\|\| true/);
+  assert.match(coverageStep, /no locked test:coverage suite — skipping/);
+  assert.match(sanitizeStep, /always\(\)/);
+  assert.match(sanitizeStep, /steps\.coverage\.outcome == 'failure'/);
+  assert.match(sanitizeStep, /(?:^|\s)coverage\/coverage-summary\.json(?:\s|$)/m);
+  assert.match(sanitizeStep, /(?:^|\s)coverage-summary\.json(?:\s|$)/m);
+  assert.match(sanitizeStep, /coverage\/lcov\.info/);
+});
+
+test("optional core health enrichment publishes only complete payloads", () => {
+  const healthStep = workflowSteps(coreScan).find((step) =>
+    /- name: Compute codebase health/.test(step)
+  );
+  assert.ok(healthStep);
+  assert.match(healthStep, /codebase-health\.v1\.json\.partial/);
+  assert.match(healthStep, /codebase-health\.contract\.json\.partial/);
+  assert.match(
+    healthStep,
+    /mv \\\n\s+"\$RUNNER_TEMP\/codebase-health\.contract\.json\.partial" \\\n\s+"\$RUNNER_TEMP\/codebase-health\.contract\.json"/
+  );
+  assert.doesNotMatch(healthStep, /> "\$RUNNER_TEMP\/codebase-health\.contract\.json"(?:\s|$)/m);
 });
 
 test("health upload failures are not retried with a destructive plain upload", () => {
   for (const [name, contents] of [
-    ["repository", workflow],
+    ["repository", coreScan],
     ["scaffold", scaffoldWorkflow],
   ]) {
     assert.doesNotMatch(

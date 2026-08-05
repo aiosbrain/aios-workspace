@@ -83,18 +83,26 @@ jobs:
       # a gate. Lifecycle scripts are disabled during install; the named coverage script remains
       # an explicit, auditable execution step.
       - name: Generate coverage (only if this workspace has a suite)
+        id: coverage
         if: steps.brain.outputs.configured == 'true'
+        continue-on-error: true # metrics source; failure stays visible but never blocks the scan
         run: |
           if [ -f package-lock.json ] && node -e "process.exit(require('./package.json').scripts?.['test:coverage'] ? 0 : 1)" 2>/dev/null; then
             echo "test:coverage found — running it."
-            if npm ci --ignore-scripts; then
-              npm run test:coverage || true
-            else
-              echo "dependency install failed — continuing without a coverage report."
-            fi
+            npm ci --ignore-scripts
+            npm run test:coverage
           else
             echo "no locked test:coverage suite — skipping (coverage will report as 'no report')."
           fi
+
+      - name: Sanitize failed coverage output
+        if: >-
+          always() &&
+          steps.brain.outputs.configured == 'true' &&
+          steps.coverage.outcome == 'failure'
+        run: |
+          rm -f -- coverage/coverage-summary.json coverage-summary.json coverage/lcov.info
+          echo "optional coverage failed — sanitized scanner-readable output; scanning with no report."
 
       - name: Compute codebase health
         if: steps.brain.outputs.configured == 'true'
