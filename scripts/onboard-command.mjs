@@ -214,7 +214,10 @@ export async function cmdOnboard(repo, cfg, args = [], { connectFlow, nextAction
       persistCiWorkflow(repo, true);
       cfg.ci_workflow = "true";
       const result = await cmdUpdate(repo, cfg, ["--with-ci-workflow", "--no-pull"]);
-      if (result.exitStatus) clack.log.warn("CI workflow setup did not complete; rerun `aios update --with-ci-workflow`.");
+      if (result.exitStatus)
+        clack.log.warn(
+          "CI workflow setup did not complete; rerun `aios update --with-ci-workflow`."
+        );
     } else {
       persistCiWorkflow(repo, false);
       cfg.ci_workflow = "false";

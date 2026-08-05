@@ -1,6 +1,7 @@
 import path from "node:path";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
+import readline from "node:readline/promises";
 
 export const CI_WORKFLOW_KEY = "ci_workflow";
 export const CI_WORKFLOW_EXPLANATION =
@@ -24,10 +25,31 @@ export function persistCiWorkflow(repo, enabled) {
   return { enabled, changed: after !== before };
 }
 
+export async function askCiWorkflow() {
+  console.log(CI_WORKFLOW_EXPLANATION);
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  const answer = await rl.question("Are you actively building a codebase with AI? [y/N] ");
+  rl.close();
+  return /^y(es)?$/i.test(answer.trim());
+}
+
 export function checkGhCli() {
-  try { execFileSync("gh", ["--version"], { stdio: "ignore" }); }
-  catch { return { ok: false, reason: "GitHub CLI (`gh`) is not installed. Install it from https://cli.github.com/, then rerun this action." }; }
-  try { execFileSync("gh", ["auth", "status"], { stdio: "ignore" }); }
-  catch { return { ok: false, reason: "GitHub CLI is not authenticated. Run `gh auth login`, then rerun this action." }; }
+  try {
+    execFileSync("gh", ["--version"], { stdio: "ignore" });
+  } catch {
+    return {
+      ok: false,
+      reason:
+        "GitHub CLI (`gh`) is not installed. Install it from https://cli.github.com/, then rerun this action.",
+    };
+  }
+  try {
+    execFileSync("gh", ["auth", "status"], { stdio: "ignore" });
+  } catch {
+    return {
+      ok: false,
+      reason: "GitHub CLI is not authenticated. Run `gh auth login`, then rerun this action.",
+    };
+  }
   return { ok: true };
 }

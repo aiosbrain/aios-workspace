@@ -31,9 +31,22 @@
  * scaffold, so a workspace never inherits the toolkit's dev-only hooks.
  */
 export const CI_WORKFLOW_MANAGED_PATHS = [
-  { dest: ".github/workflows/scan-on-merge.yml", src: "scaffold/.github/workflows/scan-on-merge.yml", kind: "file" },
-  { dest: ".github/scripts/fetch-brain-scanner.sh", src: "scaffold/.github/scripts/fetch-brain-scanner.sh", kind: "file", exec: true },
-  { dest: ".github/scripts/scan_with_health.py", src: "scaffold/.github/scripts/scan_with_health.py", kind: "file" },
+  {
+    dest: ".github/workflows/scan-on-merge.yml",
+    src: "scaffold/.github/workflows/scan-on-merge.yml",
+    kind: "file",
+  },
+  {
+    dest: ".github/scripts/fetch-brain-scanner.sh",
+    src: "scaffold/.github/scripts/fetch-brain-scanner.sh",
+    kind: "file",
+    exec: true,
+  },
+  {
+    dest: ".github/scripts/scan_with_health.py",
+    src: "scaffold/.github/scripts/scan_with_health.py",
+    kind: "file",
+  },
 ];
 
 export const MANAGED_PATHS = [

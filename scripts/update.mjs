@@ -26,31 +26,6 @@
  *   aios update --from DIR  # use a specific toolkit checkout as the source
  *   aios update --force    # take the toolkit version for everything (overwrite)
  *
- * Safety: a dirty toolkit tree is never clobbered (refuse, or --stash to stash+restore); a
- * non-fast-forward toolkit is refused, not auto-merged; a locally-uninspectable toolkit repo
- * (a git status/index/ref query itself failing) is refused, never treated as clean/current.
- * Managed files with UNCOMMITTED local changes in the WORKSPACE are skipped (never
- * clobbered). Conflicts are NEVER written inline (the files are executed/parsed) — the
- * toolkit version lands at <file>.aios-incoming and the marked-up merge at <file>.aios-merge;
- * the stamp stays at the old base until conflicts are resolved. Run inside the toolkit
- * checkout itself, update just pulls it (nothing to re-vendor into).
- *
- * The actual vendoring (merge + catalog generation + stamp write) never runs against the
- * live, mutable toolkit checkout — it always runs against an immutable `git worktree`
- * snapshot pinned at a specific commit (toolkit-pull.mjs's `createPinnedSnapshot`), via a
- * structurally non-recursive internal hand-off (`--vendor-apply-only`, see `cmdVendorApplyOnly`
- * below) — so nothing downstream of the pull can ever read a value that changed mid-operation,
- * and there is no recursion-guard state to get confused by (no env var, nothing ambient).
- *
- * Every expected failure (dirty tree, unresolved conflict, bad --from, unknown flag, ...)
- * throws `UpdateError` rather than exiting — caught exactly once, in `cmdUpdate` itself — so
- * `cmdUpdate`/`pullToolkitCheckout` are safely callable in-process by programmatic callers
- * (onboarding) and by tests, without ever risking `process.exit()`.
- *
- * Source resolution: --from DIR → $AIOS_TOOLKIT_DIR → the toolkit this CLI is executing from
- * (the checkout the workspace shim forwarded to — always the right one to pull/vendor) →
- * ~/Projects/aios/aios-workspace → `git clone` the canonical repo (aios.yaml `toolkit_repo`).
- *
  * Zero dependencies (git + npm + cp/rm shelled out; Node >= 18).
  */
 
@@ -58,11 +33,10 @@ import os from "node:os";
 import path from "node:path";
 import { existsSync, mkdtempSync, rmSync, writeFileSync, readFileSync } from "node:fs";
 import { execFileSync, spawnSync } from "node:child_process";
-import readline from "node:readline/promises";
 import { fileURLToPath } from "node:url";
 import { c, UpdateError, gitEnv } from "./cli-common.mjs";
 import { VERSION_FILE, managedPathsForConfig } from "./toolkit-manifest.mjs";
-import { ciWorkflowState, persistCiWorkflow, CI_WORKFLOW_EXPLANATION } from "./ci-workflow.mjs";
+import { askCiWorkflow, ciWorkflowState, persistCiWorkflow } from "./ci-workflow.mjs";
 import { toolkitMeta } from "./toolkit-meta.mjs";
 import { cmdContribute } from "./toolkit-contribute.mjs";
 import { installWorktreeSafetyBackstops } from "./worktree.mjs";
@@ -478,7 +452,12 @@ async function cmdVendorApplyOnly(repo, cfg, args) {
 
   const shortSha = sha.slice(0, 12);
   console.log(color.dim(`  syncing toolkit ${meta.label} from ${stampSource} (${shortSha}) …`));
-  const r = mergeManaged(srcDir, srcDir, repo, baseSha, { dirty, force, dryRun: false, managedPaths: managedPathsForConfig(cfg) });
+  const r = mergeManaged(srcDir, srcDir, repo, baseSha, {
+    dirty,
+    force,
+    dryRun: false,
+    managedPaths: managedPathsForConfig(cfg),
+  });
 
   // Regenerate the derived catalogs from the just-synced skills so INDEX.md,
   // INTEGRATIONS.md, and RESOLVER.md's generated block never drift after an update.
@@ -683,14 +662,13 @@ async function cmdUpdateInner(repo, cfg, args) {
   const io = { log: (m) => console.log(m), warn: (m) => console.warn(m) };
   const mode = check ? "check" : preview ? "preview" : "apply";
 
-  // Direct interactive updates are another entry point into this capability decision.
-  // Preview/check remain read-only, and unattended automation stays default-off.
-  if (mode === "apply" && !args.includes("--with-ci-workflow") && ciWorkflowState(cfg) === null && process.stdin.isTTY) {
-    console.log(CI_WORKFLOW_EXPLANATION);
-    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-    const answer = await rl.question("Are you actively building a codebase with AI? [y/N] ");
-    rl.close();
-    const enabled = /^y(es)?$/i.test(answer.trim());
+  if (
+    mode === "apply" &&
+    !args.includes("--with-ci-workflow") &&
+    ciWorkflowState(cfg) === null &&
+    process.stdin.isTTY
+  ) {
+    const enabled = await askCiWorkflow();
     persistCiWorkflow(repo, enabled);
     cfg.ci_workflow = enabled ? "true" : "false";
   }
@@ -700,11 +678,6 @@ async function cmdUpdateInner(repo, cfg, args) {
   // is ever vendored here, so any snapshot pullToolkitCheckout pins is unused — discard it.
   if (looksLikeToolkit(repo)) {
     console.log(color.blue("aios update") + color.dim(`  toolkit checkout ${repo}`));
-    // The envelope gate must hold in EVERY mode on EVERY entry path (the design doc's
-    // choke-point claim). This branch never reaches resolveSource, and its --no-pull
-    // no-op returns before pullToolkitCheckout's backstop — yet it still runs git
-    // (sourceCleanliness, gitSha) against `repo`, which for a non-git toolkit copy nested
-    // inside another repository would silently resolve the ENCLOSING repo. Refuse first.
     assertGitToolkitSource(repo);
     // The consent pin must never be silently ignored on ANY branch that can return
     // success: this flag is only meaningful for a two-step preview→apply over a
@@ -858,7 +831,12 @@ async function cmdUpdateInner(repo, cfg, args) {
       const force = args.includes("--force");
       const dirty = force ? new Set() : dirtyManagedPaths(repo);
 
-      const r = mergeManaged(srcDir, srcDir, repo, baseSha, { dirty, force, dryRun: true, managedPaths: managedPathsForConfig(cfg) });
+      const r = mergeManaged(srcDir, srcDir, repo, baseSha, {
+        dirty,
+        force,
+        dryRun: true,
+        managedPaths: managedPathsForConfig(cfg),
+      });
 
       const changedCount = printMergeReport(color, r, { preview: true });
       console.log(
