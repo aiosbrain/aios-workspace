@@ -19,8 +19,11 @@ A contributor's AIOS install is really **two** repos, not one:
 > checkout this design assumes — via `AIOS_TOOLKIT_DIR` (see
 > `gui-toolkit-contract.md`) — so the two-piece model here becomes three pieces,
 > all sharing one toolkit location. For existing workspace owners the migration at
-> v0.9.0 is one `aios update` plus setting `AIOS_TOOLKIT_DIR` in `.envrc` — no
-> re-scaffold.
+> v0.9.0 is one `aios update` — no re-scaffold, and since AIO-814 no manual
+> `AIOS_TOOLKIT_DIR` either: the shim reads the checkout out of the workspace's own
+> `.aios-toolkit-version` stamp, which the scaffolder and every update already write.
+> Setting `AIOS_TOOLKIT_DIR` remains the way to point a workspace at a *different*
+> checkout, and the GUI still requires it (or `--toolkit-dir`).
 
 A scaffolded workspace also carries a **vendored copy** of the governance surface
 (`.claude/{skills,rules,rubrics,commands}`, `hooks/`, `validation/`) — files Claude Code

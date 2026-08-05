@@ -58,6 +58,14 @@ conformance-fixture alignment only: neither route's runtime or wire behavior cha
 
 ### Fixed
 
+- A scaffolded workspace's CLI shim now resolves its `aios-workspace` checkout with no setup.
+  It reads the `source` line the scaffolder already writes into `.aios-toolkit-version` (and
+  every `aios update` rewrites), consulted after `AIOS_TOOLKIT_DIR` and before the legacy
+  relative-directory guesses. Previously the shim resolved only when someone exported the env
+  var or their layout happened to match one of three hardcoded sibling paths — which the
+  documented clone directory did not. Existing workspaces are fixed without running anything,
+  because they already carry the stamp. `AIOS_TOOLKIT_DIR` is unchanged and still wins, and is
+  still how the GUI is pointed at a checkout (AIO-814).
 - Optional coverage dependency installation is now genuinely fail-open: an `npm ci`
   failure cannot prevent the repository or a newly scaffolded consumer from reaching its Brain
   scan. Regression guards enforce the behavior in both workflow copies (AIO-697).

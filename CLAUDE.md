@@ -66,8 +66,10 @@ seams as import rules). Current, verified state:
 | Desktop (Tauri) | travels with the GUI repo | Adjacent-checkout mode only; **do-not-demo** for v0.9.0. Self-contained bundling is AIO-581, owned by the GUI repo. |
 | Devtools | `aiosbrain/aios-devtools` | **Cut and removed** (AIO-594 → AIO-661 → AIO-662). `ship`, `build`, `roadmap-run`, `spec-eval`, `spec-publish`, `consolidate-findings` and `scripts/ship/` are **gone from this repo**; `@aiosbrain/aios-devtools` is authoritative and is a dependency of `@aiosbrain/aios`, so `aios ship` works on a plain `npm i -g @aiosbrain/aios`. Core dispatches through `scripts/devtools-dispatch.mjs` (`--devtools-dir` → `AIOS_DEVTOOLS_DIR` → the package → actionable error). `scripts/boundaries.json` carries **zero R6 grandfathers** — the machine-checkable proof the direction is clean. Seam contract: `docs/devtools-toolkit-contract.md`. |
 
-Migration for existing workspace owners at v0.9.0: one `aios update` + set
-`AIOS_TOOLKIT_DIR` in `.envrc`. No re-scaffold.
+Migration for existing workspace owners at v0.9.0: one `aios update`. No re-scaffold, and
+since AIO-814 no manual `AIOS_TOOLKIT_DIR` — the workspace shim reads the checkout out of
+its own `.aios-toolkit-version` stamp. The **GUI** is the piece that still requires
+`AIOS_TOOLKIT_DIR` or `--toolkit-dir`; it has no stamp to read.
 
 ---
 
@@ -159,8 +161,11 @@ they don't recognize.
 - **How forks stay in sync (two layers, one command).** Every contributor has an independent
   scaffolded workspace repo. It stays current WITHOUT re-scaffolding:
   1. **CLI = a delegating shim.** A workspace's `scripts/aios.mjs` is a thin shim (`scaffold/scripts/aios.mjs`)
-     that forwards every command to the one canonical toolkit checkout (`../aios/aios-workspace`, or
-     `AIOS_TOOLKIT_DIR`). So command code (`push`/`pull`/`analyze`/harnesses) is **always current** — you
+     that forwards every command to the one canonical toolkit checkout. It finds that checkout from
+     `AIOS_TOOLKIT_DIR`, else from the `source` line in the workspace's `.aios-toolkit-version` stamp
+     (written by the scaffolder, rewritten by every `aios update` — so no env var and no particular
+     directory layout is required, AIO-814), else from relative `~/Projects` layouts as a legacy last
+     resort. So command code (`push`/`pull`/`analyze`/harnesses) is **always current** — you
      never vendor the full CLI (it needs `node_modules` deps and would crash in a workspace). Update it by
      `aios update` (or `git pull` in `aios-workspace`).
   2. **Governance = vendored, synced by `aios update`.** The files Claude Code + validators read *in place*
