@@ -15,6 +15,7 @@ import { runCreateFlow } from "./onboard-create.mjs";
 import { formatInspection, inspectOnboarding } from "./onboard-inspect.mjs";
 import { cmdUpdate } from "./update.mjs";
 import { installWorktreeSafetyBackstops } from "./worktree.mjs";
+import { ciWorkflowState, CI_WORKFLOW_EXPLANATION, persistCiWorkflow } from "./ci-workflow.mjs";
 
 const TEAM_BRAIN_PSEUDO_ID = "__team_brain__";
 
@@ -206,6 +207,19 @@ export async function cmdOnboard(repo, cfg, args = [], { connectFlow, nextAction
   }
 
   await runToolkitUpgrade(repo, cfg, inspection, { confirm, clack });
+
+  if (ciWorkflowState(cfg) === null) {
+    clack.log.info(CI_WORKFLOW_EXPLANATION);
+    if (await confirm("Are you actively building a codebase with AI?")) {
+      persistCiWorkflow(repo, true);
+      cfg.ci_workflow = "true";
+      const result = await cmdUpdate(repo, cfg, ["--with-ci-workflow", "--no-pull"]);
+      if (result.exitStatus) clack.log.warn("CI workflow setup did not complete; rerun `aios update --with-ci-workflow`.");
+    } else {
+      persistCiWorkflow(repo, false);
+      cfg.ci_workflow = "false";
+    }
+  }
 
   const backedUp = backupConfig(repo);
   if (backedUp.length) clack.log.info(`Backed up existing config first: ${backedUp.join(", ")}`);

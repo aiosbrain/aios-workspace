@@ -207,7 +207,7 @@ export function mergeManaged(toolkitDir, srcRoot, repo, baseSha, opts = {}) {
     conflicts: [],
     skippedDirty: [],
   };
-  for (const entry of MANAGED_PATHS) {
+  for (const entry of opts.managedPaths || MANAGED_PATHS) {
     if (!existsSync(path.join(srcRoot, entry.src))) continue;
     for (const f of entryFiles(srcRoot, entry)) {
       if (dirty.has(f.destRel)) {

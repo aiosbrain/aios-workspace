@@ -58,9 +58,11 @@ import os from "node:os";
 import path from "node:path";
 import { existsSync, mkdtempSync, rmSync, writeFileSync, readFileSync } from "node:fs";
 import { execFileSync, spawnSync } from "node:child_process";
+import readline from "node:readline/promises";
 import { fileURLToPath } from "node:url";
 import { c, UpdateError, gitEnv } from "./cli-common.mjs";
-import { VERSION_FILE } from "./toolkit-manifest.mjs";
+import { VERSION_FILE, managedPathsForConfig } from "./toolkit-manifest.mjs";
+import { ciWorkflowState, persistCiWorkflow, CI_WORKFLOW_EXPLANATION } from "./ci-workflow.mjs";
 import { toolkitMeta } from "./toolkit-meta.mjs";
 import { cmdContribute } from "./toolkit-contribute.mjs";
 import { installWorktreeSafetyBackstops } from "./worktree.mjs";
@@ -221,6 +223,7 @@ const UPDATE_BOOL_FLAGS = new Set([
   "--stash",
   "--no-install",
   "--force",
+  "--with-ci-workflow",
   "--dry-run", // alias for --preview UNLESS combined with --contribute (see cmdUpdate)
 ]);
 // Recognized, but deliberately excluded from --help/the "supported:" error text — internal
@@ -421,7 +424,7 @@ function assessReadOnlySource(srcDir, { pullOpts, io, skipRemote = false, repo =
  * TOCTOU-immune final gate — nothing can change under it between this check and the
  * writes that follow.
  */
-async function cmdVendorApplyOnly(repo, args) {
+async function cmdVendorApplyOnly(repo, cfg, args) {
   const color = c;
   const srcDir = argValue(args, "--from");
   if (!srcDir || !looksLikeToolkit(srcDir)) {
@@ -475,7 +478,7 @@ async function cmdVendorApplyOnly(repo, args) {
 
   const shortSha = sha.slice(0, 12);
   console.log(color.dim(`  syncing toolkit ${meta.label} from ${stampSource} (${shortSha}) …`));
-  const r = mergeManaged(srcDir, srcDir, repo, baseSha, { dirty, force, dryRun: false });
+  const r = mergeManaged(srcDir, srcDir, repo, baseSha, { dirty, force, dryRun: false, managedPaths: managedPathsForConfig(cfg) });
 
   // Regenerate the derived catalogs from the just-synced skills so INDEX.md,
   // INTEGRATIONS.md, and RESOLVER.md's generated block never drift after an update.
@@ -612,6 +615,7 @@ async function cmdUpdateInner(repo, cfg, args) {
       "--from",
       "--repo",
       "--force",
+      "--with-ci-workflow",
       "--result-file",
       "--stamp-source",
     ]);
@@ -628,7 +632,7 @@ async function cmdUpdateInner(repo, cfg, args) {
         );
       }
     }
-    return await cmdVendorApplyOnly(repo, args);
+    return await cmdVendorApplyOnly(repo, cfg, args);
   }
 
   const check = args.includes("--check");
@@ -669,11 +673,27 @@ async function cmdUpdateInner(repo, cfg, args) {
   }
 
   const noPull = args.includes("--no-pull") || preview;
+  if (args.includes("--with-ci-workflow")) {
+    persistCiWorkflow(repo, true);
+    cfg.ci_workflow = "true";
+  }
   const stash = args.includes("--stash");
   const noInstall = args.includes("--no-install");
   const pullOpts = { stash, noInstall, dryRun: check, check };
   const io = { log: (m) => console.log(m), warn: (m) => console.warn(m) };
   const mode = check ? "check" : preview ? "preview" : "apply";
+
+  // Direct interactive updates are another entry point into this capability decision.
+  // Preview/check remain read-only, and unattended automation stays default-off.
+  if (mode === "apply" && !args.includes("--with-ci-workflow") && ciWorkflowState(cfg) === null && process.stdin.isTTY) {
+    console.log(CI_WORKFLOW_EXPLANATION);
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+    const answer = await rl.question("Are you actively building a codebase with AI? [y/N] ");
+    rl.close();
+    const enabled = /^y(es)?$/i.test(answer.trim());
+    persistCiWorkflow(repo, enabled);
+    cfg.ci_workflow = enabled ? "true" : "false";
+  }
 
   // Run inside the toolkit checkout itself: no workspace to re-vendor into, so `aios update`
   // just brings the checkout current (git pull + npm ci) — the "self-update" case. Nothing
@@ -838,7 +858,7 @@ async function cmdUpdateInner(repo, cfg, args) {
       const force = args.includes("--force");
       const dirty = force ? new Set() : dirtyManagedPaths(repo);
 
-      const r = mergeManaged(srcDir, srcDir, repo, baseSha, { dirty, force, dryRun: true });
+      const r = mergeManaged(srcDir, srcDir, repo, baseSha, { dirty, force, dryRun: true, managedPaths: managedPathsForConfig(cfg) });
 
       const changedCount = printMergeReport(color, r, { preview: true });
       console.log(
@@ -956,6 +976,7 @@ async function cmdUpdateInner(repo, cfg, args) {
         stampSource,
       ];
       if (args.includes("--force")) passthrough.push("--force");
+      if (args.includes("--with-ci-workflow")) passthrough.push("--with-ci-workflow");
       // env: gitEnv() — the child runs the SNAPSHOT's own CLI, which may predate the
       // git-env hardening entirely. Scrubbing at the spawn boundary closes the inherited
       // GIT_DIR/GIT_WORK_TREE hole for EVERY snapshot version, including old ones whose

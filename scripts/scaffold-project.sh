@@ -12,7 +12,7 @@
 #     --context consultant|employee|business-owner \
 #     [--stakeholder "Acme Corp"] [--team "sam,jordan"] \
 #     [--team-id <brain team id>] [--brain-url <url>] \
-#     [--org your-github-org] [--currency USD] [--output ~/Projects/alex-aios] [--dry-run]
+#     [--org your-github-org] [--currency USD] [--output ~/Projects/alex-aios] [--with-ci-workflow] [--dry-run]
 #
 # Onboarding context (the spine skin) — three first-class choices, not a bolt-on:
 #   consultant     → you work in a team for a CLIENT.  0-context=engagement+scope,
@@ -44,6 +44,7 @@ SCAFFOLD="$REPO_ROOT/scaffold"
 DRY_RUN=false
 SLUG=""; OWNER=""; CONTEXT=""; STAKEHOLDER=""; STAKEHOLDER_FULL=""; DESC=""
 TEAM=""; ORG="your-github-org"; CURRENCY="USD"; OUTPUT=""; TEAM_ID=""; BRAIN_URL=""
+CI_WORKFLOW=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -62,6 +63,7 @@ while [[ $# -gt 0 ]]; do
     --output) OUTPUT="$2"; shift 2 ;;
     --team-id) TEAM_ID="$2"; shift 2 ;;
     --brain-url) BRAIN_URL="$2"; shift 2 ;;
+    --with-ci-workflow) CI_WORKFLOW=true; shift ;;
     --dry-run) DRY_RUN=true; shift ;;
     -h|--help)
       sed -n '2,33p' "$0"; exit 0 ;;
@@ -134,6 +136,14 @@ if [ -n "$BRAIN_URL" ]; then
     read -r BRAIN_CONFIRM || BRAIN_CONFIRM=""
     case "$BRAIN_CONFIRM" in [Yy]*) : ;; *) echo "Cancelled — Brain origin was not saved."; exit 1 ;; esac
   fi
+fi
+
+if [ -z "$CI_WORKFLOW" ] && [ -t 0 ] && [ -t 1 ]; then
+  echo ""
+  echo "Optional developer setup: AIOS can add a GitHub Actions workflow that reports merge-time code health to the Team Brain."
+  printf "Are you actively building a codebase with AI? [y/N] "
+  read -r CI_ANSWER || CI_ANSWER=""
+  case "$CI_ANSWER" in [Yy]*) CI_WORKFLOW=true ;; *) CI_WORKFLOW=false ;; esac
 fi
 
 # Team-for-context list (teammates have their OWN workspaces; this is context only).
@@ -580,6 +590,7 @@ process_template "$SCAFFOLD/AGENTS.md.tmpl" "$OUTPUT/AGENTS.md"
 splice_sixbusiness "$OUTPUT/AGENTS.md" table
 process_template "$SCAFFOLD/RESOLVER.md.tmpl" "$OUTPUT/RESOLVER.md"
 process_template "$SCAFFOLD/aios.yaml.tmpl" "$OUTPUT/aios.yaml"
+[ -z "$CI_WORKFLOW" ] || echo "ci_workflow: $CI_WORKFLOW" >> "$OUTPUT/aios.yaml"
 process_template "$SCAFFOLD/package.json.tmpl" "$OUTPUT/package.json"
 mkdir -p "$OUTPUT/scripts" "$OUTPUT/bin"
 cp "$SCAFFOLD/scripts/aios.mjs" "$OUTPUT/scripts/aios.mjs"
@@ -707,6 +718,7 @@ if command -v node >/dev/null 2>&1 && [ -f "$SCRIPT_DIR/gen-catalog.mjs" ]; then
 fi
 
 # Repository-meta files: CODEOWNERS, brain-reporting CI, .gitignore, planning stub.
+export CI_WORKFLOW
 . "$SCRIPT_DIR/scaffold-repo-meta.sh"
 
 echo "Initializing git..."

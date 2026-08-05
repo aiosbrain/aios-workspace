@@ -6,6 +6,7 @@ import path from "node:path";
 
 import {
   MANAGED_PATHS,
+  CI_WORKFLOW_MANAGED_PATHS,
   PERSONAL_PATHS,
   SCAFFOLD_UNMANAGED,
   SEED_IF_ABSENT,
@@ -72,7 +73,7 @@ function seedCovers(entry, d) {
 /** D is covered if some classified path equals it, contains it, or is contained by it. */
 function isCovered(d) {
   if (SEED_IF_ABSENT.some((e) => seedCovers(e, d))) return true;
-  if (MANAGED_PATHS.some((e) => managedCovers(e, d))) return true;
+  if ([...MANAGED_PATHS, ...CI_WORKFLOW_MANAGED_PATHS].some((e) => managedCovers(e, d))) return true;
   return [...PERSONAL_PATHS, ...SCAFFOLD_UNMANAGED].some(
     (c) => c === d || d.startsWith(c + "/") || c.startsWith(d + "/")
   );
@@ -93,7 +94,7 @@ test("every scaffold-written toolkit path is classified (manifest ↔ scaffold p
 test("the four manifest buckets have no unsafe overlap", () => {
   for (const p of [...PERSONAL_PATHS, ...SCAFFOLD_UNMANAGED]) {
     assert.ok(
-      !MANAGED_PATHS.some((e) => managedCovers(e, p)),
+      ![...MANAGED_PATHS, ...CI_WORKFLOW_MANAGED_PATHS].some((e) => managedCovers(e, p)),
       `${p} is both managed and personal/unmanaged`
     );
   }
