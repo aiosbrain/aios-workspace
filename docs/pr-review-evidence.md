@@ -268,11 +268,16 @@ list of contexts, so it must be re-sent with `review-evidence` appended):
 gh api repos/aiosbrain/aios-workspace/branches/main/protection/required_status_checks \
   --jq '{strict, contexts}'
 gh api -X PATCH repos/aiosbrain/aios-workspace/branches/main/protection/required_status_checks \
+  -F strict=false \
   -f 'contexts[]=unit tests (npm test)' \
   -f 'contexts[]=lint + format' \
   -f 'contexts[]=leak-gate + secrets + harness checks' \
   -f 'contexts[]=review-evidence'
 ```
+
+`strict` is required by GitHub's replacement endpoint. Preserve the value returned by the
+read command above; it is currently `false`. Use `-F`, not `-f`, so GitHub receives a
+boolean rather than the string `"false"`.
 
 Removing it again is the same call without the last line — a deliberate, attributable act, which
 is the point. There is no way to disable the gate from inside a pull request.
