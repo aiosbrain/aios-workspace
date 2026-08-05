@@ -59,9 +59,9 @@ export const OPEN_STALE_DAYS = 14;
 export const IDLE_STALE_HOURS = 12;
 
 const LOCK_STALE_MS = 30_000;
-// ~1s of bounded retries — generous enough to ride out CPU contention from many concurrent
-// writers, still far below the 30s stale threshold so a truly dead lock is reclaimed, not waited on.
-const LOCK_RETRIES = 40;
+// Bounded retries stay far below the 30s stale threshold, so dead locks are reclaimed instead of waited on.
+// Five seconds lets an append observe a compaction release window instead of failing under contention.
+const LOCK_RETRIES = 200;
 const LOCK_DELAY_MS = 25;
 const TITLE_MAX = 200;
 const BODY_MAX = 2000;

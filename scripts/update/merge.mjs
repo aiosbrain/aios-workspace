@@ -47,7 +47,7 @@ import {
  * `cmdVendorApplyOnly` (against the pinned, immutable snapshot — the authoritative,
  * TOCTOU-immune final gate before any workspace write).
  */
-export function vendorSafety(srcRoot) {
+export function vendorSafety(srcRoot, managedPaths = MANAGED_PATHS) {
   const errors = [];
   let unmerged = [];
   try {
@@ -55,7 +55,7 @@ export function vendorSafety(srcRoot) {
   } catch (e) {
     errors.push(`couldn't inspect the git index: ${e.message}`);
   }
-  const { paths: markerHits, errors: markerErrors } = conflictMarkerPaths(srcRoot);
+  const { paths: markerHits, errors: markerErrors } = conflictMarkerPaths(srcRoot, managedPaths);
   errors.push(...markerErrors);
   const paths = [...new Set([...unmerged, ...markerHits])];
   return { safe: paths.length === 0 && errors.length === 0, paths, errors };
@@ -207,7 +207,7 @@ export function mergeManaged(toolkitDir, srcRoot, repo, baseSha, opts = {}) {
     conflicts: [],
     skippedDirty: [],
   };
-  for (const entry of MANAGED_PATHS) {
+  for (const entry of opts.managedPaths || MANAGED_PATHS) {
     if (!existsSync(path.join(srcRoot, entry.src))) continue;
     for (const f of entryFiles(srcRoot, entry)) {
       if (dirty.has(f.destRel)) {

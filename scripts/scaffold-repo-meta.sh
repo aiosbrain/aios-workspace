@@ -22,11 +22,13 @@ EOF
 # deliberately writes no code_metrics (it has no checkout), so readiness, health and coverage
 # stay null forever — and a null coverage renders as a false 0%. The workflow skips and exits
 # 0 until the three brain secrets are set, so a fresh workspace is green either way.
-mkdir -p "$OUTPUT/.github/workflows" "$OUTPUT/.github/scripts"
-cp "$SCAFFOLD/.github/workflows/scan-on-merge.yml" "$OUTPUT/.github/workflows/scan-on-merge.yml"
-cp "$SCAFFOLD/.github/scripts/fetch-brain-scanner.sh" "$OUTPUT/.github/scripts/fetch-brain-scanner.sh"
-cp "$SCAFFOLD/.github/scripts/scan_with_health.py" "$OUTPUT/.github/scripts/scan_with_health.py"
-chmod +x "$OUTPUT/.github/scripts/fetch-brain-scanner.sh"
+if [ "$CI_WORKFLOW" = true ]; then
+  mkdir -p "$OUTPUT/.github/workflows" "$OUTPUT/.github/scripts"
+  cp "$SCAFFOLD/.github/workflows/scan-on-merge.yml" "$OUTPUT/.github/workflows/scan-on-merge.yml"
+  cp "$SCAFFOLD/.github/scripts/fetch-brain-scanner.sh" "$OUTPUT/.github/scripts/fetch-brain-scanner.sh"
+  cp "$SCAFFOLD/.github/scripts/scan_with_health.py" "$OUTPUT/.github/scripts/scan_with_health.py"
+  chmod +x "$OUTPUT/.github/scripts/fetch-brain-scanner.sh"
+fi
 
 cat > "$OUTPUT/.gitignore" << EOF
 .env

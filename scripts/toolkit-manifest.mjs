@@ -30,6 +30,25 @@
  * — e.g. your own skills — are kept). Hooks/validation are specific files, matching the
  * scaffold, so a workspace never inherits the toolkit's dev-only hooks.
  */
+export const CI_WORKFLOW_MANAGED_PATHS = [
+  {
+    dest: ".github/workflows/scan-on-merge.yml",
+    src: "scaffold/.github/workflows/scan-on-merge.yml",
+    kind: "file",
+  },
+  {
+    dest: ".github/scripts/fetch-brain-scanner.sh",
+    src: "scaffold/.github/scripts/fetch-brain-scanner.sh",
+    kind: "file",
+    exec: true,
+  },
+  {
+    dest: ".github/scripts/scan_with_health.py",
+    src: "scaffold/.github/scripts/scan_with_health.py",
+    kind: "file",
+  },
+];
+
 export const MANAGED_PATHS = [
   // The delegating shim + launcher — how a workspace reaches the canonical toolkit.
   { dest: "scripts/aios.mjs", src: "scaffold/scripts/aios.mjs", kind: "file", exec: true },
@@ -58,22 +77,6 @@ export const MANAGED_PATHS = [
   // scanner SHA and the `@aiosbrain/aios` version range in the workflow go stale — a workspace
   // that never re-syncs would keep scanning against a frozen sidecar. File entries, not a dir
   // overlay, so a person's own workflows in .github/ are never touched.
-  {
-    dest: ".github/workflows/scan-on-merge.yml",
-    src: "scaffold/.github/workflows/scan-on-merge.yml",
-    kind: "file",
-  },
-  {
-    dest: ".github/scripts/fetch-brain-scanner.sh",
-    src: "scaffold/.github/scripts/fetch-brain-scanner.sh",
-    kind: "file",
-    exec: true,
-  },
-  {
-    dest: ".github/scripts/scan_with_health.py",
-    src: "scaffold/.github/scripts/scan_with_health.py",
-    kind: "file",
-  },
   // Skill/doc router + routing fixtures — shipped into the workspace, updated on sync.
   { dest: "RESOLVER.md", src: "scaffold/RESOLVER.md.tmpl", kind: "file" },
   {
@@ -142,6 +145,12 @@ export const MANAGED_PATHS = [
   },
   { dest: "validation/secret-patterns.txt", src: "validation/secret-patterns.txt", kind: "file" },
 ];
+
+export function managedPathsForConfig(cfg = {}) {
+  return cfg.ci_workflow === true || cfg.ci_workflow === "true"
+    ? [...MANAGED_PATHS, ...CI_WORKFLOW_MANAGED_PATHS]
+    : MANAGED_PATHS;
+}
 
 /**
  * Create-only starter files. `aios update` copies these into an existing workspace

@@ -26,31 +26,6 @@
  *   aios update --from DIR  # use a specific toolkit checkout as the source
  *   aios update --force    # take the toolkit version for everything (overwrite)
  *
- * Safety: a dirty toolkit tree is never clobbered (refuse, or --stash to stash+restore); a
- * non-fast-forward toolkit is refused, not auto-merged; a locally-uninspectable toolkit repo
- * (a git status/index/ref query itself failing) is refused, never treated as clean/current.
- * Managed files with UNCOMMITTED local changes in the WORKSPACE are skipped (never
- * clobbered). Conflicts are NEVER written inline (the files are executed/parsed) — the
- * toolkit version lands at <file>.aios-incoming and the marked-up merge at <file>.aios-merge;
- * the stamp stays at the old base until conflicts are resolved. Run inside the toolkit
- * checkout itself, update just pulls it (nothing to re-vendor into).
- *
- * The actual vendoring (merge + catalog generation + stamp write) never runs against the
- * live, mutable toolkit checkout — it always runs against an immutable `git worktree`
- * snapshot pinned at a specific commit (toolkit-pull.mjs's `createPinnedSnapshot`), via a
- * structurally non-recursive internal hand-off (`--vendor-apply-only`, see `cmdVendorApplyOnly`
- * below) — so nothing downstream of the pull can ever read a value that changed mid-operation,
- * and there is no recursion-guard state to get confused by (no env var, nothing ambient).
- *
- * Every expected failure (dirty tree, unresolved conflict, bad --from, unknown flag, ...)
- * throws `UpdateError` rather than exiting — caught exactly once, in `cmdUpdate` itself — so
- * `cmdUpdate`/`pullToolkitCheckout` are safely callable in-process by programmatic callers
- * (onboarding) and by tests, without ever risking `process.exit()`.
- *
- * Source resolution: --from DIR → $AIOS_TOOLKIT_DIR → the toolkit this CLI is executing from
- * (the checkout the workspace shim forwarded to — always the right one to pull/vendor) →
- * ~/Projects/aios/aios-workspace → `git clone` the canonical repo (aios.yaml `toolkit_repo`).
- *
  * Zero dependencies (git + npm + cp/rm shelled out; Node >= 18).
  */
 
@@ -60,7 +35,8 @@ import { existsSync, mkdtempSync, rmSync, writeFileSync, readFileSync } from "no
 import { execFileSync, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { c, UpdateError, gitEnv } from "./cli-common.mjs";
-import { VERSION_FILE } from "./toolkit-manifest.mjs";
+import { VERSION_FILE, managedPathsForConfig } from "./toolkit-manifest.mjs";
+import { askCiWorkflow, ciWorkflowState, persistCiWorkflow } from "./ci-workflow.mjs";
 import { toolkitMeta } from "./toolkit-meta.mjs";
 import { cmdContribute } from "./toolkit-contribute.mjs";
 import { installWorktreeSafetyBackstops } from "./worktree.mjs";
@@ -221,6 +197,7 @@ const UPDATE_BOOL_FLAGS = new Set([
   "--stash",
   "--no-install",
   "--force",
+  "--with-ci-workflow",
   "--dry-run", // alias for --preview UNLESS combined with --contribute (see cmdUpdate)
 ]);
 // Recognized, but deliberately excluded from --help/the "supported:" error text — internal
@@ -377,7 +354,7 @@ function printMergeReport(color, r, { preview = false } = {}) {
  * --preview so a new signal (or a wording fix) lands in every mode at once instead of
  * drifting across three hand-built copies.
  */
-function assessReadOnlySource(srcDir, { pullOpts, io, skipRemote = false, repo = null }) {
+function assessReadOnlySource(srcDir, { pullOpts, io, skipRemote = false, repo = null, cfg = {} }) {
   const pullInfo = skipRemote
     ? null
     : pullToolkitCheckout(srcDir, { ...pullOpts, check: true, dryRun: true, noInstall: true }, io);
@@ -389,10 +366,11 @@ function assessReadOnlySource(srcDir, { pullOpts, io, skipRemote = false, repo =
   // whole change set exists to eliminate. Throwing (rather than folding into `reasons`)
   // matches the contract already set by `missingSeedPaths`, whose identical refusal has
   // always surfaced read-only as a structured `mode: "error"` result.
+  const managedPaths = managedPathsForConfig(cfg);
   if (repo)
-    for (const destRel of plannedDestRels(srcDir, readStampBaseSha(repo)))
+    for (const destRel of plannedDestRels(srcDir, readStampBaseSha(repo), managedPaths))
       assertDestPathSafe(repo, destRel);
-  const vs = vendorSafety(srcDir);
+  const vs = vendorSafety(srcDir, managedPaths);
   const sourceClean = pullInfo?.sourceClean ?? sourceCleanliness(srcDir);
   const remoteState = pullInfo?.remoteState ?? null;
   // Read-only counterpart of apply's dist/ rebuild (AIO-504): report — never perform — whether
@@ -421,7 +399,7 @@ function assessReadOnlySource(srcDir, { pullOpts, io, skipRemote = false, repo =
  * TOCTOU-immune final gate — nothing can change under it between this check and the
  * writes that follow.
  */
-async function cmdVendorApplyOnly(repo, args) {
+async function cmdVendorApplyOnly(repo, cfg, args) {
   const color = c;
   const srcDir = argValue(args, "--from");
   if (!srcDir || !looksLikeToolkit(srcDir)) {
@@ -443,15 +421,14 @@ async function cmdVendorApplyOnly(repo, args) {
   // passes this trivially.
   assertGitToolkitSource(srcDir);
   const force = args.includes("--force");
-
-  const vs = vendorSafety(srcDir);
+  const managedPaths = managedPathsForConfig(cfg);
+  const vs = vendorSafety(srcDir, managedPaths);
   if (!vs.safe) {
     throw new UpdateError(
       `the pinned toolkit snapshot has unresolved conflicts — ${vendorSafetyReason(vs)}.\n` +
         `  Refusing to vendor conflict markers into your workspace.`
     );
   }
-
   const sha = gitSha(srcDir); // srcDir IS the pinned snapshot — this trivially equals the pinned sha
   const meta = toolkitMeta(srcDir); // unmodified — reads the snapshot's own frozen files
   const stampPath = path.join(repo, VERSION_FILE);
@@ -470,12 +447,17 @@ async function cmdVendorApplyOnly(repo, args) {
   // loop: one bad destination there would leave every earlier file already vendored (a
   // partial apply with no stamp). Refusing up front, before the first write, keeps a
   // symlinked/escaping destination from ever producing a half-applied workspace.
-  for (const destRel of plannedDestRels(srcDir, baseSha)) assertDestPathSafe(repo, destRel);
-  const dirty = force ? new Set() : dirtyManagedPaths(repo);
-
+  for (const destRel of plannedDestRels(srcDir, baseSha, managedPaths))
+    assertDestPathSafe(repo, destRel);
+  const dirty = force ? new Set() : dirtyManagedPaths(repo, managedPaths);
   const shortSha = sha.slice(0, 12);
   console.log(color.dim(`  syncing toolkit ${meta.label} from ${stampSource} (${shortSha}) …`));
-  const r = mergeManaged(srcDir, srcDir, repo, baseSha, { dirty, force, dryRun: false });
+  const r = mergeManaged(srcDir, srcDir, repo, baseSha, {
+    dirty,
+    force,
+    dryRun: false,
+    managedPaths,
+  });
 
   // Regenerate the derived catalogs from the just-synced skills so INDEX.md,
   // INTEGRATIONS.md, and RESOLVER.md's generated block never drift after an update.
@@ -612,6 +594,7 @@ async function cmdUpdateInner(repo, cfg, args) {
       "--from",
       "--repo",
       "--force",
+      "--with-ci-workflow",
       "--result-file",
       "--stamp-source",
     ]);
@@ -628,7 +611,7 @@ async function cmdUpdateInner(repo, cfg, args) {
         );
       }
     }
-    return await cmdVendorApplyOnly(repo, args);
+    return await cmdVendorApplyOnly(repo, cfg, args);
   }
 
   const check = args.includes("--check");
@@ -669,22 +652,32 @@ async function cmdUpdateInner(repo, cfg, args) {
   }
 
   const noPull = args.includes("--no-pull") || preview;
+  if (args.includes("--with-ci-workflow")) {
+    cfg.ci_workflow = "true";
+    if (!check && !preview) persistCiWorkflow(repo, true);
+  }
   const stash = args.includes("--stash");
   const noInstall = args.includes("--no-install");
   const pullOpts = { stash, noInstall, dryRun: check, check };
   const io = { log: (m) => console.log(m), warn: (m) => console.warn(m) };
   const mode = check ? "check" : preview ? "preview" : "apply";
 
+  if (
+    mode === "apply" &&
+    !args.includes("--with-ci-workflow") &&
+    ciWorkflowState(cfg) === null &&
+    process.stdin.isTTY
+  ) {
+    const enabled = await askCiWorkflow();
+    persistCiWorkflow(repo, enabled);
+    cfg.ci_workflow = enabled ? "true" : "false";
+  }
+
   // Run inside the toolkit checkout itself: no workspace to re-vendor into, so `aios update`
   // just brings the checkout current (git pull + npm ci) — the "self-update" case. Nothing
   // is ever vendored here, so any snapshot pullToolkitCheckout pins is unused — discard it.
   if (looksLikeToolkit(repo)) {
     console.log(color.blue("aios update") + color.dim(`  toolkit checkout ${repo}`));
-    // The envelope gate must hold in EVERY mode on EVERY entry path (the design doc's
-    // choke-point claim). This branch never reaches resolveSource, and its --no-pull
-    // no-op returns before pullToolkitCheckout's backstop — yet it still runs git
-    // (sourceCleanliness, gitSha) against `repo`, which for a non-git toolkit copy nested
-    // inside another repository would silently resolve the ENCLOSING repo. Refuse first.
     assertGitToolkitSource(repo);
     // The consent pin must never be silently ignored on ANY branch that can return
     // success: this flag is only meaningful for a two-step preview→apply over a
@@ -757,7 +750,7 @@ async function cmdUpdateInner(repo, cfg, args) {
   try {
     if (check) {
       // ephemeral (freshly cloned) sources are trivially current — no remote check needed.
-      const a = assessReadOnlySource(srcDir, { pullOpts, io, skipRemote: ephemeral, repo });
+      const a = assessReadOnlySource(srcDir, { pullOpts, io, skipRemote: ephemeral, repo, cfg });
       const { remoteState, sourceClean, vs } = a;
 
       const sha = gitSha(srcDir);
@@ -811,7 +804,7 @@ async function cmdUpdateInner(repo, cfg, args) {
       // preview never pulls (implies --no-pull) and never writes — it operates directly
       // against the live srcDir, same honest point-in-time scope as --check. No snapshot
       // is needed since nothing is ever written.
-      const a = assessReadOnlySource(srcDir, { pullOpts, io, skipRemote: ephemeral, repo });
+      const a = assessReadOnlySource(srcDir, { pullOpts, io, skipRemote: ephemeral, repo, cfg });
       const { remoteState, sourceClean, vs } = a;
       if (!vs.safe) {
         console.warn(
@@ -836,9 +829,15 @@ async function cmdUpdateInner(repo, cfg, args) {
         ? readFileSync(stampPath, "utf8").split(/\s/)[0]
         : undefined;
       const force = args.includes("--force");
-      const dirty = force ? new Set() : dirtyManagedPaths(repo);
+      const managedPaths = managedPathsForConfig(cfg);
+      const dirty = force ? new Set() : dirtyManagedPaths(repo, managedPaths);
 
-      const r = mergeManaged(srcDir, srcDir, repo, baseSha, { dirty, force, dryRun: true });
+      const r = mergeManaged(srcDir, srcDir, repo, baseSha, {
+        dirty,
+        force,
+        dryRun: true,
+        managedPaths,
+      });
 
       const changedCount = printMergeReport(color, r, { preview: true });
       console.log(
@@ -956,6 +955,7 @@ async function cmdUpdateInner(repo, cfg, args) {
         stampSource,
       ];
       if (args.includes("--force")) passthrough.push("--force");
+      if (args.includes("--with-ci-workflow")) passthrough.push("--with-ci-workflow");
       // env: gitEnv() — the child runs the SNAPSHOT's own CLI, which may predate the
       // git-env hardening entirely. Scrubbing at the spawn boundary closes the inherited
       // GIT_DIR/GIT_WORK_TREE hole for EVERY snapshot version, including old ones whose
