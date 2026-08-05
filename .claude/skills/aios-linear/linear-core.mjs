@@ -310,6 +310,18 @@ export function hasRelatedRelation(relations, a, b) {
   );
 }
 
+export function findExactRelation(relations, a, b, type) {
+  const unique = [...relations.relations.nodes, ...relations.inverseRelations.nodes].filter(
+    (relation, index, all) => all.findIndex((candidate) => candidate.id === relation.id) === index
+  );
+  return unique.find((relation) => {
+    if (relation.type !== type) return false;
+    const forward = relation.issue?.id === a.id && relation.relatedIssue?.id === b.id;
+    if (type === "blocks") return forward;
+    return forward || (relation.issue?.id === b.id && relation.relatedIssue?.id === a.id);
+  });
+}
+
 export function formatIssue(issue) {
   return `${issue.identifier} [${issue.state?.name}] ${issue.title}`;
 }
