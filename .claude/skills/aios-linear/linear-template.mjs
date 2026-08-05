@@ -9,6 +9,7 @@ export function resolveLinearTemplate(name = "aios") {
   if (name !== "aios" && name !== "pick-up-able") return null;
   const rel = path.join("docs", "agentic-ergonomics", "aios-issue-template.md");
   const candidates = [
+    path.join(HERE, "..", "..", "..", rel),
     path.join(HERE, "..", "..", "..", "..", rel),
     path.join(process.cwd(), rel),
   ];
@@ -20,18 +21,20 @@ export function resolveLinearTemplate(name = "aios") {
 
 /** Apply SEARCH/REPLACE patch blocks to description text. */
 export function applyDescriptionPatch(original, patchText) {
-  const blockRe =
-    /<<<<<<< SEARCH\r?\n([\s\S]*?)\r?\n=======\r?\n([\s\S]*?)\r?\n>>>>>>> REPLACE/g;
+  const blockRe = /<<<<<<< SEARCH\r?\n([\s\S]*?)\r?\n=======\r?\n([\s\S]*?)\r?\n>>>>>>> REPLACE/g;
   let text = original;
   let count = 0;
   let m;
   while ((m = blockRe.exec(patchText)) !== null) {
     const search = m[1];
     const replace = m[2];
+    if (!search) {
+      throw new Error("patch SEARCH block is empty");
+    }
     if (!text.includes(search)) {
       throw new Error(`patch SEARCH block not found in description (${search.slice(0, 60)}…)`);
     }
-    text = text.replace(search, replace);
+    text = text.replace(search, () => replace);
     count++;
   }
   if (!count) {

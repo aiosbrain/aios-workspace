@@ -1,7 +1,7 @@
 ---
 name: aios-linear
 description: Manage the AIOS Linear board (the ONLY PM tool — Plane is retired). Use whenever updating, reading, or commenting on AIOS Linear issues (identifiers like AIO-72, AIO-75), the brain→PM projection-tracking epic, or the backlog. Triggers on "update AIO-NN", "the Linear board", "the AIOS board", "projection tracking issue", "/aios-linear". Provides a terse `linear.mjs` CLI so issue edits are one fast command instead of ad-hoc GraphQL one-liners. DO NOT use the Plane MCP for AIOS work — it is retired and its tools return huge irrelevant payloads.
-version: 1.2.0
+version: 1.3.0
 access: team
 triggers:
   - update AIO-
@@ -18,10 +18,10 @@ triggers:
 ## Canonical source — read this if you're in a sibling repo
 
 This skill's canonical, maintained copy lives in **`aios-workspace`** at
-`.claude/skills/aios-linear/` (and is vendored into every scaffolded AIOS *workspace* —
-e.g. an individual's `john-workspace`-style checkout — via `aios update`, from
+`.claude/skills/aios-linear/` (and is vendored into every scaffolded AIOS _workspace_ —
+e.g. an individual's personal workspace checkout — via `aios update`, from
 `scaffold/.claude/skills/aios-linear/` in the same repo). If you're working inside a
-sibling AIOS *product* repo that doesn't carry its own copy (`aios-team-brain`,
+sibling AIOS _product_ repo that doesn't carry its own copy (`aios-team-brain`,
 `aios-marketing`, `aios-website`, `aios-design`, `aios-engineering-harness`), reach across
 to the aios-workspace checkout rather than improvising GraphQL calls or reaching for the
 Plane MCP:
@@ -65,11 +65,16 @@ $LIN add-label AIO-75 unified-inbox   # add a team label without removing existi
 $LIN comments AIO-75           # read existing comments
 $LIN comment AIO-75 "done"     # add a comment
 $LIN users AIO                 # list assignable users
-$LIN assign AIO-75 "chetan"    # assign by name/email substring
+$LIN assign AIO-75 "alex@example.com" # assign by one exact name/display-name/email match
 $LIN list AIO                  # all AIO-team issues, id-sorted
 ```
 
 For a long description, write it to a temp file first, then `set-desc <IDENT> <file>` — avoids quoting hell and keeps it out of the transcript.
+
+`create` defaults to team key `AIO`; override it with `AIOS_LINEAR_TEAM_KEY`. Optional
+origin attribution is configuration, not public toolkit data: set both
+`AIOS_LINEAR_ORIGIN_LABEL` and `AIOS_LINEAR_ORIGIN_TEXT` to prepend an `**Origin:**` block
+when that label is used.
 
 ### Pick-up-able issue template
 
@@ -81,24 +86,20 @@ Author specs with the canonical template in `docs/agentic-ergonomics/aios-issue-
 
 Use `patch-desc` when an agent must update part of a description without wiping verification checklists:
 
-```markdown
- <<<<<<< SEARCH
-(old exact text)
- =======
-(new text)
- >>>>>>> REPLACE
-```
+A patch block contains, in order: the marker `<<<<<<< SEARCH`, the exact old text, the
+separator `=======`, the replacement text, and the closing marker `>>>>>>> REPLACE`, each on
+its own line.
 
 ## Agentic Linear factory (triage → batches → closeout)
 
 See also: `workstream-update` skill and `.claude/rules/linear-factory.md`.
 
-| Stage | Action |
-|-------|--------|
-| **Capture** | Raw notes/screenshots → `$LIN create "…" --template aios --state Triage` |
-| **Intake** | Flesh template sections; `aios spec eval`; move to Backlog |
-| **Batch** | Run `workstream-update` → paste 3–5 non-overlapping agent prompts |
-| **Build** | PR titled `(AIO-n) …`; board moves to In Review / Done via CI |
+| Stage        | Action                                                                                   |
+| ------------ | ---------------------------------------------------------------------------------------- |
+| **Capture**  | Raw notes/screenshots → `$LIN create "…" --template aios --state Triage`                 |
+| **Intake**   | Flesh template sections; `aios spec eval`; move to Backlog                               |
+| **Batch**    | Run `workstream-update` → paste 3–5 non-overlapping agent prompts                        |
+| **Build**    | PR titled `(AIO-n) …`; board moves to In Review / Done via CI                            |
 | **Closeout** | Tick acceptance subsections; copy transcript to `.aios/loop/AIO-n/`; `aios time capture` |
 
 **Outcome hierarchy:** parent = epic/outcome; children = slices. Titles describe outcomes, not cryptic handler names. Use `$LIN blocks` for deps.
@@ -134,14 +135,14 @@ reference only the one it should close.
 
 ## Key facts
 
-- Workspace `je4light`, team **AIO** (key `AIO`, name "AIOS"), team uuid `7beef22a-34c2-426a-9b0c-db584870a098`.
+- Team **AIO** (key `AIO`, name "AIOS"); the CLI resolves its runtime UUID instead of embedding it.
 - Projection-tracking epic **AIO-72**; phase issues **AIO-73..78** (Phase 0=73 … Phase 5=78) — safe to edit directly.
 - Backlog issues **AIO-1..71** are brain-projected; editing them directly is inbound drift — prefer editing the brain.
 
 ## AIOS ops cheatsheet
 
 - **dotenvx noise:** always `dotenvx run --quiet` — without it, its banner pollutes stdout and can break JSON capture.
-- **Plane MCP** returns huge, mostly-irrelevant blobs for AIOS-internal work — use this script instead. Plane remains a supported *customer* integration; that's a different boundary.
+- **Plane MCP** returns huge, mostly-irrelevant blobs for AIOS-internal work — use this script instead. Plane remains a supported _customer_ integration; that's a different boundary.
 
 ## When this skill is wrong or incomplete
 

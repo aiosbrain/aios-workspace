@@ -40,227 +40,41 @@
 //   create "<title>" [--desc <file>] [--template aios] [--label <name>]... [--state <name>]
 //          [--parent <IDENT>] [--assignee <name-or-email>]
 //                             --label is repeatable; prints the Linear-generated git branch name;
-//                             prepends deck-origin block when --label chetan-deck;
+//                             optionally prepends a configured origin block (see SKILL.md);
 //                             --desc is ignored when --template is set
 //   users <TEAMKEY>           list assignable users
 //   assign <IDENT> <name-or-email>
 import { readFileSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { applyDescriptionPatch, resolveLinearTemplate } from "./linear-template.mjs";
-
-const ORIGIN_BLOCK = "**Origin:** Chetan design deck — https://www.fluora.ai/aios\n\n";
-const AIO_TEAM_ID = "7beef22a-34c2-426a-9b0c-db584870a098";
-
-const KEY = process.env.LINEAR_API_KEY;
-if (!KEY) {
-  console.error(
-    "LINEAR_API_KEY not set — run via: dotenvx run --quiet -f .env -- node .claude/skills/aios-linear/linear.mjs ... " +
-      "(or -f <path-to-aios-workspace>/.env from a sibling repo)"
-  );
-  process.exit(1);
-}
-const API = "https://api.linear.app/graphql";
-
-async function gql(query, variables) {
-  const r = await fetch(API, {
-    method: "POST",
-    headers: { Authorization: KEY, "Content-Type": "application/json" },
-    body: JSON.stringify({ query, variables }),
-  });
-  const j = await r.json().catch(() => null);
-  if (!j || j.errors) {
-    console.error("Linear error:", j?.errors?.map((e) => e.message).join("; ") || `HTTP ${r.status}`);
-    process.exit(1);
-  }
-  return j.data;
-}
-
-// Resolve a human identifier (AIO-75) → {id, identifier, title, state} via a team-scoped lookup.
-async function findIssue(ident) {
-  const key = String(ident).split("-")[0];
-  const d = await gql(
-    `query($k:String!){ issues(first:250, filter:{ team:{ key:{ eq:$k } } }){ nodes{ id identifier title state{ name } } } }`,
-    { k: key }
-  );
-  const n = d.issues.nodes.find((x) => x.identifier === ident);
-  if (!n) {
-    console.error(`${ident} not found in team ${key}`);
-    process.exit(1);
-  }
-  return n;
-}
+import {
+  DEFAULT_TEAM_KEY,
+  findIssue,
+  findLabel,
+  findTeamId,
+  findTeamState,
+  findUser,
+  formatIssue,
+  getRelations,
+  gql,
+  hasRelatedRelation,
+  listTeamIssues,
+  listTeamMembers,
+  parseCreateArgs,
+  parsePriority,
+  printFullIssue,
+  relatedIssues,
+} from "./linear-core.mjs";
 
 const argv = process.argv.slice(2);
 const cmd = argv[0];
-
-function parseCreateArgs(args) {
-  const title = args[0];
-  if (!title) {
-    console.error("create requires a title");
-    process.exit(1);
-  }
-  let descFile = null;
-  let template = null;
-  const labels = []; // --label is repeatable
-  let state = "Backlog";
-  let parent = null;
-  let assignee = null;
-  for (let i = 1; i < args.length; i++) {
-    if (args[i] === "--desc" && args[i + 1]) { descFile = args[++i]; continue; }
-    if (args[i] === "--template" && args[i + 1]) { template = args[++i]; continue; }
-    if (args[i] === "--label" && args[i + 1]) { labels.push(args[++i]); continue; }
-    if (args[i] === "--state" && args[i + 1]) { state = args[++i]; continue; }
-    if (args[i] === "--parent" && args[i + 1]) { parent = args[++i]; continue; }
-    if (args[i] === "--assignee" && args[i + 1]) { assignee = args[++i]; continue; }
-  }
-  let description = descFile ? readFileSync(descFile, "utf8") : "";
-  if (template) {
-    const body = resolveLinearTemplate(template);
-    if (!body) {
-      console.error(`unknown template "${template}"`);
-      process.exit(1);
-    }
-    description = body.replace(/^# TITLE — outcome-oriented slice name/m, `# ${title}`);
-    if (descFile) {
-      console.error("warning: --desc ignored when --template is set");
-    }
-  }
-  if (labels.includes("chetan-deck") && !description.startsWith("**Origin:**")) {
-    description = ORIGIN_BLOCK + description;
-  }
-  return { title, description, labels, state, parent, assignee };
-}
-
-async function findLabel(teamId, name) {
-  const d = await gql(
-    `query($id:String!){ team(id:$id){ labels{ nodes{ id name } } } }`,
-    { id: teamId }
-  );
-  const want = String(name).toLowerCase();
-  return d.team.labels.nodes.find((l) => l.name.toLowerCase() === want)
-    || d.team.labels.nodes.find((l) => l.name.toLowerCase().includes(want));
-}
-
-async function findTeamState(teamId, name) {
-  const d = await gql(
-    `query($id:String!){ team(id:$id){ states{ nodes{ id name } } } }`,
-    { id: teamId }
-  );
-  const want = String(name).toLowerCase();
-  return d.team.states.nodes.find((s) => s.name.toLowerCase() === want)
-    || d.team.states.nodes.find((s) => s.name.toLowerCase().includes(want));
-}
-
-async function findUser(teamKey, query) {
-  const d = await gql(
-    `query($k:String!){ team(id:$k){ members(first:100){ nodes{ id name displayName email } } } }`,
-    { k: teamKey }
-  );
-  const want = query.toLowerCase();
-  return d.team.members.nodes.find(
-    (m) =>
-      m.email?.toLowerCase() === want ||
-      m.name?.toLowerCase() === want ||
-      m.displayName?.toLowerCase() === want ||
-      m.name?.toLowerCase().includes(want) ||
-      m.displayName?.toLowerCase().includes(want)
-  );
-}
-
-async function getRelations(issueId) {
-  const d = await gql(
-    `query($id:String!){
-      issue(id:$id){
-        identifier
-        relations(first:50){
-          nodes{
-            id
-            type
-            issue{ identifier title state{ name } }
-            relatedIssue{ identifier title state{ name } }
-          }
-        }
-        inverseRelations(first:50){
-          nodes{
-            id
-            type
-            issue{ identifier title state{ name } }
-            relatedIssue{ identifier title state{ name } }
-          }
-        }
-      }
-    }`,
-    { id: issueId }
-  );
-  return d.issue;
-}
-
-function formatIssue(i) {
-  return `${i.identifier} [${i.state?.name}] ${i.title}`;
-}
-
-function parsePriority(value) {
-  const priorities = {
-    none: 0,
-    no: 0,
-    urgent: 1,
-    high: 2,
-    medium: 3,
-    normal: 3,
-    low: 4,
-  };
-  const key = String(value || "").toLowerCase();
-  if (key in priorities) return priorities[key];
-  const numeric = Number(value);
-  if (Number.isInteger(numeric) && numeric >= 0 && numeric <= 4) return numeric;
-  console.error("priority must be one of: none, urgent, high, medium, low");
-  process.exit(1);
-}
 
 if (cmd === "get") {
   const ident = argv[1];
   const arg = argv[2];
   const n = await findIssue(ident);
   if (arg === "--full") {
-    const d = await gql(
-      `query($id:String!){
-        issue(id:$id){
-          identifier title state{ name } priorityLabel url description createdAt updatedAt
-          completedAt canceledAt project{ id name } labels{ nodes{ name } }
-          parent{ identifier title } children(first:50){ nodes{ identifier title state{ name } } }
-          comments(first:50){ nodes{ body user{ name } } }
-        }
-      }`,
-      { id: n.id }
-    );
-    const i = d.issue;
-    const parent = i.parent ? `${i.parent.identifier} ${i.parent.title}` : "(none)";
-    const children = i.children.nodes.length
-      ? i.children.nodes.map((child) => `${child.identifier} [${child.state?.name}] ${child.title}`).join("\n")
-      : "(none)";
-    const parts = [
-      `${i.identifier}  ${i.title}  [${i.state?.name}]  priority=${i.priorityLabel}`,
-      i.url,
-      `created: ${i.createdAt}`,
-      `updated: ${i.updatedAt}`,
-      `completed: ${i.completedAt || "(none)"}`,
-      `canceled: ${i.canceledAt || "(none)"}`,
-      `project: ${i.project?.name || "(none)"}`,
-      `labels: ${i.labels.nodes.map((label) => label.name).join(", ") || "(none)"}`,
-      `parent: ${parent}`,
-      `children:\n${children}`,
-      "",
-      i.description || "(no description)",
-    ];
-    const comments = (i.comments?.nodes ?? []).filter((cm) => String(cm.body ?? "").trim());
-    if (comments.length) {
-      parts.push("", "## Issue comments", "");
-      for (const cm of comments) {
-        const who = cm.user?.name ?? "comment";
-        parts.push(`### ${who}`, "", String(cm.body).trim(), "");
-      }
-    }
-    console.log(parts.join("\n"));
+    await printFullIssue(n.id);
   } else {
     console.log(`${n.identifier}  ${n.title}  [${n.state?.name}]  id=${n.id}`);
   }
@@ -295,18 +109,33 @@ if (cmd === "get") {
     while (first < remote.length && first < local.length && remote[first] === local[first]) first++;
     const start = Math.max(0, first - 60);
     const end = first + 120;
-    console.error(`${n.identifier} description mismatch (remote=${remote.length} bytes local=${local.length} bytes sha256=${sha256})`);
-    console.error(`first mismatch byte ${first}; remote=${JSON.stringify(remote.subarray(start, end).toString("utf8"))}`);
-    console.error(`first mismatch byte ${first}; local=${JSON.stringify(local.subarray(start, end).toString("utf8"))}`);
+    console.error(
+      `${n.identifier} description mismatch (remote=${remote.length} bytes local=${local.length} bytes sha256=${sha256})`
+    );
+    console.error(
+      `first mismatch byte ${first}; remote=${JSON.stringify(remote.subarray(start, end).toString("utf8"))}`
+    );
+    console.error(
+      `first mismatch byte ${first}; local=${JSON.stringify(local.subarray(start, end).toString("utf8"))}`
+    );
     process.exit(1);
   }
-  console.log(`${n.identifier} description byte-identical (${remote.length} bytes sha256=${sha256})`);
+  console.log(
+    `${n.identifier} description byte-identical (${remote.length} bytes sha256=${sha256})`
+  );
 } else if (cmd === "set-desc") {
   const ident = argv[1];
   const arg = argv[2];
+  if (!ident || !arg) {
+    console.error("set-desc requires <IDENT> <file>");
+    process.exit(1);
+  }
   const n = await findIssue(ident);
   const description = readFileSync(arg, "utf8");
-  await gql(`mutation($id:String!,$d:String!){ issueUpdate(id:$id, input:{ description:$d }){ success } }`, { id: n.id, d: description });
+  await gql(
+    `mutation($id:String!,$d:String!){ issueUpdate(id:$id, input:{ description:$d }){ success } }`,
+    { id: n.id, d: description }
+  );
   console.log(`updated ${n.identifier} (${description.length} chars)`);
 } else if (cmd === "patch-desc") {
   const ident = argv[1];
@@ -326,10 +155,13 @@ if (cmd === "get") {
     console.error(`patch failed: ${e.message}`);
     process.exit(1);
   }
-  await gql(`mutation($id:String!,$d:String!){ issueUpdate(id:$id, input:{ description:$d }){ success } }`, {
-    id: n.id,
-    d: updated,
-  });
+  await gql(
+    `mutation($id:String!,$d:String!){ issueUpdate(id:$id, input:{ description:$d }){ success } }`,
+    {
+      id: n.id,
+      d: updated,
+    }
+  );
   console.log(`patched ${n.identifier} (${original.length} → ${updated.length} chars)`);
 } else if (cmd === "set-title") {
   const ident = argv[1];
@@ -339,35 +171,53 @@ if (cmd === "get") {
     process.exit(1);
   }
   const n = await findIssue(ident);
-  await gql(`mutation($id:String!,$t:String!){ issueUpdate(id:$id, input:{ title:$t }){ success } }`, { id: n.id, t: title });
+  await gql(
+    `mutation($id:String!,$t:String!){ issueUpdate(id:$id, input:{ title:$t }){ success } }`,
+    { id: n.id, t: title }
+  );
   console.log(`renamed ${n.identifier} → ${title}`);
 } else if (cmd === "set-state") {
   const ident = argv[1];
   const arg = argv[2];
   const n = await findIssue(ident);
   const key = String(ident).split("-")[0];
-  const d = await gql(`query($k:String!){ workflowStates(filter:{ team:{ key:{ eq:$k } } }){ nodes{ id name } } }`, { k: key });
+  const d = await gql(
+    `query($k:String!){ workflowStates(filter:{ team:{ key:{ eq:$k } } }){ nodes{ id name } } }`,
+    { k: key }
+  );
   const want = String(arg).toLowerCase();
-  const st = d.workflowStates.nodes.find((s) => s.name.toLowerCase() === want)
-    || d.workflowStates.nodes.find((s) => s.name.toLowerCase().includes(want));
+  const st =
+    d.workflowStates.nodes.find((s) => s.name.toLowerCase() === want) ||
+    d.workflowStates.nodes.find((s) => s.name.toLowerCase().includes(want));
   if (!st) {
-    console.error(`state "${arg}" not found in team ${key}. states: ${d.workflowStates.nodes.map((s) => s.name).join(", ")}`);
+    console.error(
+      `state "${arg}" not found in team ${key}. states: ${d.workflowStates.nodes.map((s) => s.name).join(", ")}`
+    );
     process.exit(1);
   }
-  await gql(`mutation($id:String!,$s:String!){ issueUpdate(id:$id, input:{ stateId:$s }){ success } }`, { id: n.id, s: st.id });
+  await gql(
+    `mutation($id:String!,$s:String!){ issueUpdate(id:$id, input:{ stateId:$s }){ success } }`,
+    { id: n.id, s: st.id }
+  );
   console.log(`moved ${n.identifier} → ${st.name}`);
 } else if (cmd === "set-priority") {
   const ident = argv[1];
   const arg = argv[2];
   const n = await findIssue(ident);
   const priority = parsePriority(arg);
-  await gql(`mutation($id:String!,$p:Int!){ issueUpdate(id:$id, input:{ priority:$p }){ success issue{ priorityLabel } } }`, { id: n.id, p: priority });
+  await gql(
+    `mutation($id:String!,$p:Int!){ issueUpdate(id:$id, input:{ priority:$p }){ success issue{ priorityLabel } } }`,
+    { id: n.id, p: priority }
+  );
   console.log(`set ${n.identifier} priority`);
 } else if (cmd === "comment") {
   const ident = argv[1];
   const arg = argv[2];
   const n = await findIssue(ident);
-  await gql(`mutation($id:String!,$b:String!){ commentCreate(input:{ issueId:$id, body:$b }){ success } }`, { id: n.id, b: arg });
+  await gql(
+    `mutation($id:String!,$b:String!){ commentCreate(input:{ issueId:$id, body:$b }){ success } }`,
+    { id: n.id, b: arg }
+  );
   console.log(`commented ${n.identifier}`);
 } else if (cmd === "comments") {
   const ident = argv[1];
@@ -379,12 +229,16 @@ if (cmd === "get") {
   const comments = d.issue.comments.nodes.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
   if (!comments.length) console.log("(none)");
   for (const item of comments) {
-    console.log(`--- ${item.id} ${item.createdAt} ${item.user?.name || "unknown"} ---\n${item.body}`);
+    console.log(
+      `--- ${item.id} ${item.createdAt} ${item.user?.name || "unknown"} ---\n${item.body}`
+    );
   }
 } else if (cmd === "list") {
   const ident = argv[1];
-  const d = await gql(`query($k:String!){ issues(first:250, filter:{ team:{ key:{ eq:$k } } }){ nodes{ identifier title state{ name } } } }`, { k: ident });
-  for (const n of d.issues.nodes.sort((a, b) => a.identifier.localeCompare(b.identifier, undefined, { numeric: true }))) {
+  const issues = await listTeamIssues(ident);
+  for (const n of issues.sort((a, b) =>
+    a.identifier.localeCompare(b.identifier, undefined, { numeric: true })
+  )) {
     console.log(`${n.identifier}\t[${n.state?.name}]\t${n.title}`);
   }
 } else if (cmd === "relations") {
@@ -394,7 +248,7 @@ if (cmd === "get") {
   console.log(`${i.identifier} relations`);
   const outgoing = i.relations.nodes.filter((r) => r.type === "blocks");
   const incoming = i.inverseRelations.nodes.filter((r) => r.type === "blocks");
-  const related = i.relations.nodes.filter((r) => r.type === "related");
+  const related = relatedIssues(i);
   if (!outgoing.length && !incoming.length && !related.length) {
     console.log("(none)");
   }
@@ -404,8 +258,8 @@ if (cmd === "get") {
   for (const r of incoming) {
     console.log(`blocked by ${formatIssue(r.issue)}`);
   }
-  for (const r of related) {
-    console.log(`related    ${formatIssue(r.relatedIssue)}`);
+  for (const issue of related) {
+    console.log(`related    ${formatIssue(issue)}`);
   }
 } else if (cmd === "blocks") {
   const blockerIdent = argv[1];
@@ -417,8 +271,8 @@ if (cmd === "get") {
   const blocker = await findIssue(blockerIdent);
   const blocked = await findIssue(blockedIdent);
   const existing = await getRelations(blocker.id);
-  const duplicate = existing.relations.nodes.find((r) =>
-    r.type === "blocks" && r.relatedIssue.identifier === blocked.identifier
+  const duplicate = existing.relations.nodes.find(
+    (r) => r.type === "blocks" && r.relatedIssue.identifier === blocked.identifier
   );
   if (duplicate) {
     console.log(`${blocker.identifier} already blocks ${blocked.identifier}`);
@@ -441,9 +295,7 @@ if (cmd === "get") {
   const a = await findIssue(aIdent);
   const b = await findIssue(bIdent);
   const existing = await getRelations(a.id);
-  const duplicate = existing.relations.nodes.find((r) =>
-    r.type === "related" && r.relatedIssue.identifier === b.identifier
-  );
+  const duplicate = hasRelatedRelation(existing, a, b);
   if (duplicate) {
     console.log(`${a.identifier} already related to ${b.identifier}`);
   } else {
@@ -473,7 +325,9 @@ if (cmd === "get") {
     process.exit(1);
   }
   if (projects.length > 1) {
-    console.error(`ambiguous project match "${projectName}": ${projects.map((p) => p.name).join(", ")}`);
+    console.error(
+      `ambiguous project match "${projectName}": ${projects.map((p) => p.name).join(", ")}`
+    );
     process.exit(1);
   }
   await gql(
@@ -503,14 +357,20 @@ if (cmd === "get") {
     process.exit(1);
   }
   const n = await findIssue(ident);
-  const label = await findLabel(AIO_TEAM_ID, labelName);
+  const teamId = await findTeamId(String(ident).split("-")[0]);
+  const label = await findLabel(teamId, labelName);
   if (!label) {
     console.error(`label "${labelName}" not found`);
     process.exit(1);
   }
-  const current = await gql(`query($id:String!){ issue(id:$id){ labels{ nodes{ id } } } }`, { id: n.id });
+  const current = await gql(`query($id:String!){ issue(id:$id){ labels{ nodes{ id } } } }`, {
+    id: n.id,
+  });
   const labelIds = [...new Set([...current.issue.labels.nodes.map((item) => item.id), label.id])];
-  await gql(`mutation($id:String!,$labels:[String!]!){ issueUpdate(id:$id, input:{ labelIds:$labels }){ success } }`, { id: n.id, labels: labelIds });
+  await gql(
+    `mutation($id:String!,$labels:[String!]!){ issueUpdate(id:$id, input:{ labelIds:$labels }){ success } }`,
+    { id: n.id, labels: labelIds }
+  );
   console.log(`${n.identifier} + label "${labelName}"`);
 } else if (cmd === "template") {
   const name = argv[1] || "aios";
@@ -522,11 +382,8 @@ if (cmd === "get") {
   process.stdout.write(body);
 } else if (cmd === "users") {
   const teamKey = argv[1] || "AIO";
-  const d = await gql(
-    `query($k:String!){ team(id:$k){ members(first:100){ nodes{ id name displayName email active } } } }`,
-    { k: teamKey }
-  );
-  for (const u of d.team.members.nodes) {
+  const members = await listTeamMembers(teamKey);
+  for (const u of members) {
     console.log(`${u.name}\t${u.email}\t${u.active ? "active" : "inactive"}\tid=${u.id}`);
   }
 } else if (cmd === "assign") {
@@ -543,16 +400,20 @@ if (cmd === "get") {
     console.error(`no member matching "${query}" found on team ${teamKey}`);
     process.exit(1);
   }
-  await gql(`mutation($id:String!,$a:String!){ issueUpdate(id:$id, input:{ assigneeId:$a }){ success } }`, { id: n.id, a: u.id });
+  await gql(
+    `mutation($id:String!,$a:String!){ issueUpdate(id:$id, input:{ assigneeId:$a }){ success } }`,
+    { id: n.id, a: u.id }
+  );
   console.log(`assigned ${n.identifier} → ${u.name}`);
 } else if (cmd === "create") {
   const { title, description, labels, state, parent, assignee } = parseCreateArgs(argv.slice(1));
-  const st = await findTeamState(AIO_TEAM_ID, state);
+  const teamId = await findTeamId(DEFAULT_TEAM_KEY);
+  const st = await findTeamState(teamId, state);
   if (!st) {
     console.error(`state "${state}" not found`);
     process.exit(1);
   }
-  const input = { teamId: AIO_TEAM_ID, title, description, stateId: st.id };
+  const input = { teamId, title, description, stateId: st.id };
   if (parent) {
     const p = await findIssue(parent);
     if (p) input.parentId = p.id;
@@ -561,16 +422,15 @@ if (cmd === "get") {
   if (labels.length) {
     const ids = [];
     for (const name of labels) {
-      const lb = await findLabel(AIO_TEAM_ID, name);
+      const lb = await findLabel(teamId, name);
       if (lb) ids.push(lb.id);
       else console.error(`warning: label "${name}" not found — skipping that label`);
     }
     if (ids.length) input.labelIds = ids;
   }
   if (assignee) {
-    const u = await findUser(AIO_TEAM_ID, assignee);
-    if (u) input.assigneeId = u.id;
-    else console.error(`warning: assignee "${assignee}" not found — creating unassigned`);
+    const u = await findUser(DEFAULT_TEAM_KEY, assignee);
+    input.assigneeId = u.id;
   }
   const d = await gql(
     `mutation($input:IssueCreateInput!){ issueCreate(input:$input){ success issue{ identifier title url branchName } } }`,
@@ -586,7 +446,7 @@ if (cmd === "get") {
       "comments <IDENT> | list <TEAMKEY> | relations <IDENT> | blocks <BLOCKER> <BLOCKED> | " +
       "related <ISSUE_A> <ISSUE_B> | set-project <IDENT> <project> | set-parent <IDENT> <PARENT_IDENT> | " +
       "add-label <IDENT> <LABEL> | template [aios] | " +
-      "create \"<title>\" [--desc <file>] [--template aios] [--label <name>]... [--state Backlog] " +
+      'create "<title>" [--desc <file>] [--template aios] [--label <name>]... [--state Backlog] ' +
       "[--parent <IDENT>] [--assignee <name-or-email>] | users <TEAMKEY> | assign <IDENT> <name-or-email>"
   );
 }
