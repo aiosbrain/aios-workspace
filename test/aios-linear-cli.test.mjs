@@ -30,9 +30,17 @@ globalThis.fetch = async (_url, init) => {
     data = variables.after
       ? { issues: { nodes: [issue("issue-251", "AIO-251")], pageInfo: { hasNextPage: false, endCursor: null } } }
       : { issues: { nodes: [issue("issue-1", "AIO-1")], pageInfo: { hasNextPage: true, endCursor: "page-2" } } };
-  } else if (query.includes("inverseRelations(first:50)")) {
+  } else if (query.includes("inverseRelations(first:250")) {
     const relation = { id: "relation-1", type: "related", issue: b, relatedIssue: a };
-    data = { issue: { identifier: "AIO-73", relations: { nodes: [] }, inverseRelations: { nodes: [relation] } } };
+    const secondPage = variables.inverseAfter === "inverse-page-2";
+    const paged = mode === "related-page-2";
+    data = { issue: { identifier: "AIO-73",
+      relations: { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } },
+      inverseRelations: {
+        nodes: !paged || secondPage ? [relation] : [],
+        pageInfo: { hasNextPage: paged && !secondPage, endCursor: paged && !secondPage ? "inverse-page-2" : null }
+      }
+    } };
   } else if (query.includes("members(first:250")) {
     if (variables.key !== "AIO") throw new Error("unexpected team key: " + variables.key);
     data = { team: { members: { nodes: [
@@ -81,6 +89,13 @@ test("relations displays inverse related links", () => {
 
 test("related is idempotent for inverse storage direction", () => {
   const result = runCli(["related", "AIO-73", "AIO-75"], "related-inverse");
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /already related/);
+  assert.equal(result.mutations, "");
+});
+
+test("related checks every relation page before creating", () => {
+  const result = runCli(["related", "AIO-73", "AIO-75"], "related-page-2");
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /already related/);
   assert.equal(result.mutations, "");

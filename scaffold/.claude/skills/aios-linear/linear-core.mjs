@@ -244,17 +244,47 @@ export async function findUser(teamKey, query) {
 }
 
 export async function getRelations(issueId) {
-  const data = await gql(
-    `query($id:String!){
+  const relations = [];
+  const inverseRelations = [];
+  let relationsAfter = null;
+  let inverseAfter = null;
+  let relationsOpen = true;
+  let inverseOpen = true;
+  let identifier;
+  while (relationsOpen || inverseOpen) {
+    const data = await gql(
+      `query($id:String!,$relationsAfter:String,$inverseAfter:String){
       issue(id:$id){
         identifier
-        relations(first:50){ nodes{ id type issue{ id identifier title state{ name } } relatedIssue{ id identifier title state{ name } } } }
-        inverseRelations(first:50){ nodes{ id type issue{ id identifier title state{ name } } relatedIssue{ id identifier title state{ name } } } }
+        relations(first:250,after:$relationsAfter){ nodes{ id type issue{ id identifier title state{ name } } relatedIssue{ id identifier title state{ name } } } pageInfo{ hasNextPage endCursor } }
+        inverseRelations(first:250,after:$inverseAfter){ nodes{ id type issue{ id identifier title state{ name } } relatedIssue{ id identifier title state{ name } } } pageInfo{ hasNextPage endCursor } }
       }
     }`,
-    { id: issueId }
-  );
-  return data.issue;
+      { id: issueId, relationsAfter, inverseAfter }
+    );
+    identifier = data.issue.identifier;
+    for (const [page, nodes, isOpen, cursor] of [
+      [data.issue.relations, relations, relationsOpen, relationsAfter],
+      [data.issue.inverseRelations, inverseRelations, inverseOpen, inverseAfter],
+    ]) {
+      if (!isOpen) continue;
+      nodes.push(...page.nodes);
+      if (
+        page.pageInfo.hasNextPage &&
+        (!page.pageInfo.endCursor || page.pageInfo.endCursor === cursor)
+      )
+        fail(`Linear relation pagination stalled for ${identifier}`);
+    }
+    relationsOpen = relationsOpen && data.issue.relations.pageInfo.hasNextPage;
+    inverseOpen = inverseOpen && data.issue.inverseRelations.pageInfo.hasNextPage;
+    if (relationsOpen) relationsAfter = data.issue.relations.pageInfo.endCursor;
+    if (inverseOpen) inverseAfter = data.issue.inverseRelations.pageInfo.endCursor;
+  }
+  return {
+    identifier,
+    relations: { nodes: relations },
+    inverseRelations: { nodes: inverseRelations },
+  };
 }
 
 export function relatedIssues(relations) {
