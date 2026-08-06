@@ -180,7 +180,7 @@ if (cmd === "get") {
   const ident = argv[1];
   const arg = argv[2];
   const n = await findIssue(ident);
-  const key = String(ident).split("-")[0];
+  const key = String(n.identifier).split("-")[0];
   const d = await gql(
     `query($k:String!){ workflowStates(filter:{ team:{ key:{ eq:$k } } }){ nodes{ id name } } }`,
     { k: key }
@@ -357,7 +357,7 @@ if (cmd === "get") {
     process.exit(1);
   }
   const n = await findIssue(ident);
-  const teamId = await findTeamId(String(ident).split("-")[0]);
+  const teamId = await findTeamId(String(n.identifier).split("-")[0]);
   const label = await findLabel(teamId, labelName);
   if (!label) {
     console.error(`label "${labelName}" not found`);
@@ -394,7 +394,7 @@ if (cmd === "get") {
     process.exit(1);
   }
   const n = await findIssue(ident);
-  const teamKey = String(ident).split("-")[0];
+  const teamKey = String(n.identifier).split("-")[0];
   const u = await findUser(teamKey, query);
   if (!u) {
     console.error(`no member matching "${query}" found on team ${teamKey}`);

@@ -287,7 +287,7 @@ export function formatIssue(issue) {
 export function parsePriority(value) {
   const priorities = { none: 0, no: 0, urgent: 1, high: 2, medium: 3, normal: 3, low: 4 };
   const key = String(value || "").toLowerCase();
-  if (key in priorities) return priorities[key];
+  if (Object.hasOwn(priorities, key)) return priorities[key];
   const numeric = Number(value);
   if (Number.isInteger(numeric) && numeric >= 0 && numeric <= 4) return numeric;
   fail("priority must be one of: none, urgent, high, medium, low");

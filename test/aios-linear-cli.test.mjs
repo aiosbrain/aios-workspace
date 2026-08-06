@@ -34,6 +34,7 @@ globalThis.fetch = async (_url, init) => {
     const relation = { id: "relation-1", type: "related", issue: b, relatedIssue: a };
     data = { issue: { identifier: "AIO-73", relations: { nodes: [] }, inverseRelations: { nodes: [relation] } } };
   } else if (query.includes("members(first:250")) {
+    if (variables.key !== "AIO") throw new Error("unexpected team key: " + variables.key);
     data = { team: { members: { nodes: [
       { id: "u1", name: "Alice Smith", displayName: "Alice", email: "alice@example.test", active: true },
       { id: "u2", name: "Alison Jones", displayName: "Alison", email: "alison@example.test", active: true }
@@ -91,6 +92,20 @@ test("assign rejects ambiguous partial member matches before mutation", () => {
   assert.match(result.stderr, /no unique exact match/);
   assert.match(result.stderr, /Alice Smith/);
   assert.match(result.stderr, /Alison Jones/);
+  assert.equal(result.mutations, "");
+});
+
+test("assign derives the canonical team key from a lowercase identifier", () => {
+  const result = runCli(["assign", "aio-73", "alice@example.test"], "lowercase-team");
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /assigned AIO-73/);
+  assert.match(result.mutations, /issueUpdate/);
+});
+
+test("set-priority rejects inherited object property names before mutation", () => {
+  const result = runCli(["set-priority", "AIO-73", "constructor"], "invalid-priority");
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /priority must be one of/);
   assert.equal(result.mutations, "");
 });
 
