@@ -6,7 +6,7 @@
   "transport": "skill",
   "auth_mode": "token",
   "status": "available",
-  "summary": "Query and update issues, projects, and cycles via a personal API key — our own connector (Linear's MCP is OAuth-only).",
+  "summary": "Query and update your connected Linear workspace through the governed AIOS CLI.",
   "secrets": [
     { "env": "LINEAR_API_KEY", "label": "Personal API key", "required": true, "placeholder": "lin_api_…" }
   ],
@@ -16,11 +16,11 @@
     "token_create_url": "https://linear.app/settings/api",
     "scopes_url": "https://linear.app/developers/graphql",
     "instructions": "Linear → Settings → API → Personal API keys → Create key (copy it — shown once).",
-    "verified_against_docs": "2026-06-14"
+    "verified_against_docs": "2026-08-05"
   },
   "skill": {
-    "skill_name": "linear-direct",
-    "source": ".claude/descriptors/skills/linear-direct/"
+    "skill_name": "aios-linear",
+    "source": ".claude/skills/aios-linear/"
   },
   "validate": {
     "method": "POST",

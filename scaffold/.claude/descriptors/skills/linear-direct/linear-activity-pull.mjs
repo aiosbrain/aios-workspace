@@ -2,14 +2,15 @@
 /**
  * linear-activity-pull.mjs — assigned Linear issues → operator-loop activity.
  *
- * Reuses linear-query.mjs for API/auth, then performs only normalization and idempotent append.
+ * Reuses the public `aios linear` route for API/auth, then performs only normalization
+ * and idempotent append.
  * Records are owner-private by default and intentionally carry no communication direction.
  */
 
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { queryAssignedOpenIssuesForRepo } from "./linear-query.mjs";
 
 const DEFAULT_TIER = "admin";
 const TIERS = new Set(["admin", "team", "external"]);
@@ -25,7 +26,7 @@ export function normalizeLinearIssues(
   data,
   { tier = DEFAULT_TIER, observedAt = new Date().toISOString() } = {}
 ) {
-  const issues = data?.viewer?.assignedIssues?.nodes;
+  const issues = data?.issues ?? data?.viewer?.assignedIssues?.nodes;
   if (!Array.isArray(issues)) return [];
   const observation = new Date(observedAt);
   if (Number.isNaN(observation.valueOf())) throw new Error("invalid observation time");
@@ -135,7 +136,17 @@ function tombstonesForMissing(activityPath, current, observedAt, tier) {
 }
 
 export function runLinearQuery(repo) {
-  return queryAssignedOpenIssuesForRepo(repo);
+  const output = execFileSync(
+    "aios",
+    ["linear", "list", "--assignee", "me", "--limit", "200", "--json", "--repo", repo],
+    {
+      cwd: repo,
+      encoding: "utf8",
+      env: { ...process.env, LINEAR_API_KEY: "" },
+      stdio: ["ignore", "pipe", "pipe"],
+    }
+  );
+  return JSON.parse(output);
 }
 
 export async function pullLinearActivity({
