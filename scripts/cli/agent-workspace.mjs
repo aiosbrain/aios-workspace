@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import path from "node:path";
+import { configuredDefaultWorkspace } from "./user-config.mjs";
 
 // Product-repository agents may need their stamped personal workspace's account
 // configuration. This is explicit only: never infer it from a nearby checkout.
@@ -11,4 +12,8 @@ export function findAgentWorkspace(die, env = process.env) {
     die(`AIOS_AGENT_WORKSPACE must point to a stamped workspace with aios.yaml; got ${repo}`);
   }
   return repo;
+}
+
+export function findAccountWorkspace(die, env = process.env) {
+  return findAgentWorkspace(die, env) || configuredDefaultWorkspace(die, env);
 }
