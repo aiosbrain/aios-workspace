@@ -28,6 +28,18 @@ beta-replaced
   assert.equal(applyDescriptionPatch(original, patch), "alpha\nbeta-replaced\ngamma");
 });
 
+test("applyDescriptionPatch inserts replacement text literally", () => {
+  const patch = "<<<<<<< SEARCH\nbeta\n=======\n$& $$ $` $'\n>>>>>>> REPLACE";
+  assert.equal(applyDescriptionPatch("alpha beta gamma", patch), "alpha $& $$ $` $' gamma");
+});
+
+test("applyDescriptionPatch rejects an empty SEARCH block", () => {
+  assert.throws(
+    () => applyDescriptionPatch("hello", "<<<<<<< SEARCH\n\n=======\nx\n>>>>>>> REPLACE"),
+    /SEARCH block is empty/
+  );
+});
+
 test("applyDescriptionPatch errors when SEARCH missing", () => {
   assert.throws(
     () => applyDescriptionPatch("hello", "<<<<<<< SEARCH\nnope\n=======\nx\n>>>>>>> REPLACE"),
