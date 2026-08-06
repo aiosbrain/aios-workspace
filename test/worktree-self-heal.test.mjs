@@ -336,12 +336,19 @@ test("product-only lifecycle hydration leaves personal-workspace commit and push
   assert.ok(!existsSync(path.join(repo, ".git", "hooks", "pre-push")));
 });
 
-test("a personal workspace without the product leak scanner does not receive its pre-push hook", async () => {
+// This previously asserted an explicit `aios worktree install-hook` DID install the
+// pre-commit guard here, on the theory that invoking worktree tooling opts you into
+// worktree policy. It does not: a harness runs worktree commands against whatever repo it
+// is pointed at, and the workspace OWNER is left unable to commit on master — that repo's
+// documented workflow. Toolkit policy is now never injected into a scaffolded workspace by
+// any path. The product-repo counterpart lives in test/worktree.test.mjs.
+test("a personal workspace receives no toolkit commit or push policy, even from an explicit worktree command", async () => {
   const { repo } = makePrimary({ withLeakGate: false });
 
   await cmdWorktree(repo, {}, ["install-hook"]);
 
-  assert.ok(existsSync(path.join(repo, ".git", "hooks", "pre-commit")));
+  assert.ok(existsSync(path.join(repo, ".git", "hooks", "post-checkout")));
+  assert.ok(!existsSync(path.join(repo, ".git", "hooks", "pre-commit")));
   assert.ok(!existsSync(path.join(repo, ".git", "hooks", "pre-push")));
 });
 

@@ -179,7 +179,14 @@ export async function cmdWorktree(repo, cfg, args) {
     "link-worktree-env.sh"
   );
   const hookDest = postCheckoutHookPath(repo);
-  const installSafety = () => installWorktreeSafetyBackstops(repo);
+  // productOnly, matching onboard/update/postinstall: the primary-commit guard and the
+  // leak-gate push hook are TOOLKIT policy and must never be injected into a scaffolded
+  // personal workspace. A scaffolded workspace's documented workflow is master-only with
+  // no worktrees, so a guard that blocks every commit in the primary checkout makes its
+  // normal way of working impossible. Gated on `scripts/leak-gate.sh`, which only the
+  // product repo carries. Without this, `aios worktree add` run from inside a scaffolded
+  // workspace silently installs the guard there and strands the owner.
+  const installSafety = () => installWorktreeSafetyBackstops(repo, { productOnly: true });
 
   if (sub === "add") {
     const branch = rest[0];
