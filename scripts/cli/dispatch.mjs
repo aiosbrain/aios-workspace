@@ -21,7 +21,7 @@
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { consumeDevtoolsDirArg } from "../devtools-dispatch.mjs";
-import { findAgentWorkspace } from "./agent-workspace.mjs";
+import { findAccountWorkspace } from "./agent-workspace.mjs";
 import { findCommand, nearestCommand, renderUsage } from "./registry.mjs";
 
 const HELP_TOKENS = new Set(["-h", "--help", "help"]);
@@ -105,8 +105,8 @@ function resolveRoot(desc, repoArg, rest, r) {
   // bare `aios push` in an arbitrary repository into a sync of somebody else's
   // workspace.
   const localWorkspace = repoArg ? null : r.findRepoRoot(process.cwd());
-  const agentWorkspace = () =>
-    !repoArg && desc.agentWorkspaceFallback ? findAgentWorkspace(r.die) : null;
+  const accountWorkspace = () =>
+    !repoArg && desc.workspaceScope === "account" ? findAccountWorkspace(r.die) : null;
   if (desc.resolution === "update-root") {
     // update resolves a workspace OR the toolkit checkout — never a bare README dir (see
     // findUpdateRoot). An explicit --repo is validated the SAME way, so it can't be pointed at
@@ -123,12 +123,12 @@ function resolveRoot(desc, repoArg, rest, r) {
     // ~/.claude session logs; --push uses env/.env or aios.yaml brain config).
     repo = repoArg
       ? path.resolve(repoArg)
-      : localWorkspace || agentWorkspace() || r.findRepoRootOffline(process.cwd());
+      : localWorkspace || accountWorkspace() || r.findRepoRootOffline(process.cwd());
     if (!repo && desc.cwdFallback?.(rest)) repo = process.cwd();
     if (!repo) r.die("could not locate repo root — pass --repo <path>");
     cfg = hasConfig(repo) ? r.loadConfig(repo) : r.loadOfflineConfig(repo);
   } else {
-    repo = repoArg ? path.resolve(repoArg) : localWorkspace || agentWorkspace();
+    repo = repoArg ? path.resolve(repoArg) : localWorkspace || accountWorkspace();
     if (!repo) r.die("no aios.yaml found walking up from cwd — pass --repo <path>");
     cfg = r.loadConfig(repo);
   }

@@ -13,7 +13,7 @@
  * @property {"pre-config"|"update-root"|"offline"|"workspace"} resolution
  * @property {boolean}  [ownsRepoFlag]  true => dispatch must NOT consume `--repo`
  * @property {boolean}  [usesDevtoolsDir] true => dispatch consumes the global devtools selector
- * @property {boolean}  [agentWorkspaceFallback] use AIOS_AGENT_WORKSPACE when cwd is not stamped
+ * @property {"repository"|"account"} workspaceScope account commands may use env/XDG fallback
  * @property {(rest: string[]) => boolean} [cwdFallback]  offline-only: accept cwd as the root
  * @property {() => Promise<object>} [loader]  lazy module import; omitted for inline handlers
  * @property {(ctx: object, mod: object|null) => Promise<any>} adapt
@@ -30,6 +30,14 @@ import { DEVTOOLS_COMMANDS as DT } from "./devtools-commands.mjs";
  * @type {CommandDescriptor[]}
  */
 export const COMMANDS = [
+  {
+    name: "install",
+    resolution: "pre-config",
+    loader: () => import("../install.mjs"),
+    adapt: (_ctx, mod) => mod.cmdInstall(_ctx.rest),
+    exit: "exit-code",
+    usage: U.install,
+  },
   {
     name: "status",
     resolution: "workspace",
@@ -51,9 +59,18 @@ export const COMMANDS = [
   {
     name: "connect",
     resolution: "offline",
-    agentWorkspaceFallback: true,
+    workspaceScope: "account",
     adapt: (ctx) => ctx.local.cmdConnect(ctx.repo, ctx.rest),
     usage: U.connect,
+  },
+  {
+    name: "linear",
+    resolution: "workspace",
+    workspaceScope: "account",
+    loader: () => import("../linear-cli.mjs"),
+    adapt: (ctx, mod) => mod.cmdLinear(ctx.repo, ctx.rest),
+    exit: "exit-code",
+    usage: U.linear,
   },
   {
     name: "review",
@@ -99,14 +116,14 @@ export const COMMANDS = [
   {
     name: "query",
     resolution: "workspace",
-    agentWorkspaceFallback: true,
+    workspaceScope: "account",
     adapt: (ctx) => ctx.local.cmdQuery(ctx.repo, ctx.cfg, ctx.rest),
     usage: U.query,
   },
   {
     name: "member",
     resolution: "workspace",
-    agentWorkspaceFallback: true,
+    workspaceScope: "account",
     loader: () => import("../member-cli.mjs"),
     adapt: (ctx, mod) =>
       mod.cmdMember(ctx.repo, ctx.cfg, ctx.rest, {
@@ -117,7 +134,7 @@ export const COMMANDS = [
   {
     name: "stakeholders",
     resolution: "workspace",
-    agentWorkspaceFallback: true,
+    workspaceScope: "account",
     adapt: (ctx) => ctx.local.cmdStakeholders(ctx.repo, ctx.cfg, ctx.rest),
     usage: U.stakeholders,
   },
@@ -215,7 +232,7 @@ export const COMMANDS = [
   {
     name: "pm",
     resolution: "workspace",
-    agentWorkspaceFallback: true,
+    workspaceScope: "account",
     loader: () => import("../pm.mjs"),
     adapt: (ctx, mod) => mod.cmdPm(ctx.cfg, ctx.rest),
     usage: U.pm,
@@ -415,7 +432,7 @@ export const COMMANDS = [
     exit: "exit-status",
     usage: U.connector,
   },
-];
+].map((descriptor) => ({ workspaceScope: "repository", ...descriptor }));
 
 const BY_NAME = new Map();
 for (const d of COMMANDS) {

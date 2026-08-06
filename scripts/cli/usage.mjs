@@ -14,11 +14,17 @@ export const USAGE_HEADER = [
 
 export const USAGE_FOOTER = [
   "options:",
-  "  --repo <path>               team-ops repo (default: walk up from cwd)",
+  "  --repo <path>               explicit workspace (then cwd stamp; account commands may use",
+  "                              AIOS_AGENT_WORKSPACE or the XDG default workspace)",
   "  --devtools-dir <path>       devtools checkout (build/spec/ship/roadmap/consolidate)",
 ];
 
 export const USAGE_LINES = {
+  install: [
+    "  aios install [--workspace <path>]    install/verify the global CLI + user runtime adapters",
+    "    [--guard-scope <path>] [--yes]     XDG default workspace; repeat guard scopes as needed",
+    "    [--check] [--uninstall] [--purge]  read-only health check or ownership-safe removal",
+  ],
   status: ["  aios status [--json|--porcelain]      what would sync (new/modified/blocked/clean)"],
   onboard: [
     "  aios onboard                          guided first-run setup (brain + tools, one multi-select)",
@@ -27,6 +33,18 @@ export const USAGE_LINES = {
   connect: [
     "  aios connect [<id>]                   connect an integration (guided + live-validated)",
     "    [--token <v>] [--set ENV=v]         non-interactive credential input",
+  ],
+  linear: [
+    "  aios linear setup [--api-key-stdin]  validate + store a workspace-local Linear key",
+    "  aios linear status [--json]           credential provenance + authenticated identity",
+    "  aios linear list [filters] [--json]   list issues (--team/--state/--assignee/--project/--label)",
+    "  aios linear get <TEAM-123> [--json]   read one issue with comments and relations",
+    "  aios linear create --team <key> --title <text> [fields] [--json]",
+    "  aios linear comment <id> (--body <text>|--body-file <p>|--stdin)",
+    "  aios linear set-state <id> <state> | assign <id> <user|none>",
+    "  aios linear update <id> [--title/--description/--priority/--project/--parent/--label]",
+    "  aios linear relation <list|add|remove> ...  inspect or mutate issue relations",
+    "    --allow-env                         explicit CI-only LINEAR_API_KEY fallback",
   ],
   review: [
     "  aios review                           interactive: toggle inclusion, then push selected",

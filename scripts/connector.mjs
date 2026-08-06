@@ -26,6 +26,8 @@ import { fetchBrainOriginLocked, normalizeBrainOriginFromConfig } from "./brain-
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const BUNDLED_SCAFFOLD = path.join(SCRIPT_DIR, "..", "scaffold");
+const BUNDLED_DOTENVX = path.join(SCRIPT_DIR, "..", "node_modules", ".bin", "dotenvx");
+const DOTENVX_BIN = existsSync(BUNDLED_DOTENVX) ? BUNDLED_DOTENVX : "dotenvx";
 
 // ── descriptors + status ─────────────────────────────────────────────────────
 
@@ -99,7 +101,7 @@ export function listConnectors(repo) {
       // Presence only: never return a decrypted value to the GUI. `status` records whether
       // setup completed; these booleans let the GUI distinguish a saved credential from its
       // still-missing runtime artifact (for example, an older workspace with LINEAR_API_KEY
-      // already in its encrypted vault but no linear-direct skill installed).
+      // already in its encrypted vault but no aios-linear skill installed).
       credential_present: local.credential_present,
       artifact_present: local.artifact_present,
       team_enabled: !!(t && t.enabled),
@@ -458,7 +460,7 @@ export function vaultSet(repo, env, value) {
   // Note: value passes as an execFile arg (no shell); on a shared host this is briefly
   // visible via `ps`. Acceptable for a single-user local app; hardening tracked for M5.
   try {
-    execFileSync("dotenvx", ["set", env, value, "-f", ep], {
+    execFileSync(DOTENVX_BIN, ["set", env, value, "-f", ep], {
       cwd: repo,
       env: dotenvxEnv(),
       stdio: ["ignore", "ignore", "pipe"],
@@ -466,7 +468,7 @@ export function vaultSet(repo, env, value) {
   } catch (e) {
     if (e.code === "ENOENT") {
       throw new Error(
-        `vault: dotenvx isn't on PATH — install it (npm i -g @dotenvx/dotenvx), or run this from the toolkit repo where it's already a dependency`
+        "vault: dotenvx is unavailable — reinstall @aiosbrain/aios or install @dotenvx/dotenvx"
       );
     }
     const stderr = (e.stderr || "").toString().trim();
@@ -480,7 +482,7 @@ export function vaultSet(repo, env, value) {
 }
 export function vaultGet(repo, env) {
   try {
-    return execFileSync("dotenvx", ["get", env, "-f", envPath(repo)], {
+    return execFileSync(DOTENVX_BIN, ["get", env, "-f", envPath(repo)], {
       cwd: repo,
       env: dotenvxEnv(),
       stdio: ["ignore", "pipe", "ignore"],
@@ -598,7 +600,9 @@ export function storeConnector(repo, descriptor, secretValues) {
     // source: repo descriptors first, else bundled scaffold
     const candidates = [
       path.join(repo, ".claude", "descriptors", "skills", name),
+      path.join(repo, ".claude", "skills", name),
       path.join(BUNDLED_SCAFFOLD, ".claude", "descriptors", "skills", name),
+      path.join(BUNDLED_SCAFFOLD, ".claude", "skills", name),
     ];
     const src = candidates.find((p) => existsSync(p));
     if (!src) throw new Error(`skill source not found for '${name}'`);

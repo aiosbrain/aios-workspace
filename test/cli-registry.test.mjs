@@ -24,6 +24,7 @@ const USAGE_FIXTURE = path.join(DIR, "fixtures", "aios-usage.txt");
 
 // ── pre-refactor truth, transcribed from aios.mjs@737116f — NOT regenerated from the registry.
 const PRE_REFACTOR = {
+  install: "pre-config",
   // workspace: findRepoRoot, aios.yaml REQUIRED
   status: "workspace",
   review: "workspace",
@@ -43,6 +44,7 @@ const PRE_REFACTOR = {
   graph: "offline",
   "install-skill": "offline",
   connect: "offline",
+  linear: "workspace",
   onboard: "offline",
   skills: "offline",
   "assess-codebase": "offline",
@@ -127,6 +129,21 @@ test("registry: each command keeps its pre-refactor resolution mode", () => {
   // unconfigured directory — this is the tier-safety assertion, not a style check.
   for (const [name, mode] of Object.entries(PRE_REFACTOR)) {
     assert.equal(findCommand(name)?.resolution, mode, `${name} resolution drifted`);
+  }
+});
+
+test("registry: only account-scoped commands may use env/XDG workspace fallback", () => {
+  const accountScoped = COMMANDS.filter((d) => d.workspaceScope === "account")
+    .map((d) => d.name)
+    .sort();
+  assert.deepEqual(accountScoped, ["connect", "linear", "member", "pm", "query", "stakeholders"]);
+
+  for (const descriptor of COMMANDS.filter((d) => !accountScoped.includes(d.name))) {
+    assert.equal(
+      descriptor.workspaceScope,
+      "repository",
+      `${descriptor.name} must remain fail-closed outside an explicit or stamped workspace`
+    );
   }
 });
 
@@ -260,6 +277,8 @@ test("registry: every adapt hands its module the EXACT argument signature (table
       A,
       { connectFlow: l.connectFlow, nextAction: l.nextAction },
     ],
+    linear: ["mod", "cmdLinear", R, A],
+    install: ["mod", "cmdInstall", A],
     promote: [
       "mod",
       "cmdPromote",
