@@ -21,14 +21,34 @@ export const LINEAR_API_URL = "https://api.linear.app/graphql";
 
 export class LinearError extends Error {}
 
-// process.env wins (npm run aios runs under dotenvx → LINEAR_API_KEY injected); fall back to
-// the repo's existing plaintext .env reader (brain-config.loadDotEnv). NEVER a second parser.
-// Returns null when unresolved so the caller decides (e.g. dry-run degrades gracefully).
+// Workspace-bound resolver used by the public CLI. The ambient environment is deliberately
+// excluded unless the caller opts in for an explicit CI flow: a shell inherited from another
+// project must never silently select the credential used for a Linear mutation.
+export function resolveWorkspaceLinearApiKey(
+  repo,
+  { vaultGetFn, allowEnv = false, env = process.env } = {}
+) {
+  if (!repo) return { apiKey: null, source: "none" };
+  if (vaultGetFn) {
+    const fromVault = String(vaultGetFn(repo, "LINEAR_API_KEY") || "").trim();
+    if (fromVault) return { apiKey: fromVault, source: "workspace-vault" };
+  }
+  const dot = loadDotEnv(repo);
+  const plaintext = String(dot.LINEAR_API_KEY || "").trim();
+  if (plaintext) return { apiKey: plaintext, source: "workspace-plaintext" };
+  if (allowEnv) {
+    const ambient = String(env.LINEAR_API_KEY || "").trim();
+    if (ambient) return { apiKey: ambient, source: "explicit-environment" };
+  }
+  return { apiKey: null, source: "none" };
+}
+
+// Backwards-compatible resolver for devtools commands historically executed under `dotenvx run`.
+// New account-scoped commands must call resolveWorkspaceLinearApiKey instead.
 export function resolveLinearApiKey(repo) {
-  const fromEnv = process.env.LINEAR_API_KEY;
-  if (fromEnv && fromEnv.trim()) return fromEnv.trim();
-  const dot = repo ? loadDotEnv(repo) : {};
-  return dot.LINEAR_API_KEY?.trim() || null;
+  const ambient = String(process.env.LINEAR_API_KEY || "").trim();
+  if (ambient) return ambient;
+  return resolveWorkspaceLinearApiKey(repo).apiKey;
 }
 
 // ── proven blockedBy direction (verified against Linear's IssueRelationType) ────────────────
@@ -50,6 +70,7 @@ export function normalizeBlockedBy(issueNode) {
 function normalizeIssue(node) {
   if (!node) return null;
   return {
+    id: node.id ?? null,
     identifier: node.identifier,
     title: node.title,
     description: node.description ?? "",
@@ -58,6 +79,8 @@ function normalizeIssue(node) {
     labels: (node.labels?.nodes ?? []).map((l) => l.name),
     priority: node.priority ?? null,
     createdAt: node.createdAt ?? null,
+    updatedAt: node.updatedAt ?? null,
+    url: node.url ?? null,
     parent: node.parent ? { identifier: node.parent.identifier } : null,
     children: (node.children?.nodes ?? []).map((c) => ({
       identifier: c.identifier,
@@ -70,6 +93,18 @@ function normalizeIssue(node) {
       createdAt: c.createdAt ?? null,
     })),
     attachments: (node.attachments?.nodes ?? []).map((a) => a.url),
+    relations: (node.relations?.nodes ?? []).map((r) => ({
+      id: r.id,
+      type: r.type,
+      direction: "outbound",
+      identifier: r.relatedIssue?.identifier ?? null,
+    })),
+    inverseRelations: (node.inverseRelations?.nodes ?? []).map((r) => ({
+      id: r.id,
+      type: r.type,
+      direction: "inbound",
+      identifier: r.issue?.identifier ?? null,
+    })),
     blockedBy: normalizeBlockedBy(node),
   };
 }
@@ -166,15 +201,18 @@ export function extractRepoFileRefs(
 // ── GraphQL selection sets ────────────────────────────────────────────────────────────────
 // Both `relations` and `inverseRelations` are always fetched so blockedBy is provable.
 const RELATIONS_FRAGMENT = `
-  relations { nodes { type relatedIssue { identifier state { name type } } } }
-  inverseRelations { nodes { type issue { identifier state { name type } } } }`;
+  relations { nodes { id type relatedIssue { identifier state { name type } } } }
+  inverseRelations { nodes { id type issue { identifier state { name type } } } }`;
 
 const ISSUE_CORE_FIELDS = `
+  id
   identifier
   title
   description
   priority
   createdAt
+  updatedAt
+  url
   state { name type }
   assignee { name id }
   labels { nodes { name } }
@@ -218,12 +256,14 @@ function parseIdentifier(identifier) {
  * @param {number} [o.maxRetries]      bounded retries on 429/5xx (default 1)
  * @param {number} [o.timeoutMs]       per-request abort timeout (default 30s) so a hung
  *                                     connection can never block ship/roadmap-run forever.
+ * @param {number} [o.retryDelayMs]    base delay for safe read retries (default 100ms)
  */
 export function createLinearClient({
   apiKey,
   fetchFn = globalThis.fetch,
   maxRetries = 1,
   timeoutMs = 30_000,
+  retryDelayMs = 100,
 } = {}) {
   if (!fetchFn) throw new LinearError("no fetch implementation available (pass fetchFn).");
 
@@ -235,6 +275,18 @@ export function createLinearClient({
           .split(apiKey)
           .join("«redacted»")
       : String(s ?? "");
+
+  const delayFor = async (res, attempt) => {
+    const retryAfter = Number(res?.headers?.get?.("retry-after"));
+    const resetAt = Number(res?.headers?.get?.("x-ratelimit-requests-reset"));
+    const hinted = Number.isFinite(retryAfter) && retryAfter >= 0
+      ? retryAfter * 1000
+      : Number.isFinite(resetAt) && resetAt > Date.now()
+        ? resetAt - Date.now()
+        : retryDelayMs * (attempt + 1);
+    const bounded = Math.max(0, Math.min(2_000, hinted));
+    if (bounded) await new Promise((resolve) => setTimeout(resolve, bounded));
+  };
 
   // The single network seam. One bounded retry on HTTP 429/5xx only; no retry on 4xx. Mutations
   // pass { retryable: false }: a retry after a write that Linear accepted-but-whose-response-was-
@@ -267,28 +319,36 @@ export function createLinearClient({
         throw lastErr;
       }
       const status = res.status;
+      let raw = "";
+      try {
+        raw = await res.text();
+      } catch (e) {
+        throw new LinearError(`Linear response could not be read: ${redact(e.message)}`);
+      }
+      let json = null;
+      try {
+        json = raw ? JSON.parse(raw) : {};
+      } catch (e) {
+        if (res.ok) throw new LinearError(`Linear returned non-JSON: ${redact(e.message)}`);
+      }
+      const errors = Array.isArray(json?.errors) ? json.errors : [];
+      const rateLimited = errors.some((error) => error?.extensions?.code === "RATELIMITED");
       if (!res.ok) {
-        let bodySnippet = "";
-        try {
-          bodySnippet = (await res.text()).slice(0, 300);
-        } catch {
-          /* ignore */
-        }
-        // Retry only transient statuses (429 / 5xx) when retryable; 4xx fails immediately.
-        if ((status === 429 || status >= 500) && attempt < attempts) {
+        const bodySnippet = raw.slice(0, 300);
+        if ((status === 429 || status >= 500 || rateLimited) && attempt < attempts) {
           lastErr = new LinearError(`Linear HTTP ${status}: ${redact(bodySnippet)}`);
+          await delayFor(res, attempt);
           continue;
         }
         throw new LinearError(`Linear HTTP ${status}: ${redact(bodySnippet)}`);
       }
-      let json;
-      try {
-        json = await res.json();
-      } catch (e) {
-        throw new LinearError(`Linear returned non-JSON: ${redact(e.message)}`);
-      }
-      if (Array.isArray(json.errors) && json.errors.length) {
-        const msg = json.errors.map((e) => e.message).join("; ");
+      if (errors.length) {
+        if (rateLimited && attempt < attempts) {
+          lastErr = new LinearError(`Linear GraphQL rate limit: ${redact(errors[0]?.message)}`);
+          await delayFor(res, attempt);
+          continue;
+        }
+        const msg = errors.map((e) => e.message).join("; ");
         throw new LinearError(`Linear GraphQL error: ${redact(msg)}`);
       }
       return json.data;
@@ -314,13 +374,184 @@ export function createLinearClient({
     const { teamKey, number } = parseIdentifier(identifier);
     const query = `query IssueMeta($key: String!, $num: Float!) {
       issues(filter: { team: { key: { eq: $key } }, number: { eq: $num } }, first: 1) {
-        nodes { id identifier team { id key } }
+        nodes { id identifier team { id key name } }
       }
     }`;
     const data = await request(query, { key: teamKey, num: number });
     const node = data?.issues?.nodes?.[0];
     if (!node) throw new LinearError(`Linear issue not found: ${identifier}`);
-    return { id: node.id, teamId: node.team?.id ?? null };
+    return {
+      id: node.id,
+      teamId: node.team?.id ?? null,
+      teamKey: node.team?.key ?? null,
+      teamName: node.team?.name ?? null,
+    };
+  }
+
+  async function getIdentity() {
+    const query = `query AiosLinearIdentity {
+      viewer { id name email }
+      teams(first: 100) { nodes { id key name } }
+    }`;
+    const data = await request(query);
+    return { viewer: data?.viewer ?? null, teams: data?.teams?.nodes ?? [] };
+  }
+
+  async function listTeams() {
+    return (await getIdentity()).teams;
+  }
+
+  async function resolveTeam(selector) {
+    const wanted = String(selector || "").trim().toLowerCase();
+    if (!wanted) throw new LinearError("a team key, name, or id is required.");
+    const matches = (await listTeams()).filter((team) =>
+      [team.id, team.key, team.name].some((value) => String(value || "").toLowerCase() === wanted)
+    );
+    if (matches.length !== 1) {
+      throw new LinearError(
+        matches.length ? `team selector '${selector}' is ambiguous.` : `Linear team not found: ${selector}`
+      );
+    }
+    return matches[0];
+  }
+
+  async function listWorkflowStates(teamId) {
+    const query = `query AiosLinearStates($teamId: ID!) {
+      workflowStates(filter: { team: { id: { eq: $teamId } } }, first: 100) {
+        nodes { id name type }
+      }
+    }`;
+    const data = await request(query, { teamId });
+    return data?.workflowStates?.nodes ?? [];
+  }
+
+  async function resolveWorkflowState(teamId, selector) {
+    const wanted = String(selector || "").trim().toLowerCase();
+    const matches = (await listWorkflowStates(teamId)).filter((state) =>
+      [state.id, state.name, state.type].some(
+        (value) => String(value || "").toLowerCase() === wanted
+      )
+    );
+    if (matches.length !== 1) {
+      throw new LinearError(
+        matches.length
+          ? `workflow state '${selector}' is ambiguous.`
+          : `Linear workflow state not found: ${selector}`
+      );
+    }
+    return matches[0];
+  }
+
+  async function listUsers() {
+    const query = `query AiosLinearUsers { users(first: 100) { nodes { id name displayName email } } }`;
+    const data = await request(query);
+    return data?.users?.nodes ?? [];
+  }
+
+  async function resolveUser(selector) {
+    if (selector == null || String(selector).trim().toLowerCase() === "none") return null;
+    const wanted = String(selector).trim().toLowerCase();
+    const matches = (await listUsers()).filter((user) =>
+      [user.id, user.name, user.displayName, user.email].some(
+        (value) => String(value || "").toLowerCase() === wanted
+      )
+    );
+    if (matches.length !== 1) {
+      throw new LinearError(
+        matches.length ? `assignee '${selector}' is ambiguous.` : `Linear user not found: ${selector}`
+      );
+    }
+    return matches[0];
+  }
+
+  async function resolveProject(selector) {
+    const wanted = String(selector || "").trim();
+    if (!wanted) return null;
+    const query = `query AiosLinearProject($name: String!) {
+      projects(filter: { name: { eqIgnoreCase: $name } }, first: 10) { nodes { id name } }
+    }`;
+    const data = await request(query, { name: wanted });
+    const matches = data?.projects?.nodes ?? [];
+    if (matches.length !== 1) {
+      throw new LinearError(
+        matches.length ? `project '${selector}' is ambiguous.` : `Linear project not found: ${selector}`
+      );
+    }
+    return matches[0];
+  }
+
+  async function resolveLabels(names) {
+    const ids = [];
+    for (const name of names || []) {
+      const query = `query AiosLinearLabel($name: String!) {
+        issueLabels(filter: { name: { eqIgnoreCase: $name } }, first: 10) { nodes { id name } }
+      }`;
+      const data = await request(query, { name });
+      const matches = data?.issueLabels?.nodes ?? [];
+      if (matches.length !== 1) {
+        throw new LinearError(
+          matches.length ? `label '${name}' is ambiguous.` : `Linear label not found: ${name}`
+        );
+      }
+      ids.push(matches[0].id);
+    }
+    return ids;
+  }
+
+  async function listWorkspaceIssues({ team, state, assignee, project, label, limit = 50 } = {}) {
+    const bounded = Math.max(1, Math.min(Number(limit) || 50, LIST_PAGE_CAP));
+    if (String(assignee || "").toLowerCase() === "me") {
+      return listMyIssues({ state, limit: bounded });
+    }
+    const filter = {};
+    if (team) filter.team = { key: { eq: String(team).toUpperCase() } };
+    if (state) filter.state = { name: { eqIgnoreCase: state } };
+    if (assignee) filter.assignee = { email: { eqIgnoreCase: assignee } };
+    if (project) filter.project = { name: { eqIgnoreCase: project } };
+    if (label) filter.labels = { name: { eqIgnoreCase: label } };
+    const query = `query AiosLinearList($filter: IssueFilter!, $first: Int!, $after: String) {
+      issues(filter: $filter, first: $first, after: $after) {
+        nodes { ${ISSUE_CORE_FIELDS} }
+        pageInfo { hasNextPage endCursor }
+      }
+    }`;
+    const issues = [];
+    let after = null;
+    while (issues.length < bounded) {
+      const first = Math.min(50, bounded - issues.length);
+      const data = await request(query, { filter, first, after });
+      const connection = data?.issues;
+      for (const issue of connection?.nodes ?? []) issues.push(normalizeIssue(issue));
+      if (!connection?.pageInfo?.hasNextPage) break;
+      after = connection.pageInfo.endCursor;
+    }
+    return { issues, truncated: issues.length >= bounded };
+  }
+
+  async function listMyIssues({ state, limit = 50 } = {}) {
+    const bounded = Math.max(1, Math.min(Number(limit) || 50, LIST_PAGE_CAP));
+    const filter = state
+      ? { state: { name: { eqIgnoreCase: state } } }
+      : { state: { type: { nin: ["completed", "canceled"] } } };
+    const query = `query AiosLinearMyIssues($filter: IssueFilter!, $first: Int!, $after: String) {
+      viewer {
+        assignedIssues(filter: $filter, first: $first, after: $after) {
+          nodes { ${ISSUE_CORE_FIELDS} }
+          pageInfo { hasNextPage endCursor }
+        }
+      }
+    }`;
+    const issues = [];
+    let after = null;
+    while (issues.length < bounded) {
+      const first = Math.min(50, bounded - issues.length);
+      const data = await request(query, { filter, first, after });
+      const connection = data?.viewer?.assignedIssues;
+      for (const issue of connection?.nodes ?? []) issues.push(normalizeIssue(issue));
+      if (!connection?.pageInfo?.hasNextPage) break;
+      after = connection.pageInfo.endCursor;
+    }
+    return { issues, truncated: issues.length >= bounded };
   }
 
   async function listIssues({ label, epicIdentifier, project } = {}) {
@@ -441,12 +672,157 @@ export function createLinearClient({
     return { ok: true, identifier };
   }
 
+  async function createWorkspaceIssue({
+    team,
+    title,
+    description = "",
+    parent,
+    state,
+    assignee,
+    priority,
+    project,
+    labels = [],
+  } = {}) {
+    if (!title) throw new LinearError("create requires --title.");
+    let teamNode = team ? await resolveTeam(team) : null;
+    let parentMeta = null;
+    if (parent) {
+      parentMeta = await resolveIssueMeta(parent);
+      if (!teamNode) teamNode = { id: parentMeta.teamId, key: parentMeta.teamKey };
+    }
+    if (!teamNode?.id) throw new LinearError("create requires --team unless --parent supplies it.");
+    const input = { teamId: teamNode.id, title, description };
+    if (parentMeta) input.parentId = parentMeta.id;
+    if (state) input.stateId = (await resolveWorkflowState(teamNode.id, state)).id;
+    if (assignee !== undefined) input.assigneeId = (await resolveUser(assignee))?.id ?? null;
+    if (priority !== undefined) input.priority = Number(priority);
+    if (project) input.projectId = (await resolveProject(project)).id;
+    if (labels.length) input.labelIds = await resolveLabels(labels);
+    const query = `mutation AiosLinearCreate($input: IssueCreateInput!) {
+      issueCreate(input: $input) { success issue { identifier } }
+    }`;
+    const data = await request(query, { input }, { retryable: false });
+    const identifier = data?.issueCreate?.issue?.identifier;
+    if (!data?.issueCreate?.success || !identifier) {
+      throw new LinearError("Linear returned an ambiguous issueCreate result.");
+    }
+    const issue = await getIssue(identifier, { full: true });
+    if (!issue || issue.title !== title) {
+      throw new LinearError(`created ${identifier}, but readback did not match the requested title.`);
+    }
+    return issue;
+  }
+
+  async function updateWorkspaceIssue(
+    identifier,
+    { title, description, state, assignee, priority, parent, project, labels } = {}
+  ) {
+    const meta = await resolveIssueMeta(identifier);
+    const input = {};
+    if (title !== undefined) input.title = title;
+    if (description !== undefined) input.description = description;
+    if (state !== undefined) input.stateId = (await resolveWorkflowState(meta.teamId, state)).id;
+    if (assignee !== undefined) input.assigneeId = (await resolveUser(assignee))?.id ?? null;
+    if (priority !== undefined) input.priority = Number(priority);
+    if (parent !== undefined) input.parentId = parent ? (await resolveIssueMeta(parent)).id : null;
+    if (project !== undefined) input.projectId = project ? (await resolveProject(project)).id : null;
+    if (labels !== undefined) input.labelIds = await resolveLabels(labels);
+    if (!Object.keys(input).length) throw new LinearError("update requires at least one field.");
+    const query = `mutation AiosLinearUpdate($id: String!, $input: IssueUpdateInput!) {
+      issueUpdate(id: $id, input: $input) { success issue { identifier } }
+    }`;
+    const data = await request(query, { id: meta.id, input }, { retryable: false });
+    if (!data?.issueUpdate?.success || data?.issueUpdate?.issue?.identifier !== identifier) {
+      throw new LinearError(`Linear returned an ambiguous issueUpdate result for ${identifier}.`);
+    }
+    const issue = await getIssue(identifier, { full: true });
+    if (!issue) throw new LinearError(`updated ${identifier}, but readback could not find it.`);
+    if (title !== undefined && issue.title !== title) {
+      throw new LinearError(`updated ${identifier}, but title readback did not match.`);
+    }
+    if (state !== undefined && issue.state?.name?.toLowerCase() !== String(state).toLowerCase() &&
+        issue.state?.type?.toLowerCase() !== String(state).toLowerCase()) {
+      throw new LinearError(`updated ${identifier}, but state readback did not match '${state}'.`);
+    }
+    return issue;
+  }
+
+  async function addCommentVerified(identifier, body) {
+    await addComment(identifier, body);
+    const issue = await getIssue(identifier, { full: true });
+    if (!issue?.comments?.some((comment) => comment.body === body)) {
+      throw new LinearError(`comment mutation for ${identifier} could not be verified by readback.`);
+    }
+    return issue;
+  }
+
+  async function listRelations(identifier) {
+    const issue = await getIssue(identifier, { full: true });
+    if (!issue) throw new LinearError(`Linear issue not found: ${identifier}`);
+    return [...issue.relations, ...issue.inverseRelations];
+  }
+
+  async function addRelation(identifier, relatedIdentifier, type) {
+    const allowed = new Set(["blocks", "duplicate", "related"]);
+    if (!allowed.has(type)) throw new LinearError("relation type must be blocks, duplicate, or related.");
+    const issue = await resolveIssueMeta(identifier);
+    const related = await resolveIssueMeta(relatedIdentifier);
+    const query = `mutation AiosLinearRelationCreate($input: IssueRelationCreateInput!) {
+      issueRelationCreate(input: $input) { success issueRelation { id type } }
+    }`;
+    const data = await request(
+      query,
+      { input: { issueId: issue.id, relatedIssueId: related.id, type } },
+      { retryable: false }
+    );
+    const relationId = data?.issueRelationCreate?.issueRelation?.id;
+    if (!data?.issueRelationCreate?.success || !relationId) {
+      throw new LinearError(`Linear returned an ambiguous relation create result for ${identifier}.`);
+    }
+    const relations = await listRelations(identifier);
+    if (!relations.some((relation) => relation.id === relationId)) {
+      throw new LinearError(`created relation ${relationId}, but readback did not contain it.`);
+    }
+    return { id: relationId, relations };
+  }
+
+  async function removeRelation(identifier, relationId) {
+    const before = await listRelations(identifier);
+    if (!before.some((relation) => relation.id === relationId)) {
+      throw new LinearError(`relation ${relationId} is not attached to ${identifier}.`);
+    }
+    const query = `mutation AiosLinearRelationDelete($id: String!) {
+      issueRelationDelete(id: $id) { success }
+    }`;
+    const data = await request(query, { id: relationId }, { retryable: false });
+    if (!data?.issueRelationDelete?.success) {
+      throw new LinearError(`Linear returned an ambiguous relation delete result for ${relationId}.`);
+    }
+    const relations = await listRelations(identifier);
+    if (relations.some((relation) => relation.id === relationId)) {
+      throw new LinearError(`deleted relation ${relationId}, but readback still contains it.`);
+    }
+    return { ok: true, relations };
+  }
+
   return {
     request,
+    getIdentity,
+    listTeams,
+    listUsers,
+    listWorkflowStates,
     getIssue,
     listIssues,
+    listWorkspaceIssues,
+    listMyIssues,
     createIssue,
+    createWorkspaceIssue,
     addComment,
+    addCommentVerified,
     updateIssueDescription,
+    updateWorkspaceIssue,
+    listRelations,
+    addRelation,
+    removeRelation,
   };
 }
