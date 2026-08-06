@@ -30,6 +30,8 @@
 //                             mark one issue as blocking another
 //   related <ISSUE_A> <ISSUE_B>
 //                             mark two issues as related (non-blocking cross-reference)
+//   remove-relation <ISSUE_A> <ISSUE_B> <blocks|related>
+//                             remove exactly one relation; `blocks` is directional (A blocks B)
 //   set-project <IDENT> <project-name-substring>
 //                             move issue to a project (name match, case-insensitive substring)
 //   set-parent <IDENT> <PARENT_IDENT>
@@ -49,6 +51,7 @@ import { createHash } from "node:crypto";
 import { applyDescriptionPatch, resolveLinearTemplate } from "./linear-template.mjs";
 import {
   DEFAULT_TEAM_KEY,
+  findExactRelation,
   findIssue,
   findLabel,
   findTeamId,
@@ -307,6 +310,25 @@ if (cmd === "get") {
     );
     console.log(`${a.identifier} now related to ${b.identifier}`);
   }
+} else if (cmd === "remove-relation") {
+  const aIdent = argv[1];
+  const bIdent = argv[2];
+  const type = argv[3];
+  if (!aIdent || !bIdent || !["blocks", "related"].includes(type)) {
+    console.error("remove-relation requires <ISSUE_A> <ISSUE_B> <blocks|related>");
+    process.exit(1);
+  }
+  const a = await findIssue(aIdent);
+  const b = await findIssue(bIdent);
+  const relation = findExactRelation(await getRelations(a.id), a, b, type);
+  if (!relation) {
+    console.log(`${a.identifier} has no ${type} relation to ${b.identifier}`);
+  } else {
+    await gql(`mutation($id:String!){ issueRelationDelete(id:$id){ success } }`, {
+      id: relation.id,
+    });
+    console.log(`removed ${type} relation: ${a.identifier} -> ${b.identifier}`);
+  }
 } else if (cmd === "set-project") {
   const ident = argv[1];
   const projectName = argv[2];
@@ -444,7 +466,8 @@ if (cmd === "get") {
       "set-desc <IDENT> <file> | patch-desc <IDENT> <patch.md> | set-title <IDENT> <title> | " +
       "set-state <IDENT> <name> | set-priority <IDENT> <priority> | comment <IDENT> <text> | " +
       "comments <IDENT> | list <TEAMKEY> | relations <IDENT> | blocks <BLOCKER> <BLOCKED> | " +
-      "related <ISSUE_A> <ISSUE_B> | set-project <IDENT> <project> | set-parent <IDENT> <PARENT_IDENT> | " +
+      "related <ISSUE_A> <ISSUE_B> | remove-relation <ISSUE_A> <ISSUE_B> <blocks|related> | " +
+      "set-project <IDENT> <project> | set-parent <IDENT> <PARENT_IDENT> | " +
       "add-label <IDENT> <LABEL> | template [aios] | " +
       'create "<title>" [--desc <file>] [--template aios] [--label <name>]... [--state Backlog] ' +
       "[--parent <IDENT>] [--assignee <name-or-email>] | users <TEAMKEY> | assign <IDENT> <name-or-email>"

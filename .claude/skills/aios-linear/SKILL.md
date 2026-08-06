@@ -59,6 +59,8 @@ $LIN set-priority AIO-75 high  # priority: none, urgent, high, medium, low
 $LIN relations AIO-75          # show blocks / blocked-by / related
 $LIN blocks AIO-73 AIO-75      # mark AIO-73 as blocking AIO-75
 $LIN related AIO-73 AIO-75     # mark AIO-73/AIO-75 as related (non-blocking cross-ref)
+$LIN remove-relation TEAM-123 TEAM-456 blocks  # remove only the directional TEAM-123 → TEAM-456 blocker
+$LIN remove-relation TEAM-123 TEAM-456 related # remove the pair's related relation (either direction)
 $LIN set-project AIO-75 "V1.0 — Verified Operator Loop"  # move issue to a project (substring match)
 $LIN set-parent AIO-647 AIO-776 # re-parent an issue under another
 $LIN add-label AIO-75 unified-inbox   # add a team label without removing existing ones
