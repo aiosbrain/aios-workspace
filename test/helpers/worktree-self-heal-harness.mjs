@@ -31,13 +31,15 @@ export const MARKER = path.join(".aios", ".worktree-hydrated");
 // Same rationale as scripts/repo-bootstrap/engine.mjs. Unchanged by the move
 // out of worktree-self-heal.test.mjs — Sonar only flags it now because the
 // extracted file counts as new code.
-export const git = (cwd, ...args) =>
-  execFileSync("git", args, {
+export const git = (cwd, ...args) => {
+  const options = {
     cwd,
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
     env: { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_SYSTEM: "/dev/null" },
-  }); // NOSONAR
+  };
+  return execFileSync("git", args, options); // NOSONAR javascript:S4036
+};
 
 const tmpDirs = [];
 
