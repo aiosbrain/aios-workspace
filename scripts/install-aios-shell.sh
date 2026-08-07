@@ -62,7 +62,7 @@ fi
 
 read -r -d '' BLOCK <<'EOF' || true
 # >>> aios-shell begin >>>
-# AIOS CLI — finds aios.yaml walking up from cwd; installed by aios-workspace/scripts/install-aios-shell.sh
+# AIOS CLI — uses the nearest workspace, then the shared toolkit; installed by aios-workspace/scripts/install-aios-shell.sh
 aios() {
   local dir="$PWD"
   while [[ "$dir" != "/" ]]; do

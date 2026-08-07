@@ -13,6 +13,25 @@ The catalog of what's connectable lives in
 [`.claude/INTEGRATIONS.md`](../scaffold/.claude/INTEGRATIONS.md) (generated from
 `.claude/integrations.json`). This page is the **how-to-connect** companion.
 
+## Global command installation
+
+Install the toolkit once so every repository can use the same command surface and credential
+resolver:
+
+```bash
+npm install --global @aiosbrain/aios
+aios --help
+slack --help
+linear template aios
+```
+
+`aios` remains repo-scoped for sync commands (`status`, `push`, and `pull`); use `--repo` when
+working outside a stamped workspace. Account-scoped commands such as `aios query` and
+`aios connect` may use the explicit `AIOS_AGENT_WORKSPACE` environment variable. The global
+`slack` and `linear` launchers resolve credentials from the current environment, the current
+repository, or the toolkit's encrypted `.env`; Slack then fetches the member's personal token
+from the Team Brain when no local token is present.
+
 ## How to wire an MCP integration
 
 1. Open [`.mcp.example.json`](../scaffold/.mcp.example.json) and copy the server block you want

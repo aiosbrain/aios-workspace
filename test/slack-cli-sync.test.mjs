@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -26,3 +27,11 @@ if (actual !== expected) {
 }
 
 console.log(`slack-cli-sync: ok (${actual.slice(0, 12)}…)`);
+
+const help = spawnSync("python3", [slackPy, "dm", "--help"], { encoding: "utf8" });
+if (help.status !== 0 || !help.stdout.includes("--message-stdin")) {
+  console.error("slack-cli-sync: multiline message input is not exposed by the CLI");
+  process.exit(1);
+}
+
+console.log("slack-cli-sync: multiline input ok");

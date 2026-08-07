@@ -12,7 +12,9 @@
     "access": "public"
   },
   "bin": {
-    "aios": "scripts/aios.mjs"
+    "aios": "scripts/aios.mjs",
+    "slack": "scripts/slack.mjs",
+    "linear": "scripts/linear.mjs"
   },
   "files": [
     "scripts",
