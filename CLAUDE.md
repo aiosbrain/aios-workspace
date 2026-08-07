@@ -197,14 +197,23 @@ they don't recognize.
 ## 6. Stack & key commands
 
 - **Node ESM** tooling (zero-/light-dep CLIs), Bash validators/hooks, and the published `@aiosbrain/foundation` npm workspace. The Claude Agent SDK GUI + Tauri shell live in `aiosbrain/aios-workspace-gui` (§2c).
-- **Node is pinned to 22** (`.nvmrc` / `.node-version`). Worktrees symlink `node_modules` from the
-  primary, so they all run the primary's compiled `better-sqlite3` — running tests under a different
-  Node major (e.g. Homebrew's newer Node) triggers a `NODE_MODULE_VERSION` ABI crash in the
-  operator-loop DB tests. Run `nvm use` (or fnm/mise, which read `.nvmrc`) so your shell is on 22.
-  `scripts/ensure-native-abi.mjs` (a `pretest` gate + worktree-hydration step) turns any mismatch into
-  an actionable message instead of a cryptic ABI number, and auto-rebuilds when the active Node is a
-  supported one. Bumping to a newer Node major means bumping `better-sqlite3` too (11.x has no prebuild
-  above Node 22/23; Node 24 needs ≥12.0, Node 26 needs ≥12.10).
+- **Two Node numbers, doing two different jobs — do not collapse them** (AIO-628).
+  - **Development pin: 22** (`.nvmrc` / `.node-version`). Worktrees symlink `node_modules` from the
+    primary, so they all run the primary's compiled `better-sqlite3` — running tests under a different
+    Node major (e.g. Homebrew's newer Node) triggers a `NODE_MODULE_VERSION` ABI crash in the
+    operator-loop DB tests. Run `nvm use` (or fnm/mise, which read `.nvmrc`) so your shell is on 22.
+    `scripts/ensure-native-abi.mjs` (a `pretest` gate + worktree-hydration step) turns any mismatch into
+    an actionable message instead of a cryptic ABI number, and auto-rebuilds when the active Node is a
+    supported one. **Keep these files at 22** — bumping them to match the supported range below is the
+    exact mistake this split exists to prevent.
+  - **Supported range: `engines.node: ">=22"`** in `package.json` *and*
+    `packages/foundation/package.json`. `@aiosbrain/foundation` is published to npm, so this range
+    propagates to every downstream consumer; npm only warns on `engines`, but **yarn and pnpm hard-fail
+    by default**, so a stale upper bound is a real install failure for a user on a newer LTS. The old
+    `<23` ceiling encoded better-sqlite3 11.x's prebuild limit; the repo is on **13.x**, which declares
+    `engines: { node: ">=22" }` with no upper bound, so the ceiling is gone. CI proves the range by
+    running the `Node tests` lane on **22, 24 and 26** — keep that matrix in step with this line, and
+    keep it off the coverage lanes (one runtime owns the ratchet baseline).
 
 ```bash
 # scaffold a throwaway workspace to verify template changes:
