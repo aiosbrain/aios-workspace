@@ -294,9 +294,19 @@ def _post(chan, text, thread=None):
                                      "thread_ts": thread, "as_user": "true"})
 
 
+def message_arg(a):
+    """Read multiline message text without requiring shell escaping."""
+    if getattr(a, "message_stdin", False):
+        message = sys.stdin.read()
+        if not message:
+            die("--message-stdin received empty input", 2)
+        return message
+    return a.message
+
+
 def cmd_send(a):
     chan = resolve_target(a.target)
-    r = _post(chan, a.message, a.thread)
+    r = _post(chan, message_arg(a), a.thread)
     print(json.dumps({"ok": True, "channel": r.get("channel"), "ts": r.get("ts")}) if a.json
           else f"sent → {r.get('channel')} @ {r.get('ts')}")
 
@@ -312,7 +322,7 @@ def cmd_dm(a):
             die(f"could not resolve teammate '{a.member}' (no brain match and not an email)", 4)
     else:
         chan = resolve_target(a.target)
-    r = _post(chan, a.message, a.thread)
+    r = _post(chan, message_arg(a), a.thread)
     print(json.dumps({"ok": True, "channel": r.get("channel"), "ts": r.get("ts")}) if a.json
           else f"sent → {r.get('channel')} @ {r.get('ts')}")
 
@@ -379,11 +389,18 @@ def main():
     p = sub.add_parser("read", parents=[common])
     p.add_argument("--target", required=True); p.add_argument("--limit", type=int, default=20); p.add_argument("--thread")
     p = sub.add_parser("send", parents=[common])
-    p.add_argument("--target", required=True); p.add_argument("--message", required=True); p.add_argument("--thread")
+    p.add_argument("--target", required=True)
+    g = p.add_mutually_exclusive_group(required=True)
+    g.add_argument("--message")
+    g.add_argument("--message-stdin", action="store_true", help="read the complete message from stdin")
+    p.add_argument("--thread")
     p = sub.add_parser("dm", parents=[common])
     g = p.add_mutually_exclusive_group(required=True)
     g.add_argument("--target"); g.add_argument("--member")
-    p.add_argument("--message", required=True); p.add_argument("--thread")
+    g = p.add_mutually_exclusive_group(required=True)
+    g.add_argument("--message")
+    g.add_argument("--message-stdin", action="store_true", help="read the complete message from stdin")
+    p.add_argument("--thread")
     p = sub.add_parser("react", parents=[common])
     p.add_argument("--target", required=True); p.add_argument("--ts", required=True); p.add_argument("--emoji", required=True)
     p = sub.add_parser("connect", parents=[common])
