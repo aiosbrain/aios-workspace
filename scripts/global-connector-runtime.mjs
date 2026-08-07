@@ -1,5 +1,4 @@
 import { spawnSync as defaultSpawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
 import path from "node:path";
 import { resolveBrainConfig } from "../packages/foundation/src/brain-config.mjs";
 
@@ -18,7 +17,8 @@ export function resolveConnectorEnv({
   const apiKey = configs.find((config) => config.api_key)?.api_key;
   const teamId = configs.find((config) => config.team_id)?.team_id;
   if (brainUrl && !resolvedEnv.AIOS_BRAIN_URL) resolvedEnv.AIOS_BRAIN_URL = brainUrl;
-  if (apiKey && !resolvedEnv[apiKeyEnv]) resolvedEnv[apiKeyEnv] = apiKey;
+  const credentialEnv = apiKeyEnv === "LINEAR_API_KEY" ? "LINEAR_API_KEY" : "AIOS_API_KEY";
+  if (apiKey && !resolvedEnv[credentialEnv]) resolvedEnv[credentialEnv] = apiKey;
   if (teamId && !resolvedEnv.AIOS_TEAM) resolvedEnv.AIOS_TEAM = teamId;
   return resolvedEnv;
 }
@@ -31,17 +31,17 @@ export function runGlobalConnector({
   command,
   spawn = defaultSpawnSync,
 } = {}) {
-  if (!existsSync(cli)) {
-    console.error(`${name}: bundled CLI not found in ${path.dirname(cli)}`);
-    return 1;
-  }
   const result = spawn(command, [cli, ...argv], {
     cwd: process.cwd(),
     env,
     stdio: "inherit",
   });
   if (result.error) {
-    console.error(`${name}: could not start connector: ${result.error.message}`);
+    const detail =
+      result.error.code === "ENOENT"
+        ? `bundled CLI not found in ${path.dirname(cli)}`
+        : `could not start connector: ${result.error.message}`;
+    console.error(`${name}: ${detail}`);
     return 1;
   }
   return result.status ?? 1;
