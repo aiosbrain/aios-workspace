@@ -13,10 +13,61 @@
 /** @typedef {{ provider: string, modelId: string, raw: string }} ModelRef */
 
 export const AGENTIC_PROVIDERS = new Set(["claude", "cursor", "opencode", "codex"]);
-export const PROMPT_PROVIDERS = new Set(["openrouter", "deepseek", "opencode", "cursor", "claude"]);
+export const PROMPT_PROVIDERS = new Set([
+  "openrouter",
+  "deepseek",
+  "opencode",
+  "cursor",
+  "claude",
+  "codex",
+]);
 // These are the approved Codex execution tiers for the AIO-381 delivery lane. Keeping the
 // allowlist here lets `aios ship` reject a typo before it creates a worktree or starts a run.
 export const CODEX_MODEL_TIERS = new Set(["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"]);
+
+// Named, runtime-agnostic presets for the review/reviewer-style prompt steps (plan_review,
+// code_review, spec_eval). A preset is just a documented shortcut for a `<provider>:<modelId>`
+// ref — pick one by name instead of memorizing provider syntax. `<step>_preset:` in
+// .aios/loop-models.yaml resolves through the same `parseModelRef`/`modelFamily` machinery as
+// `<step>_model:`, so the diversity and agentic-provider guards still apply unchanged.
+//
+// `billing` documents how the underlying CLI/API actually gets paid, since that's the axis
+// people choose a preset on: "subscription" routes through a locally-authenticated CLI (Claude
+// Code, Codex CLI) and never touches that provider's API key (see callClaudeAgent's and
+// callCodexAgent's env-key stripping); "api" is metered by an API key env var.
+export const REVIEWER_PRESETS = {
+  deepseek: {
+    model: "deepseek:deepseek-v4-pro",
+    billing: "api",
+    description: "DeepSeek's own API — the long-standing default reviewer, keyed by DEEPSEEK_API_KEY.",
+  },
+  "claude-subscription": {
+    model: "claude:claude-fable-5",
+    billing: "subscription",
+    description:
+      "Fable via the local `claude` CLI login — billed against a Claude subscription, not API credits.",
+  },
+  "codex-subscription": {
+    model: "codex:gpt-5.6-terra",
+    billing: "subscription",
+    description:
+      "Codex via the local `codex` CLI login — billed against a ChatGPT subscription, not API credits.",
+  },
+  "opencode-glm": {
+    model: "opencode:glm-5.2",
+    billing: "api",
+    description: "GLM via the OpenCode Go API, keyed by OPENCODE_API_KEY/OPENCODE_GO_API_KEY.",
+  },
+  "openrouter-gpt": {
+    model: "openrouter:openai/gpt-5.5",
+    billing: "api",
+    description: "GPT via OpenRouter, keyed by OPENROUTER_API_KEY.",
+  },
+};
+
+export function resolveReviewerPreset(name) {
+  return REVIEWER_PRESETS[name] ?? null;
+}
 
 // Bare open-model ids → OpenRouter vendor/model when OpenCode isn't keyed.
 export const OPENROUTER_ALIASES = {

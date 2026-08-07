@@ -17,6 +17,21 @@
 #
 # DIVERSITY GUARD: build≠code_review family, plan≠plan_review family (fail closed).
 # AGENTIC GUARD: plan/build/fix/fix_escalated need claude|cursor|opencode|codex — not openrouter/deepseek alone.
+#
+# REVIEWER PRESETS (runtime-agnostic shortcuts for review-style prompt steps — plan_review,
+# code_review, spec_eval): `<step>_preset: <name>` instead of memorizing provider syntax.
+# `billing` says how it's actually paid for — `subscription` presets run through a locally
+# logged-in CLI (Claude Code / Codex) and are billed against that subscription, never metered
+# API credits; `api` presets are metered by the named API key.
+#   deepseek            api            deepseek:deepseek-v4-pro   (DEEPSEEK_API_KEY)      — current default
+#   claude-subscription subscription   claude:claude-fable-5      (claude CLI login)
+#   codex-subscription  subscription   codex:gpt-5.6-terra        (codex CLI login)
+#   opencode-glm        api            opencode:glm-5.2           (OPENCODE_API_KEY)
+#   openrouter-gpt       api           openrouter:openai/gpt-5.5  (OPENROUTER_API_KEY)
+# A preset is just sugar for the equivalent `<step>_model:` ref — it still flows through the
+# same diversity/agentic guards. A Claude-family preset (claude-subscription) on spec_eval
+# needs spec_author/spec_fix moved off Claude too, or the diversity guard aborts — see the
+# spec_eval example below.
 
 # recon_model: claude:claude-haiku-4-5
 # plan_model: claude:claude-opus-4-8
@@ -50,5 +65,10 @@
 # spec_author_effort: high
 # spec_fix_model: claude:claude-opus-4-8
 # spec_fix_effort: high
-# spec_eval_model: claude:claude-opus-4-8   # override to Claude CLI if preferred
+# spec_eval_preset: codex-subscription      # Codex CLI subscription instead of DEEPSEEK_API_KEY;
+#                                            # openai family stays cross-family from Opus spec_author
+# spec_eval_preset: claude-subscription     # Fable via Claude CLI subscription — ONLY valid if
+#                                            # spec_author_model/spec_fix_model are ALSO moved off
+#                                            # Claude (e.g. codex:gpt-5.6-terra), since spec_author
+#                                            # and spec_eval must stay cross-family
 # decisions_distill_model: claude:claude-opus-4-8
