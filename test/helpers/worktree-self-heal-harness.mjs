@@ -26,13 +26,18 @@ export const SELF_HEAL = path.join(TOOLKIT, "hooks", "worktree-self-heal.mjs");
 export const POSTINSTALL = path.join(TOOLKIT, "scripts", "postinstall-banner.mjs");
 export const MARKER = path.join(".aios", ".worktree-hydrated");
 
+// NOSONAR javascript:S4036 — `git` comes from the developer's/runner's PATH by
+// design; these fixtures drive a real git binary against throwaway temp repos.
+// Same rationale as scripts/repo-bootstrap/engine.mjs. Unchanged by the move
+// out of worktree-self-heal.test.mjs — Sonar only flags it now because the
+// extracted file counts as new code.
 export const git = (cwd, ...args) =>
   execFileSync("git", args, {
     cwd,
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
     env: { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_SYSTEM: "/dev/null" },
-  });
+  }); // NOSONAR
 
 const tmpDirs = [];
 
