@@ -14,7 +14,10 @@ if (!existsSync(cli)) {
 }
 
 const roots = [process.cwd()];
-if (process.env.AIOS_AGENT_WORKSPACE && path.resolve(process.env.AIOS_AGENT_WORKSPACE) !== path.resolve(process.cwd())) {
+if (
+  process.env.AIOS_AGENT_WORKSPACE &&
+  path.resolve(process.env.AIOS_AGENT_WORKSPACE) !== path.resolve(process.cwd())
+) {
   roots.push(process.env.AIOS_AGENT_WORKSPACE);
 }
 const configs = roots.map((root) => resolveBrainConfig(root));

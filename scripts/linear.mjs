@@ -14,13 +14,15 @@ if (!existsSync(cli)) {
 }
 
 const roots = [process.cwd()];
-if (process.env.AIOS_AGENT_WORKSPACE && path.resolve(process.env.AIOS_AGENT_WORKSPACE) !== path.resolve(process.cwd())) {
+if (
+  process.env.AIOS_AGENT_WORKSPACE &&
+  path.resolve(process.env.AIOS_AGENT_WORKSPACE) !== path.resolve(process.cwd())
+) {
   roots.push(process.env.AIOS_AGENT_WORKSPACE);
 }
-const resolved =
-  roots
-    .map((root) => resolveBrainConfig(root, { apiKeyEnv: "LINEAR_API_KEY" }))
-    .find((config) => config.api_key) || { api_key: "" };
+const resolved = roots
+  .map((root) => resolveBrainConfig(root, { apiKeyEnv: "LINEAR_API_KEY" }))
+  .find((config) => config.api_key) || { api_key: "" };
 const env = { ...process.env };
 if (resolved.api_key && !env.LINEAR_API_KEY) env.LINEAR_API_KEY = resolved.api_key;
 
