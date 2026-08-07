@@ -12,12 +12,13 @@
  * directories out to match one of the guesses below.
  */
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { dirname, isAbsolute, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const TOOLKIT_CLI = "scripts/aios.mjs"; // the entrypoint within a toolkit checkout
-const workspaceRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const currentScript = realpathSync(fileURLToPath(import.meta.url));
+const workspaceRoot = resolve(dirname(currentScript), "..");
 const fromDir = (dir) => resolve(dir, TOOLKIT_CLI);
 
 // AIOS_TOOLKIT_CLI (a direct path to the entrypoint) is the deprecated predecessor of
@@ -31,9 +32,10 @@ if (process.env.AIOS_TOOLKIT_CLI && !process.env.AIOS_TOOLKIT_DIR) {
 // The checkout this workspace was stamped from is already on disk: scaffold-project.sh
 // writes `source <path>` into .aios-toolkit-version, and every `aios update` rewrites the
 // same line (scripts/update/stamp.mjs). Reading it means a workspace resolves its CLI with
-// no env var and no directory-layout luck — including workspaces scaffolded before this
-// shim learned to look. `source` holds a clone URL instead of a path when update fell back
-// to an ephemeral clone; that just fails the existsSync below and falls through.
+// no env var and no directory-layout luck. Workspaces scaffolded before this behavior gain it
+// once an update installs this shim. `source` holds a clone URL instead of a path when update
+// fell back to an ephemeral clone; only absolute filesystem paths are accepted, so that falls
+// through.
 //
 // This execs a path named by a file inside the workspace, which is the same trust level the
 // relative guesses below already carry — and `aios update` already treats this exact file as
@@ -42,7 +44,8 @@ const fromStamp = () => {
   try {
     const stamp = readFileSync(resolve(workspaceRoot, ".aios-toolkit-version"), "utf8");
     const source = /^source (.+)$/m.exec(stamp);
-    return source && fromDir(resolve(workspaceRoot, source[1].trim()));
+    const sourcePath = source?.[1].trim();
+    return sourcePath && isAbsolute(sourcePath) ? fromDir(sourcePath) : undefined;
   } catch {
     return undefined; // no stamp, or unreadable — no signal, not an error
   }
@@ -57,7 +60,7 @@ const candidates = [
   fromDir(resolve(workspaceRoot, "../../aios-workspace")),
 ].filter(Boolean);
 
-const toolkit = candidates.find((p) => existsSync(p));
+const toolkit = candidates.find((p) => existsSync(p) && realpathSync(p) !== currentScript);
 if (!toolkit) {
   console.error(
     "aios: aios-workspace checkout not found.\n" +

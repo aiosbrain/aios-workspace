@@ -146,12 +146,25 @@ test("the stamp wins over the relative sibling guesses", () => {
   }
 });
 
-test("a stamp recording a clone URL falls through instead of resolving or crashing", () => {
+test("a stamp recording a clone URL falls through even when its resolved path collides", () => {
   // `aios update` records a URL in `source` when it fell back to an ephemeral clone
-  // (scripts/update.mjs resolveSource). That is not a path and must not be treated as one.
+  // (scripts/update.mjs resolveSource). A URL is not a path and must not be treated as one,
+  // even if resolve(workspaceRoot, source) happens to name an executable local file.
   const dir = fixtureWorkspace(`abc123\nsource https://github.com/aiosbrain/aios-workspace.git\n`);
+  const collision = path.join(
+    dir,
+    "https:",
+    "github.com",
+    "aiosbrain",
+    "aios-workspace.git",
+    "scripts"
+  );
+  mkdirSync(collision, { recursive: true });
+  writeFileSync(path.join(collision, "aios.mjs"), 'console.log("URL_COLLISION_RAN");\n');
   try {
-    assert.match(runShimExpectingFailure(dir), NOT_FOUND);
+    const out = runShimExpectingFailure(dir);
+    assert.match(out, NOT_FOUND);
+    assert.doesNotMatch(out, /URL_COLLISION_RAN/);
   } finally {
     rmSync(dir, discard);
   }
@@ -161,6 +174,31 @@ test("a stamp pointing at a checkout that no longer exists falls through", () =>
   const dir = fixtureWorkspace(`abc123\nsource ${path.join(tmpdir(), "deleted-checkout")}\n`);
   try {
     assert.match(runShimExpectingFailure(dir), NOT_FOUND);
+  } finally {
+    rmSync(dir, discard);
+  }
+});
+
+test("a configured entrypoint pointing back to the shim fails instead of recursing", () => {
+  const dir = fixtureWorkspace();
+  const shim = path.join(dir, "scripts", "aios.mjs");
+  const recursionGuard = path.join(dir, "recursion-guard.cjs");
+  writeFileSync(
+    recursionGuard,
+    [
+      'const depth = Number(process.env.AIOS_SHIM_TEST_DEPTH ?? "0");',
+      'if (depth > 0) { console.error("SELF_RECURSION_RAN"); process.exit(97); }',
+      'process.env.AIOS_SHIM_TEST_DEPTH = "1";',
+    ].join("\n")
+  );
+
+  try {
+    const out = runShimExpectingFailure(dir, {
+      AIOS_TOOLKIT_CLI: shim,
+      NODE_OPTIONS: `--require=${recursionGuard}`,
+    });
+    assert.match(out, NOT_FOUND);
+    assert.doesNotMatch(out, /SELF_RECURSION_RAN/);
   } finally {
     rmSync(dir, discard);
   }
