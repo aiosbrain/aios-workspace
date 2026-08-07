@@ -21,8 +21,10 @@ Both are public on npm; no auth. The human/agent contract is **`DESIGN.md`** ins
 @custom-variant dark (&:where(.dark, .dark *));
 ```
 
-Reference implementation: the **AIOS workspace GUI** (`gui/client/` in the toolkit repo) —
-`app.css` token bridge, `theme.js` for dark default, `@aios-alpha/ui` for shared components.
+Reference implementation: the **AIOS workspace GUI**, which lives in its own repo,
+[`aiosbrain/aios-workspace-gui`](https://github.com/aiosbrain/aios-workspace-gui) — its
+`gui/client/` carries the `app.css` token bridge, `theme.js` for dark default, and
+`@aios-alpha/ui` for shared components.
 
 ## Rules
 
