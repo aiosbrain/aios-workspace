@@ -51,6 +51,7 @@ import {
 } from "../scripts/review-bugbot.mjs";
 import { resolveCanonicalBranchHead } from "../scripts/review-bugbot/trusted-env.mjs";
 import { AIOSBugbot, hardenedGateEnv } from "../.opencode/plugins/aios-bugbot.mjs";
+import { assertRealLockfileGate } from "./helpers/lockfile-gate-expectation.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.join(HERE, "..");
@@ -2348,8 +2349,8 @@ test("the real compensating gate clears this repo's own real lockfile", () => {
       ["package-lock.json", "package.json"],
       { baseSha: git(repo, "rev-parse", "HEAD") }
     );
-    assert.equal(gates.ok, true, `real npm verification must succeed, got: ${gates.reason}`);
-    assert.deepEqual(gates.summaries["package-lock.json"], []);
+
+    assertRealLockfileGate(gates, REPO);
   } finally {
     rmSync(repo, { recursive: true, force: true });
   }

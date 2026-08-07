@@ -214,18 +214,33 @@ jobs:
         run: npm run format:check
 
   node-tests:
-    name: Node tests (${{ matrix.shard }}/3)
+    name: Node tests (${{ matrix.shard }}/3, Node ${{ matrix.node }})
     runs-on: ubuntu-latest
     timeout-minutes: 20 # observed p100 2.6 min per shard
     strategy:
       fail-fast: false
+      # The Node dimension is what makes `engines.node: ">=22"` a tested claim
+      # instead of an assertion (AIO-628). `@aiosbrain/foundation` is published,
+      # so that range propagates to every downstream consumer; npm only warns on
+      # engines, but yarn and pnpm hard-fail, so an unverified upper bound is a
+      # real install failure for an OSS user on a newer LTS.
+      #
+      # 22 is the development pin (.nvmrc / .node-version — do NOT bump those to
+      # match this list). 24 and 26 are the majors users actually land on.
+      #
+      # This matrix is DELIBERATELY confined to this lane. Do not fan the
+      # coverage-shard / coverage lanes out over Node versions: the ratchet
+      # compares a single merged report against a stored baseline, so N runtimes
+      # would produce N baselines racing one file. One runtime executes the
+      # coverage lanes; this lane proves the runtime range.
       matrix:
         shard: [1, 2, 3]
+        node: [22, 24, 26]
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version: ${{ matrix.node }}
           cache: npm
       - run: npm ci
       - name: Run shard
