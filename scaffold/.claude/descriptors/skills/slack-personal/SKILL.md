@@ -65,8 +65,13 @@ slack read   --target <U|D|C|#name|@email> [--limit 20] [--thread <ts>]
 slack send   --target <U|D|C|@email> --message "…" [--thread <ts>]
 slack dm     --target <U|@email>      --message "…"
 slack dm     --member <email|handle>  --message "…"   # resolves the teammate via the brain
+# For multiline messages, pipe exact text through stdin:
+printf '%s\n' 'line one' '' 'line three' | slack dm --member <email|handle> --message-stdin
 slack react  --target <D|C> --ts <ts> --emoji white_check_mark
 ```
+
+When invoking from a shell, do not pass JSON-escaped multiline text as `--message`:
+`\\n` is posted literally. Use `--message-stdin` so newlines reach Slack unchanged.
 
 A recording owner `aios loop daily` also runs the dependency-free unread adapter before collect.
 It scans conversation objects that expose an authoritative `last_read` marker and appends inbound
