@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
+import { resolveConnectorEnv, runGlobalConnector } from "../scripts/global-connector-runtime.mjs";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 
@@ -55,4 +56,38 @@ test("global entrypoints consult an explicit agent workspace outside the repo", 
     rmSync(cwd, { recursive: true, force: true });
     rmSync(agentWorkspace, { recursive: true, force: true });
   }
+});
+
+test("connector runtime preserves credentials and forwards subprocess arguments", () => {
+  const env = resolveConnectorEnv({
+    env: {
+      AIOS_BRAIN_URL: "https://existing.example",
+      AIOS_API_KEY: "existing-key",
+      AIOS_TEAM: "existing-team",
+    },
+  });
+  assert.equal(env.AIOS_BRAIN_URL, "https://existing.example");
+  assert.equal(env.AIOS_API_KEY, "existing-key");
+  assert.equal(env.AIOS_TEAM, "existing-team");
+
+  const calls = [];
+  const status = runGlobalConnector({
+    name: "test",
+    cli: process.execPath,
+    argv: ["--help"],
+    env,
+    command: "node",
+    spawn(command, args, options) {
+      calls.push({ command, args, options });
+      return { status: 0 };
+    },
+  });
+  assert.equal(status, 0);
+  assert.deepEqual(calls, [
+    {
+      command: "node",
+      args: [process.execPath, "--help"],
+      options: { cwd: process.cwd(), env, stdio: "inherit" },
+    },
+  ]);
 });
