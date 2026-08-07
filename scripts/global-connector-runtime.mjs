@@ -17,8 +17,11 @@ export function resolveConnectorEnv({
   const apiKey = configs.find((config) => config.api_key)?.api_key;
   const teamId = configs.find((config) => config.team_id)?.team_id;
   if (brainUrl && !resolvedEnv.AIOS_BRAIN_URL) resolvedEnv.AIOS_BRAIN_URL = brainUrl;
-  const credentialEnv = apiKeyEnv === "LINEAR_API_KEY" ? "LINEAR_API_KEY" : "AIOS_API_KEY";
-  if (apiKey && !resolvedEnv[credentialEnv]) resolvedEnv[credentialEnv] = apiKey;
+  if (apiKeyEnv === "LINEAR_API_KEY") {
+    if (apiKey && !resolvedEnv.LINEAR_API_KEY) resolvedEnv.LINEAR_API_KEY = apiKey;
+  } else if (apiKey && !resolvedEnv.AIOS_API_KEY) {
+    resolvedEnv.AIOS_API_KEY = apiKey;
+  }
   if (teamId && !resolvedEnv.AIOS_TEAM) resolvedEnv.AIOS_TEAM = teamId;
   return resolvedEnv;
 }
