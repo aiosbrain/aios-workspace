@@ -10,14 +10,12 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
 import os from "node:os";
-import { fileURLToPath } from "node:url";
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import {
   mkdtempSync,
   mkdirSync,
   writeFileSync,
   copyFileSync,
-  chmodSync,
   existsSync,
   lstatSync,
   realpathSync,
@@ -37,84 +35,21 @@ import {
   selfHeal,
   MARKER as SELF_HEAL_MARKER,
 } from "../hooks/worktree-self-heal.mjs";
+import {
+  TOOLKIT,
+  POSTINSTALL,
+  MARKER,
+  git,
+  cleanupTmpDirs,
+  trackTmpDir,
+  makePrimary,
+  installPostCheckout,
+  runSelfHeal,
+  assertHydrated,
+  captureLog,
+} from "./helpers/worktree-self-heal-harness.mjs";
 
-const TOOLKIT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const SELF_HEAL = path.join(TOOLKIT, "hooks", "worktree-self-heal.mjs");
-const POSTINSTALL = path.join(TOOLKIT, "scripts", "postinstall-banner.mjs");
-const MARKER = path.join(".aios", ".worktree-hydrated");
-
-const git = (cwd, ...args) =>
-  execFileSync("git", args, {
-    cwd,
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"],
-    env: { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_SYSTEM: "/dev/null" },
-  });
-
-const tmpDirs = [];
-test.after(() => {
-  for (const d of tmpDirs) rmSync(d, { recursive: true, force: true });
-});
-
-/**
- * A minimal stand-in for a primary AIOS checkout: the real hydrator + git hook, a
- * settings.json to copy down, and a node_modules dir to symlink.
- */
-function makePrimary({ withHydrator = true, withLeakGate = true } = {}) {
-  const root = mkdtempSync(path.join(os.tmpdir(), "aios-selfheal-"));
-  tmpDirs.push(root);
-  const repo = path.join(root, "primary");
-  mkdirSync(path.join(repo, "scripts"), { recursive: true });
-  mkdirSync(path.join(repo, "hooks", "git"), { recursive: true });
-  mkdirSync(path.join(repo, ".claude"), { recursive: true });
-  mkdirSync(path.join(repo, "node_modules"), { recursive: true });
-
-  if (withHydrator) {
-    const dest = path.join(repo, "scripts", "link-worktree-env.sh");
-    copyFileSync(path.join(TOOLKIT, "scripts", "link-worktree-env.sh"), dest);
-    chmodSync(dest, 0o755);
-    copyFileSync(
-      path.join(TOOLKIT, "scripts", "worktree-init.mjs"),
-      path.join(repo, "scripts", "worktree-init.mjs")
-    );
-  }
-  if (withLeakGate) {
-    copyFileSync(
-      path.join(TOOLKIT, "scripts", "leak-gate.sh"),
-      path.join(repo, "scripts", "leak-gate.sh")
-    );
-  }
-  writeFileSync(path.join(repo, ".claude", "settings.json"), JSON.stringify({ hooks: {} }) + "\n");
-  writeFileSync(path.join(repo, "README.md"), "temp\n");
-
-  git(repo, "init", "-q", "-b", "main");
-  git(repo, "config", "user.email", "t@example.com");
-  git(repo, "config", "user.name", "t");
-  git(repo, "add", "-A");
-  git(repo, "commit", "-q", "-m", "init");
-  return { root, repo };
-}
-
-function installPostCheckout(repo) {
-  const dest = path.join(repo, ".git", "hooks", "post-checkout");
-  copyFileSync(path.join(TOOLKIT, "hooks", "git", "post-checkout"), dest);
-  chmodSync(dest, 0o755);
-}
-
-/** Run the self-heal hook exactly as Claude Code would: as a subprocess in `cwd`. */
-function runSelfHeal(cwd, env = {}) {
-  return spawnSync(process.execPath, [SELF_HEAL], {
-    cwd,
-    encoding: "utf8",
-    env: { ...process.env, ...env },
-  });
-}
-
-function assertHydrated(wt) {
-  assert.ok(existsSync(path.join(wt, MARKER)), "hydration marker written");
-  assert.ok(lstatSync(path.join(wt, "node_modules")).isSymbolicLink(), "node_modules symlinked");
-  assert.ok(existsSync(path.join(wt, ".claude", "settings.json")), ".claude/settings.json present");
-}
+test.after(cleanupTmpDirs);
 
 // ── T1: a Conductor-style worktree — plain `git worktree add`, no aios wrapper ──
 test("T1: a worktree created by a plain `git worktree add` is fully hydrated", () => {
@@ -164,7 +99,7 @@ test("T4: the hook exits 0 in the primary, outside git, and with no hydrator", (
   assert.ok(!existsSync(path.join(repo, MARKER)), "primary checkout is never 'hydrated'");
 
   const notGit = mkdtempSync(path.join(os.tmpdir(), "aios-selfheal-nogit-"));
-  tmpDirs.push(notGit);
+  trackTmpDir(notGit);
   assert.equal(runSelfHeal(notGit).status, 0);
 
   const bare = makePrimary({ withHydrator: false });
@@ -206,18 +141,6 @@ test("T6: post-checkout hydrates a scaffolded workspace via the sibling toolkit"
 });
 
 // ── T7: installPostCheckoutHook — the three outcomes, in-process ───────────────
-/** Capture console.log for the duration of `fn`. */
-function captureLog(fn) {
-  const lines = [];
-  const original = console.log;
-  console.log = (...args) => lines.push(args.join(" "));
-  try {
-    return { result: fn(), out: lines.join("\n") };
-  } finally {
-    console.log = original;
-  }
-}
-
 test("T7: installPostCheckoutHook reports installed → present, and skips with no hooks dir", () => {
   const { root, repo } = makePrimary();
 
@@ -259,7 +182,7 @@ test("T7b: worktree install-hook installs the primary and pre-push safety backst
 
 test("T7c: worktree install-hook reports backstop installer failures without throwing", async () => {
   const repo = mkdtempSync(path.join(os.tmpdir(), "aios-selfheal-not-git-"));
-  tmpDirs.push(repo);
+  trackTmpDir(repo);
   mkdirSync(path.join(repo, "scripts"), { recursive: true });
   copyFileSync(
     path.join(TOOLKIT, "scripts", "leak-gate.sh"),
