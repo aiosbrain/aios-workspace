@@ -11,8 +11,8 @@
   },
   "outcome": "unavailable",
   "success": false,
-  "capability": "pm.work_item.read",
-  "mutation_class": "read",
+  "capability": "pm.work_item.update",
+  "mutation_class": "write",
   "retry": {
     "retryable": true,
     "duplicate_safety": "preflight_readback",

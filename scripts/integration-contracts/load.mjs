@@ -128,6 +128,10 @@ export function resolvePointer(document, pointer) {
   for (const rawToken of pointer.slice(1).split("/")) {
     const token = rawToken.replace(/~1/g, "/").replace(/~0/g, "~");
     if (current === null || typeof current !== "object") return undefined;
+    // Traversal is read-only, so nothing here can pollute a prototype; refusing these keys
+    // outright is belt-and-braces so a future caller that writes through a resolved path
+    // cannot turn this into a sink.
+    if (token === "__proto__" || token === "constructor" || token === "prototype") return undefined;
     if (!Object.prototype.hasOwnProperty.call(current, token)) return undefined;
     current = current[token];
   }

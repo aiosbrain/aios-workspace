@@ -193,7 +193,15 @@ export function checkInvariants(invariantsDoc, capabilities, fail) {
     }
     owners.set(owner, id);
 
-    const liveOnly = capabilities.suites[test.suite].live_only === true;
+    // `fail` accumulates rather than throwing, so an earlier unknown-suite failure does not
+    // stop this loop. Guard rather than dereference: a malformed contract should produce the
+    // diagnostic this validator exists to emit, not a TypeError and a stack trace.
+    const suite = capabilities.suites[test.suite];
+    if (!suite) {
+      fail(`invariants: ${id} owning_test "${owner}" is in unknown suite "${test.suite}"`);
+      continue;
+    }
+    const liveOnly = suite.live_only === true;
     if (invariant.evidence === "live" && !liveOnly) {
       fail(
         `invariants: ${id} claims live evidence but "${owner}" is in non-live suite "${test.suite}"`

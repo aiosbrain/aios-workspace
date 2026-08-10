@@ -12,7 +12,8 @@
     "contract_version",
     "capability",
     "occurred_at",
-    "provenance"
+    "provenance",
+    "mutation_class"
   ],
   "properties": {
     "outcome": {
@@ -350,6 +351,43 @@
           }
         }
       }
+    },
+    {
+      "if": {
+        "properties": {
+          "mutation_class": {
+            "enum": ["write", "destructive"]
+          }
+        },
+        "required": ["mutation_class"]
+      },
+      "then": {
+        "description": "Mutations are never blindly retried: a retryable mutation must name the provider-key or preflight-readback strategy that proves duplicate safety.",
+        "properties": {
+          "retry": {
+            "type": "object",
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "duplicate_safety": {
+                      "const": "none"
+                    }
+                  },
+                  "required": ["duplicate_safety"]
+                },
+                "then": {
+                  "properties": {
+                    "retryable": {
+                      "const": false
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
     }
   ],
   "unevaluatedProperties": false,
@@ -424,7 +462,7 @@
     },
     "retryPolicy": {
       "type": "object",
-      "description": "Mutations default to non-retryable. A retryable mutation must name the duplicate-safety strategy that proves it.",
+      "description": "Retryability of a failed operation. Mutations default to non-retryable and may only be retried under a duplicate-safety strategy (see the mutation retry branch); reads carry no duplicate risk.",
       "required": ["retryable", "duplicate_safety"],
       "properties": {
         "retryable": {
@@ -442,26 +480,7 @@
           "minimum": 0
         }
       },
-      "additionalProperties": false,
-      "allOf": [
-        {
-          "if": {
-            "properties": {
-              "duplicate_safety": {
-                "const": "none"
-              }
-            },
-            "required": ["duplicate_safety"]
-          },
-          "then": {
-            "properties": {
-              "retryable": {
-                "const": false
-              }
-            }
-          }
-        }
-      ]
+      "additionalProperties": false
     }
   }
 }

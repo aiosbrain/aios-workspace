@@ -53,10 +53,18 @@ export function isPrivateHost(hostname) {
   const host = hostname.toLowerCase();
   if (host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local")) return true;
 
-  const octets = host.split(".");
-  if (octets.length !== 4 || !octets.every((o) => /^\d{1,3}$/.test(o))) return false;
-  const [a, b] = octets.map(Number);
-  if (octets.map(Number).some((o) => o > 255)) return true;
+  const labels = host.split(".");
+  // A host whose labels are ALL numeric is an IPv4 literal in some notation. Resolvers accept
+  // far more than dotted-quad: `127.1` and `127.0.1` are shorthand for 127.0.0.1, and a
+  // leading zero (`0177.0.0.1`) is read as octal by many of them. Rather than reimplement
+  // every notation, reject any all-numeric host that is not a canonical, leading-zero-free
+  // dotted quad, then range-check the quad. Fail closed on the forms we refuse to interpret.
+  if (!labels.every((label) => /^\d+$/.test(label))) return false;
+  if (labels.length !== 4) return true;
+  if (!labels.every((label) => /^(?:0|[1-9]\d{0,2})$/.test(label))) return true;
+
+  const [a, b] = labels.map(Number);
+  if (labels.map(Number).some((o) => o > 255)) return true;
   if (a === 0 || a === 127) return true; // unspecified, loopback
   if (a === 10) return true; // RFC 1918
   if (a === 172 && b >= 16 && b <= 31) return true; // RFC 1918
@@ -65,6 +73,15 @@ export function isPrivateHost(hostname) {
   if (a === 100 && b >= 64 && b <= 127) return true; // RFC 6598 CGNAT
   if (a >= 224) return true; // multicast + reserved
   return false;
+}
+
+/** The hostname of an https URL or origin, lowercased; null when it cannot be parsed. */
+export function hostnameOf(url) {
+  try {
+    return new URL(url).hostname.toLowerCase();
+  } catch {
+    return null;
+  }
 }
 
 function parseSemver(value) {
@@ -352,14 +369,28 @@ function checkSyncAndEvents(manifest, supportedSet, add) {
   }
 }
 
+/**
+ * Every URL-bearing field, not just `provider_hosts`. The OAuth endpoints and
+ * `rate_limit.evidence_url` are typed `httpsUrl`, whose pattern accepts loopback and RFC 1918
+ * literals — so checking `provider_hosts` alone would let a manifest aim OAuth token exchange
+ * at an internal target and still clear the Phase 0 exit gate.
+ */
 function checkHosts(manifest, add) {
-  for (const origin of manifest.provider_hosts) {
-    const hostname = origin.slice("https://".length).split(":")[0];
-    if (isPrivateHost(hostname)) {
-      add(
-        "MR-HOST-PRIVATE",
-        `provider host "${origin}" resolves to a localhost or private-address target`
-      );
+  const targets = [
+    ...manifest.provider_hosts.map((origin) => ["provider host", origin]),
+    ["auth.oauth.authorization_endpoint", manifest.auth?.oauth?.authorization_endpoint],
+    ["auth.oauth.token_endpoint", manifest.auth?.oauth?.token_endpoint],
+    ["auth.oauth.revoke_endpoint", manifest.auth?.oauth?.revoke_endpoint],
+    ["rate_limit.evidence_url", manifest.rate_limit?.evidence_url],
+  ];
+
+  for (const [label, url] of targets) {
+    if (!url) continue;
+    const hostname = hostnameOf(url);
+    if (hostname === null) {
+      add("MR-HOST-PRIVATE", `${label} "${url}" is not a parseable URL`);
+    } else if (isPrivateHost(hostname)) {
+      add("MR-HOST-PRIVATE", `${label} "${url}" resolves to a localhost or private-address target`);
     }
   }
 }

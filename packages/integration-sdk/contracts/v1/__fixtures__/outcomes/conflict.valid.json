@@ -20,5 +20,6 @@
     "version": 5,
     "updated_at": "2026-08-10T09:12:00Z"
   },
-  "automatic_winner": null
+  "automatic_winner": null,
+  "mutation_class": "write"
 }

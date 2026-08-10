@@ -16,8 +16,9 @@
  * Barrel for `scripts/integration-contracts/` (boundary rule R1): consumers import this
  * file, never the directory's modules directly.
  */
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import {
   loadContracts,
@@ -101,6 +102,11 @@ export function buildDigestArtifact(digests) {
 }
 
 function main() {
+  // Remove any artifact from a previous run BEFORE validating. Simply not writing on failure
+  // would leave the last successful run's digests on disk, and a consumer reading the file
+  // after a failed run would pin digests that no longer describe the contract.
+  rmSync(DIGEST_ARTIFACT_PATH, { force: true });
+
   const { failures, digests, index } = validateContracts();
 
   if (failures.length > 0) {
@@ -121,4 +127,25 @@ function main() {
   console.log(`\ndigest artifact → ${path.relative(REPO_ROOT, DIGEST_ARTIFACT_PATH)}`);
 }
 
-if (process.argv[1] && import.meta.url === `file://${process.argv[1]}`) main();
+/**
+ * Whether this module was run directly, rather than imported by a test.
+ *
+ * NOT `import.meta.url === `file://${process.argv[1]}``; see the same guard in
+ * scripts/ci-changed-lanes.mjs for the full reasoning. That form compares an ENCODED url
+ * against an UNENCODED path (one space in the checkout path breaks it) and compares a
+ * symlink-resolved url against an unresolved path (macOS /var -> /private/var breaks it).
+ * Both failures are silent and both fail the same way: `main()` never runs, nothing is
+ * validated, no artifact is written, and the process still exits 0 — a gate that reports
+ * success without checking anything. Comparing realpaths on both sides is immune to both.
+ */
+function isDirectRun() {
+  const entry = process.argv[1];
+  if (!entry) return false;
+  try {
+    return realpathSync(fileURLToPath(import.meta.url)) === realpathSync(entry);
+  } catch {
+    return false;
+  }
+}
+
+if (isDirectRun()) main();

@@ -15,5 +15,6 @@
   "retry": {
     "retryable": false,
     "duplicate_safety": "none"
-  }
+  },
+  "mutation_class": "read"
 }

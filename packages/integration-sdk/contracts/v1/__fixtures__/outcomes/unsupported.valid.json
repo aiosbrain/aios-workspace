@@ -13,5 +13,6 @@
   "success": false,
   "capability": "pm.document.read",
   "unsupported_capability": "pm.document.read",
-  "reason_code": "declared_unsupported"
+  "reason_code": "declared_unsupported",
+  "mutation_class": "read"
 }

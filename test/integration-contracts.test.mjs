@@ -130,6 +130,39 @@ test("harness policy blocks mutations but never applies outside a guard scope", 
   );
 });
 
+test("prerelease host versions do not satisfy a stable min_host", () => {
+  const host = { host_version: "1.4.0-alpha", supported_contract_majors: [1] };
+  // Dropping the prerelease would make 1.4.0-alpha compare equal to 1.4.0 and load here.
+  assert.equal(
+    evaluateManifestLoad(host, { contract_version: "1.4.0", min_host: "1.4.0" }).result,
+    "inactive"
+  );
+  // The stable release of the same version does satisfy it.
+  assert.equal(
+    evaluateManifestLoad(
+      { host_version: "1.4.0", supported_contract_majors: [1] },
+      { contract_version: "1.4.0", min_host: "1.4.0" }
+    ).result,
+    "load"
+  );
+  // A prerelease min_host is satisfied by the stable release (SemVer 11: 1.4.0 > 1.4.0-beta).
+  assert.equal(
+    evaluateManifestLoad(
+      { host_version: "1.4.0", supported_contract_majors: [1] },
+      { contract_version: "1.4.0", min_host: "1.4.0-beta" }
+    ).result,
+    "load"
+  );
+  // Build metadata carries no precedence.
+  assert.equal(
+    evaluateManifestLoad(
+      { host_version: "1.4.0+build.9", supported_contract_majors: [1] },
+      { contract_version: "1.4.0", min_host: "1.4.0" }
+    ).result,
+    "load"
+  );
+});
+
 test("private, loopback and link-local provider hosts are rejected", () => {
   for (const host of [
     "localhost",
@@ -149,6 +182,29 @@ test("private, loopback and link-local provider hosts are rejected", () => {
   for (const host of ["api.linear.app", "api.clickup.com", "8.8.8.8"]) {
     assert.equal(isPrivateHost(host), false, host);
   }
+});
+
+test("shorthand and octal IPv4 forms cannot slip past the private-host check", () => {
+  // The manifest origin pattern only requires two labels, and resolvers expand short forms:
+  // 127.1 and 127.0.1 both reach 127.0.0.1, and many resolvers read a leading zero as octal.
+  for (const host of ["127.1", "127.0.1", "0177.0.0.1", "010.0.0.1", "2130706433", "1.2.3.4.5"]) {
+    assert.equal(isPrivateHost(host), true, host);
+  }
+});
+
+test("private-address rejection reaches OAuth endpoints, not just provider_hosts", () => {
+  const { artifacts } = loadContracts();
+  const capabilities = artifacts["capabilities.json"];
+  const clickup = loadFixture("manifest/clickup.valid.json");
+  assert.deepEqual(evaluateManifest(clickup, capabilities), []);
+
+  const internal = structuredClone(clickup);
+  internal.auth.oauth.token_endpoint = "https://127.0.0.1/api/v2/oauth/token";
+  const findings = evaluateManifest(internal, capabilities);
+  assert.ok(
+    findings.some((f) => f.rule === "MR-HOST-PRIVATE" && f.message.includes("token_endpoint")),
+    `expected MR-HOST-PRIVATE on token_endpoint, got ${JSON.stringify(findings)}`
+  );
 });
 
 test("resolvePointer returns undefined rather than throwing on a missing path", () => {

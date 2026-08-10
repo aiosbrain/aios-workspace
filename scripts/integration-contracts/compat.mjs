@@ -7,18 +7,56 @@
  * reproduce is a contradiction in the contract, not a bug downstream.
  */
 
+// The official SemVer 2.0.0 recommended expression. Every quantifier is anchored to a
+// disjoint character class, so there is no ambiguous backtracking to exploit.
 const SEMVER_RE =
-  /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
+  /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\+([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?$/;
 
+/**
+ * Parse into `{ core: [major, minor, patch], prerelease: string[] }`. Build metadata is
+ * discarded, which SemVer §10 requires — it carries no precedence.
+ */
 function parse(version) {
   if (typeof version !== "string") return null;
   const m = SEMVER_RE.exec(version);
-  return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
+  if (!m) return null;
+  return {
+    core: [Number(m[1]), Number(m[2]), Number(m[3])],
+    prerelease: m[4] ? m[4].split(".") : [],
+  };
 }
 
+/**
+ * SemVer §11 precedence, INCLUDING prerelease. Dropping the prerelease would make
+ * `1.4.0-alpha` compare equal to `1.4.0`, so a host on an unstable prerelease would satisfy
+ * a stable `min_host` and load a connector the release does not actually support — a
+ * fail-open hole in the one table that exists to fail closed.
+ */
 function compare(left, right) {
   for (let i = 0; i < 3; i += 1) {
-    if (left[i] !== right[i]) return left[i] < right[i] ? -1 : 1;
+    if (left.core[i] !== right.core[i]) return left.core[i] < right.core[i] ? -1 : 1;
+  }
+  // A version WITH a prerelease has lower precedence than the same version without one.
+  if (left.prerelease.length === 0 && right.prerelease.length === 0) return 0;
+  if (left.prerelease.length === 0) return 1;
+  if (right.prerelease.length === 0) return -1;
+
+  for (let i = 0; i < Math.max(left.prerelease.length, right.prerelease.length); i += 1) {
+    const a = left.prerelease[i];
+    const b = right.prerelease[i];
+    // A larger set of fields has higher precedence when all preceding ones are equal.
+    if (a === undefined) return -1;
+    if (b === undefined) return 1;
+    const aNumeric = /^\d+$/.test(a);
+    const bNumeric = /^\d+$/.test(b);
+    if (aNumeric && bNumeric) {
+      if (Number(a) !== Number(b)) return Number(a) < Number(b) ? -1 : 1;
+    } else if (aNumeric !== bNumeric) {
+      // Numeric identifiers always have lower precedence than alphanumeric ones.
+      return aNumeric ? -1 : 1;
+    } else if (a !== b) {
+      return a < b ? -1 : 1;
+    }
   }
   return 0;
 }
@@ -37,12 +75,12 @@ export function evaluateManifestLoad(host, manifest) {
     return { result: "fail_closed", rule: "malformed_or_missing_version" };
   }
 
-  if (contractVersion[0] > hostVersion[0]) {
+  if (contractVersion.core[0] > hostVersion.core[0]) {
     return { result: "fail_closed", rule: "future_major" };
   }
   if (
-    contractVersion[0] < hostVersion[0] &&
-    !(host.supported_contract_majors ?? []).includes(contractVersion[0])
+    contractVersion.core[0] < hostVersion.core[0] &&
+    !(host.supported_contract_majors ?? []).includes(contractVersion.core[0])
   ) {
     return { result: "fail_closed", rule: "unlisted_older_major" };
   }

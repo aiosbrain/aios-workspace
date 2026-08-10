@@ -20,5 +20,6 @@
     "version": 5,
     "updated_at": "2026-08-10T09:12:00Z"
   },
-  "automatic_winner": "remote"
+  "automatic_winner": "remote",
+  "mutation_class": "write"
 }

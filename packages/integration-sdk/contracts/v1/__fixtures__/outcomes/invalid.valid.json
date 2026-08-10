@@ -19,5 +19,6 @@
       "rule": "required",
       "message": "title is required"
     }
-  ]
+  ],
+  "mutation_class": "write"
 }

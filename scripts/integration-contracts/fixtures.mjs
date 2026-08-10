@@ -214,12 +214,15 @@ export function checkEvidenceCoverage(index, fail) {
  * future conformance runner can share one implementation.
  */
 export function findSkippedDeclaredCapabilities(evidence, contract) {
-  const supported = new Set(evidence.capability_matrix.supported);
+  // Defensive reads: a schema-invalid evidence fixture still reaches this function, because
+  // `fail` accumulates instead of halting. Missing structure means "nothing to report here",
+  // not a TypeError that masks the real diagnostic.
+  const supported = new Set(evidence.capability_matrix?.supported ?? []);
   const offences = [];
-  for (const suite of evidence.suites) {
-    for (const entry of suite.skipped) {
+  for (const suite of evidence.suites ?? []) {
+    for (const entry of suite.skipped ?? []) {
       for (const capability of supported) {
-        if (contract.capabilities[capability]?.tests.includes(entry.test)) {
+        if (contract.capabilities[capability]?.tests?.includes(entry.test)) {
           offences.push({ suite: suite.suite, test: entry.test, capability });
         }
       }

@@ -4,7 +4,7 @@
   "contract_digests": {
     "capabilities.json": "49da6513232e196427d271952fcdfe95a750875e4071bc5b0d342b2f244429ef",
     "manifest.schema.json": "829b194f2303e716fec0a31d366eb85d77fbc2ab9061bffce2491d6a5fd4ee5a",
-    "outcomes.schema.json": "c65894f42fc957f01c101b48acf168a7151485529f92430e55e147409c133111",
+    "outcomes.schema.json": "91d86316c126394183f0d5ada682346198cabb1ddeb9d88a968265a0aa6e56d8",
     "evidence.schema.json": "b614c607a9c10bec6a0d76d9c0f36430e9f7fa45c38f46538a45597a69234a27",
     "compatibility.json": "d610f9766c2b3e2643bf4a9d59a6287c566826b00408890590530ba8d949c8cc",
     "invariants.json": "4b21f4506f41205bd3c6d184a3f7c86ff710774eda6d7d931a7ab633c5c5b06c"

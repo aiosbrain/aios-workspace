@@ -18,5 +18,6 @@
   },
   "observed": {
     "version": 6
-  }
+  },
+  "mutation_class": "write"
 }

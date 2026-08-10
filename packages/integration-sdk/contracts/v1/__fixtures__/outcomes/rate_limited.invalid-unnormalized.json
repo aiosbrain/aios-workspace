@@ -21,5 +21,6 @@
     "provider_unit": "epoch_milliseconds",
     "provider_reset_raw": "1786000000000",
     "limit_scope": "token"
-  }
+  },
+  "mutation_class": "read"
 }
