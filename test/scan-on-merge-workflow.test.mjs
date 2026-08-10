@@ -354,5 +354,10 @@ test("the scaffold's exact toolkit pin resolves from the public npm registry", (
     env: { ...process.env, npm_config_ignore_scripts: "true" },
   });
   assert.equal(result.status, 0, result.stderr || result.error?.message);
-  assert.equal(JSON.parse(result.stdout), expectedVersion);
+  // `npm view <exact-spec> version --json` prints a bare string on npm <= 11 and a
+  // single-element ARRAY on npm >= 12. Both mean "this exact version is on the registry";
+  // CI lanes still run the npm bundled with Node 22/24 while publish lanes pin a newer npm,
+  // so accept either shape rather than fail on a difference that says nothing about the pin.
+  const viewed = JSON.parse(result.stdout);
+  assert.deepEqual(Array.isArray(viewed) ? viewed : [viewed], [expectedVersion]);
 });
