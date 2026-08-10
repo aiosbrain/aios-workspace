@@ -75,7 +75,12 @@ export const MANAGED_PATHS = [
     kind: "dir",
     exclude: ["access-control.md", "linear-factory.md"],
   },
-  { dest: ".claude/skills/aios-linear", src: "scaffold/.claude/skills/aios-linear", kind: "dir", pmTool: "linear" },
+  {
+    dest: ".claude/skills/aios-linear",
+    src: "scaffold/.claude/skills/aios-linear",
+    kind: "dir",
+    pmTool: "linear",
+  },
   { dest: ".claude/skills", src: "scaffold/.claude/skills", kind: "dir", exclude: ["aios-linear"] },
   // The spec-readiness rubric is deliberately NOT vendored under scaffold/ — `src` is
   // toolkit-repo-relative and may point outside it (see validation/secret-patterns.txt and

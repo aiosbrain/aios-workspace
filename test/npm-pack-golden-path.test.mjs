@@ -29,6 +29,8 @@ const REQUIRED_TARBALL_PATHS = [
   "package/scripts/scaffold-project.sh",
   "package/scripts/leak-gate.sh",
   "package/scaffold/aios.yaml.tmpl",
+  "package/.claude/rubrics/spec-readiness.md",
+  "package/docs/agentic-ergonomics/aios-issue-template.md",
   "package/validation/validate-all.sh",
   "package/validation/check-structure.sh",
   "package/hooks/team-ops-guard.sh",

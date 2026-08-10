@@ -40,9 +40,13 @@ test("gen-catalog regenerates INDEX.md when invoked through a symlinked path", (
     const linkedScripts = path.join(link, "scripts");
     symlinkSync(path.join(ROOT, "scripts"), linkedScripts, "dir");
 
-    const out = execFileSync(process.execPath, [path.join(linkedScripts, "gen-catalog.mjs"), "--repo", ws], {
-      encoding: "utf8",
-    });
+    const out = execFileSync(
+      process.execPath,
+      [path.join(linkedScripts, "gen-catalog.mjs"), "--repo", ws],
+      {
+        encoding: "utf8",
+      }
+    );
 
     assert.match(out, /catalog: 2 skill\(s\)/, "gen-catalog silently no-oped");
     const index = readFileSync(path.join(ws, ".claude/skills/INDEX.md"), "utf8");

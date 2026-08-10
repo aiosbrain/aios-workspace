@@ -86,7 +86,10 @@ for (const pmTool of ["clickup", "none"]) {
       scaffold(output, ["--pm-tool", pmTool]);
       assert.match(yaml(output), new RegExp(`^pm_tool: ${pmTool}$`, "m"));
       for (const asset of LINEAR_ASSETS) {
-        assert.ok(!existsSync(path.join(output, asset)), `${asset} leaked into a ${pmTool} workspace`);
+        assert.ok(
+          !existsSync(path.join(output, asset)),
+          `${asset} leaked into a ${pmTool} workspace`
+        );
       }
       // The rubric is NOT gated: grading a spec is PM-tool-agnostic, and every workspace
       // needs it for `aios spec eval` whatever tracker the team uses.
@@ -122,7 +125,9 @@ test("pm_tool is written exactly once, as a flat top-level scalar", () => {
   const output = freshOutput("scaffold-pm-shape-");
   try {
     scaffold(output, ["--pm-tool", "clickup"]);
-    const lines = yaml(output).split("\n").filter((l) => /^pm_tool:/.test(l));
+    const lines = yaml(output)
+      .split("\n")
+      .filter((l) => /^pm_tool:/.test(l));
     assert.equal(lines.length, 1, `expected one pm_tool line, got ${lines.length}`);
     assert.equal(lines[0], "pm_tool: clickup");
   } finally {

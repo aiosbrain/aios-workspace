@@ -354,7 +354,12 @@ test("a dir named in `exclude` prunes its whole subtree, including files added t
   const tk = mkdtempSync(path.join(tmpdir(), "aios-tk-dirx-"));
   const ws = mkdtempSync(path.join(tmpdir(), "aios-ws-dirx-"));
   const git = (...a) => execFileSync("git", ["-C", tk, ...a], { encoding: "utf8" });
-  const entry = { dest: ".claude/skills", src: "scaffold/.claude/skills", kind: "dir", exclude: ["gated"] };
+  const entry = {
+    dest: ".claude/skills",
+    src: "scaffold/.claude/skills",
+    kind: "dir",
+    exclude: ["gated"],
+  };
   try {
     mkdirSync(path.join(tk, "scaffold/.claude/skills/gated"), { recursive: true });
     mkdirSync(path.join(tk, "scaffold/.claude/skills/kept"), { recursive: true });
@@ -436,7 +441,10 @@ test("prune removes a de-selected asset only while it still matches the toolkit 
     });
     assert.deepEqual(dry.pruned, [".claude/rules/linear-factory.md"]);
     assert.deepEqual(dry.prunedKept, [".claude/skills/aios-linear/SKILL.md"]);
-    assert.ok(existsSync(path.join(ws, ".claude/rules/linear-factory.md")), "dryRun deleted a file");
+    assert.ok(
+      existsSync(path.join(ws, ".claude/rules/linear-factory.md")),
+      "dryRun deleted a file"
+    );
 
     const r = mergeManaged(tk, tk, ws, baseSha, {
       managedPaths: [],
