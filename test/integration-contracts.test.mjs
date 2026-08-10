@@ -20,6 +20,7 @@ import {
   CONTRACT_VERSION,
   canonicalDigest,
   canonicalJson,
+  compareCodeUnits,
   loadContracts,
   resolvePointer,
 } from "../scripts/integration-contracts/load.mjs";
@@ -44,6 +45,15 @@ test("canonical JSON is key-order independent, so digests survive reformatting",
   assert.equal(canonicalJson(a), canonicalJson(b));
   assert.equal(canonicalDigest(a), canonicalDigest(b));
   assert.equal(canonicalJson(a), '{"a":[{"x":null,"y":true}],"b":1}');
+});
+
+test("canonical JSON sorts keys by code unit, not locale collation", () => {
+  // RFC 8785 mandates UTF-16 code-unit ordering. This is the case where the two disagree:
+  // "B" (0x42) precedes "a" (0x61) by code unit, while most locales collate "a" before "B".
+  // Getting this wrong would make a contract digest depend on the ICU version and LANG of
+  // whoever computed it.
+  assert.equal(canonicalJson({ a: 1, B: 2 }), '{"B":2,"a":1}');
+  assert.equal(["a", "B"].sort(compareCodeUnits).join(""), "Ba");
 });
 
 test("the digest artifact names every normative artifact", () => {

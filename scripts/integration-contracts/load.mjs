@@ -32,6 +32,16 @@ export const ARTIFACT_FILES = [
 export const CONTRACT_VERSION = "1.0.0";
 
 /**
+ * Deterministic UTF-16 code-unit ordering. Explicitly NOT `localeCompare` — the same
+ * reasoning `scripts/check-file-size.mjs` documents for its own comparator, and here it is
+ * load-bearing rather than merely tidy: RFC 8785 canonical JSON REQUIRES code-unit key
+ * ordering, so locale collation would make a contract digest depend on the ICU version and
+ * `LANG` of whoever computed it. Passing this explicitly also states the intent that a bare
+ * `.sort()` leaves implicit.
+ */
+export const compareCodeUnits = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
+
+/**
  * RFC 8785-style canonical JSON. Object keys sort by UTF-16 code unit (the default
  * `Array.prototype.sort` ordering, which is what the spec prescribes). Only the JSON
  * types actually present in these contracts are handled; anything else is a bug in a
@@ -49,7 +59,7 @@ export function canonicalJson(value) {
   if (type === "string") return JSON.stringify(value);
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
   if (type === "object") {
-    const keys = Object.keys(value).sort();
+    const keys = Object.keys(value).sort(compareCodeUnits);
     return `{${keys.map((k) => `${JSON.stringify(k)}:${canonicalJson(value[k])}`).join(",")}}`;
   }
   throw new TypeError(`unserializable value in contract: ${type}`);
@@ -94,7 +104,7 @@ export function listFixtureFiles() {
   const found = [];
   const visit = (absoluteDir, prefix) => {
     for (const entry of readdirSync(absoluteDir, { withFileTypes: true }).sort((a, b) =>
-      a.name < b.name ? -1 : a.name > b.name ? 1 : 0
+      compareCodeUnits(a.name, b.name)
     )) {
       const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
       if (entry.isDirectory()) visit(path.join(absoluteDir, entry.name), rel);

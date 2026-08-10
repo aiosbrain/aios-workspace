@@ -5,7 +5,7 @@
  * written against them: a capability that references a test id nobody defines, or an
  * invariant with two owners, is a defect in the constitution itself, not in a connector.
  */
-import { CONTRACT_VERSION } from "./load.mjs";
+import { compareCodeUnits, CONTRACT_VERSION } from "./load.mjs";
 
 const CLOSED_CAPABILITY_RE = /^(?:core|pm)\.[a-z0-9_]+\.[a-z0-9_]+$/;
 const INVARIANT_ID_RE = /^INT-(\d{3})$/;
@@ -94,8 +94,8 @@ export function checkTaxonomy(capabilities, fail) {
   const flagged = Object.entries(caps)
     .filter(([, cap]) => cap.always_required === true)
     .map(([id]) => id)
-    .sort();
-  const listed = [...rules.always_required].sort();
+    .sort(compareCodeUnits);
+  const listed = [...rules.always_required].sort(compareCodeUnits);
   if (canonicalList(flagged) !== canonicalList(listed)) {
     fail(
       `dependency_rules.always_required [${listed}] disagrees with the always_required capability flags [${flagged}]`
