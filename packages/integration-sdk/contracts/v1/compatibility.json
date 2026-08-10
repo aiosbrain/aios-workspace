@@ -1,0 +1,242 @@
+{
+  "$id": "https://contracts.aiosbrain.dev/integration/v1/compatibility.json",
+  "contract_version": "1.0.0",
+  "title": "AIOS Integration Framework v1 — host/manifest and Harness policy compatibility truth table",
+  "description": "Normative, executable compatibility results. Owned by test `compatibility.truth-table` (INT-019). Every row is a complete input/expected pair so the SDK loader and the Harness policy parser can be driven directly from this file rather than reimplementing the rules. AIO-835 Phase 0.",
+  "manifest_load": {
+    "results": {
+      "load": "The connector is registered and its declared capabilities are routable.",
+      "inactive": "The connector is known but not activated; it becomes active once the host is upgraded. Not an error.",
+      "fail_closed": "The connector is rejected. No routing, no capability exposure, no partial activation."
+    },
+    "evaluation_order": [
+      {
+        "rule": "malformed_or_missing_version",
+        "description": "Any of host_version, manifest.contract_version, or manifest.min_host missing or not a valid semantic version.",
+        "result": "fail_closed"
+      },
+      {
+        "rule": "future_major",
+        "description": "manifest.contract_version major is greater than host_version major.",
+        "result": "fail_closed"
+      },
+      {
+        "rule": "unlisted_older_major",
+        "description": "manifest.contract_version major is less than host_version major and is not listed in host.supported_contract_majors.",
+        "result": "fail_closed"
+      },
+      {
+        "rule": "host_below_min_host",
+        "description": "manifest.min_host is greater than host_version under semantic-version precedence.",
+        "result": "inactive"
+      },
+      {
+        "rule": "compatible",
+        "description": "Same major (or an explicitly supported older major) and manifest.min_host <= host_version.",
+        "result": "load"
+      }
+    ],
+    "cases": [
+      {
+        "id": "LOAD-01",
+        "note": "Same major, min_host below host.",
+        "host": { "host_version": "1.4.0", "supported_contract_majors": [1] },
+        "manifest": { "contract_version": "1.2.0", "min_host": "1.2.0" },
+        "expected": { "result": "load", "rule": "compatible" }
+      },
+      {
+        "id": "LOAD-02",
+        "note": "Same major, min_host exactly equal to host. Boundary is inclusive.",
+        "host": { "host_version": "1.4.0", "supported_contract_majors": [1] },
+        "manifest": { "contract_version": "1.4.0", "min_host": "1.4.0" },
+        "expected": { "result": "load", "rule": "compatible" }
+      },
+      {
+        "id": "INACTIVE-01",
+        "note": "Host minor below min_host.",
+        "host": { "host_version": "1.4.0", "supported_contract_majors": [1] },
+        "manifest": { "contract_version": "1.4.0", "min_host": "1.5.0" },
+        "expected": { "result": "inactive", "rule": "host_below_min_host" }
+      },
+      {
+        "id": "INACTIVE-02",
+        "note": "Host patch below min_host.",
+        "host": { "host_version": "1.4.0", "supported_contract_majors": [1] },
+        "manifest": { "contract_version": "1.4.0", "min_host": "1.4.1" },
+        "expected": { "result": "inactive", "rule": "host_below_min_host" }
+      },
+      {
+        "id": "INACTIVE-03",
+        "note": "Explicitly supported older major, but the host is still below the manifest's declared minimum host.",
+        "host": { "host_version": "2.1.0", "supported_contract_majors": [2, 1] },
+        "manifest": { "contract_version": "1.3.0", "min_host": "2.5.0" },
+        "expected": { "result": "inactive", "rule": "host_below_min_host" }
+      },
+      {
+        "id": "FAILCLOSED-01",
+        "note": "Future major fails closed even though min_host would otherwise be satisfied.",
+        "host": { "host_version": "1.4.0", "supported_contract_majors": [1] },
+        "manifest": { "contract_version": "2.0.0", "min_host": "1.0.0" },
+        "expected": { "result": "fail_closed", "rule": "future_major" }
+      },
+      {
+        "id": "LOAD-03",
+        "note": "Older major loads only because the host explicitly lists it.",
+        "host": { "host_version": "2.1.0", "supported_contract_majors": [2, 1] },
+        "manifest": { "contract_version": "1.3.0", "min_host": "1.0.0" },
+        "expected": { "result": "load", "rule": "compatible" }
+      },
+      {
+        "id": "FAILCLOSED-02",
+        "note": "Same inputs as LOAD-03 except the host no longer lists major 1.",
+        "host": { "host_version": "2.1.0", "supported_contract_majors": [2] },
+        "manifest": { "contract_version": "1.3.0", "min_host": "1.0.0" },
+        "expected": { "result": "fail_closed", "rule": "unlisted_older_major" }
+      },
+      {
+        "id": "FAILCLOSED-03",
+        "note": "Malformed manifest contract version.",
+        "host": { "host_version": "1.4.0", "supported_contract_majors": [1] },
+        "manifest": { "contract_version": "1.4", "min_host": "1.0.0" },
+        "expected": { "result": "fail_closed", "rule": "malformed_or_missing_version" }
+      },
+      {
+        "id": "FAILCLOSED-04",
+        "note": "Missing manifest min_host.",
+        "host": { "host_version": "1.4.0", "supported_contract_majors": [1] },
+        "manifest": { "contract_version": "1.4.0", "min_host": null },
+        "expected": { "result": "fail_closed", "rule": "malformed_or_missing_version" }
+      },
+      {
+        "id": "FAILCLOSED-05",
+        "note": "Malformed host version.",
+        "host": { "host_version": "v1.4", "supported_contract_majors": [1] },
+        "manifest": { "contract_version": "1.4.0", "min_host": "1.0.0" },
+        "expected": { "result": "fail_closed", "rule": "malformed_or_missing_version" }
+      },
+      {
+        "id": "FAILCLOSED-06",
+        "note": "Missing manifest contract version.",
+        "host": { "host_version": "1.4.0", "supported_contract_majors": [1] },
+        "manifest": { "contract_version": null, "min_host": "1.0.0" },
+        "expected": { "result": "fail_closed", "rule": "malformed_or_missing_version" }
+      }
+    ]
+  },
+  "harness_policy": {
+    "description": "Behavior of the generated integration-policy.v1.json guard. Reads stay allowed under missing/malformed/future-major policy because the guard is a mutation-routing gate, not a read sandbox; only a same-major stale policy warns on reads. Outside a configured AIOS guard scope every state is a no-op so customer and project routing remain locally governed.",
+    "results": {
+      "allow": "Operation proceeds with no guard output.",
+      "warn": "Operation proceeds and the guard emits a regeneration remediation.",
+      "block": "Operation is refused and the guard emits a remediation.",
+      "noop": "The guard does not apply at all."
+    },
+    "policy_states": {
+      "compatible": "Present, well-formed, same major as the installed policy schema, and not stale.",
+      "stale_same_major": "Present and same major, but its toolkit version/commit or contract digest no longer matches the installed registry.",
+      "missing": "No policy file at the resolved path.",
+      "malformed": "Present but unparseable or failing the policy schema.",
+      "future_major": "Present and well-formed but declares a schema_version major above the installed parser."
+    },
+    "cases": [
+      {
+        "id": "HP-01",
+        "scope": "aios_guard_scope",
+        "policy_state": "compatible",
+        "operation": "read",
+        "expected": { "result": "allow", "remediation": false }
+      },
+      {
+        "id": "HP-02",
+        "scope": "aios_guard_scope",
+        "policy_state": "compatible",
+        "operation": "mutation",
+        "expected": { "result": "allow", "remediation": false }
+      },
+      {
+        "id": "HP-03",
+        "scope": "aios_guard_scope",
+        "policy_state": "stale_same_major",
+        "operation": "read",
+        "expected": { "result": "warn", "remediation": true }
+      },
+      {
+        "id": "HP-04",
+        "scope": "aios_guard_scope",
+        "policy_state": "stale_same_major",
+        "operation": "mutation",
+        "expected": { "result": "block", "remediation": true }
+      },
+      {
+        "id": "HP-05",
+        "scope": "aios_guard_scope",
+        "policy_state": "missing",
+        "operation": "read",
+        "expected": { "result": "allow", "remediation": false }
+      },
+      {
+        "id": "HP-06",
+        "scope": "aios_guard_scope",
+        "policy_state": "missing",
+        "operation": "mutation",
+        "expected": { "result": "block", "remediation": true }
+      },
+      {
+        "id": "HP-07",
+        "scope": "aios_guard_scope",
+        "policy_state": "malformed",
+        "operation": "read",
+        "expected": { "result": "allow", "remediation": false }
+      },
+      {
+        "id": "HP-08",
+        "scope": "aios_guard_scope",
+        "policy_state": "malformed",
+        "operation": "mutation",
+        "expected": { "result": "block", "remediation": true }
+      },
+      {
+        "id": "HP-09",
+        "scope": "aios_guard_scope",
+        "policy_state": "future_major",
+        "operation": "read",
+        "expected": { "result": "allow", "remediation": false }
+      },
+      {
+        "id": "HP-10",
+        "scope": "aios_guard_scope",
+        "policy_state": "future_major",
+        "operation": "mutation",
+        "expected": { "result": "block", "remediation": true }
+      },
+      {
+        "id": "HP-11",
+        "scope": "outside_guard_scope",
+        "policy_state": "missing",
+        "operation": "mutation",
+        "expected": { "result": "noop", "remediation": false }
+      },
+      {
+        "id": "HP-12",
+        "scope": "outside_guard_scope",
+        "policy_state": "malformed",
+        "operation": "mutation",
+        "expected": { "result": "noop", "remediation": false }
+      },
+      {
+        "id": "HP-13",
+        "scope": "outside_guard_scope",
+        "policy_state": "future_major",
+        "operation": "mutation",
+        "expected": { "result": "noop", "remediation": false }
+      },
+      {
+        "id": "HP-14",
+        "scope": "outside_guard_scope",
+        "policy_state": "stale_same_major",
+        "operation": "read",
+        "expected": { "result": "noop", "remediation": false }
+      }
+    ]
+  }
+}

@@ -1,0 +1,467 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.aiosbrain.dev/integration/v1/outcomes.schema.json",
+  "title": "AIOS Integration Framework v1 — normalized operation outcome",
+  "description": "Every connector operation returns exactly one discriminant. Only `verified` and `noop` count as success. No `format` keywords are used anywhere: every lexical constraint is pinned by `pattern` so plain ajv in strict mode is a faithful compile of this contract.",
+  "type": "object",
+  "required": [
+    "outcome",
+    "success",
+    "operation_id",
+    "connector_id",
+    "contract_version",
+    "capability",
+    "occurred_at",
+    "provenance"
+  ],
+  "properties": {
+    "outcome": {
+      "enum": [
+        "verified",
+        "noop",
+        "unsupported",
+        "ambiguous",
+        "stale",
+        "conflict",
+        "unavailable",
+        "invalid",
+        "unauthorized",
+        "rate_limited"
+      ]
+    },
+    "success": {
+      "type": "boolean",
+      "description": "Derived, not free: true only for `verified` and `noop`."
+    },
+    "operation_id": {
+      "$ref": "#/$defs/nonEmptyString"
+    },
+    "connector_id": {
+      "$ref": "#/$defs/connectorId"
+    },
+    "contract_version": {
+      "$ref": "#/$defs/semver"
+    },
+    "capability": {
+      "$ref": "#/$defs/capabilityId"
+    },
+    "mutation_class": {
+      "enum": ["read", "write", "destructive", "admin"]
+    },
+    "occurred_at": {
+      "$ref": "#/$defs/timestamp"
+    },
+    "provenance": {
+      "$ref": "#/$defs/provenance"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "outcome": {
+            "const": "verified"
+          }
+        },
+        "required": ["outcome"]
+      },
+      "then": {
+        "properties": {
+          "success": {
+            "const": true
+          },
+          "provider_resource_id": {
+            "$ref": "#/$defs/nonEmptyString"
+          },
+          "readback": {
+            "type": "object",
+            "required": ["requested_fields", "observed"],
+            "properties": {
+              "requested_fields": {
+                "type": "array",
+                "minItems": 1,
+                "uniqueItems": true,
+                "items": {
+                  "$ref": "#/$defs/nonEmptyString"
+                }
+              },
+              "observed": {
+                "type": "object"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "required": ["success", "provider_resource_id", "readback"]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "outcome": {
+            "const": "noop"
+          }
+        },
+        "required": ["outcome"]
+      },
+      "then": {
+        "properties": {
+          "success": {
+            "const": true
+          },
+          "provider_resource_id": {
+            "$ref": "#/$defs/nonEmptyString"
+          },
+          "existing_state_proof": {
+            "type": "object",
+            "required": ["kind", "observed"],
+            "properties": {
+              "kind": {
+                "enum": ["readback", "fingerprint", "absent_relation"]
+              },
+              "observed": {
+                "type": "object"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "required": ["success", "provider_resource_id", "existing_state_proof"]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "outcome": {
+            "const": "unsupported"
+          }
+        },
+        "required": ["outcome"]
+      },
+      "then": {
+        "description": "`unsupported` names the capability and is never a generic failure.",
+        "properties": {
+          "unsupported_capability": {
+            "$ref": "#/$defs/capabilityId"
+          },
+          "reason_code": {
+            "enum": ["not_declared", "declared_unsupported", "provider_lacks_capability"]
+          }
+        },
+        "required": ["unsupported_capability", "reason_code"]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "outcome": {
+            "const": "ambiguous"
+          }
+        },
+        "required": ["outcome"]
+      },
+      "then": {
+        "description": "The write may have happened. Automatic replay is forbidden until reconciliation.",
+        "properties": {
+          "replay_allowed": {
+            "const": false
+          },
+          "reconciliation_required": {
+            "const": true
+          },
+          "attempted_mutation": {
+            "type": "object",
+            "required": ["capability"],
+            "properties": {
+              "capability": {
+                "$ref": "#/$defs/capabilityId"
+              },
+              "idempotency_key": {
+                "$ref": "#/$defs/nonEmptyString"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "required": ["replay_allowed", "reconciliation_required", "attempted_mutation"]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "outcome": {
+            "const": "stale"
+          }
+        },
+        "required": ["outcome"]
+      },
+      "then": {
+        "properties": {
+          "expected": {
+            "$ref": "#/$defs/versionMarker"
+          },
+          "observed": {
+            "$ref": "#/$defs/versionMarker"
+          }
+        },
+        "required": ["expected", "observed"]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "outcome": {
+            "const": "conflict"
+          }
+        },
+        "required": ["outcome"]
+      },
+      "then": {
+        "description": "Redacted local/remote version metadata and no automatic winner.",
+        "properties": {
+          "local": {
+            "$ref": "#/$defs/versionMarker"
+          },
+          "remote": {
+            "$ref": "#/$defs/versionMarker"
+          },
+          "automatic_winner": {
+            "type": "null"
+          }
+        },
+        "required": ["local", "remote", "automatic_winner"]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "outcome": {
+            "enum": ["unavailable", "unauthorized", "rate_limited"]
+          }
+        },
+        "required": ["outcome"]
+      },
+      "then": {
+        "properties": {
+          "retry": {
+            "$ref": "#/$defs/retryPolicy"
+          }
+        },
+        "required": ["retry"]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "outcome": {
+            "const": "rate_limited"
+          }
+        },
+        "required": ["outcome"]
+      },
+      "then": {
+        "description": "Rate-limit units are normalized before any time comparison.",
+        "properties": {
+          "rate_limit": {
+            "type": "object",
+            "required": ["provider_unit", "normalized_reset_at"],
+            "properties": {
+              "provider_unit": {
+                "enum": ["epoch_milliseconds", "epoch_seconds", "delta_seconds", "unknown"]
+              },
+              "provider_reset_raw": {
+                "type": ["string", "number", "null"]
+              },
+              "normalized_reset_at": {
+                "$ref": "#/$defs/timestamp"
+              },
+              "limit_scope": {
+                "enum": ["token", "team", "ip", "endpoint"]
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "required": ["rate_limit"]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "outcome": {
+            "const": "invalid"
+          }
+        },
+        "required": ["outcome"]
+      },
+      "then": {
+        "description": "Contract or input violations detected before any provider mutation.",
+        "properties": {
+          "pre_mutation": {
+            "const": true
+          },
+          "violations": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "required": ["pointer", "rule"],
+              "properties": {
+                "pointer": {
+                  "type": "string"
+                },
+                "rule": {
+                  "$ref": "#/$defs/nonEmptyString"
+                },
+                "message": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": ["pre_mutation", "violations"]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "outcome": {
+            "enum": [
+              "unsupported",
+              "ambiguous",
+              "stale",
+              "conflict",
+              "unavailable",
+              "invalid",
+              "unauthorized",
+              "rate_limited"
+            ]
+          }
+        },
+        "required": ["outcome"]
+      },
+      "then": {
+        "description": "The single normative encoding of \"only verified and noop count as success\". Every non-success discriminant is pinned here rather than repeated per branch, so a discriminant added later cannot quietly default to success.",
+        "properties": {
+          "success": {
+            "const": false
+          }
+        }
+      }
+    }
+  ],
+  "unevaluatedProperties": false,
+  "$defs": {
+    "nonEmptyString": {
+      "type": "string",
+      "minLength": 1
+    },
+    "connectorId": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]*$"
+    },
+    "capabilityId": {
+      "type": "string",
+      "pattern": "^(?:core|pm)\\.[a-z0-9_]+\\.[a-z0-9_]+$|^x-[a-z0-9][a-z0-9-]*\\.[a-z0-9][a-z0-9._-]*$"
+    },
+    "semver": {
+      "type": "string",
+      "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-((?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\\.(?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\\+([0-9a-zA-Z-]+(?:\\.[0-9a-zA-Z-]+)*))?$"
+    },
+    "timestamp": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?(?:Z|[+-]\\d{2}:\\d{2})$"
+    },
+    "provenance": {
+      "type": "object",
+      "description": "Redacted by construction: closed property set, scalars only, no provider payload.",
+      "required": ["origin", "connector_id", "contract_version", "redacted"],
+      "properties": {
+        "origin": {
+          "enum": ["aios", "provider", "reconciliation"]
+        },
+        "connector_id": {
+          "$ref": "#/$defs/connectorId"
+        },
+        "contract_version": {
+          "$ref": "#/$defs/semver"
+        },
+        "redacted": {
+          "const": true
+        },
+        "fingerprint": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "projection_source": {
+          "$ref": "#/$defs/nonEmptyString"
+        }
+      },
+      "additionalProperties": false
+    },
+    "versionMarker": {
+      "type": "object",
+      "description": "Redacted version metadata: a version, a fingerprint, or both. Never a provider body.",
+      "minProperties": 1,
+      "properties": {
+        "version": {
+          "type": ["string", "number"]
+        },
+        "fingerprint": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "updated_at": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "actor_ref": {
+          "$ref": "#/$defs/nonEmptyString"
+        }
+      },
+      "additionalProperties": false
+    },
+    "retryPolicy": {
+      "type": "object",
+      "description": "Mutations default to non-retryable. A retryable mutation must name the duplicate-safety strategy that proves it.",
+      "required": ["retryable", "duplicate_safety"],
+      "properties": {
+        "retryable": {
+          "type": "boolean"
+        },
+        "duplicate_safety": {
+          "enum": ["provider_key", "preflight_readback", "none"]
+        },
+        "retry_after_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "max_attempts": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "duplicate_safety": {
+                "const": "none"
+              }
+            },
+            "required": ["duplicate_safety"]
+          },
+          "then": {
+            "properties": {
+              "retryable": {
+                "const": false
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

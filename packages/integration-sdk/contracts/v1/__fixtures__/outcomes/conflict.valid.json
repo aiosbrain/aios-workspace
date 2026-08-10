@@ -1,0 +1,24 @@
+{
+  "operation_id": "op_01HZY6M0000000000000000000",
+  "connector_id": "linear",
+  "contract_version": "1.0.0",
+  "occurred_at": "2026-08-10T09:15:00.000Z",
+  "provenance": {
+    "origin": "aios",
+    "connector_id": "linear",
+    "contract_version": "1.0.0",
+    "redacted": true
+  },
+  "outcome": "conflict",
+  "success": false,
+  "capability": "pm.sync.inbound",
+  "local": {
+    "version": 4,
+    "updated_at": "2026-08-10T09:10:00Z"
+  },
+  "remote": {
+    "version": 5,
+    "updated_at": "2026-08-10T09:12:00Z"
+  },
+  "automatic_winner": null
+}

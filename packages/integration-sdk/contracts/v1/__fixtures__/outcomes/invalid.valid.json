@@ -1,0 +1,23 @@
+{
+  "operation_id": "op_01HZY6M0000000000000000000",
+  "connector_id": "linear",
+  "contract_version": "1.0.0",
+  "occurred_at": "2026-08-10T09:15:00.000Z",
+  "provenance": {
+    "origin": "aios",
+    "connector_id": "linear",
+    "contract_version": "1.0.0",
+    "redacted": true
+  },
+  "outcome": "invalid",
+  "success": false,
+  "capability": "pm.work_item.create",
+  "pre_mutation": true,
+  "violations": [
+    {
+      "pointer": "/title",
+      "rule": "required",
+      "message": "title is required"
+    }
+  ]
+}

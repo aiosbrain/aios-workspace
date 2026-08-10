@@ -1,0 +1,405 @@
+{
+  "$id": "https://contracts.aiosbrain.dev/integration/v1/capabilities.json",
+  "contract_version": "1.0.0",
+  "title": "AIOS Integration Framework v1 — closed capability taxonomy",
+  "description": "Closed v1 capability identifiers, profile membership, capability classes, canonical conformance test ids, and machine-checkable dependency rules. AIO-835 Phase 0. A change to any identifier, class, profile membership, dependency rule, or canonical test id requires a contract-version change and updated fixtures.",
+  "extension_namespace_pattern": "^x-[a-z0-9][a-z0-9-]*\\.[a-z0-9][a-z0-9._-]*$",
+  "capability_classes": {
+    "read": "Non-mutating retrieval of provider state.",
+    "write": "Creates or modifies provider state and requires readback verification.",
+    "destructive": "Removes provider state or revokes access; separately permissioned from write.",
+    "admin": "Changes installation or configuration posture rather than provider work data."
+  },
+  "suites": {
+    "manifest": {
+      "title": "Manifest/schema",
+      "live_only": false,
+      "description": "Required metadata, unique registration, capability/test correspondence, version compatibility, generated catalog/docs parity."
+    },
+    "boundary": {
+      "title": "Boundary/routing",
+      "live_only": false,
+      "description": "Public entrypoint only, no deep imports or copied clients, root resolution, skill and hook routing generated from the registry."
+    },
+    "credentials": {
+      "title": "Credential safety",
+      "live_only": false,
+      "description": "Secret-source precedence, explicit ambient opt-in, redaction, OAuth state/host checks, uninstall/revoke, no secret leakage."
+    },
+    "capability": {
+      "title": "Capability contract",
+      "live_only": false,
+      "description": "Normalized reads, typed unsupported/ambiguous/stale results, exact relation semantics, hierarchy, status, assignment, comments, and capability denial."
+    },
+    "mutation": {
+      "title": "Mutation safety",
+      "live_only": false,
+      "description": "Readback verification, idempotent create/update/remove, duplicate prevention, no unsafe mutation retries, partial-failure recovery."
+    },
+    "resilience": {
+      "title": "Resilience",
+      "live_only": false,
+      "description": "Rate-limit unit fixtures, retry/backoff, pagination completeness, timeout/cancellation, malformed provider responses, webhook replay and ordering."
+    },
+    "sync": {
+      "title": "Sync integrity",
+      "live_only": false,
+      "description": "Stable identity, fingerprint no-op, parent-first projection, provenance, loop prevention, concurrent-edit conflict, tombstone/missing-remote behavior."
+    },
+    "lifecycle": {
+      "title": "Black-box lifecycle",
+      "live_only": false,
+      "description": "install -> configure -> validate -> health -> use -> upgrade -> revoke/uninstall from outside the source checkout."
+    },
+    "live": {
+      "title": "Live disposable-sandbox certification",
+      "live_only": true,
+      "description": "Required before a connector is promoted from experimental. Never a pull-request merge gate."
+    }
+  },
+  "tests": {
+    "boundary.public-route": {
+      "suite": "boundary",
+      "title": "Consumers reach the connector only through its public route."
+    },
+    "manifest.registry-parity": {
+      "suite": "manifest",
+      "title": "Generated catalog, docs, skill routes, and hook policy match the manifest registry."
+    },
+    "compatibility.truth-table": {
+      "suite": "manifest",
+      "title": "Host/manifest and Harness policy compatibility results match compatibility.json."
+    },
+    "contract.outcomes": {
+      "suite": "capability",
+      "title": "Every operation returns exactly one normalized discriminant that validates against outcomes.schema.json."
+    },
+    "core.identity": {
+      "suite": "capability",
+      "title": "Authenticated identity is readable and returned redacted."
+    },
+    "core.health": {
+      "suite": "capability",
+      "title": "Health reports partial installation as unhealthy without leaking provider payloads."
+    },
+    "pm.work-item-read": {
+      "suite": "capability",
+      "title": "Work items normalize to provider-neutral fields with stable external identity."
+    },
+    "pm.document-read": {
+      "suite": "capability",
+      "title": "Provider documents normalize and carry provenance."
+    },
+    "pm.state-transition": {
+      "suite": "capability",
+      "title": "State transitions resolve named states and read back the resulting state id."
+    },
+    "pm.assignee-set": {
+      "suite": "capability",
+      "title": "Assignment resolves an actor identity and reads it back."
+    },
+    "pm.comment-create": {
+      "suite": "capability",
+      "title": "Comment creation returns a stable comment id and provenance."
+    },
+    "pm.relations": {
+      "suite": "capability",
+      "title": "Directional blockers preserve source and target exactly; symmetric related links match in either order."
+    },
+    "pm.hierarchy": {
+      "suite": "capability",
+      "title": "Parent-before-child ordering is preserved and hierarchy cycles fail closed."
+    },
+    "mutation.readback": {
+      "suite": "mutation",
+      "title": "Every successful mutation is read back against stable identity and requested fields."
+    },
+    "mutation.ambiguity": {
+      "suite": "mutation",
+      "title": "Ambiguous mutations are typed and never automatically replayed."
+    },
+    "pm.work-item-create": {
+      "suite": "mutation",
+      "title": "Creation is duplicate-safe under the declared idempotency strategy."
+    },
+    "pm.work-item-update": {
+      "suite": "mutation",
+      "title": "Updates are idempotent and surface stale versions rather than overwriting."
+    },
+    "pm.relation-remove-idempotent": {
+      "suite": "mutation",
+      "title": "Removing an absent relation is an idempotent no-op."
+    },
+    "resilience.pagination": {
+      "suite": "resilience",
+      "title": "Paginated reads are complete or return the declared truncation outcome."
+    },
+    "resilience.rate-limit": {
+      "suite": "resilience",
+      "title": "Provider rate-limit units are normalized before time comparison and backoff honors the reset window."
+    },
+    "security.credentials": {
+      "suite": "credentials",
+      "title": "Credential source is deterministic, ambient credentials require explicit opt-in, and every surface is redacted."
+    },
+    "security.tenant-isolation": {
+      "suite": "credentials",
+      "title": "One team's connector cannot read, mutate, health-check, or revoke another team's integration."
+    },
+    "security.events": {
+      "suite": "credentials",
+      "title": "OAuth state and webhook signature, expiry, replay, and ordering behavior are enforced."
+    },
+    "security.execution-boundary": {
+      "suite": "credentials",
+      "title": "Paths are canonicalized before containment checks and subprocesses use argument arrays with trusted executable resolution."
+    },
+    "sync.no-echo": {
+      "suite": "sync",
+      "title": "Provenance and projection fingerprints prevent echo loops and unchanged input performs no provider writes."
+    },
+    "sync.concurrent-conflict": {
+      "suite": "sync",
+      "title": "Concurrent edits surface a typed conflict with no automatic winner."
+    },
+    "security.content-ingest": {
+      "suite": "sync",
+      "title": "Access tier and audience only narrow on ingest and provider rich text is sanitized before use."
+    },
+    "lifecycle.black-box": {
+      "suite": "lifecycle",
+      "title": "Install, upgrade, and uninstall are atomic or recoverable from outside the source checkout."
+    },
+    "lifecycle.validate": {
+      "suite": "lifecycle",
+      "title": "Validation reports configuration and credential readiness without mutating provider state."
+    },
+    "lifecycle.revoke": {
+      "suite": "lifecycle",
+      "title": "Revoke removes routing and local credentials without deleting remote data."
+    },
+    "live.cleanup": {
+      "suite": "live",
+      "title": "Live sandbox inventory reaches zero active prefixed objects and the disposable credential is revoked."
+    }
+  },
+  "profiles": {
+    "core": {
+      "title": "Core",
+      "description": "Applies to every connector regardless of domain.",
+      "capabilities": [
+        "core.identity.read",
+        "core.health.read",
+        "core.lifecycle.install",
+        "core.lifecycle.configure",
+        "core.lifecycle.validate",
+        "core.lifecycle.revoke",
+        "core.lifecycle.uninstall"
+      ]
+    },
+    "pm": {
+      "title": "Product Management",
+      "description": "Normalized work-item semantics, hierarchy, directional blockers, bidirectional related links, statuses, assignment, comments, and sync conflict handling.",
+      "capabilities": [
+        "pm.work_item.read",
+        "pm.work_item.create",
+        "pm.work_item.update",
+        "pm.comment.create",
+        "pm.state.transition",
+        "pm.assignee.set",
+        "pm.hierarchy.parent",
+        "pm.relation.blocks",
+        "pm.relation.related",
+        "pm.relation.remove",
+        "pm.sync.outbound",
+        "pm.sync.inbound",
+        "pm.document.read"
+      ]
+    }
+  },
+  "capabilities": {
+    "core.identity.read": {
+      "profile": "core",
+      "class": "read",
+      "always_required": true,
+      "tests": ["core.identity"]
+    },
+    "core.health.read": {
+      "profile": "core",
+      "class": "read",
+      "always_required": true,
+      "tests": ["core.health"]
+    },
+    "core.lifecycle.install": {
+      "profile": "core",
+      "class": "admin",
+      "always_required": false,
+      "lifecycle_operation": "install",
+      "tests": ["lifecycle.black-box"]
+    },
+    "core.lifecycle.configure": {
+      "profile": "core",
+      "class": "admin",
+      "always_required": false,
+      "lifecycle_operation": "configure",
+      "tests": ["lifecycle.black-box"]
+    },
+    "core.lifecycle.validate": {
+      "profile": "core",
+      "class": "read",
+      "always_required": true,
+      "lifecycle_operation": "validate",
+      "tests": ["lifecycle.validate"]
+    },
+    "core.lifecycle.revoke": {
+      "profile": "core",
+      "class": "destructive",
+      "always_required": false,
+      "lifecycle_operation": "revoke",
+      "tests": ["lifecycle.revoke", "security.credentials"]
+    },
+    "core.lifecycle.uninstall": {
+      "profile": "core",
+      "class": "destructive",
+      "always_required": false,
+      "lifecycle_operation": "uninstall",
+      "tests": ["lifecycle.black-box"]
+    },
+    "pm.work_item.read": {
+      "profile": "pm",
+      "class": "read",
+      "always_required": false,
+      "tests": ["pm.work-item-read"],
+      "paginated": true
+    },
+    "pm.work_item.create": {
+      "profile": "pm",
+      "class": "write",
+      "always_required": false,
+      "tests": ["pm.work-item-create", "mutation.readback"]
+    },
+    "pm.work_item.update": {
+      "profile": "pm",
+      "class": "write",
+      "always_required": false,
+      "tests": ["pm.work-item-update", "mutation.readback"]
+    },
+    "pm.comment.create": {
+      "profile": "pm",
+      "class": "write",
+      "always_required": false,
+      "tests": ["pm.comment-create", "mutation.readback"]
+    },
+    "pm.state.transition": {
+      "profile": "pm",
+      "class": "write",
+      "always_required": false,
+      "tests": ["pm.state-transition", "mutation.readback"]
+    },
+    "pm.assignee.set": {
+      "profile": "pm",
+      "class": "write",
+      "always_required": false,
+      "tests": ["pm.assignee-set", "mutation.readback"]
+    },
+    "pm.hierarchy.parent": {
+      "profile": "pm",
+      "class": "write",
+      "always_required": false,
+      "tests": ["pm.hierarchy", "mutation.readback"]
+    },
+    "pm.relation.blocks": {
+      "profile": "pm",
+      "class": "write",
+      "always_required": false,
+      "tests": ["pm.relations", "mutation.readback"]
+    },
+    "pm.relation.related": {
+      "profile": "pm",
+      "class": "write",
+      "always_required": false,
+      "tests": ["pm.relations", "mutation.readback"]
+    },
+    "pm.relation.remove": {
+      "profile": "pm",
+      "class": "destructive",
+      "always_required": false,
+      "tests": ["pm.relation-remove-idempotent"]
+    },
+    "pm.sync.outbound": {
+      "profile": "pm",
+      "class": "write",
+      "always_required": false,
+      "tests": ["sync.no-echo", "mutation.ambiguity"]
+    },
+    "pm.sync.inbound": {
+      "profile": "pm",
+      "class": "write",
+      "always_required": false,
+      "tests": ["sync.concurrent-conflict", "security.content-ingest"]
+    },
+    "pm.document.read": {
+      "profile": "pm",
+      "class": "read",
+      "always_required": false,
+      "tests": ["pm.document-read", "security.content-ingest"],
+      "paginated": true
+    }
+  },
+  "dependency_rules": {
+    "always_required": ["core.identity.read", "core.health.read", "core.lifecycle.validate"],
+    "lifecycle_operations_must_be_declared": true,
+    "requires_all": {
+      "pm.work_item.create": ["pm.work_item.read"],
+      "pm.work_item.update": ["pm.work_item.read"],
+      "pm.comment.create": ["pm.work_item.read"],
+      "pm.state.transition": ["pm.work_item.read"],
+      "pm.assignee.set": ["pm.work_item.read"],
+      "pm.hierarchy.parent": ["pm.work_item.read"],
+      "pm.relation.blocks": ["pm.work_item.read"],
+      "pm.relation.related": ["pm.work_item.read"],
+      "pm.relation.remove": ["pm.work_item.read"],
+      "pm.sync.outbound": [
+        "pm.work_item.read",
+        "pm.work_item.create",
+        "pm.work_item.update",
+        "pm.state.transition"
+      ],
+      "pm.sync.inbound": ["pm.work_item.read"]
+    },
+    "requires_any": {
+      "pm.relation.remove": ["pm.relation.blocks", "pm.relation.related"]
+    },
+    "requires_manifest": {
+      "pm.sync.outbound": ["/identity/stable_external_id"],
+      "pm.sync.inbound": ["/conflict/typed", "/data/provenance_fields"]
+    },
+    "requires_manifest_note": "Values are JSON Pointers into the manifest. Each must resolve to `true` or to a non-empty array.",
+    "notes": [
+      "Every PM mutation requires pm.work_item.read; the per-capability requires_all entries are the machine-checkable form of that rule.",
+      "Capability ids outside this closed set are rejected unless they match extension_namespace_pattern.",
+      "Extension capabilities can never satisfy a dependency here and never drive normalized orchestration decisions.",
+      "Profile membership is additive: every capability of every declared profile appears exactly once in supported or unsupported. Omission is invalid.",
+      "always_required capabilities may never appear in unsupported.",
+      "A capability marked paginated:true requires a manifest-level pagination block with an explicit completeness limit and truncation outcome."
+    ]
+  },
+  "baseline_tests": [
+    "boundary.public-route",
+    "manifest.registry-parity",
+    "compatibility.truth-table",
+    "contract.outcomes",
+    "security.credentials",
+    "security.tenant-isolation",
+    "security.execution-boundary",
+    "lifecycle.black-box",
+    "lifecycle.validate"
+  ],
+  "baseline_tests_note": "Run by every connector regardless of declared capabilities. The eight non-live suites are required for every connector, so conformance.suites must list all of them.",
+  "conditional_tests": {
+    "security.events": "oauth_or_webhook",
+    "resilience.pagination": "pagination_declared",
+    "resilience.rate-limit": "rate_limit_declared"
+  },
+  "conditional_tests_note": "Condition names are a closed set understood by the contract validator; an unrecognized name is a hard failure rather than a silently skipped requirement."
+}

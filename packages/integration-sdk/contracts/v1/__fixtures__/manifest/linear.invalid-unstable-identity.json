@@ -1,0 +1,264 @@
+{
+  "connector_id": "linear",
+  "display_name": "Linear",
+  "contract_version": "1.0.0",
+  "min_host": "1.0.0",
+  "owner": {
+    "team": "AIOS Core",
+    "contact": "https://github.com/aiosbrain/aios-workspace/issues"
+  },
+  "source_repository": "https://github.com/aiosbrain/aios-workspace",
+  "maturity": "experimental",
+  "runtimes": [
+    "brain",
+    "claude-code",
+    "codex",
+    "cursor",
+    "node",
+    "opencode"
+  ],
+  "platforms": [
+    "darwin",
+    "linux"
+  ],
+  "profiles": [
+    "core",
+    "pm"
+  ],
+  "capabilities": {
+    "supported": [
+      "core.health.read",
+      "core.identity.read",
+      "core.lifecycle.configure",
+      "core.lifecycle.install",
+      "core.lifecycle.revoke",
+      "core.lifecycle.uninstall",
+      "core.lifecycle.validate",
+      "pm.assignee.set",
+      "pm.comment.create",
+      "pm.document.read",
+      "pm.hierarchy.parent",
+      "pm.relation.blocks",
+      "pm.relation.related",
+      "pm.relation.remove",
+      "pm.state.transition",
+      "pm.sync.inbound",
+      "pm.sync.outbound",
+      "pm.work_item.create",
+      "pm.work_item.read",
+      "pm.work_item.update"
+    ],
+    "unsupported": []
+  },
+  "entity_kinds": [
+    "actor",
+    "comment",
+    "container",
+    "document",
+    "relation",
+    "state",
+    "work_item"
+  ],
+  "sync": {
+    "direction": "bidirectional"
+  },
+  "entrypoints": {
+    "cli": {
+      "executable": "aios",
+      "argv_prefix": [
+        "linear"
+      ]
+    },
+    "health": {
+      "argv": [
+        "linear",
+        "health",
+        "--json"
+      ]
+    }
+  },
+  "transport": "graphql",
+  "provider_hosts": [
+    "https://api.linear.app"
+  ],
+  "auth": {
+    "mode": "token",
+    "credential_owner": "local",
+    "secret_ref": "env:LINEAR_API_KEY",
+    "ambient_opt_in": false,
+    "redaction": {
+      "identity_readback": true,
+      "redact_fields": [
+        "authorization",
+        "secret_ref",
+        "token"
+      ]
+    }
+  },
+  "data": {
+    "classes_read": [
+      "actor_identity",
+      "audit_metadata",
+      "comment_body",
+      "document_body",
+      "team_membership",
+      "work_item_body",
+      "work_item_metadata"
+    ],
+    "classes_written": [
+      "comment_body",
+      "work_item_body",
+      "work_item_metadata"
+    ],
+    "provenance_fields": [
+      "observed_at",
+      "projection_fingerprint",
+      "source_connector",
+      "source_resource_id"
+    ]
+  },
+  "identity": {
+    "stable_external_id": false,
+    "external_id_field": "id"
+  },
+  "conflict": {
+    "typed": true,
+    "version_field": "updatedAt"
+  },
+  "mutation": {
+    "classes": [
+      "destructive",
+      "write"
+    ],
+    "idempotency": "preflight_readback",
+    "readback_fields": [
+      "id",
+      "state.id",
+      "assignee.id",
+      "parent.id"
+    ],
+    "retry": {
+      "max_attempts": 3,
+      "backoff": "exponential_bounded",
+      "max_delay_ms": 30000
+    }
+  },
+  "pagination": {
+    "strategy": "cursor",
+    "page_size_max": 250,
+    "completeness_limit": 50000,
+    "truncation_outcome": "unavailable"
+  },
+  "rate_limit": {
+    "reset_header": "X-RateLimit-Requests-Reset",
+    "provider_unit": "epoch_milliseconds",
+    "scope": "token",
+    "evidence_url": "https://linear.app/developers/rate-limiting"
+  },
+  "events": {
+    "mode": "webhook",
+    "webhook": {
+      "signature_algorithm": "hmac-sha256",
+      "raw_body_verification": true,
+      "replay_key": "delivery_id",
+      "replay_key_ttl_seconds": 86400,
+      "timestamp_window_seconds": 60,
+      "ordering": "unordered_tolerant"
+    }
+  },
+  "lifecycle": {
+    "install": {
+      "argv": [
+        "connector",
+        "install",
+        "linear"
+      ],
+      "recoverable": true
+    },
+    "configure": {
+      "argv": [
+        "connector",
+        "configure",
+        "linear"
+      ],
+      "recoverable": true
+    },
+    "validate": {
+      "argv": [
+        "connector",
+        "validate",
+        "linear"
+      ],
+      "recoverable": true
+    },
+    "health": {
+      "argv": [
+        "linear",
+        "health",
+        "--json"
+      ],
+      "recoverable": true
+    },
+    "revoke": {
+      "argv": [
+        "connector",
+        "revoke",
+        "linear"
+      ],
+      "recoverable": true
+    },
+    "uninstall": {
+      "argv": [
+        "connector",
+        "uninstall",
+        "linear"
+      ],
+      "recoverable": true
+    }
+  },
+  "conformance": {
+    "suites": [
+      "boundary",
+      "capability",
+      "credentials",
+      "lifecycle",
+      "manifest",
+      "mutation",
+      "resilience",
+      "sync"
+    ],
+    "tests": [
+      "boundary.public-route",
+      "compatibility.truth-table",
+      "contract.outcomes",
+      "core.health",
+      "core.identity",
+      "lifecycle.black-box",
+      "lifecycle.revoke",
+      "lifecycle.validate",
+      "manifest.registry-parity",
+      "mutation.ambiguity",
+      "mutation.readback",
+      "pm.assignee-set",
+      "pm.comment-create",
+      "pm.document-read",
+      "pm.hierarchy",
+      "pm.relation-remove-idempotent",
+      "pm.relations",
+      "pm.state-transition",
+      "pm.work-item-create",
+      "pm.work-item-read",
+      "pm.work-item-update",
+      "resilience.pagination",
+      "resilience.rate-limit",
+      "security.content-ingest",
+      "security.credentials",
+      "security.events",
+      "security.execution-boundary",
+      "security.tenant-isolation",
+      "sync.concurrent-conflict",
+      "sync.no-echo"
+    ],
+    "min_contract_version": "1.0.0"
+  }
+}
