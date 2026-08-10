@@ -53,8 +53,19 @@ jobs:
           node-version: 22
 
       # Trusted publishing needs npm >= 11.5.1 (newer than the npm bundled with Node 22).
+      #
+      # The pin lives in `.npm-version` — the SINGLE source of truth, shared with the
+      # `unit tests (publish lane npm)` job in ci.yml, so CI always exercises the npm major
+      # this job publishes with. Bump that file, never this line. See ci.yml for why.
       - name: Upgrade npm (pinned)
-        run: npm install -g npm@12.0.2 --ignore-scripts
+        run: |
+          PINNED_NPM="$(tr -d '[:space:]' < .npm-version)"
+          if ! printf '%s' "$PINNED_NPM" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::.npm-version must contain an exact x.y.z npm version (got '$PINNED_NPM')"
+            exit 1
+          fi
+          npm install -g "npm@$PINNED_NPM" --ignore-scripts
+          npm --version
 
       - name: Resolve package directory
         id: pkg
