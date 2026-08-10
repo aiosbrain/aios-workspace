@@ -195,7 +195,13 @@ test("the retired @aios-alpha/monorepo specifiers do not resolve (AIO-601 rename
 });
 
 test("npm pack ships src + README + LICENSE and nothing else", () => {
-  const [report] = npmJson(["pack", "--dry-run"], PKG_DIR);
+  // npm <= 11 prints an ARRAY of packed-tarball records; npm >= 12 prints an OBJECT KEYED BY
+  // PACKAGE NAME whose values are those same records. CI lanes run the npm bundled with Node
+  // 22/24 while publish lanes pin a newer npm (trusted publishing needs >= 11.5.1). Only the
+  // pack family changed shape, so normalize here rather than inside npmJson.
+  const packed = npmJson(["pack", "--dry-run"], PKG_DIR);
+  const [report] = Array.isArray(packed) ? packed : Object.values(packed);
+  assert.ok(report?.files, "unrecognized npm pack --json shape");
   const files = report.files.map((f) => f.path);
   for (const required of [
     "package.json",
