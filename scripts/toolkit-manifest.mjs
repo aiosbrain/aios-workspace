@@ -53,6 +53,17 @@ export const MANAGED_PATHS = [
   // The delegating shim + launcher — how a workspace reaches the canonical toolkit.
   { dest: "scripts/aios.mjs", src: "scaffold/scripts/aios.mjs", kind: "file", exec: true },
   { dest: "bin/aios", src: "scaffold/bin/aios", kind: "file", exec: true },
+  // The three `pmTool: "linear"` entries below are split OUT of the wholesale .claude/rules
+  // and .claude/skills overlays so a workspace whose aios.yaml says `pm_tool: clickup` (or
+  // `none`) never receives Linear-specific governance in its agent's context (AIO-844). Each
+  // one must sit BEFORE the dir entry that would otherwise cover it: toolkit-contribute.mjs
+  // returns on FIRST match, and the dir branch would misreport them as `excluded: true`.
+  {
+    dest: ".claude/rules/linear-factory.md",
+    src: "scaffold/.claude/rules/linear-factory.md",
+    kind: "file",
+    pmTool: "linear",
+  },
   // Governance read in-place by Claude Code (overlay — personal skills/rules preserved).
   // access-control.md is excluded: it's stamp-time PERSONALIZED (workspaces customize
   // the tier table, team names, context aliases), so blind-overlaying it clobbers
@@ -62,10 +73,29 @@ export const MANAGED_PATHS = [
     dest: ".claude/rules",
     src: "scaffold/.claude/rules",
     kind: "dir",
-    exclude: ["access-control.md"],
+    exclude: ["access-control.md", "linear-factory.md"],
   },
-  { dest: ".claude/skills", src: "scaffold/.claude/skills", kind: "dir" },
+  { dest: ".claude/skills/aios-linear", src: "scaffold/.claude/skills/aios-linear", kind: "dir", pmTool: "linear" },
+  { dest: ".claude/skills", src: "scaffold/.claude/skills", kind: "dir", exclude: ["aios-linear"] },
+  // The spec-readiness rubric is deliberately NOT vendored under scaffold/ — `src` is
+  // toolkit-repo-relative and may point outside it (see validation/secret-patterns.txt and
+  // every hooks/ entry), so this syncs the ONE canonical copy rather than creating a second
+  // file to keep byte-identical. It is ungated: spec quality is PM-tool-agnostic.
+  {
+    dest: ".claude/rubrics/spec-readiness.md",
+    src: ".claude/rubrics/spec-readiness.md",
+    kind: "file",
+  },
   { dest: ".claude/rubrics", src: "scaffold/.claude/rubrics", kind: "dir" },
+  // The issue template `linear-factory.md` tells the agent to author from, and the exact path
+  // resolveLinearTemplate() looks for (.claude/skills/aios-linear/linear-template.mjs). Same
+  // no-duplicate reasoning as the rubric above.
+  {
+    dest: "docs/agentic-ergonomics/aios-issue-template.md",
+    src: "docs/agentic-ergonomics/aios-issue-template.md",
+    kind: "file",
+    pmTool: "linear",
+  },
   { dest: ".claude/commands", src: "scaffold/.claude/commands", kind: "dir" },
   { dest: ".claude/personalities", src: "scaffold/.claude/personalities", kind: "dir" },
   { dest: ".claude/agents", src: "scaffold/.claude/agents", kind: "dir" },
@@ -146,11 +176,38 @@ export const MANAGED_PATHS = [
   { dest: "validation/secret-patterns.txt", src: "validation/secret-patterns.txt", kind: "file" },
 ];
 
+/**
+ * Which PM tool this workspace's agent factory targets — `linear` | `clickup` | `none`.
+ *
+ * A workspace scaffolded before AIO-844 has no `pm_tool` key at all, and MUST keep receiving
+ * the Linear assets it already has: an absent key reads as `linear`, never as "no PM tool".
+ * `aios update` writes the key explicitly on first run after that (see persistScalar), so the
+ * default is a one-time migration bridge rather than a permanent implicit value.
+ *
+ * `loadConfig` → parseFlatYaml already strips quotes, so `pm_tool: linear` and
+ * `pm_tool: "linear"` both land here as the bare string.
+ */
+export const PM_TOOL_DEFAULT = "linear";
+export const pmToolOf = (cfg = {}) => String(cfg.pm_tool ?? "").trim() || PM_TOOL_DEFAULT;
+
 export function managedPathsForConfig(cfg = {}) {
-  return cfg.ci_workflow === true || cfg.ci_workflow === "true"
-    ? [...MANAGED_PATHS, ...CI_WORKFLOW_MANAGED_PATHS]
-    : MANAGED_PATHS;
+  const pmTool = pmToolOf(cfg);
+  const base =
+    cfg.ci_workflow === true || cfg.ci_workflow === "true"
+      ? [...MANAGED_PATHS, ...CI_WORKFLOW_MANAGED_PATHS]
+      : MANAGED_PATHS;
+  return base.filter((e) => !e.pmTool || e.pmTool === pmTool);
 }
+
+/**
+ * The managed entries this workspace's `pm_tool` EXCLUDES — i.e. assets it may still be
+ * carrying from a previous `pm_tool` value. Filtering an entry out of managedPathsForConfig
+ * only stops it syncing; it never removes what is already on disk (applyDeletions only fires
+ * for files that vanished from the toolkit SOURCE). `aios update` prunes these separately,
+ * and only when the workspace copy still matches the toolkit — an edited file is kept.
+ */
+export const pmToolPrunable = (cfg = {}) =>
+  MANAGED_PATHS.filter((e) => e.pmTool && e.pmTool !== pmToolOf(cfg));
 
 /**
  * Create-only starter files. `aios update` copies these into an existing workspace

@@ -21,5 +21,11 @@ Return `SPEC_READY`, `NOT_READY`, or `NOT_EVALUATED` without editing the candida
 7. Return the verdict and evidence bundle with findings separated by deterministic/adversarial
    source. Never suggest that a green score overrides a blocking verdict.
 
+If `aios spec eval` cannot run at all because no `aios-devtools` checkout resolves
+(`--devtools-dir` → `AIOS_DEVTOOLS_DIR` → the `@aiosbrain/aios-devtools` package — see
+`docs/devtools-toolkit-contract.md`), report `NOT_EVALUATED` and name that as the reason. An
+unrunnable grader is neither a pass nor a fail, and hand-grading is not a substitute unless the
+verdict says so explicitly.
+
 Do not revise the spec, write to Linear, waive blockers, or evaluate a dirty/mismatched tree while
 reporting a clean baseline.

@@ -28,6 +28,10 @@ agent_base_url: ""
 # Cockpit personality — style-only voice (aios | operator | coach | analyst).
 agent_personality: "aios"
 
+# External PM tool the agent factory targets (linear | clickup | none). `linear` ships the
+# Linear factory rule + aios-linear skill + issue template; the others skip all three.
+pm_tool: linear
+
 # Background memory reviewer (cockpit, claude-code only). on | off.
 memory_review: on
 

@@ -133,9 +133,13 @@ export function entryFiles(srcRoot, entry) {
     for (const name of readdirSync(dir)) {
       const abs = path.join(dir, name);
       const rel = sub ? `${sub}/${name}` : name;
+      // An excluded name prunes the whole subtree, not just a file of that name. Listing a
+      // DIRECTORY in `exclude` (AIO-844 needs `.claude/skills/aios-linear`) only works if the
+      // check happens BEFORE recursing — the alternative, naming that skill's four files
+      // one by one, silently leaks a fifth file added to it later.
+      if (exclude.has(rel)) continue;
       if (statSync(abs).isDirectory()) walk(abs, rel);
-      else if (!exclude.has(rel))
-        out.push({ srcRel: `${entry.src}/${rel}`, destRel: `${entry.dest}/${rel}` });
+      else out.push({ srcRel: `${entry.src}/${rel}`, destRel: `${entry.dest}/${rel}` });
     }
   };
   walk(absSrc, "");
@@ -223,11 +227,15 @@ export function missingSeedPaths(srcRoot, repo) {
 export function deletionCandidates(toolkitDir, srcRoot, entry, baseSha) {
   const baseFiles = lsTree(toolkitDir, baseSha, entry.src); // srcRel paths at base
   if (!baseFiles.length) return [];
-  const exclude = new Set((entry.exclude || []).map((rel) => `${entry.src}/${rel}`));
+  // Exact-or-prefix, mirroring entryFiles: an `exclude` naming a DIRECTORY covers everything
+  // beneath it, so a file removed from an excluded subtree is never reported as an upstream
+  // deletion for a workspace that was never supposed to receive it.
+  const exclude = (entry.exclude || []).map((rel) => `${entry.src}/${rel}`);
+  const isExcluded = (srcRel) => exclude.some((x) => srcRel === x || srcRel.startsWith(`${x}/`));
   const present = new Set(entryFiles(srcRoot, entry).map((f) => f.srcRel));
   const out = [];
   for (const srcRel of baseFiles) {
-    if (exclude.has(srcRel)) continue; // excluded files are never synced — never "deleted" either
+    if (isExcluded(srcRel)) continue; // excluded files are never synced — never "deleted" either
     if (present.has(srcRel)) continue; // still shipped — not a deletion
     out.push({ srcRel, destRel: entry.dest + srcRel.slice(entry.src.length) });
   }
@@ -241,13 +249,21 @@ export function deletionCandidates(toolkitDir, srcRoot, entry, baseSha) {
  *   - each managed file's two conflict sidecars (`.aios-incoming`/`.aios-merge` — written
  *     on merge conflicts and no-base fallbacks);
  *   - each dir entry's upstream-deletion targets (present at baseSha, gone from src —
- *     via the same `deletionCandidates` enumeration applyDeletions itself iterates).
+ *     via the same `deletionCandidates` enumeration applyDeletions itself iterates);
+ *   - each `prunablePaths` entry's files (config-gated removals — the pmTool prune pass).
  * This is what makes the pre-flight containment scan genuinely all-or-nothing: it derives
  * from the same helpers the write loop calls (`entryFiles`, `deletionCandidates`), so the
  * scanned set and the touched set cannot drift. Exported for tests.
  */
-export function plannedDestRels(srcDir, baseSha, managedPaths = MANAGED_PATHS) {
+export function plannedDestRels(srcDir, baseSha, managedPaths = MANAGED_PATHS, prunablePaths = []) {
   const out = [];
+  // Prune targets are deletes, so they need no sidecars — but they DO have to be in the scan:
+  // applyPrune calls assertDestPathSafe, and the pre-flight must cover every path the write
+  // loop can touch, in both directions.
+  for (const entry of prunablePaths) {
+    if (!existsSync(path.join(srcDir, entry.src))) continue;
+    for (const file of entryFiles(srcDir, entry)) out.push(file.destRel);
+  }
   for (const entry of managedPaths) {
     // Mirror mergeManaged's own entry guard EXACTLY: when an entry's src is absent from
     // the snapshot, the write loop skips the whole entry — writes AND deletions. Without

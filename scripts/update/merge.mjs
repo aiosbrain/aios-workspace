@@ -18,6 +18,7 @@ import {
   writeFileSync,
   chmodSync,
   unlinkSync,
+  rmdirSync,
   copyFileSync,
   constants as fsConstants,
 } from "node:fs";
@@ -188,6 +189,50 @@ function applyDeletions({ toolkitDir, srcRoot, repo, baseSha, entry, force, dryR
 }
 
 /**
+ * Remove assets this workspace's config no longer selects — today, the `pmTool`-gated Linear
+ * paths after an owner switches `pm_tool` away from `linear` (AIO-844).
+ *
+ * This is a SEPARATE mechanism from applyDeletions, which answers a different question:
+ * "did the toolkit stop shipping this file?" Filtering an entry out of managedPathsForConfig
+ * only stops it syncing — it leaves whatever is already on disk — so without this pass a
+ * workspace that switched to ClickUp would keep Linear governance in its agent's context
+ * forever.
+ *
+ * Safety mirrors applyDeletions' `mine === base` rule, against the CURRENT source rather than
+ * the base sha: an untouched copy is the toolkit's to remove, an edited one is the owner's to
+ * keep. `force` deliberately does NOT apply here — it is the escape hatch for "give me the
+ * toolkit's version", never a licence to destroy a file the owner wrote in.
+ */
+function applyPrune({ srcRoot, repo, entry, dryRun }, r) {
+  const dirs = new Set();
+  for (const { srcRel, destRel } of entryFiles(srcRoot, entry)) {
+    assertDestPathSafe(repo, destRel, "delete");
+    const destAbs = path.join(repo, destRel);
+    const mine = readIf(destAbs);
+    if (mine === undefined) continue; // never synced into this workspace, or already gone
+    if (mine !== readIf(path.join(srcRoot, srcRel))) {
+      r.prunedKept.push(destRel); // locally edited — surfaced as a warning, never deleted
+      continue;
+    }
+    if (!dryRun) unlinkSync(destAbs);
+    r.pruned.push(destRel);
+    if (entry.kind === "dir") dirs.add(path.dirname(destAbs));
+  }
+  // Deepest-first, and only for dir entries: a file entry's parent (.claude/rules,
+  // docs/agentic-ergonomics) belongs to other content. rmdirSync on a non-empty directory
+  // throws, which is precisely the guard we want — a personal file left inside keeps it.
+  if (!dryRun) {
+    for (const dir of [...dirs].sort((a, b) => b.length - a.length)) {
+      try {
+        rmdirSync(dir);
+      } catch {
+        /* not empty — the owner has something of their own in here */
+      }
+    }
+  }
+}
+
+/**
  * 3-way merge every managed path from `srcRoot` (a toolkit checkout at `toolkitDir`, whose
  * pinned base is `baseSha`) into `repo`. Committed local edits are merged, not clobbered;
  * genuine conflicts are surfaced (never written inline). Dirty (uncommitted) files are
@@ -206,6 +251,8 @@ export function mergeManaged(toolkitDir, srcRoot, repo, baseSha, opts = {}) {
     deleted: [],
     conflicts: [],
     skippedDirty: [],
+    pruned: [],
+    prunedKept: [],
   };
   for (const entry of opts.managedPaths || MANAGED_PATHS) {
     if (!existsSync(path.join(srcRoot, entry.src))) continue;
@@ -218,6 +265,10 @@ export function mergeManaged(toolkitDir, srcRoot, repo, baseSha, opts = {}) {
     }
     if (entry.kind === "dir")
       applyDeletions({ toolkitDir, srcRoot, repo, baseSha, entry, force, dryRun }, r);
+  }
+  for (const entry of opts.prunablePaths || []) {
+    if (!existsSync(path.join(srcRoot, entry.src))) continue;
+    applyPrune({ srcRoot, repo, entry, dryRun }, r);
   }
   applySeeds(srcRoot, repo, r, { dryRun });
   return r;

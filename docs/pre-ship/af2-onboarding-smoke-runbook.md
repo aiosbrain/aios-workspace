@@ -97,7 +97,7 @@ fixed literals above.
      `.env`, and `2-work/smoke-test.md`).
 
 `spec eval` is **not** applied to the runbook: the runbook is an operator document, not a
-spec, so grading it against the spec-readiness rubric (SR1–SR16) is out of scope and is not a
+spec, so grading it against the spec-readiness rubric is out of scope and is not a
 builder-closure gate. See *Scope*.
 
 ## Builder vs operator closure

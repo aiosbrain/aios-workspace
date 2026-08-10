@@ -7,7 +7,8 @@ through `aios spec eval`; if it fails, `aios spec fix` iterates it to ready.
 
 Sibling contracts: [`ENGINEERING-CONSTITUTION.md`](../ENGINEERING-CONSTITUTION.md) (spec-before-code),
 [`build-paradigm.md`](./build-paradigm.md) (how a slice ships), and the rubric it enforces,
-[`.claude/rubrics/spec-readiness.md`](../../.claude/rubrics/spec-readiness.md) (SR1–SR16).
+[`.claude/rubrics/spec-readiness.md`](../../.claude/rubrics/spec-readiness.md) (the `SR` criteria
+table there is the count of record — do not restate it as a range, it grows).
 
 ---
 
