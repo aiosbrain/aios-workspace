@@ -521,6 +521,15 @@
         "pointer": ""
       },
       "note": "Outcomes are closed; a raw provider body has nowhere to go."
+    },
+    {
+      "id": "outcome-class-mismatch-bypasses-retry-rule",
+      "file": "outcomes/unavailable.invalid-class-mismatch.json",
+      "expect": "invalid",
+      "failure": {
+        "kind": "outcome-class-mismatch"
+      },
+      "note": "A write capability self-reporting as a read would escape the mutation duplicate-safety branch (INT-007)."
     }
   ],
   "evidence": [

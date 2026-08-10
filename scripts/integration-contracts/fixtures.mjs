@@ -205,6 +205,41 @@ export function checkEvidenceCoverage(index, fail) {
 }
 
 /**
+ * `mutation_class` gates the mutation-retry branch in outcomes.schema.json, but the schema
+ * has no way to check that field against the capability it accompanies. Left unchecked, an
+ * outcome for `pm.work_item.update` could declare `"mutation_class": "read"` and then carry
+ * `retryable: true` with `duplicate_safety: "none"` — the mutation branch never runs, and the
+ * duplicate-safety invariant (INT-007) is bypassed by self-report.
+ *
+ * Extension capabilities have no class in the closed taxonomy, so they are exempt rather than
+ * treated as mismatches.
+ *
+ * Returns `{ capability, declared, expected }` on mismatch, otherwise null.
+ */
+export function findOutcomeClassMismatch(outcome, contract) {
+  const expected = contract.capabilities[outcome.capability]?.class;
+  if (!expected) return null;
+  if (outcome.mutation_class === expected) return null;
+  return { capability: outcome.capability, declared: outcome.mutation_class, expected };
+}
+
+export function checkOutcomeClassRule(index, contract, fail) {
+  for (const entry of index.outcomes) {
+    const mismatch = findOutcomeClassMismatch(loadFixture(entry.file), contract);
+    const shouldMismatch = entry.failure?.kind === "outcome-class-mismatch";
+
+    if (shouldMismatch && !mismatch) {
+      fail(`fixture ${entry.id}: expected a mutation_class mismatch, found none`);
+    }
+    if (!shouldMismatch && mismatch) {
+      fail(
+        `fixture ${entry.id}: declares mutation_class "${mismatch.declared}" for ${mismatch.capability}, whose taxonomy class is "${mismatch.expected}"`
+      );
+    }
+  }
+}
+
+/**
  * "A declared capability cannot be skipped" is a cross-field rule: it relates a suite's
  * `skipped` test ids to the connector's `capability_matrix.supported`. JSON Schema cannot
  * see across those two, so without this a connector could claim a capability, skip its

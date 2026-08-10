@@ -12,7 +12,10 @@ import test from "node:test";
 
 import { checkInvariants } from "../scripts/integration-contracts/taxonomy.mjs";
 import { loadFixture } from "../scripts/integration-contracts/load.mjs";
-import { findSkippedDeclaredCapabilities } from "../scripts/integration-contracts/fixtures.mjs";
+import {
+  findOutcomeClassMismatch,
+  findSkippedDeclaredCapabilities,
+} from "../scripts/integration-contracts/fixtures.mjs";
 
 import { buildDigestArtifact, validateContracts } from "../scripts/integration-contracts.mjs";
 import {
@@ -228,6 +231,36 @@ test("the validator fails when a contract invariant is corrupted", () => {
   assert.ok(
     failures.some((f) => f.includes("one owner per test")),
     `expected a duplicate-owner failure, got ${JSON.stringify(failures)}`
+  );
+});
+
+test("a self-reported mutation_class cannot bypass the mutation retry rule", () => {
+  const { artifacts } = loadContracts();
+  const capabilities = artifacts["capabilities.json"];
+
+  assert.equal(
+    findOutcomeClassMismatch(loadFixture("outcomes/verified.valid.json"), capabilities),
+    null
+  );
+
+  // pm.work_item.update declaring itself a read: the schema's mutation branch never runs, so
+  // retryable + duplicate_safety "none" would otherwise sail through.
+  const bypass = loadFixture("outcomes/unavailable.invalid-class-mismatch.json");
+  assert.equal(bypass.retry.duplicate_safety, "none");
+  assert.equal(bypass.retry.retryable, true);
+  assert.deepEqual(findOutcomeClassMismatch(bypass, capabilities), {
+    capability: "pm.work_item.update",
+    declared: "read",
+    expected: "write",
+  });
+
+  // An extension capability has no class in the closed taxonomy, so it is exempt.
+  assert.equal(
+    findOutcomeClassMismatch(
+      { capability: "x-linear.roadmaps", mutation_class: "read" },
+      capabilities
+    ),
+    null
   );
 });
 

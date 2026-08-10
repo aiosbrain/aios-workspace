@@ -38,6 +38,7 @@ import {
   checkEvidenceDigestParity,
   checkEvidenceSkipRule,
   checkFixtureIndexParity,
+  checkOutcomeClassRule,
   checkOutcomeCoverage,
   compileSchemas,
   loadIndex,
@@ -80,6 +81,7 @@ export function validateContracts() {
   runDocumentFixtures(index.outcomes, validators.outcomes, "outcome", fail);
   runDocumentFixtures(index.evidence, validators.evidence, "evidence", fail);
   checkOutcomeCoverage(index, artifacts, fail);
+  checkOutcomeClassRule(index, capabilities, fail);
   checkEvidenceCoverage(index, fail);
   checkEvidenceSkipRule(index, capabilities, fail);
   checkEvidenceDigestParity(index, digests, fail);
