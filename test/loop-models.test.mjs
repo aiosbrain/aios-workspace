@@ -375,6 +375,15 @@ console.log("spec harness steps (EE5) resolve + runner-family guard");
     cliOverrides: { spec_fix: { model: "claude:claude-sonnet-5" } },
   });
   check("claude spec_fix model passes", okFix.ok === true);
+  const badPromptTier = resolveInChild({
+    repo: null,
+    cliOverrides: { code_review: { model: "codex:gpt-9.9" } },
+  });
+  check("unavailable Codex review tier aborts before dispatch", badPromptTier.ok === false);
+  check(
+    "unavailable Codex review tier names the supported tiers",
+    /supported tiers/.test(badPromptTier.stderr)
+  );
 }
 
 console.log("modelFamily");
@@ -404,6 +413,77 @@ console.log("default reviewer models (2026-07-04 — Cursor Ultra cap)");
     "plan/plan_review stay cross-family",
     modelFamily(DEFAULT_MODELS.plan.model) !== modelFamily(DEFAULT_MODELS.plan_review.model)
   );
+}
+
+console.log("reviewer presets (<step>_preset)");
+{
+  const repo = mkdtempSync(path.join(tmpdir(), "lm-preset-"));
+  mkdirSync(path.join(repo, ".aios"), { recursive: true });
+  const writeCfg = (line) => writeFileSync(path.join(repo, ".aios", "loop-models.yaml"), line);
+
+  // A file preset resolves to the preset's model, without touching other steps.
+  writeCfg("spec_eval_preset: codex-subscription\n");
+  const r = resolveLoopModels({ repo });
+  check(
+    "file preset resolves spec_eval to the preset model",
+    r.spec_eval.model === "codex:gpt-5.6-terra"
+  );
+  check(
+    "spec_author unaffected by spec_eval preset",
+    r.spec_author.model === DEFAULT_MODELS.spec_author.model
+  );
+
+  // codex-subscription (openai family) stays cross-family from the default Opus spec_author,
+  // so this passes the diversity guard cleanly.
+  check(
+    "codex-subscription preset satisfies the diversity guard",
+    resolveInChild({ repo }).ok === true
+  );
+
+  // A Claude-family preset collides with the (also Claude) spec_author default.
+  writeCfg("spec_eval_preset: claude-subscription\n");
+  const badPreset = resolveInChild({ repo });
+  check("same-family preset still aborts the diversity guard", badPreset.ok === false);
+  check("abort message names an alternative preset", /codex-subscription/.test(badPreset.stderr));
+
+  // Unknown preset name fails loudly at validation, not silently at defaults.
+  writeCfg("spec_eval_preset: not-a-real-preset\n");
+  const unknownPreset = resolveInChild({ repo });
+  check("unknown preset name aborts", unknownPreset.ok === false);
+  check("unknown preset message lists known presets", /deepseek/.test(unknownPreset.stderr));
+
+  // Precedence: CLI preset beats a file-level explicit model.
+  writeCfg("spec_eval_model: openrouter:openai/gpt-4o-mini\n");
+  const cliPreset = resolveInChild({
+    repo,
+    cliOverrides: { spec_eval: { preset: "codex-subscription" } },
+  });
+  check(
+    "CLI preset beats file model",
+    cliPreset.ok === true && cliPreset.resolved.spec_eval.model === "codex:gpt-5.6-terra"
+  );
+
+  // An explicit CLI model still beats a CLI preset for the same step.
+  const cliModelBeatsPreset = resolveInChild({
+    repo: null,
+    cliOverrides: {
+      spec_eval: { model: "openrouter:openai/gpt-4o-mini", preset: "codex-subscription" },
+    },
+  });
+  check(
+    "explicit CLI model beats CLI preset",
+    cliModelBeatsPreset.ok === true &&
+      cliModelBeatsPreset.resolved.spec_eval.model === "openrouter:openai/gpt-4o-mini"
+  );
+
+  // Unknown CLI preset aborts too.
+  const badCliPreset = resolveInChild({
+    repo: null,
+    cliOverrides: { spec_eval: { preset: "not-a-real-preset" } },
+  });
+  check("unknown CLI preset aborts", badCliPreset.ok === false);
+
+  rmSync(repo, { recursive: true, force: true });
 }
 
 console.log(failed ? `${RED}${failed} check(s) failed${NC}` : `${GREEN}all checks passed${NC}`);

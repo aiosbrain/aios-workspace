@@ -189,7 +189,15 @@ export async function callOpencodeAgent(prompt, timeoutMs, opts = {}) {
   });
 }
 
-/** Run Codex in its target worktree and return its final response. */
+/**
+ * Run Codex in its target worktree and return its final response.
+ *
+ * OPENAI_API_KEY is ALWAYS stripped from the child env, mirroring callClaudeAgent's treatment
+ * of ANTHROPIC_API_KEY: aios steps run under `npm run aios` (dotenvx-injected keys), and without
+ * this strip a spawned `codex` flips from its own login/subscription auth to metered API
+ * billing. A caller-supplied opts.env is cloned, not required, so this stays authoritative even
+ * when the caller passes its own env.
+ */
 export async function callCodexAgent(prompt, timeoutMs, opts = {}) {
   const model = String(opts.model ?? "").trim();
   if (!model) throw new Error("codex agent requires a model id");
@@ -198,21 +206,24 @@ export async function callCodexAgent(prompt, timeoutMs, opts = {}) {
       `Codex tier '${model}' is unavailable — supported tiers: ${[...CODEX_MODEL_TIERS].join(", ")}`
     );
   }
+  const childEnv = { ...(opts.env ?? process.env) };
+  delete childEnv.OPENAI_API_KEY;
   const effort = opts.effort;
   if (effort != null && !CODEX_REASONING_EFFORTS.has(effort)) {
     throw new Error(
       `invalid Codex reasoning effort '${effort}' — expected one of ${[...CODEX_REASONING_EFFORTS].join("|")}`
     );
   }
-
   const cwd = opts.cwd ?? process.cwd();
   const dir = await mkdtemp(path.join(tmpdir(), "aios-codex-"));
   const outputFile = path.join(dir, "last-message.txt");
   const args = [
     "exec",
+    ...(opts.extraArgs ?? []),
     "--model",
     model,
     ...(effort ? ["-c", `model_reasoning_effort=${JSON.stringify(effort)}`] : []),
+    ...(opts.sandbox ? ["--sandbox", opts.sandbox] : []),
     "--cd",
     cwd,
     "--output-last-message",
@@ -234,7 +245,7 @@ export async function callCodexAgent(prompt, timeoutMs, opts = {}) {
       const proc = spawn("codex", args, {
         stdio: ["ignore", "pipe", "pipe"],
         cwd,
-        ...(opts.env ? { env: opts.env } : {}),
+        env: childEnv,
       });
       const errBufs = [];
       proc.stderr.on("data", (data) => errBufs.push(data));
@@ -312,9 +323,17 @@ export async function callPromptModel({ model, prompt, timeoutMs, opts = {} }) {
         model: ref.modelId,
         extraArgs: [...(opts.extraArgs ?? []), ...NO_TOOLS_ARGS],
       });
+    case "codex":
+      return callCodexAgent(prompt, timeoutMs, {
+        ...opts,
+        model: ref.modelId,
+        cwd: opts.cwd,
+        sandbox: "read-only",
+        extraArgs: opts.extraArgs,
+      });
     default:
       throw new Error(
-        `unsupported prompt model '${model}' (provider '${ref.provider}') — use openrouter:, opencode:, deepseek:, claude:, or cursor:`
+        `unsupported prompt model '${model}' (provider '${ref.provider}') — use openrouter:, opencode:, deepseek:, claude:, codex:, or cursor:`
       );
   }
 }

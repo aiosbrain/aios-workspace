@@ -19,6 +19,8 @@ import {
   isAgenticProvider,
   isSupportedCodexModel,
   CODEX_MODEL_TIERS,
+  REVIEWER_PRESETS,
+  resolveReviewerPreset,
 } from "./model-providers.mjs";
 
 // The default per-step matrix. `effort` is omitted for steps whose model/runner does
@@ -108,9 +110,10 @@ const DIVERSITY_PAIRS = [
 
 const VALID_EFFORTS = new Set(["low", "medium", "high", "xhigh", "max"]);
 const STEP_SET = new Set(STEPS);
+const PRESET_NAMES = Object.keys(REVIEWER_PRESETS);
 // A well-formed config key is `<step>_<field>`; step names contain underscores, so the
 // suffix alternation is anchored and the remainder must be a known step.
-const KEY_RE = /^(.+)_(model|effort|timeout_s)$/;
+const KEY_RE = /^(.+)_(model|effort|timeout_s|preset)$/;
 
 // The config surface must fail loudly, not silently fall back to defaults. Rejects: junk /
 // unknown-step keys, non-scalar values, invalid effort strings, non-numeric or non-positive
@@ -121,7 +124,7 @@ function validateFileCfg(fileCfg, file) {
     if (!m || !STEP_SET.has(m[1])) {
       die(
         `unknown key '${key}' in ${file} — expected <step>_model / <step>_effort / ` +
-          `<step>_timeout_s for a known step (${STEPS.join(", ")}).`
+          `<step>_timeout_s / <step>_preset for a known step (${STEPS.join(", ")}).`
       );
     }
     const field = m[2];
@@ -137,6 +140,9 @@ function validateFileCfg(fileCfg, file) {
       die(
         `invalid ${key}='${value}' in ${file} — effort must be one of ${[...VALID_EFFORTS].join("|")}.`
       );
+    }
+    if (field === "preset" && !resolveReviewerPreset(value)) {
+      die(`invalid ${key}='${value}' in ${file} — known presets: ${PRESET_NAMES.join(", ")}.`);
     }
     if (field === "timeout_s") {
       const secs = Number(value);
@@ -163,13 +169,29 @@ function validateCliOverrides(cliOverrides) {
         `invalid effort '${over.effort}' for ${step} — must be one of ${[...VALID_EFFORTS].join("|")}.`
       );
     }
+    if (over.preset != null && !resolveReviewerPreset(over.preset)) {
+      die(
+        `invalid preset '${over.preset}' for ${step} — known presets: ${PRESET_NAMES.join(", ")}.`
+      );
+    }
+  }
+}
+
+function validateProfilePresets(profileCfg, profile) {
+  for (const [step, over] of Object.entries(profileCfg?.overrides ?? {})) {
+    if (over.preset != null && !resolveReviewerPreset(over.preset)) {
+      die(
+        `invalid preset '${over.preset}' for ${step} in loop profile '${profile}' — ` +
+          `known presets: ${PRESET_NAMES.join(", ")}.`
+      );
+    }
   }
 }
 
 function assertAgenticProviders(resolved) {
-  for (const step of AGENTIC_STEPS) {
+  for (const step of STEPS) {
     const ref = parseModelRef(resolved[step].model);
-    if (!isAgenticProvider(ref.provider)) {
+    if (AGENTIC_STEPS.includes(step) && !isAgenticProvider(ref.provider)) {
       die(
         `${step} needs an agentic provider (claude, cursor, opencode, or codex) but ` +
           `'${resolved[step].model}' resolves to '${ref.provider}'. ` +
@@ -190,10 +212,13 @@ function assertDiversity(resolved) {
     const pf = modelFamily(resolved[producer].model);
     const rf = modelFamily(resolved[reviewer].model);
     if (pf === rf) {
+      const altPresets = PRESET_NAMES.filter(
+        (name) => modelFamily(REVIEWER_PRESETS[name].model) !== pf
+      );
       die(
         `${producer} and ${reviewer} must use different model families (both resolved to '${pf}'); ` +
           `the reviewer must be an independent model — set ${reviewer}_model to a different-family ` +
-          `model (e.g. opencode:glm-5.2 or openrouter:openai/gpt-5.5) in .aios/loop-models.yaml`
+          `model, or ${reviewer}_preset to one of: ${altPresets.join(", ")} (in .aios/loop-models.yaml)`
       );
     }
   }
@@ -218,6 +243,7 @@ export function resolveLoopModels({ configPath, repo, cliOverrides = {}, profile
         `unknown loop profile '${profile}' — known profiles: ${Object.keys(LOOP_PROFILES).join(", ")}.`
       );
     }
+    validateProfilePresets(profileCfg, profile);
   }
   const file = configPath ?? (repo ? path.join(repo, ".aios", "loop-models.yaml") : null);
   // A MISSING file is fine (defaults). A PRESENT-but-broken file fails loudly, never a
@@ -249,7 +275,18 @@ export function resolveLoopModels({ configPath, repo, cliOverrides = {}, profile
     // re-routed by a stray .aios/loop-models.yaml line (the AIO-398 session-model burn).
     const prof = profileCfg?.overrides?.[step] ?? {};
 
-    const model = over.model ?? prof.model ?? fileCfg[`${step}_model`] ?? def.model;
+    // `_preset` is a named shortcut for `_model` (e.g. spec_eval_preset: claude-subscription).
+    // It resolves within its OWN source's precedence tier, so a CLI preset still beats a file
+    // model — a preset is not automatically weaker than an explicit model from a lower-precedence
+    // source, only within the same source (an explicit CLI model still beats a CLI preset).
+    const cliValue = over.model ?? resolveReviewerPreset(over.preset)?.model ?? undefined;
+    const profValue = prof.model ?? resolveReviewerPreset(prof.preset)?.model ?? undefined;
+    const fileValue =
+      fileCfg[`${step}_model`] ??
+      resolveReviewerPreset(fileCfg[`${step}_preset`])?.model ??
+      undefined;
+
+    const model = cliValue ?? profValue ?? fileValue ?? def.model;
 
     const effort = over.effort ?? prof.effort ?? fileCfg[`${step}_effort`] ?? def.effort;
 

@@ -14,3 +14,7 @@ local review as part of their own operator workflow; neither makes Local Bugbot 
 that already has qualifying cloud review. Address every substantive Medium-or-higher finding from
 any reviewer, but do not block an otherwise clear PR solely because Local Bugbot is unavailable,
 returns a protocol error, or cannot review an unrelated worktree.
+
+Error ledger (2026-08-10): loop-model routing changes must be reviewed against the separately
+published `@aiosbrain/aios-devtools` runtime; core tests alone cannot prove `spec eval`/`ship`
+parity. Land and publish the devtools companion before bumping the core exact dependency pin.

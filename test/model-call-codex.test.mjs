@@ -50,6 +50,29 @@ check("does not pass Claude's --effort flag", !args.includes("--effort"));
 check("runs in the supplied worktree", args[args.indexOf("--cd") + 1] === worktree);
 check("passes the prompt", args.at(-1) === "implement the issue");
 
+console.log("codex prompt dispatch stays read-only and preserves caller env");
+const callerEnv = { ...process.env, OPENAI_API_KEY: "caller-api-key" };
+const promptResult = await (
+  await import("../scripts/model-call.mjs")
+).callPromptModel({
+  model: "codex:gpt-5.6-sol",
+  prompt: "review the issue",
+  timeoutMs: 30_000,
+  opts: { cwd: worktree, env: callerEnv },
+});
+const promptArgs = JSON.parse(readFileSync(argsFile, "utf8"));
+check("prompt route returns Codex final message", promptResult === "Codex final message");
+check(
+  "prompt route uses Codex read-only sandbox",
+  JSON.stringify(
+    promptArgs.slice(promptArgs.indexOf("--sandbox"), promptArgs.indexOf("--sandbox") + 2)
+  ) === JSON.stringify(["--sandbox", "read-only"])
+);
+check(
+  "Codex env stripping does not mutate caller env",
+  callerEnv.OPENAI_API_KEY === "caller-api-key"
+);
+
 let invalidEffort = null;
 try {
   await callAgentModel({
