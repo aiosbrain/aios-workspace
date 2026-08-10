@@ -1,21 +1,21 @@
 {
-  "$comment": "Toolkit product repo: full harness adapter with strict primary-checkout edit/commit policies, plus the local Bugbot stop gate. IC workspaces ship scaffold/.cursor/hooks.json instead (cross-repo guard only).",
+  "$comment": "Toolkit product repo: full harness adapter with strict primary-checkout edit/commit policies, plus the local Bugbot stop gate. IC workspaces ship scaffold/.cursor/hooks.json instead (cross-repo guard only). Every command is wrapped so a MULTI-ROOT Cursor session cannot deadlock: ${CURSOR_PROJECT_DIR} resolves to ONE root, which may be a repo that does not vendor .harness/ (aios-team-brain, aios-website, an IC workspace). Unwrapped, /bin/sh exits 127 (script not found) and failClosed turns that into a policy DENY, blocking every edit and shell call in the whole session. The wrapper never fails open and never over-blocks, because it decides on a MARKER FILE that identifies THIS repo specifically: scaffold/.cursor/hooks.json exists only in the toolkit checkout. Marker ABSENT means the hook does not apply to this root (exit 0); marker PRESENT but the script missing means the toolkit's own guard is broken or deleted, which is exit 3 (could-not-evaluate, mapped to a block) so enforcement is never silently lost. The marker is deliberately NOT a generic path like .cursor/hooks or .harness — an unrelated root may legitimately have those, and treating that as 'configured' would re-create the lockout. The check is inline because a helper script would sit at the same unresolvable path.",
   "version": 1,
   "hooks": {
     "sessionStart": [
       {
-        "command": "/bin/sh \"${CURSOR_PROJECT_DIR}/.harness/adapters/run-hook.sh\" cursor session_start inject-context.sh",
+        "command": "/bin/sh -c 'm=\"$1\"; p=\"$2\"; shift 2; [ -f \"$p\" ] && exec /bin/sh \"$p\" \"$@\"; [ -f \"$m\" ] && { echo \"AIOS hook: guard is installed here but $p is missing\" >&2; exit 3; }; exit 0' _ \"${CURSOR_PROJECT_DIR}/scaffold/.cursor/hooks.json\" \"${CURSOR_PROJECT_DIR}/.harness/adapters/run-hook.sh\" cursor session_start inject-context.sh",
         "timeout": 15
       }
     ],
     "beforeShellExecution": [
       {
-        "command": "/bin/sh \"${CURSOR_PROJECT_DIR}/.harness/adapters/run-hook.sh\" cursor pre_command guard-destructive.sh",
+        "command": "/bin/sh -c 'm=\"$1\"; p=\"$2\"; shift 2; [ -f \"$p\" ] && exec /bin/sh \"$p\" \"$@\"; [ -f \"$m\" ] && { echo \"AIOS hook: guard is installed here but $p is missing\" >&2; exit 3; }; exit 0' _ \"${CURSOR_PROJECT_DIR}/scaffold/.cursor/hooks.json\" \"${CURSOR_PROJECT_DIR}/.harness/adapters/run-hook.sh\" cursor pre_command guard-destructive.sh",
         "timeout": 30,
         "failClosed": true
       },
       {
-        "command": "/bin/sh \"${CURSOR_PROJECT_DIR}/.harness/adapters/cursor/run-strict-guard.sh\" pre_command guard-worktree.sh",
+        "command": "/bin/sh -c 'm=\"$1\"; p=\"$2\"; shift 2; [ -f \"$p\" ] && exec /bin/sh \"$p\" \"$@\"; [ -f \"$m\" ] && { echo \"AIOS hook: guard is installed here but $p is missing\" >&2; exit 3; }; exit 0' _ \"${CURSOR_PROJECT_DIR}/scaffold/.cursor/hooks.json\" \"${CURSOR_PROJECT_DIR}/.harness/adapters/cursor/run-strict-guard.sh\" pre_command guard-worktree.sh",
         "timeout": 30,
         "failClosed": true
       }
@@ -23,36 +23,36 @@
     "preToolUse": [
       {
         "matcher": "Write|Edit|MultiEdit|StrReplace",
-        "command": "/bin/sh \"${CURSOR_PROJECT_DIR}/.harness/adapters/run-hook.sh\" cursor pre_edit guard-secrets.sh",
+        "command": "/bin/sh -c 'm=\"$1\"; p=\"$2\"; shift 2; [ -f \"$p\" ] && exec /bin/sh \"$p\" \"$@\"; [ -f \"$m\" ] && { echo \"AIOS hook: guard is installed here but $p is missing\" >&2; exit 3; }; exit 0' _ \"${CURSOR_PROJECT_DIR}/scaffold/.cursor/hooks.json\" \"${CURSOR_PROJECT_DIR}/.harness/adapters/run-hook.sh\" cursor pre_edit guard-secrets.sh",
         "timeout": 30,
         "failClosed": true
       },
       {
         "matcher": "Write|Edit|MultiEdit|StrReplace",
-        "command": "/bin/sh \"${CURSOR_PROJECT_DIR}/.harness/adapters/run-hook.sh\" cursor pre_edit guard-protected-paths.sh",
+        "command": "/bin/sh -c 'm=\"$1\"; p=\"$2\"; shift 2; [ -f \"$p\" ] && exec /bin/sh \"$p\" \"$@\"; [ -f \"$m\" ] && { echo \"AIOS hook: guard is installed here but $p is missing\" >&2; exit 3; }; exit 0' _ \"${CURSOR_PROJECT_DIR}/scaffold/.cursor/hooks.json\" \"${CURSOR_PROJECT_DIR}/.harness/adapters/run-hook.sh\" cursor pre_edit guard-protected-paths.sh",
         "timeout": 30,
         "failClosed": true
       },
       {
         "matcher": "Write|Edit|MultiEdit|StrReplace|Delete|Remove|Move|Rename",
-        "command": "/bin/sh \"${CURSOR_PROJECT_DIR}/.harness/adapters/cursor/run-strict-guard.sh\" pre_edit guard-worktree.sh",
+        "command": "/bin/sh -c 'm=\"$1\"; p=\"$2\"; shift 2; [ -f \"$p\" ] && exec /bin/sh \"$p\" \"$@\"; [ -f \"$m\" ] && { echo \"AIOS hook: guard is installed here but $p is missing\" >&2; exit 3; }; exit 0' _ \"${CURSOR_PROJECT_DIR}/scaffold/.cursor/hooks.json\" \"${CURSOR_PROJECT_DIR}/.harness/adapters/cursor/run-strict-guard.sh\" pre_edit guard-worktree.sh",
         "timeout": 30,
         "failClosed": true
       }
     ],
     "afterFileEdit": [
       {
-        "command": "/bin/sh \"${CURSOR_PROJECT_DIR}/.harness/adapters/run-hook.sh\" cursor post_edit post-edit-format.sh",
+        "command": "/bin/sh -c 'm=\"$1\"; p=\"$2\"; shift 2; [ -f \"$p\" ] && exec /bin/sh \"$p\" \"$@\"; [ -f \"$m\" ] && { echo \"AIOS hook: guard is installed here but $p is missing\" >&2; exit 3; }; exit 0' _ \"${CURSOR_PROJECT_DIR}/scaffold/.cursor/hooks.json\" \"${CURSOR_PROJECT_DIR}/.harness/adapters/run-hook.sh\" cursor post_edit post-edit-format.sh",
         "timeout": 120
       }
     ],
     "stop": [
       {
-        "command": "/bin/sh \"${CURSOR_PROJECT_DIR}/hooks/run-local-bugbot-gate.sh\" cursor \"${CURSOR_PROJECT_DIR}\"",
+        "command": "/bin/sh -c 'm=\"$1\"; p=\"$2\"; shift 2; [ -f \"$p\" ] && exec /bin/sh \"$p\" \"$@\"; [ -f \"$m\" ] && { echo \"AIOS hook: guard is installed here but $p is missing\" >&2; exit 3; }; exit 0' _ \"${CURSOR_PROJECT_DIR}/scaffold/.cursor/hooks.json\" \"${CURSOR_PROJECT_DIR}/hooks/run-local-bugbot-gate.sh\" cursor \"${CURSOR_PROJECT_DIR}\"",
         "timeout": 86400
       },
       {
-        "command": "/bin/sh \"${CURSOR_PROJECT_DIR}/.harness/adapters/cursor/stop-gate.sh\"",
+        "command": "/bin/sh -c 'm=\"$1\"; p=\"$2\"; shift 2; [ -f \"$p\" ] && exec /bin/sh \"$p\" \"$@\"; [ -f \"$m\" ] && { echo \"AIOS hook: guard is installed here but $p is missing\" >&2; exit 3; }; exit 0' _ \"${CURSOR_PROJECT_DIR}/scaffold/.cursor/hooks.json\" \"${CURSOR_PROJECT_DIR}/.harness/adapters/cursor/stop-gate.sh\"",
         "timeout": 600,
         "loop_limit": 5
       }

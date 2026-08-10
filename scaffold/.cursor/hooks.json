@@ -1,10 +1,10 @@
 {
-  "$comment": "IC workspace (dogfood): block cross-repo edits/commits to the toolkit PRIMARY checkout. This workspace stays writable on master; only the linked toolkit checkout is guarded.",
+  "$comment": "IC workspace (dogfood): block cross-repo edits/commits to the toolkit PRIMARY checkout. This workspace stays writable on master; only the linked toolkit checkout is guarded. Commands are wrapped so a MULTI-ROOT Cursor session cannot deadlock: ${CURSOR_PROJECT_DIR} resolves to ONE root, which may be a repo with no AIOS guard — unwrapped, /bin/sh exits 127 (script not found) and failClosed turns that into a policy DENY across the whole session. The wrapper decides on the MARKER FILE .aios-toolkit-version, which exists only in a scaffolded AIOS workspace. Marker ABSENT means this root is not an AIOS workspace and the hook does not apply (exit 0); marker PRESENT but the script missing means a real workspace whose guard was deleted, which is exit 3 (could-not-evaluate, mapped to a block) so the guard cannot be bypassed by removing a file. The marker is deliberately NOT .cursor/hooks: that directory is a generic Cursor convention an unrelated root may have for its own hooks, and treating it as 'AIOS guard installed' would block that root entirely. The check is inline because a helper script would sit at the same unresolvable path.",
   "version": 1,
   "hooks": {
     "beforeShellExecution": [
       {
-        "command": "/bin/sh \"${CURSOR_PROJECT_DIR}/.cursor/hooks/guard-toolkit-primary.sh\" pre_command",
+        "command": "/bin/sh -c 'm=\"$1\"; p=\"$2\"; shift 2; [ -f \"$p\" ] && exec /bin/sh \"$p\" \"$@\"; [ -f \"$m\" ] && { echo \"AIOS hook: guard is installed here but $p is missing\" >&2; exit 3; }; exit 0' _ \"${CURSOR_PROJECT_DIR}/.aios-toolkit-version\" \"${CURSOR_PROJECT_DIR}/.cursor/hooks/guard-toolkit-primary.sh\" pre_command",
         "timeout": 30,
         "failClosed": true
       }
@@ -12,14 +12,14 @@
     "preToolUse": [
       {
         "matcher": "Write|Edit|MultiEdit|StrReplace|Delete|Remove|Move|Rename",
-        "command": "/bin/sh \"${CURSOR_PROJECT_DIR}/.cursor/hooks/guard-toolkit-primary.sh\" pre_edit",
+        "command": "/bin/sh -c 'm=\"$1\"; p=\"$2\"; shift 2; [ -f \"$p\" ] && exec /bin/sh \"$p\" \"$@\"; [ -f \"$m\" ] && { echo \"AIOS hook: guard is installed here but $p is missing\" >&2; exit 3; }; exit 0' _ \"${CURSOR_PROJECT_DIR}/.aios-toolkit-version\" \"${CURSOR_PROJECT_DIR}/.cursor/hooks/guard-toolkit-primary.sh\" pre_edit",
         "timeout": 30,
         "failClosed": true
       }
     ],
     "stop": [
       {
-        "command": "/bin/sh \"${CURSOR_PROJECT_DIR}/.cursor/hooks/toolkit-primary-tripwire.sh\"",
+        "command": "/bin/sh -c 'm=\"$1\"; p=\"$2\"; shift 2; [ -f \"$p\" ] && exec /bin/sh \"$p\" \"$@\"; [ -f \"$m\" ] && { echo \"AIOS hook: guard is installed here but $p is missing\" >&2; exit 3; }; exit 0' _ \"${CURSOR_PROJECT_DIR}/.aios-toolkit-version\" \"${CURSOR_PROJECT_DIR}/.cursor/hooks/toolkit-primary-tripwire.sh\"",
         "timeout": 30,
         "loop_limit": 3
       }
