@@ -419,12 +419,10 @@ console.log("reviewer presets (<step>_preset)");
 {
   const repo = mkdtempSync(path.join(tmpdir(), "lm-preset-"));
   mkdirSync(path.join(repo, ".aios"), { recursive: true });
+  const writeCfg = (line) => writeFileSync(path.join(repo, ".aios", "loop-models.yaml"), line);
 
   // A file preset resolves to the preset's model, without touching other steps.
-  writeFileSync(
-    path.join(repo, ".aios", "loop-models.yaml"),
-    "spec_eval_preset: codex-subscription\n"
-  );
+  writeCfg("spec_eval_preset: codex-subscription\n");
   const r = resolveLoopModels({ repo });
   check(
     "file preset resolves spec_eval to the preset model",
@@ -443,28 +441,19 @@ console.log("reviewer presets (<step>_preset)");
   );
 
   // A Claude-family preset collides with the (also Claude) spec_author default.
-  writeFileSync(
-    path.join(repo, ".aios", "loop-models.yaml"),
-    "spec_eval_preset: claude-subscription\n"
-  );
+  writeCfg("spec_eval_preset: claude-subscription\n");
   const badPreset = resolveInChild({ repo });
   check("same-family preset still aborts the diversity guard", badPreset.ok === false);
   check("abort message names an alternative preset", /codex-subscription/.test(badPreset.stderr));
 
   // Unknown preset name fails loudly at validation, not silently at defaults.
-  writeFileSync(
-    path.join(repo, ".aios", "loop-models.yaml"),
-    "spec_eval_preset: not-a-real-preset\n"
-  );
+  writeCfg("spec_eval_preset: not-a-real-preset\n");
   const unknownPreset = resolveInChild({ repo });
   check("unknown preset name aborts", unknownPreset.ok === false);
   check("unknown preset message lists known presets", /deepseek/.test(unknownPreset.stderr));
 
   // Precedence: CLI preset beats a file-level explicit model.
-  writeFileSync(
-    path.join(repo, ".aios", "loop-models.yaml"),
-    "spec_eval_model: openrouter:openai/gpt-4o-mini\n"
-  );
+  writeCfg("spec_eval_model: openrouter:openai/gpt-4o-mini\n");
   const cliPreset = resolveInChild({
     repo,
     cliOverrides: { spec_eval: { preset: "codex-subscription" } },
