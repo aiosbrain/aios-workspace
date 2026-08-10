@@ -11,7 +11,7 @@ Seam contract: `docs/devtools-toolkit-contract.md`. Dispatch: `scripts/devtools-
 `@aiosbrain/aios-devtools` is a **pinned dependency** of `@aiosbrain/aios`, so
 `npm i -g @aiosbrain/aios` still gives you all five commands. Nothing to do for a normal install.
 
-The pin is exact (`0.2.0`, not `^0.2.0`) on purpose: these commands drive an agent pipeline whose
+The pin is exact (`0.2.1`, not `^0.2.1`) on purpose: these commands drive an agent pipeline whose
 output is reviewed and merged, so "whatever was latest that day" is not an acceptable answer to
 "what reviewed this diff". Bumping it is a deliberate PR, and `scripts/devtools-preflight.mjs`
 fails if it is loosened to any range, wildcard, tag, workspace alias, or local path.
@@ -41,6 +41,12 @@ Order of operations, and it is not optional:
 
 Merging core first ships a broken config surface to every operator on the current pin.
 
+`test/devtools-config-parity.test.mjs` enforces this mechanically: it drives the **installed**
+package (never a local checkout) and fails if core knows a `<step>_preset` key or a reviewer
+preset the pin does not, or if a shared preset resolves to a different model or billing mode on
+the two sides. The devtools-side `toolkit-drift` lane does not cover this — it runs the devtools
+suite against core `main`, which is the opposite direction.
+
 ## Preflight
 
 ```bash
@@ -55,8 +61,8 @@ resolve four different ways.
 
 ```
 devtools: @aiosbrain/aios-devtools
-  declared:  0.2.0
-  installed: 0.2.0
+  declared:  0.2.1
+  installed: 0.2.1
   ✓ ship                   via @aiosbrain/aios-devtools
   ✓ build                  via @aiosbrain/aios-devtools
   ...
