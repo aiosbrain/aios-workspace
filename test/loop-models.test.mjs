@@ -375,6 +375,12 @@ console.log("spec harness steps (EE5) resolve + runner-family guard");
     cliOverrides: { spec_fix: { model: "claude:claude-sonnet-5" } },
   });
   check("claude spec_fix model passes", okFix.ok === true);
+  const badPromptTier = resolveInChild({
+    repo: null,
+    cliOverrides: { code_review: { model: "codex:gpt-9.9" } },
+  });
+  check("unavailable Codex review tier aborts before dispatch", badPromptTier.ok === false);
+  check("unavailable Codex review tier names the supported tiers", /supported tiers/.test(badPromptTier.stderr));
 }
 
 console.log("modelFamily");

@@ -206,7 +206,7 @@ export async function callCodexAgent(prompt, timeoutMs, opts = {}) {
       `Codex tier '${model}' is unavailable — supported tiers: ${[...CODEX_MODEL_TIERS].join(", ")}`
     );
   }
-  const childEnv = opts.env ?? { ...process.env };
+  const childEnv = { ...(opts.env ?? process.env) };
   delete childEnv.OPENAI_API_KEY;
   const effort = opts.effort;
   if (effort != null && !CODEX_REASONING_EFFORTS.has(effort)) {
@@ -214,15 +214,16 @@ export async function callCodexAgent(prompt, timeoutMs, opts = {}) {
       `invalid Codex reasoning effort '${effort}' — expected one of ${[...CODEX_REASONING_EFFORTS].join("|")}`
     );
   }
-
   const cwd = opts.cwd ?? process.cwd();
   const dir = await mkdtemp(path.join(tmpdir(), "aios-codex-"));
   const outputFile = path.join(dir, "last-message.txt");
   const args = [
     "exec",
+    ...(opts.extraArgs ?? []),
     "--model",
     model,
     ...(effort ? ["-c", `model_reasoning_effort=${JSON.stringify(effort)}`] : []),
+    ...(opts.sandbox ? ["--sandbox", opts.sandbox] : []),
     "--cd",
     cwd,
     "--output-last-message",
@@ -323,7 +324,13 @@ export async function callPromptModel({ model, prompt, timeoutMs, opts = {} }) {
         extraArgs: [...(opts.extraArgs ?? []), ...NO_TOOLS_ARGS],
       });
     case "codex":
-      return callCodexAgent(prompt, timeoutMs, { ...opts, model: ref.modelId, cwd: opts.cwd });
+      return callCodexAgent(prompt, timeoutMs, {
+        ...opts,
+        model: ref.modelId,
+        cwd: opts.cwd,
+        sandbox: "read-only",
+        extraArgs: opts.extraArgs,
+      });
     default:
       throw new Error(
         `unsupported prompt model '${model}' (provider '${ref.provider}') — use openrouter:, opencode:, deepseek:, claude:, codex:, or cursor:`

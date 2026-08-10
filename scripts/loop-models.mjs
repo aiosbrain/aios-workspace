@@ -20,6 +20,7 @@ import {
   isSupportedCodexModel,
   CODEX_MODEL_TIERS,
   REVIEWER_PRESETS,
+  resolveReviewerPreset,
 } from "./model-providers.mjs";
 
 // The default per-step matrix. `effort` is omitted for steps whose model/runner does
@@ -123,7 +124,7 @@ function validateFileCfg(fileCfg, file) {
     if (!m || !STEP_SET.has(m[1])) {
       die(
         `unknown key '${key}' in ${file} — expected <step>_model / <step>_effort / ` +
-          `<step>_timeout_s for a known step (${STEPS.join(", ")}).`
+          `<step>_timeout_s / <step>_preset for a known step (${STEPS.join(", ")}).`
       );
     }
     const field = m[2];
@@ -140,10 +141,8 @@ function validateFileCfg(fileCfg, file) {
         `invalid ${key}='${value}' in ${file} — effort must be one of ${[...VALID_EFFORTS].join("|")}.`
       );
     }
-    if (field === "preset" && !REVIEWER_PRESETS[value]) {
-      die(
-        `invalid ${key}='${value}' in ${file} — known presets: ${PRESET_NAMES.join(", ")}.`
-      );
+    if (field === "preset" && !resolveReviewerPreset(value)) {
+      die(`invalid ${key}='${value}' in ${file} — known presets: ${PRESET_NAMES.join(", ")}.`);
     }
     if (field === "timeout_s") {
       const secs = Number(value);
@@ -170,16 +169,29 @@ function validateCliOverrides(cliOverrides) {
         `invalid effort '${over.effort}' for ${step} — must be one of ${[...VALID_EFFORTS].join("|")}.`
       );
     }
-    if (over.preset != null && !REVIEWER_PRESETS[over.preset]) {
-      die(`invalid preset '${over.preset}' for ${step} — known presets: ${PRESET_NAMES.join(", ")}.`);
+    if (over.preset != null && !resolveReviewerPreset(over.preset)) {
+      die(
+        `invalid preset '${over.preset}' for ${step} — known presets: ${PRESET_NAMES.join(", ")}.`
+      );
+    }
+  }
+}
+
+function validateProfilePresets(profileCfg, profile) {
+  for (const [step, over] of Object.entries(profileCfg?.overrides ?? {})) {
+    if (over.preset != null && !resolveReviewerPreset(over.preset)) {
+      die(
+        `invalid preset '${over.preset}' for ${step} in loop profile '${profile}' — ` +
+          `known presets: ${PRESET_NAMES.join(", ")}.`
+      );
     }
   }
 }
 
 function assertAgenticProviders(resolved) {
-  for (const step of AGENTIC_STEPS) {
+  for (const step of STEPS) {
     const ref = parseModelRef(resolved[step].model);
-    if (!isAgenticProvider(ref.provider)) {
+    if (AGENTIC_STEPS.includes(step) && !isAgenticProvider(ref.provider)) {
       die(
         `${step} needs an agentic provider (claude, cursor, opencode, or codex) but ` +
           `'${resolved[step].model}' resolves to '${ref.provider}'. ` +
@@ -231,6 +243,7 @@ export function resolveLoopModels({ configPath, repo, cliOverrides = {}, profile
         `unknown loop profile '${profile}' — known profiles: ${Object.keys(LOOP_PROFILES).join(", ")}.`
       );
     }
+    validateProfilePresets(profileCfg, profile);
   }
   const file = configPath ?? (repo ? path.join(repo, ".aios", "loop-models.yaml") : null);
   // A MISSING file is fine (defaults). A PRESENT-but-broken file fails loudly, never a
@@ -266,11 +279,12 @@ export function resolveLoopModels({ configPath, repo, cliOverrides = {}, profile
     // It resolves within its OWN source's precedence tier, so a CLI preset still beats a file
     // model — a preset is not automatically weaker than an explicit model from a lower-precedence
     // source, only within the same source (an explicit CLI model still beats a CLI preset).
-    const cliValue = over.model ?? (over.preset ? REVIEWER_PRESETS[over.preset].model : undefined);
-    const profValue = prof.model ?? (prof.preset ? REVIEWER_PRESETS[prof.preset].model : undefined);
+    const cliValue = over.model ?? resolveReviewerPreset(over.preset)?.model ?? undefined;
+    const profValue = prof.model ?? resolveReviewerPreset(prof.preset)?.model ?? undefined;
     const fileValue =
       fileCfg[`${step}_model`] ??
-      (fileCfg[`${step}_preset`] ? REVIEWER_PRESETS[fileCfg[`${step}_preset`]].model : undefined);
+      resolveReviewerPreset(fileCfg[`${step}_preset`])?.model ??
+      undefined;
 
     const model = cliValue ?? profValue ?? fileValue ?? def.model;
 

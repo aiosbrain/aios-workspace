@@ -13,14 +13,6 @@
 /** @typedef {{ provider: string, modelId: string, raw: string }} ModelRef */
 
 export const AGENTIC_PROVIDERS = new Set(["claude", "cursor", "opencode", "codex"]);
-export const PROMPT_PROVIDERS = new Set([
-  "openrouter",
-  "deepseek",
-  "opencode",
-  "cursor",
-  "claude",
-  "codex",
-]);
 // These are the approved Codex execution tiers for the AIO-381 delivery lane. Keeping the
 // allowlist here lets `aios ship` reject a typo before it creates a worktree or starts a run.
 export const CODEX_MODEL_TIERS = new Set(["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"]);
@@ -39,10 +31,11 @@ export const REVIEWER_PRESETS = {
   deepseek: {
     model: "deepseek:deepseek-v4-pro",
     billing: "api",
-    description: "DeepSeek's own API — the long-standing default reviewer, keyed by DEEPSEEK_API_KEY.",
+    description:
+      "DeepSeek's own API — the long-standing default reviewer, keyed by DEEPSEEK_API_KEY.",
   },
   "claude-subscription": {
-    model: "claude:claude-fable-5",
+    model: "claude:fable-5",
     billing: "subscription",
     description:
       "Fable via the local `claude` CLI login — billed against a Claude subscription, not API credits.",
@@ -66,7 +59,7 @@ export const REVIEWER_PRESETS = {
 };
 
 export function resolveReviewerPreset(name) {
-  return REVIEWER_PRESETS[name] ?? null;
+  return Object.hasOwn(REVIEWER_PRESETS, name) ? REVIEWER_PRESETS[name] : null;
 }
 
 // Bare open-model ids → OpenRouter vendor/model when OpenCode isn't keyed.

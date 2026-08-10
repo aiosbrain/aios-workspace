@@ -16,6 +16,31 @@ output is reviewed and merged, so "whatever was latest that day" is not an accep
 "what reviewed this diff". Bumping it is a deliberate PR, and `scripts/devtools-preflight.mjs`
 fails if it is loosened to any range, wildcard, tag, workspace alias, or local path.
 
+## Bumping the pin (paired core + devtools changes)
+
+Anything that changes **loop-model routing** (`scripts/loop-models.mjs`, `scripts/model-call.mjs`,
+`scripts/model-providers.mjs`) exists in both repos. Core's test suite cannot prove `aios spec eval`
+or `aios ship` behaviour, because those dispatch into the *published* devtools — so a core-only
+change to a shared module ships a config surface that the runtime rejects. `<step>_preset` is the
+worked example: devtools 0.2.0's `KEY_RE` has no `preset`, so `spec_eval_preset:` in
+`.aios/loop-models.yaml` aborts every devtools command with `unknown key`, not just that step.
+
+Order of operations, and it is not optional:
+
+1. Land the devtools companion PR and publish it (`npm publish` from `aios-devtools`).
+2. In core, bump the pin **and** the lockfile together — the lockfile integrity hash can only come
+   from the registry, so this step is impossible before step 1:
+
+   ```bash
+   npm pkg set dependencies.@aiosbrain/aios-devtools=0.2.1
+   npm install --package-lock-only
+   npm run check:devtools        # declared and installed must both read 0.2.1
+   ```
+
+3. Only then merge the core PR.
+
+Merging core first ships a broken config surface to every operator on the current pin.
+
 ## Preflight
 
 ```bash

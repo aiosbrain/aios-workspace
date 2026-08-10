@@ -6,7 +6,6 @@ import {
   isSupportedCodexModel,
   REVIEWER_PRESETS,
   resolveReviewerPreset,
-  PROMPT_PROVIDERS,
 } from "../scripts/model-providers.mjs";
 
 let failed = 0;
@@ -63,11 +62,23 @@ console.log("toOpenRouterModelId");
 
 console.log("reviewer presets (runtime-agnostic reviewer selection)");
 {
-  ok("deepseek preset resolves", resolveReviewerPreset("deepseek")?.model === "deepseek:deepseek-v4-pro");
+  ok(
+    "deepseek preset resolves",
+    resolveReviewerPreset("deepseek")?.model === "deepseek:deepseek-v4-pro"
+  );
   ok("unknown preset resolves to null", resolveReviewerPreset("not-a-preset") === null);
+  ok(
+    "inherited constructor preset resolves to null",
+    resolveReviewerPreset("constructor") === null
+  );
+  ok("inherited __proto__ preset resolves to null", resolveReviewerPreset("__proto__") === null);
   ok(
     "claude-subscription preset routes through claude: provider",
     parseModelRef(REVIEWER_PRESETS["claude-subscription"].model).provider === "claude"
+  );
+  ok(
+    "claude-subscription preset uses the supported Fable model id",
+    REVIEWER_PRESETS["claude-subscription"].model === "claude:fable-5"
   );
   ok(
     "codex-subscription preset routes through codex: provider",
@@ -79,14 +90,15 @@ console.log("reviewer presets (runtime-agnostic reviewer selection)");
   );
   ok(
     "every preset declares a billing mode",
-    Object.values(REVIEWER_PRESETS).every((p) => p.billing === "subscription" || p.billing === "api")
+    Object.values(REVIEWER_PRESETS).every(
+      (p) => p.billing === "subscription" || p.billing === "api"
+    )
   );
   ok(
     "subscription and api presets both exist (runtime-agnostic)",
     Object.values(REVIEWER_PRESETS).some((p) => p.billing === "subscription") &&
       Object.values(REVIEWER_PRESETS).some((p) => p.billing === "api")
   );
-  ok("codex is a prompt-capable provider", PROMPT_PROVIDERS.has("codex"));
 }
 
 if (failed) process.exit(1);
