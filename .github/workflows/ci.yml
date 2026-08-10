@@ -575,7 +575,14 @@ jobs:
           fi
           npm install -g "npm@$PINNED_NPM" --ignore-scripts
           npm --version
-      - run: npm ci
+      # --ignore-scripts, then build explicitly: the postinstall hook only builds the
+      # operator loop, and test:node's `ensure-loop-built --strict` preamble needs that
+      # artifact either way. What this lane exists to compare is npm's OUTPUT SHAPES
+      # under a different major, not whether lifecycle hooks fire, so disabling them
+      # costs no coverage. Same call the sibling aios-devtools repo made on its
+      # toolkit-drift lane after SonarCloud flagged the identical pattern (AIO-699).
+      - run: npm ci --ignore-scripts
+      - run: npm run build:loop
       - name: Run the suite on the publish lane's npm
         run: npm run test:node -- --concurrency=2
       # test:node cannot reach the golden-path test — it self-skips unless
