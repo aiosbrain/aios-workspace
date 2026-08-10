@@ -14,6 +14,7 @@ import { checkInvariants } from "../scripts/integration-contracts/taxonomy.mjs";
 import { loadFixture } from "../scripts/integration-contracts/load.mjs";
 import {
   classifyCapability,
+  findEvidenceCapabilityFault,
   findOutcomeCapabilityFault,
   findSkippedDeclaredCapabilities,
 } from "../scripts/integration-contracts/fixtures.mjs";
@@ -29,8 +30,10 @@ import {
   resolvePointer,
 } from "../scripts/integration-contracts/load.mjs";
 import {
+  compareSemver,
   evaluateHarnessPolicy,
   evaluateManifestLoad,
+  parseSemver,
 } from "../scripts/integration-contracts/compat.mjs";
 import {
   evaluateManifest,
@@ -167,6 +170,41 @@ test("prerelease host versions do not satisfy a stable min_host", () => {
   );
 });
 
+test("SemVer precedence remains exact above JavaScript's safe integer limit", () => {
+  const lowerCore = parseSemver("9007199254740992.0.0");
+  const higherCore = parseSemver("9007199254740993.0.0");
+  assert.equal(compareSemver(lowerCore, higherCore), -1);
+
+  const lowerPrerelease = parseSemver("1.0.0-9007199254740992");
+  const higherPrerelease = parseSemver("1.0.0-9007199254740993");
+  assert.equal(compareSemver(lowerPrerelease, higherPrerelease), -1);
+
+  assert.equal(
+    evaluateManifestLoad(
+      { host_version: "1.0.0-9007199254740992", supported_contract_majors: [1] },
+      { contract_version: "1.0.0", min_host: "1.0.0-9007199254740993" }
+    ).result,
+    "inactive"
+  );
+});
+
+test("SemVer comparison reproduces the specification's prerelease precedence chain", () => {
+  const ordered = [
+    "1.0.0-alpha",
+    "1.0.0-alpha.1",
+    "1.0.0-alpha.beta",
+    "1.0.0-beta",
+    "1.0.0-beta.2",
+    "1.0.0-beta.11",
+    "1.0.0-rc.1",
+    "1.0.0",
+  ].map(parseSemver);
+  for (let index = 1; index < ordered.length; index += 1) {
+    assert.equal(compareSemver(ordered[index - 1], ordered[index]), -1);
+  }
+  assert.equal(parseSemver("1.0.0-01"), null, "numeric prerelease identifiers forbid zeros");
+});
+
 test("private, loopback and link-local provider hosts are rejected", () => {
   for (const host of [
     "localhost",
@@ -194,6 +232,22 @@ test("shorthand and octal IPv4 forms cannot slip past the private-host check", (
   for (const host of ["127.1", "127.0.1", "0177.0.0.1", "010.0.0.1", "2130706433", "1.2.3.4.5"]) {
     assert.equal(isPrivateHost(host), true, host);
   }
+});
+
+test("absolute DNS names cannot hide localhost or private addresses behind a root dot", () => {
+  for (const host of ["localhost.", "api.localhost.", "dev.local.", "127.0.0.1."]) {
+    assert.equal(isPrivateHost(host), true, host);
+  }
+  assert.equal(isPrivateHost("api.linear.app."), false);
+
+  const { artifacts } = loadContracts();
+  const clickup = structuredClone(loadFixture("manifest/clickup.valid.json"));
+  clickup.auth.oauth.token_endpoint = "https://localhost./oauth/token";
+  const findings = evaluateManifest(clickup, artifacts["capabilities.json"]);
+  assert.ok(
+    findings.some((finding) => finding.rule === "MR-HOST-PRIVATE"),
+    `expected MR-HOST-PRIVATE, got ${JSON.stringify(findings)}`
+  );
 });
 
 test("private-address rejection reaches OAuth endpoints, not just provider_hosts", () => {
@@ -276,6 +330,63 @@ test("a self-reported mutation_class cannot bypass the mutation retry rule", () 
     kind: "unknown-capability",
     capability: "pm.work_item.typo",
   });
+});
+
+test("every outcome capability field is closed and names the root operation", () => {
+  const { artifacts } = loadContracts();
+  const capabilities = artifacts["capabilities.json"];
+
+  assert.deepEqual(
+    findOutcomeCapabilityFault(
+      loadFixture("outcomes/unsupported.invalid-unknown-nested-capability.json"),
+      capabilities
+    ),
+    {
+      kind: "unknown-capability",
+      capability: "pm.work_item.typo",
+      field: "unsupported_capability",
+    }
+  );
+  assert.deepEqual(
+    findOutcomeCapabilityFault(
+      loadFixture("outcomes/ambiguous.invalid-unknown-attempted-capability.json"),
+      capabilities
+    ),
+    {
+      kind: "unknown-capability",
+      capability: "pm.work_item.typo",
+      field: "attempted_mutation.capability",
+    }
+  );
+
+  const mismatched = structuredClone(loadFixture("outcomes/ambiguous.valid.json"));
+  mismatched.attempted_mutation.capability = "pm.work_item.update";
+  assert.deepEqual(findOutcomeCapabilityFault(mismatched, capabilities), {
+    kind: "capability-mismatch",
+    capability: "pm.work_item.update",
+    field: "attempted_mutation.capability",
+    expected: "pm.work_item.create",
+  });
+});
+
+test("suite capability ids cannot escape evidence taxonomy validation", () => {
+  const { artifacts } = loadContracts();
+  const capabilities = artifacts["capabilities.json"];
+  assert.equal(
+    findEvidenceCapabilityFault(loadFixture("evidence/pass.valid.json"), capabilities),
+    null
+  );
+  assert.deepEqual(
+    findEvidenceCapabilityFault(
+      loadFixture("evidence/pass.invalid-unknown-suite-capability.json"),
+      capabilities
+    ),
+    {
+      kind: "unknown-capability",
+      capability: "pm.work_item.typo",
+      field: "suites[0].capabilities",
+    }
+  );
 });
 
 test("a declared capability may not be skipped, even in an otherwise passing suite", () => {

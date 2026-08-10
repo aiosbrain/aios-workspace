@@ -229,13 +229,38 @@ export function classifyCapability(id, contract) {
  * unknown non-extension id is a fault, not an exemption — otherwise a single typo buys the
  * same escape.
  *
- * Returns `null`, or `{ kind: "class-mismatch" | "unknown-capability", ... }`.
+ * The outcome-specific capability fields must also name the root operation. Checking only
+ * `outcome.capability` leaves `unsupported_capability` and
+ * `attempted_mutation.capability` able to smuggle unknown ids past this rule.
+ *
+ * Returns `null`, or `{ kind: "class-mismatch" | "unknown-capability" |
+ * "capability-mismatch", ... }`.
  */
 export function findOutcomeCapabilityFault(outcome, contract) {
+  const references = [
+    ["capability", outcome.capability],
+    ["unsupported_capability", outcome.unsupported_capability],
+    ["attempted_mutation.capability", outcome.attempted_mutation?.capability],
+  ].filter(([, id]) => typeof id === "string");
+
+  for (const [field, id] of references) {
+    if (classifyCapability(id, contract) === "unknown") {
+      return field === "capability"
+        ? { kind: "unknown-capability", capability: id }
+        : { kind: "unknown-capability", capability: id, field };
+    }
+    if (field !== "capability" && id !== outcome.capability) {
+      return {
+        kind: "capability-mismatch",
+        capability: id,
+        field,
+        expected: outcome.capability,
+      };
+    }
+  }
+
   const id = outcome.capability;
-  const classification = classifyCapability(id, contract);
-  if (classification === "extension") return null;
-  if (classification === "unknown") return { kind: "unknown-capability", capability: id };
+  if (classifyCapability(id, contract) === "extension") return null;
 
   const expected = contract.capabilities[id].class;
   if (outcome.mutation_class === expected) return null;
@@ -245,6 +270,7 @@ export function findOutcomeCapabilityFault(outcome, contract) {
 const OUTCOME_FAULT_KINDS = {
   "outcome-class-mismatch": "class-mismatch",
   "outcome-unknown-capability": "unknown-capability",
+  "outcome-capability-mismatch": "capability-mismatch",
 };
 
 export function checkOutcomeClassRule(index, contract, fail) {
@@ -261,30 +287,52 @@ export function checkOutcomeClassRule(index, contract, fail) {
       fail(
         fault.kind === "unknown-capability"
           ? `fixture ${entry.id}: capability "${fault.capability}" is outside the closed v1 set and is not a namespaced extension`
-          : `fixture ${entry.id}: declares mutation_class "${fault.declared}" for ${fault.capability}, whose taxonomy class is "${fault.expected}"`
+          : fault.kind === "capability-mismatch"
+            ? `fixture ${entry.id}: ${fault.field} names "${fault.capability}" instead of root capability "${fault.expected}"`
+            : `fixture ${entry.id}: declares mutation_class "${fault.declared}" for ${fault.capability}, whose taxonomy class is "${fault.expected}"`
       );
     }
   }
 }
 
 /**
- * The same distinction applied to evidence: a capability matrix listing an id that is neither
- * in the taxonomy nor a valid extension would silently match no canonical test, so the
- * skipped-capability rule below would have nothing to catch it on.
+ * The same distinction applied to every capability-bearing evidence field. An id that is
+ * neither in the taxonomy nor a valid extension would silently match no canonical test, so
+ * the skipped-capability rule below would have nothing to catch it on.
  */
+export function findEvidenceCapabilityFault(evidence, contract) {
+  const references = [
+    ...(evidence.capability_matrix?.supported ?? []).map((id) => [
+      "capability_matrix.supported",
+      id,
+    ]),
+    ...(evidence.capability_matrix?.unsupported ?? []).map((id) => [
+      "capability_matrix.unsupported",
+      id,
+    ]),
+    ...(evidence.suites ?? []).flatMap((suite, index) =>
+      (suite.capabilities ?? []).map((id) => [`suites[${index}].capabilities`, id])
+    ),
+  ];
+  for (const [field, capability] of references) {
+    if (classifyCapability(capability, contract) === "unknown") {
+      return { kind: "unknown-capability", capability, field };
+    }
+  }
+  return null;
+}
+
 export function checkEvidenceCapabilityIds(index, contract, fail) {
   for (const entry of index.evidence) {
-    const doc = loadFixture(entry.file);
-    const declared = [
-      ...(doc.capability_matrix?.supported ?? []),
-      ...(doc.capability_matrix?.unsupported ?? []),
-    ];
-    for (const id of declared) {
-      if (classifyCapability(id, contract) === "unknown") {
-        fail(
-          `fixture ${entry.id}: capability_matrix lists "${id}", which is outside the closed v1 set and is not a namespaced extension`
-        );
-      }
+    const fault = findEvidenceCapabilityFault(loadFixture(entry.file), contract);
+    const shouldFault = entry.failure?.kind === "evidence-unknown-capability";
+    if (shouldFault && fault?.kind !== "unknown-capability") {
+      fail(`fixture ${entry.id}: expected an unknown evidence capability, found none`);
+    }
+    if (!shouldFault && fault) {
+      fail(
+        `fixture ${entry.id}: ${fault.field} lists "${fault.capability}", which is outside the closed v1 set and is not a namespaced extension`
+      );
     }
   }
 }

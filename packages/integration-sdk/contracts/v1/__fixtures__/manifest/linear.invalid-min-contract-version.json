@@ -1,7 +1,7 @@
 {
   "connector_id": "linear",
   "display_name": "Linear",
-  "contract_version": "1.0.0",
+  "contract_version": "1.0.0-alpha",
   "min_host": "1.0.0",
   "owner": {
     "team": "AIOS Core",
@@ -259,6 +259,6 @@
       "sync.concurrent-conflict",
       "sync.no-echo"
     ],
-    "min_contract_version": "1.1.0"
+    "min_contract_version": "1.0.0"
   }
 }

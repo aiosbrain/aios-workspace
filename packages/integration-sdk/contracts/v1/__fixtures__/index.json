@@ -539,6 +539,24 @@
         "kind": "outcome-unknown-capability"
       },
       "note": "An unknown pm.*.* id must not inherit the exemption meant for x-<owner>.<name> extensions."
+    },
+    {
+      "id": "outcome-unsupported-unknown-nested-capability",
+      "file": "outcomes/unsupported.invalid-unknown-nested-capability.json",
+      "expect": "invalid",
+      "failure": {
+        "kind": "outcome-unknown-capability"
+      },
+      "note": "unsupported_capability is checked against the closed capability taxonomy."
+    },
+    {
+      "id": "outcome-ambiguous-unknown-attempted-capability",
+      "file": "outcomes/ambiguous.invalid-unknown-attempted-capability.json",
+      "expect": "invalid",
+      "failure": {
+        "kind": "outcome-unknown-capability"
+      },
+      "note": "attempted_mutation.capability is checked against the closed capability taxonomy."
     }
   ],
   "evidence": [
@@ -621,6 +639,15 @@
         "kind": "declared-capability-skipped"
       },
       "note": "A declared capability cannot be skipped, even when the suite otherwise passes."
+    },
+    {
+      "id": "evidence-unknown-suite-capability",
+      "file": "evidence/pass.invalid-unknown-suite-capability.json",
+      "expect": "invalid",
+      "failure": {
+        "kind": "evidence-unknown-capability"
+      },
+      "note": "Suite capability ids are checked against the same closed taxonomy as the matrix."
     }
   ]
 }

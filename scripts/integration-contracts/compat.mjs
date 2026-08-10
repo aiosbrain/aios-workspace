@@ -16,14 +16,22 @@ const SEMVER_RE =
  * Parse into `{ core: [major, minor, patch], prerelease: string[] }`. Build metadata is
  * discarded, which SemVer §10 requires — it carries no precedence.
  */
-function parse(version) {
+export function parseSemver(version) {
   if (typeof version !== "string") return null;
   const m = SEMVER_RE.exec(version);
   if (!m) return null;
   return {
-    core: [Number(m[1]), Number(m[2]), Number(m[3])],
+    // Keep numeric identifiers as strings. SemVer places no upper bound on their size, so
+    // coercing them to Number would collapse distinct versions above MAX_SAFE_INTEGER.
+    core: [m[1], m[2], m[3]],
     prerelease: m[4] ? m[4].split(".") : [],
   };
+}
+
+function compareNumericIdentifiers(left, right) {
+  if (left.length !== right.length) return left.length < right.length ? -1 : 1;
+  if (left === right) return 0;
+  return left < right ? -1 : 1;
 }
 
 /**
@@ -32,9 +40,10 @@ function parse(version) {
  * a stable `min_host` and load a connector the release does not actually support — a
  * fail-open hole in the one table that exists to fail closed.
  */
-function compare(left, right) {
+export function compareSemver(left, right) {
   for (let i = 0; i < 3; i += 1) {
-    if (left.core[i] !== right.core[i]) return left.core[i] < right.core[i] ? -1 : 1;
+    const coreComparison = compareNumericIdentifiers(left.core[i], right.core[i]);
+    if (coreComparison !== 0) return coreComparison;
   }
   // A version WITH a prerelease has lower precedence than the same version without one.
   if (left.prerelease.length === 0 && right.prerelease.length === 0) return 0;
@@ -50,7 +59,8 @@ function compare(left, right) {
     const aNumeric = /^\d+$/.test(a);
     const bNumeric = /^\d+$/.test(b);
     if (aNumeric && bNumeric) {
-      if (Number(a) !== Number(b)) return Number(a) < Number(b) ? -1 : 1;
+      const numericComparison = compareNumericIdentifiers(a, b);
+      if (numericComparison !== 0) return numericComparison;
     } else if (aNumeric !== bNumeric) {
       // Numeric identifiers always have lower precedence than alphanumeric ones.
       return aNumeric ? -1 : 1;
@@ -68,23 +78,28 @@ function compare(left, right) {
  * would otherwise be satisfied.
  */
 export function evaluateManifestLoad(host, manifest) {
-  const hostVersion = parse(host.host_version);
-  const contractVersion = parse(manifest.contract_version);
-  const minHost = parse(manifest.min_host);
+  const hostVersion = parseSemver(host.host_version);
+  const contractVersion = parseSemver(manifest.contract_version);
+  const minHost = parseSemver(manifest.min_host);
   if (!hostVersion || !contractVersion || !minHost) {
     return { result: "fail_closed", rule: "malformed_or_missing_version" };
   }
 
-  if (contractVersion.core[0] > hostVersion.core[0]) {
+  const majorComparison = compareNumericIdentifiers(contractVersion.core[0], hostVersion.core[0]);
+  if (majorComparison > 0) {
     return { result: "fail_closed", rule: "future_major" };
   }
   if (
-    contractVersion.core[0] < hostVersion.core[0] &&
-    !(host.supported_contract_majors ?? []).includes(contractVersion.core[0])
+    majorComparison < 0 &&
+    !(host.supported_contract_majors ?? []).some(
+      (major) =>
+        (typeof major === "string" || Number.isSafeInteger(major)) &&
+        String(major) === contractVersion.core[0]
+    )
   ) {
     return { result: "fail_closed", rule: "unlisted_older_major" };
   }
-  if (compare(minHost, hostVersion) > 0) {
+  if (compareSemver(minHost, hostVersion) > 0) {
     return { result: "inactive", rule: "host_below_min_host" };
   }
   return { result: "load", rule: "compatible" };

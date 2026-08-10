@@ -11,6 +11,7 @@
  * is what stops a negative fixture from rotting into a tautology.
  */
 import { canonicalJson, resolvePointer } from "./load.mjs";
+import { compareSemver, parseSemver } from "./compat.mjs";
 
 const EXTENSION_RE = /^x-[a-z0-9][a-z0-9-]*\.[a-z0-9][a-z0-9._-]*$/;
 const EXTENSION_MAX_BYTES = 16 * 1024;
@@ -50,7 +51,10 @@ export const MANIFEST_RULE_IDS = [
  * brackets, which the origin pattern rejects outright.
  */
 export function isPrivateHost(hostname) {
-  const host = hostname.toLowerCase();
+  // URL.hostname preserves the terminal root label for an absolute DNS name. Normalize it
+  // before applying suffix and numeric-host checks, or `localhost.` and `127.0.0.1.` evade
+  // the exact same rules as their ordinary spellings.
+  const host = hostname.toLowerCase().replace(/\.$/, "");
   if (host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local")) return true;
 
   const labels = host.split(".");
@@ -82,18 +86,6 @@ export function hostnameOf(url) {
   } catch {
     return null;
   }
-}
-
-function parseSemver(value) {
-  const m = /^(\d+)\.(\d+)\.(\d+)/.exec(value ?? "");
-  return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
-}
-
-function compareSemver(left, right) {
-  for (let i = 0; i < 3; i += 1) {
-    if (left[i] !== right[i]) return left[i] < right[i] ? -1 : 1;
-  }
-  return 0;
 }
 
 /**
