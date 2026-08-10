@@ -205,36 +205,86 @@ export function checkEvidenceCoverage(index, fail) {
 }
 
 /**
+ * Classify a capability id against the closed taxonomy: `known`, `extension`, or `unknown`.
+ *
+ * The distinction between `extension` and `unknown` is the whole point. The schemas' id
+ * pattern accepts any syntactically valid `core.*.*` / `pm.*.*`, so "absent from the
+ * taxonomy" is NOT the same as "an extension" — treating the two alike is how a typo like
+ * `pm.work_item.typo` earns an exemption meant only for `x-<owner>.<name>`.
+ */
+export function classifyCapability(id, contract) {
+  if (contract.capabilities[id]) return "known";
+  if (new RegExp(contract.extension_namespace_pattern).test(id)) return "extension";
+  return "unknown";
+}
+
+/**
  * `mutation_class` gates the mutation-retry branch in outcomes.schema.json, but the schema
  * has no way to check that field against the capability it accompanies. Left unchecked, an
  * outcome for `pm.work_item.update` could declare `"mutation_class": "read"` and then carry
  * `retryable: true` with `duplicate_safety: "none"` — the mutation branch never runs, and the
  * duplicate-safety invariant (INT-007) is bypassed by self-report.
  *
- * Extension capabilities have no class in the closed taxonomy, so they are exempt rather than
- * treated as mismatches.
+ * Extension capabilities carry no class in the closed taxonomy and are genuinely exempt. An
+ * unknown non-extension id is a fault, not an exemption — otherwise a single typo buys the
+ * same escape.
  *
- * Returns `{ capability, declared, expected }` on mismatch, otherwise null.
+ * Returns `null`, or `{ kind: "class-mismatch" | "unknown-capability", ... }`.
  */
-export function findOutcomeClassMismatch(outcome, contract) {
-  const expected = contract.capabilities[outcome.capability]?.class;
-  if (!expected) return null;
+export function findOutcomeCapabilityFault(outcome, contract) {
+  const id = outcome.capability;
+  const classification = classifyCapability(id, contract);
+  if (classification === "extension") return null;
+  if (classification === "unknown") return { kind: "unknown-capability", capability: id };
+
+  const expected = contract.capabilities[id].class;
   if (outcome.mutation_class === expected) return null;
-  return { capability: outcome.capability, declared: outcome.mutation_class, expected };
+  return { kind: "class-mismatch", capability: id, declared: outcome.mutation_class, expected };
 }
+
+const OUTCOME_FAULT_KINDS = {
+  "outcome-class-mismatch": "class-mismatch",
+  "outcome-unknown-capability": "unknown-capability",
+};
 
 export function checkOutcomeClassRule(index, contract, fail) {
   for (const entry of index.outcomes) {
-    const mismatch = findOutcomeClassMismatch(loadFixture(entry.file), contract);
-    const shouldMismatch = entry.failure?.kind === "outcome-class-mismatch";
+    const fault = findOutcomeCapabilityFault(loadFixture(entry.file), contract);
+    const expectedKind = OUTCOME_FAULT_KINDS[entry.failure?.kind];
 
-    if (shouldMismatch && !mismatch) {
-      fail(`fixture ${entry.id}: expected a mutation_class mismatch, found none`);
-    }
-    if (!shouldMismatch && mismatch) {
+    if (expectedKind && fault?.kind !== expectedKind) {
       fail(
-        `fixture ${entry.id}: declares mutation_class "${mismatch.declared}" for ${mismatch.capability}, whose taxonomy class is "${mismatch.expected}"`
+        `fixture ${entry.id}: expected outcome fault "${expectedKind}", got ${fault ? `"${fault.kind}"` : "none"}`
       );
+    }
+    if (!expectedKind && fault) {
+      fail(
+        fault.kind === "unknown-capability"
+          ? `fixture ${entry.id}: capability "${fault.capability}" is outside the closed v1 set and is not a namespaced extension`
+          : `fixture ${entry.id}: declares mutation_class "${fault.declared}" for ${fault.capability}, whose taxonomy class is "${fault.expected}"`
+      );
+    }
+  }
+}
+
+/**
+ * The same distinction applied to evidence: a capability matrix listing an id that is neither
+ * in the taxonomy nor a valid extension would silently match no canonical test, so the
+ * skipped-capability rule below would have nothing to catch it on.
+ */
+export function checkEvidenceCapabilityIds(index, contract, fail) {
+  for (const entry of index.evidence) {
+    const doc = loadFixture(entry.file);
+    const declared = [
+      ...(doc.capability_matrix?.supported ?? []),
+      ...(doc.capability_matrix?.unsupported ?? []),
+    ];
+    for (const id of declared) {
+      if (classifyCapability(id, contract) === "unknown") {
+        fail(
+          `fixture ${entry.id}: capability_matrix lists "${id}", which is outside the closed v1 set and is not a namespaced extension`
+        );
+      }
     }
   }
 }

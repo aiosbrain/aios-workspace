@@ -34,6 +34,7 @@ import {
 } from "./integration-contracts/taxonomy.mjs";
 import { checkCompatibility } from "./integration-contracts/compat.mjs";
 import {
+  checkEvidenceCapabilityIds,
   checkEvidenceCoverage,
   checkEvidenceDigestParity,
   checkEvidenceSkipRule,
@@ -83,6 +84,7 @@ export function validateContracts() {
   checkOutcomeCoverage(index, artifacts, fail);
   checkOutcomeClassRule(index, capabilities, fail);
   checkEvidenceCoverage(index, fail);
+  checkEvidenceCapabilityIds(index, capabilities, fail);
   checkEvidenceSkipRule(index, capabilities, fail);
   checkEvidenceDigestParity(index, digests, fail);
 

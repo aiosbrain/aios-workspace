@@ -13,7 +13,8 @@ import test from "node:test";
 import { checkInvariants } from "../scripts/integration-contracts/taxonomy.mjs";
 import { loadFixture } from "../scripts/integration-contracts/load.mjs";
 import {
-  findOutcomeClassMismatch,
+  classifyCapability,
+  findOutcomeCapabilityFault,
   findSkippedDeclaredCapabilities,
 } from "../scripts/integration-contracts/fixtures.mjs";
 
@@ -239,7 +240,7 @@ test("a self-reported mutation_class cannot bypass the mutation retry rule", () 
   const capabilities = artifacts["capabilities.json"];
 
   assert.equal(
-    findOutcomeClassMismatch(loadFixture("outcomes/verified.valid.json"), capabilities),
+    findOutcomeCapabilityFault(loadFixture("outcomes/verified.valid.json"), capabilities),
     null
   );
 
@@ -248,20 +249,33 @@ test("a self-reported mutation_class cannot bypass the mutation retry rule", () 
   const bypass = loadFixture("outcomes/unavailable.invalid-class-mismatch.json");
   assert.equal(bypass.retry.duplicate_safety, "none");
   assert.equal(bypass.retry.retryable, true);
-  assert.deepEqual(findOutcomeClassMismatch(bypass, capabilities), {
+  assert.deepEqual(findOutcomeCapabilityFault(bypass, capabilities), {
+    kind: "class-mismatch",
     capability: "pm.work_item.update",
     declared: "read",
     expected: "write",
   });
 
-  // An extension capability has no class in the closed taxonomy, so it is exempt.
+  // A VALID extension carries no class in the closed taxonomy and is genuinely exempt...
+  assert.equal(classifyCapability("x-linear.roadmaps", capabilities), "extension");
   assert.equal(
-    findOutcomeClassMismatch(
+    findOutcomeCapabilityFault(
       { capability: "x-linear.roadmaps", mutation_class: "read" },
       capabilities
     ),
     null
   );
+
+  // ...but a typo in a closed namespace must NOT inherit that exemption. It is
+  // schema-valid, absent from the taxonomy, and not an extension.
+  assert.equal(classifyCapability("pm.work_item.typo", capabilities), "unknown");
+  const typo = loadFixture("outcomes/unavailable.invalid-unknown-capability.json");
+  assert.equal(typo.retry.duplicate_safety, "none");
+  assert.equal(typo.retry.retryable, true);
+  assert.deepEqual(findOutcomeCapabilityFault(typo, capabilities), {
+    kind: "unknown-capability",
+    capability: "pm.work_item.typo",
+  });
 });
 
 test("a declared capability may not be skipped, even in an otherwise passing suite", () => {
