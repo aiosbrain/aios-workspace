@@ -1,10 +1,10 @@
 {
-  "$comment": "IC workspace (dogfood): block cross-repo edits/commits to the toolkit PRIMARY checkout. This workspace stays writable on master; only the linked toolkit checkout is guarded.",
+  "$comment": "IC workspace (dogfood): block cross-repo edits/commits to the toolkit PRIMARY checkout. This workspace stays writable on master; only the linked toolkit checkout is guarded. Commands carry an inline existence check: in a MULTI-ROOT Cursor session ${CURSOR_PROJECT_DIR} resolves to ONE root, which may be a repo that has no .cursor/hooks/ of its own — /bin/sh then exits 127 (script not found) and failClosed turns that into a DENY, blocking every edit and shell call across the whole session. A missing script means 'this root is not guard-configured', which is not a policy decision, so it exits 0. The check is inline because a helper script would sit at the same unresolvable path. When the script IS present the guard runs exactly as before.",
   "version": 1,
   "hooks": {
     "beforeShellExecution": [
       {
-        "command": "/bin/sh \"${CURSOR_PROJECT_DIR}/.cursor/hooks/guard-toolkit-primary.sh\" pre_command",
+        "command": "/bin/sh -c 'p=\"$1\"; shift; [ -f \"$p\" ] || exit 0; exec /bin/sh \"$p\" \"$@\"' _ \"${CURSOR_PROJECT_DIR}/.cursor/hooks/guard-toolkit-primary.sh\" pre_command",
         "timeout": 30,
         "failClosed": true
       }
@@ -12,14 +12,14 @@
     "preToolUse": [
       {
         "matcher": "Write|Edit|MultiEdit|StrReplace|Delete|Remove|Move|Rename",
-        "command": "/bin/sh \"${CURSOR_PROJECT_DIR}/.cursor/hooks/guard-toolkit-primary.sh\" pre_edit",
+        "command": "/bin/sh -c 'p=\"$1\"; shift; [ -f \"$p\" ] || exit 0; exec /bin/sh \"$p\" \"$@\"' _ \"${CURSOR_PROJECT_DIR}/.cursor/hooks/guard-toolkit-primary.sh\" pre_edit",
         "timeout": 30,
         "failClosed": true
       }
     ],
     "stop": [
       {
-        "command": "/bin/sh \"${CURSOR_PROJECT_DIR}/.cursor/hooks/toolkit-primary-tripwire.sh\"",
+        "command": "/bin/sh -c 'p=\"$1\"; shift; [ -f \"$p\" ] || exit 0; exec /bin/sh \"$p\" \"$@\"' _ \"${CURSOR_PROJECT_DIR}/.cursor/hooks/toolkit-primary-tripwire.sh\"",
         "timeout": 30,
         "loop_limit": 3
       }
