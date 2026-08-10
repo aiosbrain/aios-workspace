@@ -578,6 +578,15 @@ jobs:
       - run: npm ci
       - name: Run the suite on the publish lane's npm
         run: npm run test:node -- --concurrency=2
+      # test:node cannot reach the golden-path test — it self-skips unless
+      # AIOS_PACK_GOLDEN_TESTS=1, so the `npm pack golden path` job above is its only
+      # runner and that job uses the bundled npm. It is also the single test that
+      # actually packs a tarball, installs it, and runs the installed bin, which makes
+      # it the most publish-shaped surface in the repo and the one most exposed to an
+      # npm behaviour change. Passing today on both majors; run it here so it stays
+      # that way rather than being discovered at publish time.
+      - name: Run the pack golden path on the publish lane's npm
+        run: npm run test:pack-golden
 
   mutation:
     name: Changed-code mutation (calibration)
