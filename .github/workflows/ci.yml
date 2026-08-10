@@ -525,6 +525,76 @@ jobs:
       - run: npm ci
       - run: npm run test:pack-golden
 
+  publish-npm-parity:
+    # The publish path runs a DIFFERENT npm major than every lane above. Trusted
+    # publishing needs npm >= 11.5.1, so publish-npm.yml installs the pin from
+    # `.npm-version` (12.0.2 today), while every other job here — pack-golden
+    # included — runs whatever npm ships bundled with Node 22 (10.x/11.x).
+    #
+    # Nothing exercised that npm major, and the publish workflow is manual-dispatch
+    # only, so its own gates were the first thing to see a difference. npm 12 changed
+    # two `--json` output shapes: `npm view <exact-spec> version --json` went from a
+    # bare string to a single-element array, and `npm pack --json` went from an array
+    # of records to an OBJECT keyed by package name. The sibling aios-devtools repo
+    # hit exactly this — two tests parsed the old shapes, stayed green on every PR,
+    # and broke only at publish time. The same three npm-surface tests live here
+    # (npm-pack-manifest, npm-pack-golden-path, foundation-package), two of which ARE
+    # publish gates, so this repo had the identical latent divergence.
+    #
+    # This lane runs the WHOLE Node suite on the pinned npm rather than a hand-listed
+    # subset: a file list in YAML rots the moment someone adds another test that
+    # shells out to npm, which is the failure mode being fixed. It is mandatory via
+    # `test-gate` below, so a shape/behaviour difference under the publishing npm now
+    # fails a PR check instead of a release.
+    #
+    # WHY NOT pin this npm across all lanes: `node-tests` on the bundled npm is what
+    # proves the suite works for an OSS consumer, who has whatever npm their Node
+    # shipped (`engines.node: ">=22"` propagates through @aiosbrain/foundation).
+    # Pinning everywhere deletes that coverage and couples all of CI to one npm bump.
+    # Two lanes, one pin, read from one file.
+    name: unit tests (publish lane npm)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30 # unsharded full suite; node-tests p100 is 2.6 min per 1/3 shard
+    needs: changes
+    if: needs.changes.outputs.code != 'false'
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      # Byte-identical install line to publish-npm.yml, reading the same `.npm-version`.
+      # The exact x.y.z assertion is not cosmetic: a range or `latest` here would
+      # silently stop testing the version that actually publishes.
+      - name: Install the pinned npm the publish workflow uses
+        run: |
+          PINNED_NPM="$(tr -d '[:space:]' < .npm-version)"
+          if ! printf '%s' "$PINNED_NPM" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::.npm-version must contain an exact x.y.z npm version (got '$PINNED_NPM')"
+            exit 1
+          fi
+          npm install -g "npm@$PINNED_NPM" --ignore-scripts
+          npm --version
+      # --ignore-scripts, then build explicitly: the postinstall hook only builds the
+      # operator loop, and test:node's `ensure-loop-built --strict` preamble needs that
+      # artifact either way. What this lane exists to compare is npm's OUTPUT SHAPES
+      # under a different major, not whether lifecycle hooks fire, so disabling them
+      # costs no coverage. Same call the sibling aios-devtools repo made on its
+      # toolkit-drift lane after SonarCloud flagged the identical pattern (AIO-699).
+      - run: npm ci --ignore-scripts
+      - run: npm run build:loop
+      - name: Run the suite on the publish lane's npm
+        run: npm run test:node -- --concurrency=2
+      # test:node cannot reach the golden-path test — it self-skips unless
+      # AIOS_PACK_GOLDEN_TESTS=1, so the `npm pack golden path` job above is its only
+      # runner and that job uses the bundled npm. It is also the single test that
+      # actually packs a tarball, installs it, and runs the installed bin, which makes
+      # it the most publish-shaped surface in the repo and the one most exposed to an
+      # npm behaviour change. Passing today on both majors; run it here so it stays
+      # that way rather than being discovered at publish time.
+      - name: Run the pack golden path on the publish lane's npm
+        run: npm run test:pack-golden
+
   mutation:
     name: Changed-code mutation (calibration)
     runs-on: ubuntu-latest
@@ -575,6 +645,7 @@ jobs:
       - guard
       - lint
       - node-tests
+      - publish-npm-parity
       - coverage-shard
       - coverage
     steps:
