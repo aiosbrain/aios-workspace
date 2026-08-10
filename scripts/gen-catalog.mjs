@@ -13,7 +13,14 @@
  *   node scripts/gen-catalog.mjs [--repo <path>]   (default: cwd)
  */
 
-import { readFileSync, writeFileSync, existsSync, readdirSync, statSync } from "node:fs";
+import {
+  readFileSync,
+  writeFileSync,
+  existsSync,
+  readdirSync,
+  statSync,
+  realpathSync,
+} from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -251,8 +258,31 @@ export function cmdCatalog(repo, rest) {
   generate(repo);
 }
 
+/**
+ * Whether this module was run directly (as opposed to imported by a test).
+ *
+ * Realpath BOTH sides — the canonical form, see the same guard in ci-changed-lanes.mjs.
+ * `path.resolve` does NOT resolve symlinks but Node's module loader DOES, so comparing a
+ * resolved `process.argv[1]` against `import.meta.url` is false for any entrypoint reached
+ * through a symlink. That is not an edge case here: `aios update` spawns this from its pinned
+ * snapshot under `os.tmpdir()`, and on macOS that is `/var/folders/…` behind the
+ * `/var -> /private/var` symlink. The guard therefore never fired during an update, and
+ * because the no-op still exits 0 the `catalogFailed` branch in update.mjs could not see it —
+ * INDEX.md, INTEGRATIONS.md, and RESOLVER.md's generated block silently went stale after
+ * every `aios update`, which is precisely the drift this script exists to prevent.
+ */
+function isDirectRun() {
+  const entry = process.argv[1];
+  if (!entry) return false;
+  try {
+    return realpathSync(fileURLToPath(import.meta.url)) === realpathSync(entry);
+  } catch {
+    return false;
+  }
+}
+
 // ── CLI entry (only when run directly, not when imported) ──
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (isDirectRun()) {
   const argv = process.argv.slice(2);
   const repo = path.resolve(
     argv.includes("--repo") ? argv[argv.indexOf("--repo") + 1] : process.cwd()
