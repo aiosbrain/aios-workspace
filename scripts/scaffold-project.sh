@@ -12,7 +12,7 @@
 #     --context consultant|employee|business-owner \
 #     [--stakeholder "Acme Corp"] [--team "sam,jordan"] \
 #     [--team-id <brain team id>] [--brain-url <url>] \
-#     [--org your-github-org] [--currency USD] [--output ~/Projects/alex-aios] [--with-ci-workflow] [--dry-run]
+#     [--org your-github-org] [--currency USD] [--output ~/Projects/alex-aios] [--with-ci-workflow] [--pm-tool linear|clickup|none] [--dry-run]
 #
 # Onboarding context (the spine skin) — three first-class choices, not a bolt-on:
 #   consultant     → you work in a team for a CLIENT.  0-context=engagement+scope,
@@ -44,7 +44,7 @@ SCAFFOLD="$REPO_ROOT/scaffold"
 DRY_RUN=false
 SLUG=""; OWNER=""; CONTEXT=""; STAKEHOLDER=""; STAKEHOLDER_FULL=""; DESC=""
 TEAM=""; ORG="your-github-org"; CURRENCY="USD"; OUTPUT=""; TEAM_ID=""; BRAIN_URL=""
-CI_WORKFLOW=""
+CI_WORKFLOW=""; PM_TOOL=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -64,6 +64,7 @@ while [[ $# -gt 0 ]]; do
     --team-id) TEAM_ID="$2"; shift 2 ;;
     --brain-url) BRAIN_URL="$2"; shift 2 ;;
     --with-ci-workflow) CI_WORKFLOW=true; shift ;;
+    --pm-tool) PM_TOOL="$2"; shift 2 ;;
     --dry-run) DRY_RUN=true; shift ;;
     -h|--help)
       sed -n '2,33p' "$0"; exit 0 ;;
@@ -714,6 +715,8 @@ BRAIN_API_VER="$(grep -m1 -oE '\*\*Version: [0-9]+\.[0-9]+\*\*' "$REPO_ROOT/docs
   echo "scaffolded-at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
   echo "source $REPO_ROOT"
 } > "$OUTPUT/.aios-toolkit-version"
+
+. "$SCRIPT_DIR/scaffold-pm-tool.sh"
 
 # Generate the skills + integrations catalogs for the new workspace
 if command -v node >/dev/null 2>&1 && [ -f "$SCRIPT_DIR/gen-catalog.mjs" ]; then

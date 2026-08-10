@@ -6,7 +6,16 @@ summary: Agentic Linear factory — triage, pick-up-able specs, workstream batch
 
 # Linear factory operations
 
+**Applies only when this workspace's `aios.yaml` sets `pm_tool: linear`.** If it says
+`clickup` or `none`, ignore this rule — `aios update` will remove it on the next sync (unless
+you have edited it, in which case it warns and leaves it for you to delete).
+
 Companion to the `aios-linear` and `workstream-update` skills. Linear issue bodies are **agent contracts** graded by `aios spec eval`.
+
+`aios spec eval` runs out of the separate `aios-devtools` checkout (`--devtools-dir` →
+`AIOS_DEVTOOLS_DIR` → the `@aiosbrain/aios-devtools` package). If none resolves, the command
+cannot run — say so and stop. An unrunnable grader is **not** a passing grade, and it is not a
+failing one either.
 
 ## Triage inbox
 
@@ -16,7 +25,7 @@ Companion to the `aios-linear` and `workstream-update` skills. Linear issue bodi
 
 ## Pick-up-able spec shape
 
-Use `docs/agentic-ergonomics/aios-issue-template.md` (or `aios spec init`). Required sections map to SR1–SR7 in `.claude/rubrics/spec-readiness.md`.
+Use `docs/agentic-ergonomics/aios-issue-template.md` (or `aios spec init`). The **Template mapping** table in `.claude/rubrics/spec-readiness.md` is what maps each section to the criteria it satisfies — read it there rather than trusting a criterion range quoted here, which goes stale every time the rubric grows.
 
 ## Outcome hierarchy
 

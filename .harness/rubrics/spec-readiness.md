@@ -8,6 +8,15 @@ am_pattern: B3, D3
 
 # Rubric — Spec / Plan Readiness
 
+> **This is the portable harness rubric, not AIOS's own.** It is the generalized derivative
+> described in [`PROVENANCE.md`](../PROVENANCE.md) — stack-agnostic, with the AIOS-specific
+> criteria removed, so it can ship inside this harness to any project. AIOS's canonical rubric
+> is `.claude/rubrics/spec-readiness.md` at the repo root, and the two use **different, and
+> deliberately non-corresponding, SR numbering** (this file's SR7 is that one's SR9; this
+> file's SR10 is that one's SR16). `aios spec eval` loads a rubric by path and will parse
+> either without complaint, so pointing `--rubric` here grades AIOS work against the wrong
+> criteria set, silently. Don't.
+
 Readiness criteria for a spec or plan **before** a builder — human or agent — picks it
 up. The operative test throughout: **an agent with no conversation history can read this
 spec and start correctly.**

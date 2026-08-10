@@ -13,16 +13,38 @@ export function ciWorkflowState(cfg = {}) {
   return null;
 }
 
-export function persistCiWorkflow(repo, enabled) {
+/**
+ * Set one flat top-level scalar in a workspace's `aios.yaml`, replacing the line in place if
+ * the key is already there and appending it otherwise. A line rewrite, not a YAML round-trip:
+ * aios.yaml is a deliberately restricted flat subset (see flat-yaml.mjs) and comments,
+ * ordering, and hand-formatting in it are the owner's, so re-emitting the file would churn
+ * far more than the one key we mean to touch.
+ *
+ * `what` names the setting in the not-found error, since callers persist different keys.
+ */
+export function persistScalar(repo, key, value, what = `\`${key}\``) {
   const file = path.join(repo, "aios.yaml");
-  if (!existsSync(file)) throw new Error("Cannot save CI preference: aios.yaml is missing.");
+  if (!existsSync(file)) throw new Error(`Cannot save ${what}: aios.yaml is missing.`);
   const before = readFileSync(file, "utf8");
-  const line = `${CI_WORKFLOW_KEY}: ${enabled ? "true" : "false"}`;
-  const after = new RegExp(`^${CI_WORKFLOW_KEY}:\\s*.*$`, "m").test(before)
-    ? before.replace(new RegExp(`^${CI_WORKFLOW_KEY}:\\s*.*$`, "m"), line)
-    : `${before.replace(/\\s*$/, "")}\n${line}\n`;
+  const line = `${key}: ${value}`;
+  const keyRe = new RegExp(`^${key}:\\s*.*$`, "m");
+  // `\s*$` (real whitespace, not the literal `\\s` this once had) so appending to a file that
+  // already ends in a newline doesn't leave a blank line behind it.
+  const after = keyRe.test(before)
+    ? before.replace(keyRe, line)
+    : `${before.replace(/\s*$/, "")}\n${line}\n`;
   if (after !== before) writeFileSync(file, after);
-  return { enabled, changed: after !== before };
+  return { changed: after !== before };
+}
+
+export function persistCiWorkflow(repo, enabled) {
+  const { changed } = persistScalar(
+    repo,
+    CI_WORKFLOW_KEY,
+    enabled ? "true" : "false",
+    "CI preference"
+  );
+  return { enabled, changed };
 }
 
 export async function askCiWorkflow({

@@ -35,7 +35,9 @@ import { existsSync, mkdtempSync, rmSync, writeFileSync, readFileSync } from "no
 import { execFileSync, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { c, UpdateError, gitEnv } from "./cli-common.mjs";
-import { VERSION_FILE, managedPathsForConfig } from "./toolkit-manifest.mjs";
+import { VERSION_FILE, managedPathsForConfig, pmToolPrunable } from "./toolkit-manifest.mjs";
+import { migratePmTool } from "./update/pm-tool.mjs";
+import { printMergeReport } from "./update/report.mjs";
 import { askCiWorkflow, ciWorkflowState, persistCiWorkflow } from "./ci-workflow.mjs";
 import { toolkitMeta } from "./toolkit-meta.mjs";
 import { cmdContribute } from "./toolkit-contribute.mjs";
@@ -298,56 +300,6 @@ function buildResult({
 }
 
 /**
- * The one renderer for a mergeManaged() result — used by the real apply
- * (cmdVendorApplyOnly) and --preview, with `preview` selecting the mode-appropriate
- * conflict hints. Returns changedCount. One implementation so report categories and
- * conflict wording can't drift between the two modes.
- */
-function printMergeReport(color, r, { preview = false } = {}) {
-  const report = (label, arr, tone = color.green) => {
-    if (!arr.length) return;
-    console.log(tone(`  ${label}: ${arr.length}`));
-    for (const p of arr.slice(0, 20)) console.log(color.dim(`    ${p}`));
-    if (arr.length > 20) console.log(color.dim(`    … and ${arr.length - 20} more`));
-  };
-  report("created", r.created);
-  report("seeded (missing starter files)", r.seeded);
-  report("updated", r.updated);
-  report("merged (local edits + toolkit changes combined)", r.merged);
-  report("removed (deleted upstream)", r.deleted);
-  report("skipped — uncommitted local changes", r.skippedDirty, color.yellow);
-  if (r.skippedDirty.length) {
-    console.warn(
-      color.dim(
-        "  Commit them (then re-run), `git checkout -- <path>` to take the toolkit version, " +
-          "or re-run with --force to overwrite."
-      )
-    );
-  }
-
-  if (r.conflicts.length) {
-    console.warn(color.yellow(`  ${r.conflicts.length} conflict(s) — NOT applied:`));
-    for (const cf of r.conflicts.slice(0, 20)) {
-      const how =
-        cf.kind === "merge"
-          ? preview
-            ? "both sides changed — applying would create .aios-incoming and .aios-merge sidecars"
-            : `both sides changed — see ${cf.path}.aios-merge, take ${cf.path}.aios-incoming, or edit in place`
-          : cf.kind === "deleted-upstream"
-            ? "removed upstream but you modified it — delete it or upstream your change"
-            : preview
-              ? "no sync baseline — applying would create an .aios-incoming sidecar"
-              : `no sync baseline — see ${cf.path}.aios-incoming, or re-run --force if you have no local edits`;
-      console.warn(color.dim(`    ✗ ${cf.path} — ${how}`));
-    }
-    if (r.conflicts.length > 20)
-      console.warn(color.dim(`    … and ${r.conflicts.length - 20} more`));
-  }
-
-  return r.created.length + r.seeded.length + r.updated.length + r.merged.length + r.deleted.length;
-}
-
-/**
  * The one read-only safety assessment of a toolkit source — remote state (via a strictly
  * read-only pullToolkitCheckout), vendor safety, source cleanliness, and the reasons list
  * built from them. Shared by the toolkit-self check/preview block, workspace --check, and
@@ -368,7 +320,12 @@ function assessReadOnlySource(srcDir, { pullOpts, io, skipRemote = false, repo =
   // always surfaced read-only as a structured `mode: "error"` result.
   const managedPaths = managedPathsForConfig(cfg);
   if (repo)
-    for (const destRel of plannedDestRels(srcDir, readStampBaseSha(repo), managedPaths))
+    for (const destRel of plannedDestRels(
+      srcDir,
+      readStampBaseSha(repo),
+      managedPaths,
+      pmToolPrunable(cfg)
+    ))
       assertDestPathSafe(repo, destRel);
   const vs = vendorSafety(srcDir, managedPaths);
   const sourceClean = pullInfo?.sourceClean ?? sourceCleanliness(srcDir);
@@ -447,7 +404,8 @@ async function cmdVendorApplyOnly(repo, cfg, args) {
   // loop: one bad destination there would leave every earlier file already vendored (a
   // partial apply with no stamp). Refusing up front, before the first write, keeps a
   // symlinked/escaping destination from ever producing a half-applied workspace.
-  for (const destRel of plannedDestRels(srcDir, baseSha, managedPaths))
+  const prunablePaths = pmToolPrunable(cfg);
+  for (const destRel of plannedDestRels(srcDir, baseSha, managedPaths, prunablePaths))
     assertDestPathSafe(repo, destRel);
   const dirty = force ? new Set() : dirtyManagedPaths(repo, managedPaths);
   const shortSha = sha.slice(0, 12);
@@ -457,6 +415,7 @@ async function cmdVendorApplyOnly(repo, cfg, args) {
     force,
     dryRun: false,
     managedPaths,
+    prunablePaths,
   });
 
   // Regenerate the derived catalogs from the just-synced skills so INDEX.md,
@@ -673,6 +632,9 @@ async function cmdUpdateInner(repo, cfg, args) {
     cfg.ci_workflow = enabled ? "true" : "false";
   }
 
+  // One-time pm_tool back-fill for a workspace scaffolded before the key existed (AIO-844).
+  if (mode === "apply") migratePmTool(repo, cfg, (m) => console.warn(c.yellow(m)));
+
   // Run inside the toolkit checkout itself: no workspace to re-vendor into, so `aios update`
   // just brings the checkout current (git pull + npm ci) — the "self-update" case. Nothing
   // is ever vendored here, so any snapshot pullToolkitCheckout pins is unused — discard it.
@@ -837,6 +799,7 @@ async function cmdUpdateInner(repo, cfg, args) {
         force,
         dryRun: true,
         managedPaths,
+        prunablePaths: pmToolPrunable(cfg),
       });
 
       const changedCount = printMergeReport(color, r, { preview: true });

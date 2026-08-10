@@ -15,25 +15,30 @@ and score are mechanically derived from pass/fail results — the model never as
 
 ## Two-layer model (unchanged)
 
+Which criteria sit in which layer is **not** duplicated here as a fixed list — it is the
+`Check method` column of [`.claude/rubrics/spec-readiness.md`](../../.claude/rubrics/spec-readiness.md),
+and on the code side the deterministic set is `DETERMINISTIC_CHECK_IDS` in
+`scripts/spec-checks/deterministic.mjs`. Read one of those two. Every past attempt to restate
+the split in prose went stale within a release.
+
 | Layer | What | Exit on failure |
 |-------|------|-----------------|
-| Deterministic | Structural checks (SR1-SR7 triggers, SR3 paths, SR4 deps, SR5 scope, SR6 build-with, SR16 paths) | Exit 1 |
-| LLM Checklist | Per-criterion evaluation (SR2-quality, SR7-adequacy, SR8-SR15, SR16-claims) | Exit 2 |
+| Deterministic | Structural checks — every rubric row whose `Check method` includes `deterministic`, implemented in `DETERMINISTIC_CHECK_IDS` | Exit 1 |
+| LLM Checklist | Per-criterion evaluation — every rubric row whose `Check method` includes `llm-read` | Exit 2 |
 
 ## Deterministic pass rule
 
 A spec is `SPEC_READY` when:
 
-1. **Deterministic clean**: no SR1-SR7, SR10-trigger, SR16-path `blocker` findings (exit 3 with
+1. **Deterministic clean**: no `blocker` findings from the deterministic layer (exit 3 with
    `--no-llm`, exit 1 otherwise).
-2. **LLM checklist clean**: for every `must` criterion (SR2-quality, SR8, SR9, SR11, SR15) and
-   every triggered `conditional` criterion (SR7-adequacy, SR10-adequacy, SR16-claims), the model
-   returns PASS.
+2. **LLM checklist clean**: for every `must` criterion and every triggered `conditional`
+   criterion the LLM layer owns, the model returns PASS.
 
 If any `must` or triggered `conditional` criterion FAILs: `NOT_READY`.
 
-If only `advisory` criteria (SR12, SR13, SR14) fail: `NOT_READY` with non-blocking findings
-(reported but don't gate merge — operator discretion).
+If only `advisory` criteria fail (the rubric's `Must` column reads `advisory`): `NOT_READY`
+with non-blocking findings (reported but don't gate merge — operator discretion).
 
 ## Score derivation
 
@@ -55,6 +60,11 @@ value. A spec passing all must-criteria gets 100 regardless of advisory findings
 | SR13 | Structural signals captured zero-LLM before model steps? | advisory |
 | SR14 | Durable-state discipline stated? Append-only, writer-honored locks? | advisory |
 | SR16-claims | Architecture claims ("reuses X") backed by real file paths? | must |
+| SR18-completeness | If a blanket scope fence is raised ("byte-identical", "do not touch Y"): does it account for what it excludes and where that work goes? A `Deferred:` list alone is not enough | conditional |
+| SR19 | Are the acceptance criteria mutually satisfiable — no two that cannot both hold at once? | must |
+
+The rubric is authoritative if this table and it ever disagree. SR17 is absent here on purpose:
+it is deterministic-only, so the model never grades it.
 
 ## Why this is more deterministic
 

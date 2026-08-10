@@ -19,6 +19,9 @@ import {
   PERSONAL_PATHS,
   SEED_IF_ABSENT,
   managedPathsForConfig,
+  pmToolOf,
+  pmToolPrunable,
+  PM_TOOL_DEFAULT,
 } from "../scripts/toolkit-manifest.mjs";
 import { dirtyManagedPaths, mergeManaged, missingSeedPaths } from "../scripts/update.mjs";
 
@@ -260,6 +263,220 @@ test("mergeManaged: an excluded file present at the base sha is not propagated a
     const r = mergeManaged(tk, tk, ws, baseSha, {});
     assert.ok(existsSync(path.join(ws, ".claude/rules/access-control.md")));
     assert.ok(!r.deleted.includes(".claude/rules/access-control.md"));
+  } finally {
+    rmSync(tk, { recursive: true, force: true });
+    rmSync(ws, { recursive: true, force: true });
+  }
+});
+
+// ---- pm_tool gating (AIO-844) ----
+
+/** The three Linear-specific managed destinations this seam gates. */
+const LINEAR_DESTS = [
+  ".claude/rules/linear-factory.md",
+  ".claude/skills/aios-linear",
+  "docs/agentic-ergonomics/aios-issue-template.md",
+];
+
+test("pmToolOf defaults an absent/blank pm_tool to linear and honors any explicit value", () => {
+  // Back-compat is the whole point: a workspace scaffolded before pm_tool existed has no key,
+  // and must NOT be read as "this team uses no PM tool" — that would strip a working harness.
+  assert.equal(pmToolOf({}), "linear");
+  assert.equal(pmToolOf({ pm_tool: "" }), "linear");
+  assert.equal(pmToolOf({ pm_tool: "   " }), "linear");
+  assert.equal(pmToolOf(), "linear");
+  assert.equal(PM_TOOL_DEFAULT, "linear");
+
+  assert.equal(pmToolOf({ pm_tool: "clickup" }), "clickup");
+  assert.equal(pmToolOf({ pm_tool: "none" }), "none");
+  assert.equal(pmToolOf({ pm_tool: " clickup " }), "clickup");
+});
+
+test("managedPathsForConfig ships the Linear assets only when pm_tool selects linear", () => {
+  const dests = (cfg) => new Set(managedPathsForConfig(cfg).map((e) => e.dest));
+
+  for (const cfg of [{}, { pm_tool: "linear" }]) {
+    const d = dests(cfg);
+    for (const dest of LINEAR_DESTS) assert.ok(d.has(dest), `${dest} missing for ${cfg.pm_tool}`);
+  }
+
+  for (const pm_tool of ["clickup", "none"]) {
+    const d = dests({ pm_tool });
+    for (const dest of LINEAR_DESTS) assert.ok(!d.has(dest), `${dest} leaked into ${pm_tool}`);
+    // Everything else is untouched — the gate must move exactly three entries and no others,
+    // so switching PM tool can never quietly stop syncing unrelated governance.
+    const linear = managedPathsForConfig({ pm_tool: "linear" });
+    assert.equal(managedPathsForConfig({ pm_tool }).length, linear.length - LINEAR_DESTS.length);
+    for (const e of linear) {
+      if (!LINEAR_DESTS.includes(e.dest)) assert.ok(d.has(e.dest), `${e.dest} lost`);
+    }
+  }
+
+  // Composes with the pre-existing ci_workflow gate rather than replacing it.
+  const ci = dests({ pm_tool: "clickup", ci_workflow: "true" });
+  for (const e of CI_WORKFLOW_MANAGED_PATHS) assert.ok(ci.has(e.dest));
+});
+
+test("pmToolPrunable names exactly the assets this pm_tool no longer selects", () => {
+  assert.deepEqual(pmToolPrunable({ pm_tool: "linear" }), []);
+  assert.deepEqual(pmToolPrunable({}), []);
+  for (const pm_tool of ["clickup", "none"]) {
+    assert.deepEqual(
+      pmToolPrunable({ pm_tool })
+        .map((e) => e.dest)
+        .sort(),
+      [...LINEAR_DESTS].sort()
+    );
+  }
+});
+
+test("every managed src resolves in the toolkit tree, including the non-scaffold ones", () => {
+  // Two AIO-844 entries deliberately source the canonical file rather than a scaffold/ copy
+  // (no duplicate to keep byte-identical). A typo there fails silently at runtime — mergeManaged
+  // skips an entry whose src is absent — so assert it here instead.
+  const root = path.join(import.meta.dirname, "..");
+  for (const e of [...MANAGED_PATHS, ...CI_WORKFLOW_MANAGED_PATHS]) {
+    assert.ok(existsSync(path.join(root, e.src)), `MANAGED_PATHS src does not exist: ${e.src}`);
+  }
+  const skills = MANAGED_PATHS.find((e) => e.dest === ".claude/skills");
+  assert.ok(skills?.exclude?.includes("aios-linear"), "aios-linear must be excluded by name");
+  const rules = MANAGED_PATHS.find((e) => e.dest === ".claude/rules");
+  assert.ok(rules?.exclude?.includes("linear-factory.md"));
+  // Specific-before-dir ordering: toolkit-contribute.mjs returns on FIRST match, so a split-out
+  // entry listed after its covering dir entry would be misreported as `excluded`.
+  const idx = (dest) => MANAGED_PATHS.findIndex((e) => e.dest === dest);
+  assert.ok(idx(".claude/skills/aios-linear") < idx(".claude/skills"));
+  assert.ok(idx(".claude/rules/linear-factory.md") < idx(".claude/rules"));
+  assert.ok(idx(".claude/rubrics/spec-readiness.md") < idx(".claude/rubrics"));
+});
+
+test("a dir named in `exclude` prunes its whole subtree, including files added to it later", () => {
+  const tk = mkdtempSync(path.join(tmpdir(), "aios-tk-dirx-"));
+  const ws = mkdtempSync(path.join(tmpdir(), "aios-ws-dirx-"));
+  const git = (...a) => execFileSync("git", ["-C", tk, ...a], { encoding: "utf8" });
+  const entry = {
+    dest: ".claude/skills",
+    src: "scaffold/.claude/skills",
+    kind: "dir",
+    exclude: ["gated"],
+  };
+  try {
+    mkdirSync(path.join(tk, "scaffold/.claude/skills/gated"), { recursive: true });
+    mkdirSync(path.join(tk, "scaffold/.claude/skills/kept"), { recursive: true });
+    writeFileSync(path.join(tk, "scaffold/.claude/skills/gated/SKILL.md"), "GATED v1\n");
+    writeFileSync(path.join(tk, "scaffold/.claude/skills/kept/SKILL.md"), "KEPT v1\n");
+    git("init", "-q");
+    git("config", "user.email", "t@t.t");
+    git("config", "user.name", "t");
+    git("add", "-A");
+    git("commit", "-qm", "base");
+    const baseSha = git("rev-parse", "HEAD").trim();
+
+    // The footgun this replaces file-by-file excludes to avoid: a file added to the excluded
+    // directory AFTER the exclude was written must still be excluded, with no manifest edit.
+    writeFileSync(path.join(tk, "scaffold/.claude/skills/gated/added-later.mjs"), "leak?\n");
+    writeFileSync(path.join(tk, "scaffold/.claude/skills/kept/SKILL.md"), "KEPT v2\n");
+    git("add", "-A");
+    git("commit", "-qm", "head");
+
+    const r = mergeManaged(tk, tk, ws, baseSha, { managedPaths: [entry] });
+    assert.ok(!existsSync(path.join(ws, ".claude/skills/gated")), "excluded subtree was vendored");
+    assert.ok(!existsSync(path.join(ws, ".claude/skills/gated/added-later.mjs")));
+    assert.ok(r.created.includes(".claude/skills/kept/SKILL.md"));
+    assert.equal(readFileSync(path.join(ws, ".claude/skills/kept/SKILL.md"), "utf8"), "KEPT v2\n");
+
+    // And a file REMOVED from an excluded subtree is never reported as an upstream deletion.
+    rmSync(path.join(tk, "scaffold/.claude/skills/gated/SKILL.md"));
+    git("add", "-A");
+    git("commit", "-qm", "drop");
+    const r2 = mergeManaged(tk, tk, ws, baseSha, { managedPaths: [entry] });
+    assert.ok(!r2.deleted.some((p) => p.startsWith(".claude/skills/gated")));
+    assert.ok(!r2.conflicts.some((cf) => cf.path.startsWith(".claude/skills/gated")));
+  } finally {
+    rmSync(tk, { recursive: true, force: true });
+    rmSync(ws, { recursive: true, force: true });
+  }
+});
+
+test("prune removes a de-selected asset only while it still matches the toolkit copy", () => {
+  const tk = mkdtempSync(path.join(tmpdir(), "aios-tk-prune-"));
+  const ws = mkdtempSync(path.join(tmpdir(), "aios-ws-prune-"));
+  const git = (...a) => execFileSync("git", ["-C", tk, ...a], { encoding: "utf8" });
+  const ruleEntry = {
+    dest: ".claude/rules/linear-factory.md",
+    src: "scaffold/.claude/rules/linear-factory.md",
+    kind: "file",
+    pmTool: "linear",
+  };
+  const skillEntry = {
+    dest: ".claude/skills/aios-linear",
+    src: "scaffold/.claude/skills/aios-linear",
+    kind: "dir",
+    pmTool: "linear",
+  };
+  try {
+    mkdirSync(path.join(tk, "scaffold/.claude/rules"), { recursive: true });
+    mkdirSync(path.join(tk, "scaffold/.claude/skills/aios-linear"), { recursive: true });
+    writeFileSync(path.join(tk, "scaffold/.claude/rules/linear-factory.md"), "RULE\n");
+    writeFileSync(path.join(tk, "scaffold/.claude/skills/aios-linear/SKILL.md"), "SKILL\n");
+    git("init", "-q");
+    git("config", "user.email", "t@t.t");
+    git("config", "user.name", "t");
+    git("add", "-A");
+    git("commit", "-qm", "base");
+    const baseSha = git("rev-parse", "HEAD").trim();
+
+    // A workspace that previously ran with pm_tool: linear, now switched away. The rule is
+    // untouched (the toolkit's to remove); the skill file has been edited (the owner's to keep).
+    mkdirSync(path.join(ws, ".claude/rules"), { recursive: true });
+    mkdirSync(path.join(ws, ".claude/skills/aios-linear"), { recursive: true });
+    writeFileSync(path.join(ws, ".claude/rules/linear-factory.md"), "RULE\n");
+    writeFileSync(path.join(ws, ".claude/skills/aios-linear/SKILL.md"), "SKILL + my notes\n");
+
+    // dryRun first: --check/--preview must report the intent and write nothing.
+    const dry = mergeManaged(tk, tk, ws, baseSha, {
+      managedPaths: [],
+      prunablePaths: [ruleEntry, skillEntry],
+      dryRun: true,
+    });
+    assert.deepEqual(dry.pruned, [".claude/rules/linear-factory.md"]);
+    assert.deepEqual(dry.prunedKept, [".claude/skills/aios-linear/SKILL.md"]);
+    assert.ok(
+      existsSync(path.join(ws, ".claude/rules/linear-factory.md")),
+      "dryRun deleted a file"
+    );
+
+    const r = mergeManaged(tk, tk, ws, baseSha, {
+      managedPaths: [],
+      prunablePaths: [ruleEntry, skillEntry],
+    });
+    assert.deepEqual(r.pruned, [".claude/rules/linear-factory.md"]);
+    assert.ok(!existsSync(path.join(ws, ".claude/rules/linear-factory.md")));
+    // The edited file survives, is reported, and its directory is NOT swept away with it.
+    assert.deepEqual(r.prunedKept, [".claude/skills/aios-linear/SKILL.md"]);
+    assert.equal(
+      readFileSync(path.join(ws, ".claude/skills/aios-linear/SKILL.md"), "utf8"),
+      "SKILL + my notes\n"
+    );
+    // The rule's own parent belongs to other content — a file entry never sweeps it.
+    assert.ok(existsSync(path.join(ws, ".claude/rules")));
+
+    // Re-running is a no-op: nothing left to prune, and no phantom entries.
+    const again = mergeManaged(tk, tk, ws, baseSha, {
+      managedPaths: [],
+      prunablePaths: [ruleEntry, skillEntry],
+    });
+    assert.deepEqual(again.pruned, []);
+    assert.deepEqual(again.prunedKept, [".claude/skills/aios-linear/SKILL.md"]);
+
+    // Once the owner's edit is reverted, the now-empty skill dir goes too.
+    writeFileSync(path.join(ws, ".claude/skills/aios-linear/SKILL.md"), "SKILL\n");
+    const last = mergeManaged(tk, tk, ws, baseSha, {
+      managedPaths: [],
+      prunablePaths: [ruleEntry, skillEntry],
+    });
+    assert.deepEqual(last.pruned, [".claude/skills/aios-linear/SKILL.md"]);
+    assert.ok(!existsSync(path.join(ws, ".claude/skills/aios-linear")), "empty dir left behind");
   } finally {
     rmSync(tk, { recursive: true, force: true });
     rmSync(ws, { recursive: true, force: true });

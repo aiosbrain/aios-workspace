@@ -13,11 +13,17 @@ import {
 } from "../scripts/toolkit-manifest.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-// Both files, because the repo-meta writes (CODEOWNERS, brain CI, .gitignore, planning stub)
-// were extracted out of scaffold-project.sh when it hit its size-cap ratchet. Scanning only
-// the main script would silently stop enforcing classification for everything that moved —
-// the exact drift this test exists to prevent.
-const SCAFFOLD_SOURCES = ["../scripts/scaffold-project.sh", "../scripts/scaffold-repo-meta.sh"];
+// Every sourced scaffold fragment, not just the main script: the repo-meta writes (CODEOWNERS,
+// brain CI, .gitignore, planning stub) and the pm-tool writes (rubric, issue template, gated
+// Linear assets) were each extracted out of scaffold-project.sh when it hit its size-cap
+// ratchet. Scanning only the main script would silently stop enforcing classification for
+// everything that moved — the exact drift this test exists to prevent. ADD ANY NEW SOURCED
+// FRAGMENT HERE, or its destinations go unclassified without a single test failing.
+const SCAFFOLD_SOURCES = [
+  "../scripts/scaffold-project.sh",
+  "../scripts/scaffold-repo-meta.sh",
+  "../scripts/scaffold-pm-tool.sh",
+];
 const scaffold = SCAFFOLD_SOURCES.map((p) => readFileSync(path.join(here, p), "utf8")).join("\n");
 
 /**
