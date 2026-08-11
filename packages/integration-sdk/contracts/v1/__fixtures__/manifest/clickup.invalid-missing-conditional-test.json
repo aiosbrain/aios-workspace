@@ -99,7 +99,7 @@
     },
     "oauth": {
       "authorization_endpoint": "https://app.clickup.com/api",
-      "token_endpoint": "https://api.clickup.com/api/v2/oauth/token",
+      "token_endpoint": "https://localhost../oauth/token",
       "revoke_endpoint": "https://api.clickup.com/api/v2/oauth/revoke",
       "callback_owner": "brain",
       "state": {

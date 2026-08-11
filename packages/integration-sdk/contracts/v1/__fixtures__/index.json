@@ -261,10 +261,11 @@
       "failure": {
         "kind": "rule",
         "rules": [
-          "MR-CONDITIONAL-TEST"
+          "MR-CONDITIONAL-TEST",
+          "MR-HOST-PRIVATE"
         ]
       },
-      "note": "OAuth or webhook delivery requires the security.events test."
+      "note": "OAuth or webhook delivery requires the security.events test; repeated terminal dots cannot hide a private OAuth target."
     },
     {
       "id": "clickup-unknown-suite",

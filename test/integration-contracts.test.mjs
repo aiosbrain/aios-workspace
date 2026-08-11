@@ -234,15 +234,21 @@ test("shorthand and octal IPv4 forms cannot slip past the private-host check", (
   }
 });
 
-test("absolute DNS names cannot hide localhost or private addresses behind a root dot", () => {
-  for (const host of ["localhost.", "api.localhost.", "dev.local.", "127.0.0.1."]) {
+test("absolute DNS names cannot hide localhost or private addresses behind root dots", () => {
+  for (const host of [
+    "localhost.",
+    "localhost..",
+    "api.localhost..",
+    "dev.local.",
+    "127.0.0.1..",
+  ]) {
     assert.equal(isPrivateHost(host), true, host);
   }
   assert.equal(isPrivateHost("api.linear.app."), false);
 
   const { artifacts } = loadContracts();
   const clickup = structuredClone(loadFixture("manifest/clickup.valid.json"));
-  clickup.auth.oauth.token_endpoint = "https://localhost./oauth/token";
+  clickup.auth.oauth.token_endpoint = "https://localhost../oauth/token";
   const findings = evaluateManifest(clickup, artifacts["capabilities.json"]);
   assert.ok(
     findings.some((finding) => finding.rule === "MR-HOST-PRIVATE"),

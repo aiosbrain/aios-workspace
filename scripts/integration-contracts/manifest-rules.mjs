@@ -51,10 +51,10 @@ export const MANIFEST_RULE_IDS = [
  * brackets, which the origin pattern rejects outright.
  */
 export function isPrivateHost(hostname) {
-  // URL.hostname preserves the terminal root label for an absolute DNS name. Normalize it
-  // before applying suffix and numeric-host checks, or `localhost.` and `127.0.0.1.` evade
-  // the exact same rules as their ordinary spellings.
-  const host = hostname.toLowerCase().replace(/\.$/, "");
+  // URL.hostname preserves terminal root labels. Normalize all of them before applying
+  // suffix and numeric-host checks, or repeated spellings such as `localhost..` retain one
+  // dot and evade the exact same rules as the ordinary hostname.
+  const host = hostname.toLowerCase().replace(/\.+$/, "");
   if (host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local")) return true;
 
   const labels = host.split(".");
