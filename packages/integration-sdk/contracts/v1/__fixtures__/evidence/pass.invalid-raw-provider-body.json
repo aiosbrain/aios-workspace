@@ -1,0 +1,58 @@
+{
+  "evidence_version": "1.0.0",
+  "contract_version": "1.0.0",
+  "contract_digests": {
+    "capabilities.json": "74f4d793ce6b4d51f57584322e6bfda80de3c7dc46ac92a0a7fbc3bbfc28be48",
+    "manifest.schema.json": "eac0901055b25b2a44d2068909bc1c34d7c87f8acd5f1cb2df6195fdc2641ece",
+    "outcomes.schema.json": "9666d964ac49a5059a0a4fade956174fcbb80cdf419e990d63183bba4ee653bc",
+    "evidence.schema.json": "c3e970e15d58f67bbb1870cce30a9554bfcc7eba8b015ab5169faa9c24139f1a",
+    "compatibility.json": "d610f9766c2b3e2643bf4a9d59a6287c566826b00408890590530ba8d949c8cc",
+    "invariants.json": "4b21f4506f41205bd3c6d184a3f7c86ff710774eda6d7d931a7ab633c5c5b06c"
+  },
+  "connector_id": "linear",
+  "connector_version": "0.1.0",
+  "commit": "0e30915145567d101b53742f49c6a57838ac0e5c",
+  "generated_at": "2026-08-10T09:20:00.000Z",
+  "capability_matrix": {
+    "supported": [
+      "pm.work_item.read"
+    ],
+    "unsupported": []
+  },
+  "suites": [
+    {
+      "suite": "capability",
+      "contract_version": "1.0.0",
+      "connector_version": "0.1.0",
+      "commit": "0e30915145567d101b53742f49c6a57838ac0e5c",
+      "capabilities": [
+        "pm.work_item.read"
+      ],
+      "status": "fail",
+      "passed": [],
+      "failed": [
+        {
+          "test": "pm.relations",
+          "fixture_id": "relations-directional",
+          "provider_response": "{...}"
+        }
+      ],
+      "skipped": [],
+      "evidence_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    }
+  ],
+  "security_checks": [
+    {
+      "id": "no_secret_in_evidence",
+      "status": "pass",
+      "fixture_id": "redaction-baseline"
+    }
+  ],
+  "adversarial_review": {
+    "head_commit": "0e30915145567d101b53742f49c6a57838ac0e5c",
+    "reviewed_at": "2026-08-10T09:19:00.000Z",
+    "verdict": "build_ready",
+    "blockers": 0,
+    "majors": 0
+  }
+}

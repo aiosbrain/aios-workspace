@@ -1,0 +1,20 @@
+{
+  "operation_id": "op_01HZY6M0000000000000000000",
+  "connector_id": "linear",
+  "contract_version": "1.0.0",
+  "occurred_at": "2026-08-10T09:15:00.000Z",
+  "provenance": {
+    "origin": "aios",
+    "connector_id": "linear",
+    "contract_version": "1.0.0",
+    "redacted": true
+  },
+  "outcome": "unauthorized",
+  "success": false,
+  "capability": "core.identity.read",
+  "retry": {
+    "retryable": false,
+    "duplicate_safety": "none"
+  },
+  "mutation_class": "read"
+}

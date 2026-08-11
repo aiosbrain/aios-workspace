@@ -1,0 +1,719 @@
+{
+  "contract_version": "1.0.0",
+  "description": "Every fixture is declared here. An undeclared file under __fixtures__ or a declared file that does not exist is a hard failure, so a fixture can never be added and silently never asserted on.",
+  "manifest": [
+    {
+      "id": "linear-valid",
+      "file": "manifest/linear.valid.json",
+      "provider": "linear",
+      "expect": "valid"
+    },
+    {
+      "id": "clickup-valid",
+      "file": "manifest/clickup.valid.json",
+      "provider": "clickup",
+      "expect": "valid"
+    },
+    {
+      "id": "linear-secret-value-inline",
+      "file": "manifest/linear.invalid-secret-value.json",
+      "provider": "linear",
+      "expect": "invalid",
+      "failure": {
+        "kind": "schema",
+        "pointer": "/auth/secret_ref"
+      },
+      "note": "Secrets are references, never manifest values (INT-010)."
+    },
+    {
+      "id": "linear-missing-read-dependency",
+      "file": "manifest/linear.invalid-missing-dependency.json",
+      "provider": "linear",
+      "expect": "invalid",
+      "failure": {
+        "kind": "rule",
+        "rules": [
+          "MR-DEPENDENCY-MISSING"
+        ]
+      },
+      "note": "Every PM mutation requires pm.work_item.read."
+    },
+    {
+      "id": "linear-single-label-evidence-host",
+      "file": "manifest/linear.invalid-private-host.json",
+      "provider": "linear",
+      "expect": "invalid",
+      "failure": {
+        "kind": "rule",
+        "rules": [
+          "MR-HOST-PRIVATE"
+        ]
+      },
+      "note": "Single-label rate-limit evidence hosts are rejected because DNS search domains can resolve them internally."
+    },
+    {
+      "id": "clickup-single-label-oauth-host",
+      "file": "manifest/clickup.invalid-single-label-oauth.json",
+      "provider": "clickup",
+      "expect": "invalid",
+      "failure": {
+        "kind": "rule",
+        "rules": [
+          "MR-HOST-PRIVATE"
+        ]
+      },
+      "note": "Single-label OAuth endpoints remain schema-valid and must be rejected by the private-host cross-field rule."
+    },
+    {
+      "id": "linear-link-local-provider-host",
+      "file": "manifest/linear.invalid-link-local-host.json",
+      "provider": "linear",
+      "expect": "invalid",
+      "failure": {
+        "kind": "rule",
+        "rules": [
+          "MR-HOST-PRIVATE"
+        ]
+      },
+      "note": "Link-local provider targets are rejected independently of DNS-name policy."
+    },
+    {
+      "id": "linear-missing-canonical-test",
+      "file": "manifest/linear.invalid-missing-test.json",
+      "provider": "linear",
+      "expect": "invalid",
+      "failure": {
+        "kind": "rule",
+        "rules": [
+          "MR-TEST-CORRESPONDENCE"
+        ]
+      },
+      "note": "A connector may not advertise a capability without its required tests."
+    },
+    {
+      "id": "linear-retry-without-idempotency",
+      "file": "manifest/linear.invalid-retry-without-idempotency.json",
+      "provider": "linear",
+      "expect": "invalid",
+      "failure": {
+        "kind": "schema",
+        "pointer": "/mutation/retry"
+      },
+      "note": "`none` forces zero automatic mutation retries."
+    },
+    {
+      "id": "linear-unknown-capability",
+      "file": "manifest/linear.invalid-unknown-capability.json",
+      "provider": "linear",
+      "expect": "invalid",
+      "failure": {
+        "kind": "rule",
+        "rules": [
+          "MR-CAPABILITY-UNKNOWN"
+        ]
+      },
+      "note": "Capability ids outside the closed v1 set must be namespaced x-<owner>.<name>."
+    },
+    {
+      "id": "linear-sync-direction-mismatch",
+      "file": "manifest/linear.invalid-sync-direction.json",
+      "provider": "linear",
+      "expect": "invalid",
+      "failure": {
+        "kind": "rule",
+        "rules": [
+          "MR-SYNC-DIRECTION"
+        ]
+      },
+      "note": "Declared sync capabilities imply bidirectional."
+    },
+    {
+      "id": "clickup-oauth-missing-revoke",
+      "file": "manifest/clickup.invalid-oauth-missing-endpoints.json",
+      "provider": "clickup",
+      "expect": "invalid",
+      "failure": {
+        "kind": "schema",
+        "pointer": "/auth/oauth"
+      },
+      "note": "auth.mode=oauth requires authorization, token and revoke endpoints."
+    },
+    {
+      "id": "clickup-profile-partition-omission",
+      "file": "manifest/clickup.invalid-profile-partition.json",
+      "provider": "clickup",
+      "expect": "invalid",
+      "failure": {
+        "kind": "rule",
+        "rules": [
+          "MR-PROFILE-PARTITION"
+        ]
+      },
+      "note": "Every profile capability appears exactly once in supported or unsupported; omission is invalid."
+    },
+    {
+      "id": "clickup-extension-oversize",
+      "file": "manifest/clickup.invalid-extension-oversize.json",
+      "provider": "clickup",
+      "expect": "invalid",
+      "failure": {
+        "kind": "rule",
+        "rules": [
+          "MR-EXTENSION-SIZE"
+        ]
+      },
+      "note": "Each extension value is at most 16 KiB of schema-valid JSON."
+    },
+    {
+      "id": "clickup-webhook-missing-replay-key",
+      "file": "manifest/clickup.invalid-webhook-missing-replay.json",
+      "provider": "clickup",
+      "expect": "invalid",
+      "failure": {
+        "kind": "schema",
+        "pointer": "/events/webhook"
+      },
+      "note": "Webhook capabilities require a replay key."
+    },
+    {
+      "id": "clickup-always-required-unsupported",
+      "file": "manifest/clickup.invalid-always-required-unsupported.json",
+      "provider": "clickup",
+      "expect": "invalid",
+      "failure": {
+        "kind": "rule",
+        "rules": [
+          "MR-ALWAYS-REQUIRED-UNSUPPORTED",
+          "MR-LIFECYCLE-CAPABILITY"
+        ]
+      },
+      "note": "core.lifecycle.validate is always required, and its lifecycle operation is still declared."
+    },
+    {
+      "id": "clickup-auth-none-with-secret",
+      "file": "manifest/clickup.invalid-auth-none-with-secret.json",
+      "provider": "clickup",
+      "expect": "invalid",
+      "failure": {
+        "kind": "schema",
+        "pointer": "/auth"
+      },
+      "note": "auth.mode=none forbids every secret-bearing field."
+    },
+    {
+      "id": "clickup-missing-required-suite",
+      "file": "manifest/clickup.invalid-missing-suite.json",
+      "provider": "clickup",
+      "expect": "invalid",
+      "failure": {
+        "kind": "rule",
+        "rules": [
+          "MR-SUITE-COVERAGE"
+        ]
+      },
+      "note": "All eight non-live suites run against every connector."
+    },
+    {
+      "id": "linear-extension-in-unsupported",
+      "file": "manifest/linear.invalid-extension-unsupported.json",
+      "provider": "linear",
+      "expect": "invalid",
+      "failure": {
+        "kind": "rule",
+        "rules": [
+          "MR-EXTENSION-UNSUPPORTED-LIST"
+        ]
+      },
+      "note": "Extension capabilities cannot appear in the unsupported list."
+    },
+    {
+      "id": "linear-always-required-omitted",
+      "file": "manifest/linear.invalid-always-required-missing.json",
+      "provider": "linear",
+      "expect": "invalid",
+      "failure": {
+        "kind": "rule",
+        "rules": [
+          "MR-ALWAYS-REQUIRED-MISSING",
+          "MR-LIFECYCLE-CAPABILITY",
+          "MR-PROFILE-PARTITION"
+        ]
+      },
+      "note": "core.health.read is required of every connector."
+    },
+    {
+      "id": "linear-relation-remove-without-relation",
+      "file": "manifest/linear.invalid-relation-remove-orphan.json",
+      "provider": "linear",
+      "expect": "invalid",
+      "failure": {
+        "kind": "rule",
+        "rules": [
+          "MR-DEPENDENCY-ANY-MISSING"
+        ]
+      },
+      "note": "pm.relation.remove requires at least one declared relation capability."
+    },
+    {
+      "id": "linear-outbound-without-stable-identity",
+      "file": "manifest/linear.invalid-unstable-identity.json",
+      "provider": "linear",
+      "expect": "invalid",
+      "failure": {
+        "kind": "rule",
+        "rules": [
+          "MR-MANIFEST-REQUIREMENT"
+        ]
+      },
+      "note": "pm.sync.outbound requires stable external identity."
+    },
+    {
+      "id": "linear-missing-baseline-test",
+      "file": "manifest/linear.invalid-missing-baseline-test.json",
+      "provider": "linear",
+      "expect": "invalid",
+      "failure": {
+        "kind": "rule",
+        "rules": [
+          "MR-BASELINE-TEST"
+        ]
+      },
+      "note": "Every connector declares the baseline tests."
+    },
+    {
+      "id": "clickup-missing-conditional-test",
+      "file": "manifest/clickup.invalid-missing-conditional-test.json",
+      "provider": "clickup",
+      "expect": "invalid",
+      "failure": {
+        "kind": "rule",
+        "rules": [
+          "MR-CONDITIONAL-TEST"
+        ]
+      },
+      "note": "OAuth or webhook delivery requires the security.events test."
+    },
+    {
+      "id": "clickup-unknown-suite",
+      "file": "manifest/clickup.invalid-unknown-suite.json",
+      "provider": "clickup",
+      "expect": "invalid",
+      "failure": {
+        "kind": "rule",
+        "rules": [
+          "MR-SUITE-UNKNOWN"
+        ]
+      },
+      "note": "Suites are drawn from the contract's closed suite registry."
+    },
+    {
+      "id": "clickup-unknown-test",
+      "file": "manifest/clickup.invalid-unknown-test.json",
+      "provider": "clickup",
+      "expect": "invalid",
+      "failure": {
+        "kind": "rule",
+        "rules": [
+          "MR-TEST-UNKNOWN"
+        ]
+      },
+      "note": "Tests are drawn from the contract's closed test registry."
+    },
+    {
+      "id": "linear-mutations-without-mutation-block",
+      "file": "manifest/linear.invalid-no-mutation-block.json",
+      "provider": "linear",
+      "expect": "invalid",
+      "failure": {
+        "kind": "rule",
+        "rules": [
+          "MR-MUTATION-REQUIRED"
+        ]
+      },
+      "note": "Mutation capabilities require idempotency, readback fields and a retry policy."
+    },
+    {
+      "id": "linear-mutation-class-mismatch",
+      "file": "manifest/linear.invalid-mutation-class-mismatch.json",
+      "provider": "linear",
+      "expect": "invalid",
+      "failure": {
+        "kind": "rule",
+        "rules": [
+          "MR-MUTATION-CLASS-MISMATCH"
+        ]
+      },
+      "note": "Destructive capabilities are a separate class and must be declared."
+    },
+    {
+      "id": "linear-paginated-read-without-pagination",
+      "file": "manifest/linear.invalid-no-pagination.json",
+      "provider": "linear",
+      "expect": "invalid",
+      "failure": {
+        "kind": "rule",
+        "rules": [
+          "MR-PAGINATION-REQUIRED"
+        ]
+      },
+      "note": "Pagination-capable reads need an explicit completeness contract."
+    },
+    {
+      "id": "linear-http-without-rate-limit",
+      "file": "manifest/linear.invalid-no-rate-limit.json",
+      "provider": "linear",
+      "expect": "invalid",
+      "failure": {
+        "kind": "rule",
+        "rules": [
+          "MR-RATE-LIMIT-REQUIRED"
+        ]
+      },
+      "note": "HTTP and GraphQL transports must pin their rate-limit unit."
+    },
+    {
+      "id": "linear-inbound-without-events",
+      "file": "manifest/linear.invalid-inbound-no-events.json",
+      "provider": "linear",
+      "expect": "invalid",
+      "failure": {
+        "kind": "rule",
+        "rules": [
+          "MR-INBOUND-EVENTS"
+        ]
+      },
+      "note": "Inbound sync needs webhook or polling delivery."
+    },
+    {
+      "id": "linear-min-contract-above-declared",
+      "file": "manifest/linear.invalid-min-contract-version.json",
+      "provider": "linear",
+      "expect": "invalid",
+      "failure": {
+        "kind": "rule",
+        "rules": [
+          "MR-MIN-CONTRACT-VERSION"
+        ]
+      },
+      "note": "A connector cannot require a contract newer than the one it declares."
+    }
+  ],
+  "outcomes": [
+    {
+      "id": "outcome-verified",
+      "file": "outcomes/verified.valid.json",
+      "expect": "valid"
+    },
+    {
+      "id": "outcome-noop",
+      "file": "outcomes/noop.valid.json",
+      "expect": "valid"
+    },
+    {
+      "id": "outcome-invalid-connector-id",
+      "file": "outcomes/noop.invalid-connector-id.json",
+      "expect": "invalid",
+      "failure": {
+        "kind": "schema",
+        "pointer": "/connector_id"
+      },
+      "note": "Outcome connector ids use the same bounded, non-hyphen-terminated shape as manifests."
+    },
+    {
+      "id": "outcome-unsupported",
+      "file": "outcomes/unsupported.valid.json",
+      "expect": "valid"
+    },
+    {
+      "id": "outcome-ambiguous",
+      "file": "outcomes/ambiguous.valid.json",
+      "expect": "valid"
+    },
+    {
+      "id": "outcome-stale",
+      "file": "outcomes/stale.valid.json",
+      "expect": "valid"
+    },
+    {
+      "id": "outcome-conflict",
+      "file": "outcomes/conflict.valid.json",
+      "expect": "valid"
+    },
+    {
+      "id": "outcome-unavailable",
+      "file": "outcomes/unavailable.valid.json",
+      "expect": "valid"
+    },
+    {
+      "id": "outcome-unauthorized",
+      "file": "outcomes/unauthorized.valid.json",
+      "expect": "valid"
+    },
+    {
+      "id": "outcome-rate_limited",
+      "file": "outcomes/rate_limited.valid.json",
+      "expect": "valid"
+    },
+    {
+      "id": "outcome-invalid",
+      "file": "outcomes/invalid.valid.json",
+      "expect": "valid"
+    },
+    {
+      "id": "outcome-verified-without-readback",
+      "file": "outcomes/verified.invalid-no-readback.json",
+      "expect": "invalid",
+      "failure": {
+        "kind": "schema",
+        "pointer": ""
+      },
+      "note": "verified requires requested-field readback."
+    },
+    {
+      "id": "outcome-verified-success-false",
+      "file": "outcomes/verified.invalid-success-false.json",
+      "expect": "invalid",
+      "failure": {
+        "kind": "schema",
+        "pointer": "/success"
+      },
+      "note": "verified always counts as success."
+    },
+    {
+      "id": "outcome-unsupported-success-true",
+      "file": "outcomes/unsupported.invalid-success-true.json",
+      "expect": "invalid",
+      "failure": {
+        "kind": "schema",
+        "pointer": "/success"
+      },
+      "note": "Only verified and noop count as success."
+    },
+    {
+      "id": "outcome-ambiguous-replay-allowed",
+      "file": "outcomes/ambiguous.invalid-replay-allowed.json",
+      "expect": "invalid",
+      "failure": {
+        "kind": "schema",
+        "pointer": "/replay_allowed"
+      },
+      "note": "An ambiguous write forbids automatic replay until reconciliation."
+    },
+    {
+      "id": "outcome-ambiguous-incomplete-retry",
+      "file": "outcomes/ambiguous.invalid-incomplete-retry.json",
+      "expect": "invalid",
+      "failure": {
+        "kind": "schema",
+        "pointer": "/retry"
+      },
+      "note": "When a mutation outcome declares retry metadata, it must provide the complete retry policy."
+    },
+    {
+      "id": "outcome-conflict-automatic-winner",
+      "file": "outcomes/conflict.invalid-automatic-winner.json",
+      "expect": "invalid",
+      "failure": {
+        "kind": "schema",
+        "pointer": "/automatic_winner"
+      },
+      "note": "A conflict has no automatic winner."
+    },
+    {
+      "id": "outcome-rate-limited-unnormalized",
+      "file": "outcomes/rate_limited.invalid-unnormalized.json",
+      "expect": "invalid",
+      "failure": {
+        "kind": "schema",
+        "pointer": "/rate_limit"
+      },
+      "note": "Rate-limit units are normalized before any time comparison."
+    },
+    {
+      "id": "outcome-rate-limited-mismatched-reset",
+      "file": "outcomes/rate_limited.invalid-mismatched-reset.json",
+      "expect": "invalid",
+      "failure": {
+        "kind": "outcome-rate-limit-normalization"
+      },
+      "note": "The normalized reset instant must equal the provider reset after unit conversion."
+    },
+    {
+      "id": "outcome-retryable-without-duplicate-safety",
+      "file": "outcomes/unavailable.invalid-retry-none.json",
+      "expect": "invalid",
+      "failure": {
+        "kind": "schema",
+        "pointer": "/retry/retryable"
+      },
+      "note": "Mutations are never blindly retried without a duplicate-safety strategy."
+    },
+    {
+      "id": "outcome-unsupported-generic-failure",
+      "file": "outcomes/unsupported.invalid-no-capability.json",
+      "expect": "invalid",
+      "failure": {
+        "kind": "schema",
+        "pointer": ""
+      },
+      "note": "unsupported names the capability; it is never a generic failure."
+    },
+    {
+      "id": "outcome-invalid-empty-violations",
+      "file": "outcomes/invalid.invalid-empty-violations.json",
+      "expect": "invalid",
+      "failure": {
+        "kind": "schema",
+        "pointer": "/violations"
+      },
+      "note": "invalid identifies at least one contract or input violation."
+    },
+    {
+      "id": "outcome-provider-payload-smuggled",
+      "file": "outcomes/verified.invalid-extra-property.json",
+      "expect": "invalid",
+      "failure": {
+        "kind": "schema",
+        "pointer": ""
+      },
+      "note": "Outcomes are closed; a raw provider body has nowhere to go."
+    },
+    {
+      "id": "outcome-class-mismatch-bypasses-retry-rule",
+      "file": "outcomes/unavailable.invalid-class-mismatch.json",
+      "expect": "invalid",
+      "failure": {
+        "kind": "outcome-class-mismatch"
+      },
+      "note": "A write capability self-reporting as a read would escape the mutation duplicate-safety branch (INT-007)."
+    },
+    {
+      "id": "outcome-unknown-capability-bypasses-retry-rule",
+      "file": "outcomes/unavailable.invalid-unknown-capability.json",
+      "expect": "invalid",
+      "failure": {
+        "kind": "outcome-unknown-capability"
+      },
+      "note": "An unknown pm.*.* id must not inherit the exemption meant for x-<owner>.<name> extensions."
+    },
+    {
+      "id": "outcome-unsupported-unknown-nested-capability",
+      "file": "outcomes/unsupported.invalid-unknown-nested-capability.json",
+      "expect": "invalid",
+      "failure": {
+        "kind": "outcome-unknown-capability"
+      },
+      "note": "unsupported_capability is checked against the closed capability taxonomy."
+    },
+    {
+      "id": "outcome-ambiguous-unknown-attempted-capability",
+      "file": "outcomes/ambiguous.invalid-unknown-attempted-capability.json",
+      "expect": "invalid",
+      "failure": {
+        "kind": "outcome-unknown-capability"
+      },
+      "note": "attempted_mutation.capability is checked against the closed capability taxonomy."
+    }
+  ],
+  "evidence": [
+    {
+      "id": "evidence-pass",
+      "file": "evidence/pass.valid.json",
+      "expect": "valid"
+    },
+    {
+      "id": "evidence-invalid-connector-id",
+      "file": "evidence/pass.invalid-connector-id.json",
+      "expect": "invalid",
+      "failure": {
+        "kind": "schema",
+        "pointer": "/connector_id"
+      },
+      "note": "Evidence connector ids use the same bounded, non-hyphen-terminated shape as manifests."
+    },
+    {
+      "id": "evidence-inconclusive",
+      "file": "evidence/inconclusive.valid.json",
+      "expect": "valid",
+      "note": "Provider unavailability earns zero credit and is never a pass."
+    },
+    {
+      "id": "evidence-pass-with-failures",
+      "file": "evidence/pass.invalid-with-failures.json",
+      "expect": "invalid",
+      "failure": {
+        "kind": "schema",
+        "pointer": "/suites/0"
+      },
+      "note": "Pass requires zero failed items."
+    },
+    {
+      "id": "evidence-inconclusive-claims-credit",
+      "file": "evidence/inconclusive.invalid-claims-credit.json",
+      "expect": "invalid",
+      "failure": {
+        "kind": "schema",
+        "pointer": "/suites/0"
+      },
+      "note": "Inconclusive earns zero certification credit."
+    },
+    {
+      "id": "evidence-inconclusive-untyped",
+      "file": "evidence/inconclusive.invalid-untyped.json",
+      "expect": "invalid",
+      "failure": {
+        "kind": "schema",
+        "pointer": "/suites/0"
+      },
+      "note": "Inconclusive requires a typed infrastructure or provider reason."
+    },
+    {
+      "id": "evidence-build-ready-with-blockers",
+      "file": "evidence/review.invalid-build-ready-with-blockers.json",
+      "expect": "invalid",
+      "failure": {
+        "kind": "schema",
+        "pointer": "/adversarial_review"
+      },
+      "note": "build_ready requires zero blockers and zero majors."
+    },
+    {
+      "id": "evidence-live-not-cleaned-up",
+      "file": "evidence/live.invalid-active-objects.json",
+      "expect": "invalid",
+      "failure": {
+        "kind": "schema",
+        "pointer": "/live/active_prefixed_objects"
+      },
+      "note": "Revocation requires zero active prefixed objects."
+    },
+    {
+      "id": "evidence-raw-provider-body",
+      "file": "evidence/pass.invalid-raw-provider-body.json",
+      "expect": "invalid",
+      "failure": {
+        "kind": "schema",
+        "pointer": "/suites/0/failed/0"
+      },
+      "note": "Evidence carries normalized fixture ids only, never raw provider bodies."
+    },
+    {
+      "id": "evidence-skipped-declared-capability",
+      "file": "evidence/pass.invalid-skipped-declared-capability.json",
+      "expect": "invalid",
+      "failure": {
+        "kind": "declared-capability-skipped"
+      },
+      "note": "A declared capability cannot be skipped, even when the suite otherwise passes."
+    },
+    {
+      "id": "evidence-unknown-suite-capability",
+      "file": "evidence/pass.invalid-unknown-suite-capability.json",
+      "expect": "invalid",
+      "failure": {
+        "kind": "evidence-unknown-capability"
+      },
+      "note": "Suite capability ids are checked against the same closed taxonomy as the matrix."
+    }
+  ]
+}

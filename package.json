@@ -49,6 +49,7 @@
     "check:codebase-health": "node scripts/check-codebase-health.mjs",
     "check:v1-linear": "node scripts/check-v1-linear-drift.mjs",
     "check:inbox-audit": "node scripts/inbox-redaction-lint.mjs",
+    "integration:contracts:validate": "node scripts/integration-contracts.mjs",
     "check:review-evidence-parity": "node scripts/check-review-evidence-parity.mjs",
     "eval:transcripts": "node evals/transcript-extraction/extraction-eval.mjs",
     "pr:backlog": "node scripts/pr-backlog-report.mjs",

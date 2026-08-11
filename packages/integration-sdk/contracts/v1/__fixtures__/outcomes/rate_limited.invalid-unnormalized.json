@@ -1,0 +1,26 @@
+{
+  "operation_id": "op_01HZY6M0000000000000000000",
+  "connector_id": "linear",
+  "contract_version": "1.0.0",
+  "occurred_at": "2026-08-10T09:15:00.000Z",
+  "provenance": {
+    "origin": "aios",
+    "connector_id": "linear",
+    "contract_version": "1.0.0",
+    "redacted": true
+  },
+  "outcome": "rate_limited",
+  "success": false,
+  "capability": "pm.work_item.read",
+  "retry": {
+    "retryable": true,
+    "duplicate_safety": "preflight_readback",
+    "retry_after_ms": 4200
+  },
+  "rate_limit": {
+    "provider_unit": "epoch_milliseconds",
+    "provider_reset_raw": "1786000000000",
+    "limit_scope": "token"
+  },
+  "mutation_class": "read"
+}

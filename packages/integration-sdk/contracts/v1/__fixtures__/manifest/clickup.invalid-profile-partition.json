@@ -1,0 +1,279 @@
+{
+  "connector_id": "clickup",
+  "display_name": "ClickUp",
+  "contract_version": "1.0.0",
+  "min_host": "1.0.0",
+  "owner": {
+    "team": "AIOS Core",
+    "contact": "https://github.com/aiosbrain/aios-workspace/issues"
+  },
+  "source_repository": "https://github.com/aiosbrain/aios-workspace",
+  "maturity": "experimental",
+  "runtimes": [
+    "brain",
+    "node"
+  ],
+  "platforms": [
+    "darwin",
+    "linux"
+  ],
+  "profiles": [
+    "core",
+    "pm"
+  ],
+  "capabilities": {
+    "supported": [
+      "core.health.read",
+      "core.identity.read",
+      "core.lifecycle.configure",
+      "core.lifecycle.install",
+      "core.lifecycle.revoke",
+      "core.lifecycle.uninstall",
+      "core.lifecycle.validate",
+      "pm.assignee.set",
+      "pm.comment.create",
+      "pm.document.read",
+      "pm.hierarchy.parent",
+      "pm.relation.blocks",
+      "pm.relation.related",
+      "pm.relation.remove",
+      "pm.state.transition",
+      "pm.sync.outbound",
+      "pm.work_item.create",
+      "pm.work_item.read",
+      "pm.work_item.update"
+    ],
+    "unsupported": []
+  },
+  "entity_kinds": [
+    "actor",
+    "comment",
+    "container",
+    "document",
+    "relation",
+    "state",
+    "work_item"
+  ],
+  "sync": {
+    "direction": "outbound"
+  },
+  "entrypoints": {
+    "cli": {
+      "executable": "aios",
+      "argv_prefix": [
+        "clickup"
+      ]
+    },
+    "health": {
+      "argv": [
+        "clickup",
+        "health",
+        "--json"
+      ]
+    }
+  },
+  "transport": "http",
+  "provider_hosts": [
+    "https://api.clickup.com"
+  ],
+  "auth": {
+    "mode": "oauth",
+    "credential_owner": "brain",
+    "scopes": [
+      "task:read",
+      "task:write",
+      "doc:read"
+    ],
+    "ambient_opt_in": false,
+    "redaction": {
+      "identity_readback": true,
+      "redact_fields": [
+        "authorization",
+        "access_token"
+      ]
+    },
+    "oauth": {
+      "authorization_endpoint": "https://app.clickup.com/api",
+      "token_endpoint": "https://api.clickup.com/api/v2/oauth/token",
+      "revoke_endpoint": "https://api.clickup.com/api/v2/oauth/revoke",
+      "callback_owner": "brain",
+      "state": {
+        "bound_to": [
+          "member",
+          "provider",
+          "team"
+        ],
+        "ttl_seconds": 600,
+        "single_use": true
+      }
+    }
+  },
+  "data": {
+    "classes_read": [
+      "actor_identity",
+      "comment_body",
+      "document_body",
+      "team_membership",
+      "work_item_body",
+      "work_item_metadata"
+    ],
+    "classes_written": [
+      "comment_body",
+      "work_item_body",
+      "work_item_metadata"
+    ],
+    "provenance_fields": [
+      "observed_at",
+      "source_connector",
+      "source_resource_id"
+    ]
+  },
+  "identity": {
+    "stable_external_id": true,
+    "external_id_field": "id"
+  },
+  "conflict": {
+    "typed": true,
+    "version_field": "date_updated"
+  },
+  "mutation": {
+    "classes": [
+      "destructive",
+      "write"
+    ],
+    "idempotency": "preflight_readback",
+    "readback_fields": [
+      "id",
+      "status.status",
+      "assignees"
+    ],
+    "retry": {
+      "max_attempts": 2,
+      "backoff": "exponential_bounded",
+      "max_delay_ms": 20000
+    }
+  },
+  "pagination": {
+    "strategy": "offset",
+    "page_size_max": 100,
+    "completeness_limit": 20000,
+    "truncation_outcome": "unavailable"
+  },
+  "rate_limit": {
+    "reset_header": "X-RateLimit-Reset",
+    "provider_unit": "epoch_seconds",
+    "scope": "token",
+    "evidence_url": "https://developer.clickup.com/docs/rate-limits"
+  },
+  "events": {
+    "mode": "webhook",
+    "webhook": {
+      "signature_algorithm": "hmac-sha256",
+      "raw_body_verification": true,
+      "replay_key": "webhook_id:history_item_id",
+      "replay_key_ttl_seconds": 86400,
+      "timestamp_window_seconds": 300,
+      "ordering": "unordered_tolerant"
+    }
+  },
+  "lifecycle": {
+    "install": {
+      "argv": [
+        "connector",
+        "install",
+        "clickup"
+      ],
+      "recoverable": true
+    },
+    "configure": {
+      "argv": [
+        "connector",
+        "configure",
+        "clickup"
+      ],
+      "recoverable": true
+    },
+    "validate": {
+      "argv": [
+        "connector",
+        "validate",
+        "clickup"
+      ],
+      "recoverable": true
+    },
+    "health": {
+      "argv": [
+        "clickup",
+        "health",
+        "--json"
+      ],
+      "recoverable": true
+    },
+    "revoke": {
+      "argv": [
+        "connector",
+        "revoke",
+        "clickup"
+      ],
+      "recoverable": true
+    },
+    "uninstall": {
+      "argv": [
+        "connector",
+        "uninstall",
+        "clickup"
+      ],
+      "recoverable": true
+    }
+  },
+  "conformance": {
+    "suites": [
+      "boundary",
+      "capability",
+      "credentials",
+      "lifecycle",
+      "manifest",
+      "mutation",
+      "resilience",
+      "sync"
+    ],
+    "tests": [
+      "boundary.public-route",
+      "compatibility.truth-table",
+      "contract.outcomes",
+      "core.health",
+      "core.identity",
+      "lifecycle.black-box",
+      "lifecycle.revoke",
+      "lifecycle.validate",
+      "manifest.registry-parity",
+      "mutation.ambiguity",
+      "mutation.readback",
+      "pm.assignee-set",
+      "pm.comment-create",
+      "pm.document-read",
+      "pm.hierarchy",
+      "pm.relation-remove-idempotent",
+      "pm.relations",
+      "pm.state-transition",
+      "pm.work-item-create",
+      "pm.work-item-read",
+      "pm.work-item-update",
+      "resilience.pagination",
+      "resilience.rate-limit",
+      "security.content-ingest",
+      "security.credentials",
+      "security.events",
+      "security.execution-boundary",
+      "security.tenant-isolation",
+      "sync.no-echo"
+    ],
+    "min_contract_version": "1.0.0"
+  },
+  "extensions": {
+    "x-clickup.custom_fields": {
+      "mode": "opaque",
+      "note": "Provider-specific custom fields never drive normalized orchestration decisions."
+    }
+  }
+}

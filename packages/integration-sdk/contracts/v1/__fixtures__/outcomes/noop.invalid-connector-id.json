@@ -1,0 +1,23 @@
+{
+  "operation_id": "op_01HZY6M0000000000000000000",
+  "connector_id": "linear-",
+  "contract_version": "1.0.0",
+  "occurred_at": "2026-08-10T09:15:00.000Z",
+  "provenance": {
+    "origin": "aios",
+    "connector_id": "linear",
+    "contract_version": "1.0.0",
+    "redacted": true
+  },
+  "outcome": "noop",
+  "success": true,
+  "capability": "pm.relation.remove",
+  "mutation_class": "destructive",
+  "provider_resource_id": "issue_9f2c",
+  "existing_state_proof": {
+    "kind": "absent_relation",
+    "observed": {
+      "relation": "blocks"
+    }
+  }
+}

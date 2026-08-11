@@ -1,0 +1,114 @@
+{
+  "$id": "https://contracts.aiosbrain.dev/integration/v1/invariants.json",
+  "contract_version": "1.0.0",
+  "title": "AIOS Integration Framework v1 — constitutional invariants and owning tests",
+  "description": "Every invariant id maps to exactly one owning test id, and no test id owns more than one invariant. Additional defence-in-depth tests may reference an invariant id, but only the owner produces certification credit. AIO-835 Phase 0.",
+  "ownership_rules": {
+    "one_owner_per_invariant": true,
+    "one_invariant_per_owning_test": true,
+    "owning_test_must_exist_in_capabilities_registry": true,
+    "defence_in_depth_tests_produce_no_certification_credit": true
+  },
+  "invariants": {
+    "INT-001": {
+      "title": "One canonical public implementation per provider operation; no deep import or copied client.",
+      "owning_test": "boundary.public-route",
+      "evidence": "automated"
+    },
+    "INT-002": {
+      "title": "The manifest is the sole capability and route registry; provider names are not repeated in independent registries.",
+      "owning_test": "manifest.registry-parity",
+      "evidence": "automated"
+    },
+    "INT-003": {
+      "title": "Unsupported, ambiguous, stale, and conflict results are typed and distinguishable from verified success.",
+      "owning_test": "contract.outcomes",
+      "evidence": "automated"
+    },
+    "INT-004": {
+      "title": "Directional blockers preserve source and target exactly; symmetric related links match in either order.",
+      "owning_test": "pm.relations",
+      "evidence": "automated"
+    },
+    "INT-005": {
+      "title": "Removal of an absent relation is an idempotent no-op.",
+      "owning_test": "pm.relation-remove-idempotent",
+      "evidence": "automated"
+    },
+    "INT-006": {
+      "title": "Every successful mutation is read back and verified against stable identity and requested fields.",
+      "owning_test": "mutation.readback",
+      "evidence": "automated"
+    },
+    "INT-007": {
+      "title": "Mutations are never blindly retried; retry requires a provider idempotency key or a preflight/readback strategy proving duplicate safety.",
+      "owning_test": "mutation.ambiguity",
+      "evidence": "automated"
+    },
+    "INT-008": {
+      "title": "Pagination is complete or returns an explicit declared truncation outcome; it never silently truncates.",
+      "owning_test": "resilience.pagination",
+      "evidence": "automated"
+    },
+    "INT-009": {
+      "title": "Provider rate-limit units are normalized before time comparison and bounded backoff honors provider reset windows.",
+      "owning_test": "resilience.rate-limit",
+      "evidence": "automated"
+    },
+    "INT-010": {
+      "title": "Credential source is deterministic and every surface is redacted; secrets are references, never manifest values.",
+      "owning_test": "security.credentials",
+      "evidence": "automated"
+    },
+    "INT-011": {
+      "title": "Tenant and member isolation: team_id and member identity derive from authenticated server context and every query carries a tenant predicate.",
+      "owning_test": "security.tenant-isolation",
+      "evidence": "automated"
+    },
+    "INT-012": {
+      "title": "OAuth state and webhook signature, expiry, replay, and ordering behavior are enforced over the raw body.",
+      "owning_test": "security.events",
+      "evidence": "automated"
+    },
+    "INT-013": {
+      "title": "Paths are canonicalized before containment checks and subprocesses use argument arrays with trusted executable resolution.",
+      "owning_test": "security.execution-boundary",
+      "evidence": "automated"
+    },
+    "INT-014": {
+      "title": "Provenance and projection fingerprints prevent echo loops; unchanged normalized input performs no provider writes.",
+      "owning_test": "sync.no-echo",
+      "evidence": "automated"
+    },
+    "INT-015": {
+      "title": "Concurrent edits surface a typed conflict and are never silently overwritten.",
+      "owning_test": "sync.concurrent-conflict",
+      "evidence": "automated"
+    },
+    "INT-016": {
+      "title": "Parent-before-child hierarchy ordering is preserved and hierarchy cycles fail closed.",
+      "owning_test": "pm.hierarchy",
+      "evidence": "automated"
+    },
+    "INT-017": {
+      "title": "Access tier and audience can only become more restrictive on ingest, and provider rich text is sanitized before rendering, indexing, logging, or model context assembly.",
+      "owning_test": "security.content-ingest",
+      "evidence": "automated"
+    },
+    "INT-018": {
+      "title": "Install, upgrade, and uninstall are atomic or recoverable; partial installation is reported as unhealthy.",
+      "owning_test": "lifecycle.black-box",
+      "evidence": "automated"
+    },
+    "INT-019": {
+      "title": "Contract and Harness policy compatibility fails closed for missing, malformed, and future-major versions.",
+      "owning_test": "compatibility.truth-table",
+      "evidence": "automated"
+    },
+    "INT-020": {
+      "title": "Live sandbox inventory reaches zero active prefixed objects and the disposable credential is revoked and probed.",
+      "owning_test": "live.cleanup",
+      "evidence": "live"
+    }
+  }
+}

@@ -1,0 +1,752 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.aiosbrain.dev/integration/v1/manifest.schema.json",
+  "title": "AIOS Integration Framework v1 — canonical connector manifest",
+  "description": "The single versioned, machine-readable description of a connector. Catalogs, docs, skill routes, and Harness policy are generated projections of this file; nothing else may be a second capability or route registry. Manifests are data, never executable JavaScript. No `format` keywords are used: every lexical constraint is pinned by `pattern` so plain ajv in strict mode is a faithful compile. Cross-field rules that JSON Schema cannot express (capability/test correspondence, exhaustive profile partition, mutation/pagination/webhook applicability, private-address detection, extension byte budget) are normative too and are enforced by `npm run integration:contracts:validate`.",
+  "type": "object",
+  "required": [
+    "connector_id",
+    "display_name",
+    "contract_version",
+    "min_host",
+    "owner",
+    "source_repository",
+    "maturity",
+    "runtimes",
+    "platforms",
+    "profiles",
+    "capabilities",
+    "entity_kinds",
+    "sync",
+    "entrypoints",
+    "transport",
+    "provider_hosts",
+    "auth",
+    "data",
+    "identity",
+    "lifecycle",
+    "conformance"
+  ],
+  "properties": {
+    "connector_id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]{1,38}[a-z0-9]$",
+      "description": "Stable for the life of the connector. Renaming is a contract-version change, not a rename."
+    },
+    "display_name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "contract_version": {
+      "$ref": "#/$defs/semver"
+    },
+    "min_host": {
+      "$ref": "#/$defs/semver",
+      "description": "Minimum host version, compared under compatibility.json's manifest_load evaluation order."
+    },
+    "owner": {
+      "type": "object",
+      "required": ["team", "contact"],
+      "properties": {
+        "team": {
+          "type": "string",
+          "minLength": 1
+        },
+        "contact": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "source_repository": {
+      "type": "string",
+      "pattern": "^https://[a-z0-9.-]+/[A-Za-z0-9._/-]+$",
+      "description": "v1 supports only bundled, code-reviewed connectors shipped in the AIOS repositories."
+    },
+    "maturity": {
+      "enum": ["experimental", "beta", "stable"],
+      "description": "Promotion out of `experimental` requires the live disposable-sandbox certification."
+    },
+    "runtimes": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "enum": ["claude-code", "codex", "cursor", "opencode", "node", "brain"]
+      }
+    },
+    "platforms": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "enum": ["darwin", "linux", "win32"]
+      }
+    },
+    "profiles": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "enum": ["core", "pm"]
+      },
+      "allOf": [
+        {
+          "contains": {
+            "const": "core"
+          }
+        }
+      ],
+      "description": "Profile membership is additive and `core` is always present."
+    },
+    "capabilities": {
+      "type": "object",
+      "required": ["supported", "unsupported"],
+      "properties": {
+        "supported": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/capabilityId"
+          }
+        },
+        "unsupported": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "object",
+            "required": ["capability", "reason"],
+            "properties": {
+              "capability": {
+                "$ref": "#/$defs/capabilityId"
+              },
+              "reason": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "entity_kinds": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "enum": ["work_item", "comment", "relation", "document", "actor", "state", "container"]
+      }
+    },
+    "sync": {
+      "type": "object",
+      "required": ["direction"],
+      "properties": {
+        "direction": {
+          "enum": ["none", "outbound", "inbound", "bidirectional"]
+        }
+      },
+      "additionalProperties": false
+    },
+    "entrypoints": {
+      "type": "object",
+      "required": ["cli", "health"],
+      "description": "The public route. Consumers use these only; deep imports and direct provider calls fail the boundary suite.",
+      "properties": {
+        "cli": {
+          "type": "object",
+          "required": ["executable", "argv_prefix"],
+          "properties": {
+            "executable": {
+              "type": "string",
+              "minLength": 1
+            },
+            "argv_prefix": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "string",
+                "minLength": 1
+              },
+              "description": "Argument array, never a shell string. Subprocesses never interpolate provider or user input."
+            }
+          },
+          "additionalProperties": false
+        },
+        "api": {
+          "type": "object",
+          "required": ["base_path"],
+          "properties": {
+            "base_path": {
+              "type": "string",
+              "pattern": "^/"
+            }
+          },
+          "additionalProperties": false
+        },
+        "health": {
+          "type": "object",
+          "required": ["argv"],
+          "properties": {
+            "argv": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "transport": {
+      "enum": ["http", "graphql", "cli", "skill"]
+    },
+    "provider_hosts": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/httpsOrigin"
+      }
+    },
+    "auth": {
+      "$ref": "#/$defs/auth"
+    },
+    "data": {
+      "type": "object",
+      "required": ["classes_read", "classes_written", "provenance_fields"],
+      "properties": {
+        "classes_read": {
+          "$ref": "#/$defs/dataClasses"
+        },
+        "classes_written": {
+          "$ref": "#/$defs/dataClasses"
+        },
+        "provenance_fields": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "identity": {
+      "type": "object",
+      "required": ["stable_external_id"],
+      "properties": {
+        "stable_external_id": {
+          "type": "boolean"
+        },
+        "external_id_field": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "conflict": {
+      "type": "object",
+      "required": ["typed"],
+      "properties": {
+        "typed": {
+          "type": "boolean"
+        },
+        "version_field": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "mutation": {
+      "$ref": "#/$defs/mutation"
+    },
+    "pagination": {
+      "$ref": "#/$defs/pagination"
+    },
+    "rate_limit": {
+      "$ref": "#/$defs/rateLimit"
+    },
+    "events": {
+      "$ref": "#/$defs/events"
+    },
+    "lifecycle": {
+      "type": "object",
+      "required": ["validate", "health"],
+      "description": "Every lifecycle operation present here must have its mapped core capability declared as supported.",
+      "properties": {
+        "install": {
+          "$ref": "#/$defs/lifecycleOperation"
+        },
+        "configure": {
+          "$ref": "#/$defs/lifecycleOperation"
+        },
+        "validate": {
+          "$ref": "#/$defs/lifecycleOperation"
+        },
+        "health": {
+          "$ref": "#/$defs/lifecycleOperation"
+        },
+        "revoke": {
+          "$ref": "#/$defs/lifecycleOperation"
+        },
+        "uninstall": {
+          "$ref": "#/$defs/lifecycleOperation"
+        }
+      },
+      "additionalProperties": false
+    },
+    "conformance": {
+      "type": "object",
+      "required": ["suites", "tests", "min_contract_version"],
+      "properties": {
+        "suites": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "tests": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "min_contract_version": {
+          "$ref": "#/$defs/semver"
+        }
+      },
+      "additionalProperties": false
+    },
+    "extensions": {
+      "type": "object",
+      "description": "The only open object in the manifest. Keys are namespaced, values are schema-valid JSON of at most 16 KiB each, excluded from normalized orchestration decisions, and redacted by default.",
+      "propertyNames": {
+        "pattern": "^x-[a-z0-9][a-z0-9-]*\\.[a-z0-9][a-z0-9._-]*$"
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "semver": {
+      "type": "string",
+      "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-((?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\\.(?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\\+([0-9a-zA-Z-]+(?:\\.[0-9a-zA-Z-]+)*))?$"
+    },
+    "capabilityId": {
+      "type": "string",
+      "pattern": "^(?:core|pm)\\.[a-z0-9_]+\\.[a-z0-9_]+$|^x-[a-z0-9][a-z0-9-]*\\.[a-z0-9][a-z0-9._-]*$"
+    },
+    "httpsOrigin": {
+      "type": "string",
+      "description": "HTTPS origin only: scheme + host + optional port. No path, no userinfo credentials, no wildcard, no single-label host such as `localhost`. Private-address rejection is enforced by the validator.",
+      "pattern": "^https://[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+(:[1-9][0-9]{0,4})?$"
+    },
+    "dataClasses": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "work_item_metadata",
+          "work_item_body",
+          "comment_body",
+          "document_body",
+          "actor_identity",
+          "team_membership",
+          "attachment_reference",
+          "audit_metadata"
+        ]
+      }
+    },
+    "auth": {
+      "type": "object",
+      "description": "Discriminated on `mode` via `unevaluatedProperties`. `scopes`, `secret_ref` and `oauth` are defined ONLY inside the branch that permits them, so `mode: none` forbids every secret-bearing field by construction rather than by a `not` clause that a later edit could forget to extend.",
+      "required": ["mode", "credential_owner", "redaction"],
+      "properties": {
+        "mode": {
+          "enum": ["oauth", "token", "none"]
+        },
+        "credential_owner": {
+          "enum": ["local", "brain"],
+          "description": "Local workspace secret handoff, or encrypted Team Brain team credential."
+        },
+        "redaction": {
+          "type": "object",
+          "required": ["identity_readback", "redact_fields"],
+          "properties": {
+            "identity_readback": {
+              "type": "boolean",
+              "description": "Credential resolution is read back as a redacted identity."
+            },
+            "redact_fields": {
+              "type": "array",
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        "ambient_opt_in": {
+          "type": "boolean",
+          "description": "Ambient provider credentials are ignored unless the caller explicitly opts in. Default false."
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "mode": {
+                "const": "oauth"
+              }
+            },
+            "required": ["mode"]
+          },
+          "then": {
+            "required": ["oauth", "scopes"],
+            "properties": {
+              "scopes": {
+                "type": "array",
+                "minItems": 1,
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "oauth": {
+                "$ref": "#/$defs/oauthBlock"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "mode": {
+                "const": "token"
+              }
+            },
+            "required": ["mode"]
+          },
+          "then": {
+            "required": ["secret_ref"],
+            "properties": {
+              "secret_ref": {
+                "$ref": "#/$defs/secretRef"
+              }
+            }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "httpsUrl": {
+      "type": "string",
+      "description": "HTTPS URL with syntactically valid DNS labels and a non-empty path. Single-label hosts remain schema-valid so the private-host cross-field rule must reject them.",
+      "pattern": "^https://[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*(?::[1-9][0-9]{0,4})?/[^\\s]*$"
+    },
+    "secretRef": {
+      "type": "string",
+      "pattern": "^(?:env|brain):[A-Za-z0-9_.-]+$",
+      "description": "A reference, never a value. Secrets never appear in a manifest."
+    },
+    "oauthBlock": {
+      "type": "object",
+      "required": [
+        "authorization_endpoint",
+        "token_endpoint",
+        "revoke_endpoint",
+        "callback_owner",
+        "state"
+      ],
+      "properties": {
+        "authorization_endpoint": {
+          "$ref": "#/$defs/httpsUrl"
+        },
+        "token_endpoint": {
+          "$ref": "#/$defs/httpsUrl"
+        },
+        "revoke_endpoint": {
+          "$ref": "#/$defs/httpsUrl"
+        },
+        "callback_owner": {
+          "enum": ["local", "brain"]
+        },
+        "state": {
+          "type": "object",
+          "description": "OAuth state is bound to member, team and provider, expires, and is single-use.",
+          "required": ["bound_to", "ttl_seconds", "single_use"],
+          "properties": {
+            "bound_to": {
+              "type": "array",
+              "uniqueItems": true,
+              "minItems": 3,
+              "items": {
+                "enum": ["member", "team", "provider"]
+              }
+            },
+            "ttl_seconds": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 3600
+            },
+            "single_use": {
+              "const": true
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "mutation": {
+      "type": "object",
+      "required": ["classes", "idempotency", "readback_fields", "retry"],
+      "properties": {
+        "classes": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "enum": ["write", "destructive"]
+          }
+        },
+        "idempotency": {
+          "enum": ["provider_key", "preflight_readback", "none"]
+        },
+        "readback_fields": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "retry": {
+          "type": "object",
+          "required": ["max_attempts", "backoff"],
+          "properties": {
+            "max_attempts": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 10
+            },
+            "backoff": {
+              "enum": ["none", "exponential_bounded"]
+            },
+            "max_delay_ms": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "idempotency": {
+                "const": "none"
+              }
+            },
+            "required": ["idempotency"]
+          },
+          "then": {
+            "description": "`none` forces zero automatic mutation retries.",
+            "properties": {
+              "retry": {
+                "properties": {
+                  "max_attempts": {
+                    "const": 0
+                  },
+                  "backoff": {
+                    "const": "none"
+                  }
+                },
+                "type": "object"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "pagination": {
+      "type": "object",
+      "required": ["strategy", "completeness_limit", "truncation_outcome"],
+      "properties": {
+        "strategy": {
+          "enum": ["cursor", "offset"]
+        },
+        "page_size_max": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "completeness_limit": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "The declared maximum number of items a complete read will return before the truncation outcome is emitted."
+        },
+        "truncation_outcome": {
+          "enum": ["invalid", "unavailable"],
+          "description": "Which normalized outcome is returned when the completeness limit is reached. Silent truncation is never permitted."
+        }
+      },
+      "additionalProperties": false
+    },
+    "rateLimit": {
+      "type": "object",
+      "required": ["reset_header", "provider_unit", "scope"],
+      "description": "Units are normalized before any time comparison. Each provider pins its own unit from captured evidence; parsers are never reused across providers by assumption.",
+      "properties": {
+        "reset_header": {
+          "type": "string",
+          "minLength": 1
+        },
+        "provider_unit": {
+          "enum": ["epoch_milliseconds", "epoch_seconds", "delta_seconds", "unknown"]
+        },
+        "scope": {
+          "enum": ["token", "team", "ip", "endpoint"]
+        },
+        "evidence_url": {
+          "$ref": "#/$defs/httpsUrl"
+        }
+      },
+      "additionalProperties": false
+    },
+    "events": {
+      "type": "object",
+      "description": "Discriminated on `mode` via `unevaluatedProperties`, so `mode: none` cannot carry a stray webhook or polling block.",
+      "required": ["mode"],
+      "properties": {
+        "mode": {
+          "enum": ["none", "polling", "webhook"]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "mode": {
+                "const": "webhook"
+              }
+            },
+            "required": ["mode"]
+          },
+          "then": {
+            "required": ["webhook"],
+            "properties": {
+              "webhook": {
+                "$ref": "#/$defs/webhookBlock"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "mode": {
+                "const": "polling"
+              }
+            },
+            "required": ["mode"]
+          },
+          "then": {
+            "required": ["polling"],
+            "properties": {
+              "polling": {
+                "type": "object",
+                "required": ["interval_seconds"],
+                "properties": {
+                  "interval_seconds": {
+                    "type": "integer",
+                    "minimum": 1
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "webhookBlock": {
+      "type": "object",
+      "required": [
+        "signature_algorithm",
+        "raw_body_verification",
+        "replay_key",
+        "timestamp_window_seconds",
+        "ordering"
+      ],
+      "properties": {
+        "signature_algorithm": {
+          "enum": ["hmac-sha256"]
+        },
+        "raw_body_verification": {
+          "const": true,
+          "description": "The signature is verified over the RAW body, before any parsing."
+        },
+        "replay_key": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The deduplication key, e.g. `webhook_id:history_item_id`."
+        },
+        "replay_key_ttl_seconds": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "timestamp_window_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 300
+        },
+        "ordering": {
+          "enum": ["unordered_tolerant", "monotonic_required"]
+        }
+      },
+      "additionalProperties": false
+    },
+    "lifecycleOperation": {
+      "type": "object",
+      "required": ["argv"],
+      "properties": {
+        "argv": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "recoverable": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

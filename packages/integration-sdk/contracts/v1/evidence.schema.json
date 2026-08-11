@@ -1,0 +1,425 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.aiosbrain.dev/integration/v1/evidence.schema.json",
+  "title": "AIOS Integration Framework v1 — certification evidence",
+  "description": "The machine-readable certification result for one connector at one commit. Every property set is closed and every leaf is a scalar, an enum, or a normalized fixture id — raw provider bodies, secrets, and free-text provider payloads have nowhere to go. No `format` keywords are used: every lexical constraint is pinned by `pattern`.",
+  "type": "object",
+  "required": [
+    "evidence_version",
+    "contract_version",
+    "contract_digests",
+    "connector_id",
+    "connector_version",
+    "commit",
+    "generated_at",
+    "capability_matrix",
+    "suites",
+    "security_checks",
+    "adversarial_review"
+  ],
+  "properties": {
+    "evidence_version": {
+      "$ref": "#/$defs/semver"
+    },
+    "contract_version": {
+      "$ref": "#/$defs/semver"
+    },
+    "contract_digests": {
+      "type": "object",
+      "description": "Canonical JSON SHA-256 of each v1 contract artifact, as exported by the SDK. A consumer whose digests differ is not running this contract.",
+      "required": [
+        "capabilities.json",
+        "manifest.schema.json",
+        "outcomes.schema.json",
+        "evidence.schema.json",
+        "compatibility.json",
+        "invariants.json"
+      ],
+      "properties": {
+        "capabilities.json": {
+          "$ref": "#/$defs/sha256"
+        },
+        "manifest.schema.json": {
+          "$ref": "#/$defs/sha256"
+        },
+        "outcomes.schema.json": {
+          "$ref": "#/$defs/sha256"
+        },
+        "evidence.schema.json": {
+          "$ref": "#/$defs/sha256"
+        },
+        "compatibility.json": {
+          "$ref": "#/$defs/sha256"
+        },
+        "invariants.json": {
+          "$ref": "#/$defs/sha256"
+        }
+      },
+      "additionalProperties": false
+    },
+    "connector_id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]{1,38}[a-z0-9]$"
+    },
+    "connector_version": {
+      "$ref": "#/$defs/semver"
+    },
+    "commit": {
+      "$ref": "#/$defs/commitSha"
+    },
+    "generated_at": {
+      "$ref": "#/$defs/timestamp"
+    },
+    "capability_matrix": {
+      "type": "object",
+      "required": ["supported", "unsupported"],
+      "properties": {
+        "supported": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/capabilityId"
+          }
+        },
+        "unsupported": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/capabilityId"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "suites": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/suiteResult"
+      }
+    },
+    "security_checks": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["id", "status"],
+        "properties": {
+          "id": {
+            "enum": [
+              "no_secret_in_argv",
+              "no_secret_in_logs",
+              "no_secret_in_evidence",
+              "tenant_predicate_present",
+              "oauth_state_single_use",
+              "webhook_raw_body_verified",
+              "path_canonicalized",
+              "subprocess_argv_only",
+              "rich_text_sanitized",
+              "access_tier_narrows_only"
+            ]
+          },
+          "status": {
+            "enum": ["pass", "fail", "inconclusive"]
+          },
+          "fixture_id": {
+            "$ref": "#/$defs/fixtureId"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "adversarial_review": {
+      "type": "object",
+      "description": "Advisory evidence only. Never a sole merge gate; deterministic gates prevail.",
+      "required": ["head_commit", "reviewed_at", "verdict", "blockers", "majors"],
+      "properties": {
+        "head_commit": {
+          "$ref": "#/$defs/commitSha"
+        },
+        "reviewed_at": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "verdict": {
+          "enum": ["build_ready", "changes_required"]
+        },
+        "blockers": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "majors": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "verdict": {
+                "const": "build_ready"
+              }
+            },
+            "required": ["verdict"]
+          },
+          "then": {
+            "properties": {
+              "blockers": {
+                "const": 0
+              },
+              "majors": {
+                "const": 0
+              }
+            }
+          }
+        }
+      ]
+    },
+    "live": {
+      "type": "object",
+      "description": "Present only for live disposable-sandbox certification runs. Required before promotion out of `experimental`.",
+      "required": [
+        "run_id",
+        "active_prefixed_objects",
+        "active_webhooks",
+        "credential_revoked",
+        "revocation_probe_failed",
+        "journal_digest"
+      ],
+      "properties": {
+        "run_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{16,64}$"
+        },
+        "active_prefixed_objects": {
+          "const": 0
+        },
+        "active_webhooks": {
+          "const": 0
+        },
+        "credential_revoked": {
+          "const": true
+        },
+        "revocation_probe_failed": {
+          "const": true,
+          "description": "An authentication probe after revocation is expected to fail. `true` means the probe correctly failed."
+        },
+        "journal_digest": {
+          "$ref": "#/$defs/sha256"
+        },
+        "hashed_object_ids": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/sha256"
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "semver": {
+      "type": "string",
+      "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-((?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\\.(?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\\+([0-9a-zA-Z-]+(?:\\.[0-9a-zA-Z-]+)*))?$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "commitSha": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "timestamp": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?(?:Z|[+-]\\d{2}:\\d{2})$"
+    },
+    "capabilityId": {
+      "type": "string",
+      "pattern": "^(?:core|pm)\\.[a-z0-9_]+\\.[a-z0-9_]+$|^x-[a-z0-9][a-z0-9-]*\\.[a-z0-9][a-z0-9._-]*$"
+    },
+    "testId": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]*\\.[a-z0-9-]+$"
+    },
+    "inconclusiveReason": {
+      "enum": [
+        "infrastructure_fault",
+        "provider_unavailable",
+        "credential_unavailable",
+        "runner_timeout",
+        "network_unreachable"
+      ]
+    },
+    "fixtureId": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]*$"
+    },
+    "suiteResult": {
+      "type": "object",
+      "required": [
+        "suite",
+        "contract_version",
+        "connector_version",
+        "commit",
+        "capabilities",
+        "status",
+        "passed",
+        "failed",
+        "skipped",
+        "evidence_digest"
+      ],
+      "properties": {
+        "suite": {
+          "type": "string",
+          "minLength": 1
+        },
+        "contract_version": {
+          "$ref": "#/$defs/semver"
+        },
+        "connector_version": {
+          "$ref": "#/$defs/semver"
+        },
+        "commit": {
+          "$ref": "#/$defs/commitSha"
+        },
+        "capabilities": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/capabilityId"
+          }
+        },
+        "status": {
+          "enum": ["pass", "fail", "inconclusive"]
+        },
+        "passed": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/testId"
+          }
+        },
+        "failed": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "object",
+            "required": ["test", "fixture_id"],
+            "properties": {
+              "test": {
+                "$ref": "#/$defs/testId"
+              },
+              "fixture_id": {
+                "$ref": "#/$defs/fixtureId"
+              },
+              "invariant": {
+                "type": "string",
+                "pattern": "^INT-\\d{3}$"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "skipped": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "object",
+            "required": ["test", "reason"],
+            "properties": {
+              "test": {
+                "$ref": "#/$defs/testId"
+              },
+              "reason": {
+                "enum": ["live_only", "capability_not_declared", "profile_not_declared"]
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "inconclusive_reason": {
+          "$ref": "#/$defs/inconclusiveReason"
+        },
+        "evidence_digest": {
+          "$ref": "#/$defs/sha256"
+        }
+      },
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "pass"
+              }
+            },
+            "required": ["status"]
+          },
+          "then": {
+            "description": "Pass requires a non-empty passed set and zero failed items.",
+            "properties": {
+              "passed": {
+                "minItems": 1,
+                "type": "array"
+              },
+              "failed": {
+                "maxItems": 0,
+                "type": "array"
+              },
+              "inconclusive_reason": false
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "fail"
+              }
+            },
+            "required": ["status"]
+          },
+          "then": {
+            "properties": {
+              "failed": {
+                "minItems": 1,
+                "type": "array"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "inconclusive"
+              }
+            },
+            "required": ["status"]
+          },
+          "then": {
+            "description": "Inconclusive earns zero certification credit and must name a typed infrastructure or provider reason. Provider or network unavailability is inconclusive, never pass.",
+            "required": ["inconclusive_reason"],
+            "properties": {
+              "inconclusive_reason": {
+                "$ref": "#/$defs/inconclusiveReason"
+              },
+              "passed": {
+                "maxItems": 0,
+                "type": "array"
+              },
+              "failed": {
+                "maxItems": 0,
+                "type": "array"
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}
