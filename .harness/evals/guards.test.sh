@@ -12,6 +12,7 @@
 # this file never contains a literal secret-shaped string — otherwise secret
 # scanners (including our own guard-secrets.sh) rightly refuse to write it.
 
+# shellcheck disable=SC1091  # cases/*.sh are sourced via a runtime-resolved path
 set -u
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 H="$ROOT/hooks"
