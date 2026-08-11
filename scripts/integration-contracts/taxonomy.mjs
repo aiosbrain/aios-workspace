@@ -74,9 +74,10 @@ export function checkTaxonomy(capabilities, fail) {
     }
     if (!Array.isArray(cap.tests) || cap.tests.length === 0) {
       fail(`capabilities: "${id}" declares no canonical test id`);
-    }
-    for (const testId of cap.tests ?? []) {
-      if (!tests[testId]) fail(`capabilities: "${id}" references unknown test "${testId}"`);
+    } else {
+      for (const testId of cap.tests) {
+        if (!tests[testId]) fail(`capabilities: "${id}" references unknown test "${testId}"`);
+      }
     }
   }
 
@@ -105,6 +106,32 @@ export function checkTaxonomy(capabilities, fail) {
   checkDependencyRules(caps, rules, fail);
   checkLifecycleMapping(caps, fail);
   checkPmMutationRule(caps, rules, fail);
+}
+
+/** Keep the manifest lifecycle vocabulary identical to the capability taxonomy mappings. */
+export function checkLifecycleSchemaParity(capabilities, manifestSchema, fail) {
+  const schemaOperations = new Set(Object.keys(manifestSchema.properties.lifecycle.properties));
+  const mappedOperations = new Map();
+  for (const [capability, definition] of Object.entries(capabilities.capabilities)) {
+    if (!definition.lifecycle_operation) continue;
+    const prior = mappedOperations.get(definition.lifecycle_operation);
+    if (prior) {
+      fail(
+        `lifecycle: operation "${definition.lifecycle_operation}" is mapped by both "${prior}" and "${capability}"`
+      );
+    }
+    mappedOperations.set(definition.lifecycle_operation, capability);
+  }
+  for (const operation of schemaOperations) {
+    if (!mappedOperations.has(operation)) {
+      fail(`lifecycle: schema operation "${operation}" has no mapped capability`);
+    }
+  }
+  for (const [operation, capability] of mappedOperations) {
+    if (!schemaOperations.has(operation)) {
+      fail(`lifecycle: "${capability}" maps operation "${operation}" absent from the schema`);
+    }
+  }
 }
 
 function canonicalList(list) {

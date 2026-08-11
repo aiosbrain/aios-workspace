@@ -283,7 +283,7 @@
     "lifecycle": {
       "type": "object",
       "required": ["validate", "health"],
-      "description": "Every lifecycle operation present here must have its matching core.lifecycle.* capability declared as supported.",
+      "description": "Every lifecycle operation present here must have its mapped core capability declared as supported.",
       "properties": {
         "install": {
           "$ref": "#/$defs/lifecycleOperation"
@@ -301,12 +301,6 @@
           "$ref": "#/$defs/lifecycleOperation"
         },
         "uninstall": {
-          "$ref": "#/$defs/lifecycleOperation"
-        },
-        "migration": {
-          "$ref": "#/$defs/lifecycleOperation"
-        },
-        "rollback": {
           "$ref": "#/$defs/lifecycleOperation"
         }
       },
@@ -467,7 +461,8 @@
     },
     "httpsUrl": {
       "type": "string",
-      "pattern": "^https://[a-z0-9.-]+(?::[1-9][0-9]{0,4})?/[^\\s]*$"
+      "description": "HTTPS URL with syntactically valid DNS labels and a non-empty path. Single-label hosts remain schema-valid so the private-host cross-field rule must reject them.",
+      "pattern": "^https://[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*(?::[1-9][0-9]{0,4})?/[^\\s]*$"
     },
     "secretRef": {
       "type": "string",

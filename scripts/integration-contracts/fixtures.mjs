@@ -27,9 +27,12 @@ export function compileSchemas(artifacts) {
   };
 }
 
-function schemaErrorsAt(validate, pointer) {
+export function schemaErrorsAt(validate, pointer) {
   if (!pointer) return validate.errors ?? [];
-  return (validate.errors ?? []).filter((err) => (err.instancePath ?? "").startsWith(pointer));
+  return (validate.errors ?? []).filter((err) => {
+    const instancePath = err.instancePath ?? "";
+    return instancePath === pointer || instancePath.startsWith(`${pointer}/`);
+  });
 }
 
 function describeErrors(validate) {
@@ -291,6 +294,46 @@ export function checkOutcomeClassRule(index, contract, fail) {
             ? `fixture ${entry.id}: ${fault.field} names "${fault.capability}" instead of root capability "${fault.expected}"`
             : `fixture ${entry.id}: declares mutation_class "${fault.declared}" for ${fault.capability}, whose taxonomy class is "${fault.expected}"`
       );
+    }
+  }
+}
+
+/** Return the normalization fault for a rate-limit outcome, or null when it is coherent. */
+export function findRateLimitNormalizationFault(outcome) {
+  if (outcome.outcome !== "rate_limited") return null;
+  const rateLimit = outcome.rate_limit;
+  if (!rateLimit || typeof rateLimit.normalized_reset_at !== "string") return null;
+  if (rateLimit.provider_unit === "unknown") return null;
+
+  const rawText = rateLimit.provider_reset_raw;
+  const raw = typeof rawText === "string" && rawText.trim() ? Number(rawText) : rawText;
+  if (typeof raw !== "number" || !Number.isFinite(raw)) {
+    return { kind: "rate-limit-normalization", reason: "provider reset is not numeric" };
+  }
+
+  const occurredAt = Date.parse(outcome.occurred_at);
+  const expected =
+    rateLimit.provider_unit === "epoch_milliseconds"
+      ? raw
+      : rateLimit.provider_unit === "epoch_seconds"
+        ? raw * 1000
+        : occurredAt + raw * 1000;
+  const actual = Date.parse(rateLimit.normalized_reset_at);
+  if (!Number.isFinite(expected) || !Number.isFinite(actual) || actual !== expected) {
+    return { kind: "rate-limit-normalization", expected, actual };
+  }
+  return null;
+}
+
+export function checkOutcomeRateLimitRule(index, fail) {
+  for (const entry of index.outcomes) {
+    const fault = findRateLimitNormalizationFault(loadFixture(entry.file));
+    const expected = entry.failure?.kind === "outcome-rate-limit-normalization";
+    if (expected && fault?.kind !== "rate-limit-normalization") {
+      fail(`fixture ${entry.id}: expected a rate-limit normalization fault, got none`);
+    }
+    if (!expected && entry.failure?.kind !== "schema" && fault) {
+      fail(`fixture ${entry.id}: normalized_reset_at does not match provider_reset_raw`);
     }
   }
 }

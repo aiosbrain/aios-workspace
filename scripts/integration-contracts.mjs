@@ -29,6 +29,7 @@ import {
 import {
   checkContractVersions,
   checkInvariants,
+  checkLifecycleSchemaParity,
   checkSchemaHygiene,
   checkTaxonomy,
 } from "./integration-contracts/taxonomy.mjs";
@@ -41,6 +42,7 @@ import {
   checkFixtureIndexParity,
   checkOutcomeClassRule,
   checkOutcomeCoverage,
+  checkOutcomeRateLimitRule,
   compileSchemas,
   loadIndex,
   runDocumentFixtures,
@@ -67,6 +69,7 @@ export function validateContracts() {
   checkContractVersions(artifacts, fail);
   checkSchemaHygiene(artifacts, fail);
   checkTaxonomy(capabilities, fail);
+  checkLifecycleSchemaParity(capabilities, artifacts["manifest.schema.json"], fail);
   checkInvariants(artifacts["invariants.json"], capabilities, fail);
   checkCompatibility(artifacts["compatibility.json"], fail);
 
@@ -83,6 +86,7 @@ export function validateContracts() {
   runDocumentFixtures(index.evidence, validators.evidence, "evidence", fail);
   checkOutcomeCoverage(index, artifacts, fail);
   checkOutcomeClassRule(index, capabilities, fail);
+  checkOutcomeRateLimitRule(index, fail);
   checkEvidenceCoverage(index, fail);
   checkEvidenceCapabilityIds(index, capabilities, fail);
   checkEvidenceSkipRule(index, capabilities, fail);

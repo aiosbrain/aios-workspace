@@ -59,7 +59,7 @@
     },
     "connector_id": {
       "type": "string",
-      "pattern": "^[a-z][a-z0-9-]*$"
+      "pattern": "^[a-z][a-z0-9-]{1,38}[a-z0-9]$"
     },
     "connector_version": {
       "$ref": "#/$defs/semver"

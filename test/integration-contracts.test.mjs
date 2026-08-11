@@ -10,13 +10,20 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { checkInvariants } from "../scripts/integration-contracts/taxonomy.mjs";
+import {
+  checkInvariants,
+  checkLifecycleSchemaParity,
+  checkTaxonomy,
+} from "../scripts/integration-contracts/taxonomy.mjs";
 import { loadFixture } from "../scripts/integration-contracts/load.mjs";
 import {
   classifyCapability,
+  compileSchemas,
   findEvidenceCapabilityFault,
   findOutcomeCapabilityFault,
+  findRateLimitNormalizationFault,
   findSkippedDeclaredCapabilities,
+  schemaErrorsAt,
 } from "../scripts/integration-contracts/fixtures.mjs";
 
 import { buildDigestArtifact, validateContracts } from "../scripts/integration-contracts.mjs";
@@ -279,6 +286,50 @@ test("private-address rejection reaches OAuth endpoints, not just provider_hosts
       (f) => f.rule === "MR-HOST-PRIVATE" && f.message.includes("token_endpoint")
     ),
     `expected MR-HOST-PRIVATE on single-label token_endpoint, got ${JSON.stringify(singleLabelFindings)}`
+  );
+
+  const malformed = structuredClone(clickup);
+  malformed.auth.oauth.token_endpoint = "https://.../oauth/token";
+  assert.equal(compileSchemas(loadContracts().artifacts).manifest(malformed), false);
+});
+
+test("schema error pointers match exact nodes and descendants, not sibling prefixes", () => {
+  const validate = {
+    errors: [{ instancePath: "/foo" }, { instancePath: "/foo/bar" }, { instancePath: "/foobar" }],
+  };
+  assert.deepEqual(schemaErrorsAt(validate, "/foo"), validate.errors.slice(0, 2));
+});
+
+test("malformed capability tests accumulate a diagnostic instead of throwing", () => {
+  const { artifacts } = loadContracts();
+  const malformed = structuredClone(artifacts["capabilities.json"]);
+  malformed.capabilities["core.health.read"].tests = {};
+  const failures = [];
+  assert.doesNotThrow(() => checkTaxonomy(malformed, (message) => failures.push(message)));
+  assert.ok(failures.some((message) => message.includes("declares no canonical test id")));
+});
+
+test("lifecycle schema operations stay in parity with capability mappings", () => {
+  const { artifacts } = loadContracts();
+  const failures = [];
+  checkLifecycleSchemaParity(
+    artifacts["capabilities.json"],
+    artifacts["manifest.schema.json"],
+    (message) => failures.push(message)
+  );
+  assert.deepEqual(failures, []);
+});
+
+test("rate-limit normalized timestamps equal the provider reset after unit conversion", () => {
+  assert.equal(
+    findRateLimitNormalizationFault(loadFixture("outcomes/rate_limited.valid.json")),
+    null
+  );
+  assert.equal(
+    findRateLimitNormalizationFault(
+      loadFixture("outcomes/rate_limited.invalid-mismatched-reset.json")
+    ).kind,
+    "rate-limit-normalization"
   );
 });
 

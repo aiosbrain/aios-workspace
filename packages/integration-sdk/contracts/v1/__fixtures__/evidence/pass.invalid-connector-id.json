@@ -9,7 +9,7 @@
     "compatibility.json": "d610f9766c2b3e2643bf4a9d59a6287c566826b00408890590530ba8d949c8cc",
     "invariants.json": "4b21f4506f41205bd3c6d184a3f7c86ff710774eda6d7d931a7ab633c5c5b06c"
   },
-  "connector_id": "linear",
+  "connector_id": "linear-",
   "connector_version": "0.1.0",
   "commit": "0e30915145567d101b53742f49c6a57838ac0e5c",
   "generated_at": "2026-08-10T09:20:00.000Z",
@@ -30,15 +30,10 @@
       ],
       "status": "pass",
       "passed": [
-        "core.identity"
+        "pm.work-item-read"
       ],
       "failed": [],
-      "skipped": [
-        {
-          "test": "pm.work-item-read",
-          "reason": "capability_not_declared"
-        }
-      ],
+      "skipped": [],
       "evidence_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
     }
   ],

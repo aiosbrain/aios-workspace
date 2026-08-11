@@ -228,6 +228,7 @@
       "profile": "core",
       "class": "read",
       "always_required": true,
+      "lifecycle_operation": "health",
       "tests": ["core.health"]
     },
     "core.lifecycle.install": {

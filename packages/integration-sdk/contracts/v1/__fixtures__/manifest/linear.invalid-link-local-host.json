@@ -1,6 +1,6 @@
 {
-  "connector_id": "clickup",
-  "display_name": "ClickUp",
+  "connector_id": "linear",
+  "display_name": "Linear",
   "contract_version": "1.0.0",
   "min_host": "1.0.0",
   "owner": {
@@ -11,7 +11,11 @@
   "maturity": "experimental",
   "runtimes": [
     "brain",
-    "node"
+    "claude-code",
+    "codex",
+    "cursor",
+    "node",
+    "opencode"
   ],
   "platforms": [
     "darwin",
@@ -38,17 +42,13 @@
       "pm.relation.related",
       "pm.relation.remove",
       "pm.state.transition",
+      "pm.sync.inbound",
       "pm.sync.outbound",
       "pm.work_item.create",
       "pm.work_item.read",
       "pm.work_item.update"
     ],
-    "unsupported": [
-      {
-        "capability": "pm.sync.inbound",
-        "reason": "Inbound writeback and merge certification are deferred to AIO-819 Phase 3."
-      }
-    ]
+    "unsupported": []
   },
   "entity_kinds": [
     "actor",
@@ -60,62 +60,45 @@
     "work_item"
   ],
   "sync": {
-    "direction": "outbound"
+    "direction": "bidirectional"
   },
   "entrypoints": {
     "cli": {
       "executable": "aios",
       "argv_prefix": [
-        "clickup"
+        "linear"
       ]
     },
     "health": {
       "argv": [
-        "clickup",
+        "linear",
         "health",
         "--json"
       ]
     }
   },
-  "transport": "http",
+  "transport": "graphql",
   "provider_hosts": [
-    "https://api.clickup.com"
+    "https://169.254.169.254"
   ],
   "auth": {
-    "mode": "oauth",
-    "credential_owner": "brain",
-    "scopes": [
-      "task:read",
-      "task:write",
-      "doc:read"
-    ],
+    "mode": "token",
+    "credential_owner": "local",
+    "secret_ref": "env:LINEAR_API_KEY",
     "ambient_opt_in": false,
     "redaction": {
       "identity_readback": true,
       "redact_fields": [
         "authorization",
-        "access_token"
+        "secret_ref",
+        "token"
       ]
-    },
-    "oauth": {
-      "authorization_endpoint": "https://app.clickup.com/api",
-      "token_endpoint": "https://api.clickup.com/api/v2/oauth/token",
-      "revoke_endpoint": "https://api.clickup.com/api/v2/oauth/revoke",
-      "callback_owner": "brain",
-      "state": {
-        "bound_to": [
-          "member",
-          "provider",
-          "team"
-        ],
-        "ttl_seconds": 600,
-        "single_use": true
-      }
     }
   },
   "data": {
     "classes_read": [
       "actor_identity",
+      "audit_metadata",
       "comment_body",
       "document_body",
       "team_membership",
@@ -129,6 +112,7 @@
     ],
     "provenance_fields": [
       "observed_at",
+      "projection_fingerprint",
       "source_connector",
       "source_resource_id"
     ]
@@ -139,7 +123,7 @@
   },
   "conflict": {
     "typed": true,
-    "version_field": "date_updated"
+    "version_field": "updatedAt"
   },
   "mutation": {
     "classes": [
@@ -149,35 +133,36 @@
     "idempotency": "preflight_readback",
     "readback_fields": [
       "id",
-      "status.status",
-      "assignees"
+      "state.id",
+      "assignee.id",
+      "parent.id"
     ],
     "retry": {
-      "max_attempts": 2,
+      "max_attempts": 3,
       "backoff": "exponential_bounded",
-      "max_delay_ms": 20000
+      "max_delay_ms": 30000
     }
   },
   "pagination": {
-    "strategy": "offset",
-    "page_size_max": 100,
-    "completeness_limit": 20000,
+    "strategy": "cursor",
+    "page_size_max": 250,
+    "completeness_limit": 50000,
     "truncation_outcome": "unavailable"
   },
   "rate_limit": {
-    "reset_header": "X-RateLimit-Reset",
-    "provider_unit": "epoch_seconds",
+    "reset_header": "X-RateLimit-Requests-Reset",
+    "provider_unit": "epoch_milliseconds",
     "scope": "token",
-    "evidence_url": "https://developer.clickup.com/docs/rate-limits"
+    "evidence_url": "https://linear.app/developers/rate-limiting"
   },
   "events": {
     "mode": "webhook",
     "webhook": {
       "signature_algorithm": "hmac-sha256",
       "raw_body_verification": true,
-      "replay_key": "webhook_id:history_item_id",
+      "replay_key": "delivery_id",
       "replay_key_ttl_seconds": 86400,
-      "timestamp_window_seconds": 300,
+      "timestamp_window_seconds": 60,
       "ordering": "unordered_tolerant"
     }
   },
@@ -186,7 +171,7 @@
       "argv": [
         "connector",
         "install",
-        "clickup"
+        "linear"
       ],
       "recoverable": true
     },
@@ -194,7 +179,7 @@
       "argv": [
         "connector",
         "configure",
-        "clickup"
+        "linear"
       ],
       "recoverable": true
     },
@@ -202,13 +187,13 @@
       "argv": [
         "connector",
         "validate",
-        "clickup"
+        "linear"
       ],
       "recoverable": true
     },
     "health": {
       "argv": [
-        "clickup",
+        "linear",
         "health",
         "--json"
       ],
@@ -218,7 +203,7 @@
       "argv": [
         "connector",
         "revoke",
-        "clickup"
+        "linear"
       ],
       "recoverable": true
     },
@@ -226,7 +211,7 @@
       "argv": [
         "connector",
         "uninstall",
-        "clickup"
+        "linear"
       ],
       "recoverable": true
     }
@@ -268,16 +253,12 @@
       "resilience.rate-limit",
       "security.content-ingest",
       "security.credentials",
+      "security.events",
       "security.execution-boundary",
       "security.tenant-isolation",
+      "sync.concurrent-conflict",
       "sync.no-echo"
     ],
     "min_contract_version": "1.0.0"
-  },
-  "extensions": {
-    "x-clickup.custom_fields": {
-      "mode": "opaque",
-      "note": "Provider-specific custom fields never drive normalized orchestration decisions."
-    }
   }
 }

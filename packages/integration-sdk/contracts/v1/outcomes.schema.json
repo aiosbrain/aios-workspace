@@ -366,6 +366,7 @@
         "properties": {
           "retry": {
             "type": "object",
+            "$ref": "#/$defs/retryPolicy",
             "allOf": [
               {
                 "if": {
@@ -398,7 +399,7 @@
     },
     "connectorId": {
       "type": "string",
-      "pattern": "^[a-z][a-z0-9-]*$"
+      "pattern": "^[a-z][a-z0-9-]{1,38}[a-z0-9]$"
     },
     "capabilityId": {
       "type": "string",
