@@ -62,6 +62,9 @@ export const BOOTSTRAP_MANAGED = [
     exec: true,
   },
   { dest: ".harness/hooks/guard-worktree.sh", src: ".harness/hooks/guard-worktree.sh", exec: true },
+  // Sourced by guard-worktree.sh — without it a bootstrapped repo silently falls back to
+  // policing every primary checkout it sees, which is the cross-repo leak this fixes.
+  { dest: ".harness/hooks/repo-scope.sh", src: ".harness/hooks/repo-scope.sh", exec: true },
   { dest: ".harness/hooks/prepare-event.sh", src: ".harness/hooks/prepare-event.sh", exec: true },
   { dest: ".harness/hooks/validate-event.sh", src: ".harness/hooks/validate-event.sh", exec: true },
   {

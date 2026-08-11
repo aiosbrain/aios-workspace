@@ -55,12 +55,20 @@ after(() => {
   rmSync(sandbox, { recursive: true, force: true });
 });
 
-/** Run `<runtime>/run-strict-guard.sh <event> guard-worktree.sh` with `payload` on stdin. */
-function runGuard(runtime, event, payload) {
+/**
+ * Run `<runtime>/run-strict-guard.sh <event> guard-worktree.sh` with `payload` on stdin.
+ *
+ * `HARNESS_GUARDED_ROOT` points the policy at the sandbox. guard-worktree polices exactly
+ * ONE repository — the one vendoring the harness — so without this the sandbox is out of
+ * scope by construction and every block-expecting case here would pass while asserting
+ * nothing. The sandbox is what stands in for "the guarded repo" in these fixtures.
+ */
+function runGuard(runtime, event, payload, guardedRoot = sandbox) {
   const input = typeof payload === "string" ? payload : JSON.stringify(payload);
   const res = spawnSync("/bin/sh", [GUARDS[runtime], event, "guard-worktree.sh"], {
     input,
     encoding: "utf8",
+    env: { ...process.env, HARNESS_GUARDED_ROOT: guardedRoot },
   });
   return res.status;
 }
