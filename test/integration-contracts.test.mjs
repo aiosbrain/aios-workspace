@@ -210,6 +210,7 @@ test("private, loopback and link-local provider hosts are rejected", () => {
     "localhost",
     "api.localhost",
     "dev.local",
+    "metadata",
     "127.0.0.1",
     "10.0.0.5",
     "172.16.4.9",
@@ -268,6 +269,16 @@ test("private-address rejection reaches OAuth endpoints, not just provider_hosts
   assert.ok(
     findings.some((f) => f.rule === "MR-HOST-PRIVATE" && f.message.includes("token_endpoint")),
     `expected MR-HOST-PRIVATE on token_endpoint, got ${JSON.stringify(findings)}`
+  );
+
+  const searchRelative = structuredClone(clickup);
+  searchRelative.auth.oauth.token_endpoint = "https://metadata/oauth/token";
+  const singleLabelFindings = evaluateManifest(searchRelative, capabilities);
+  assert.ok(
+    singleLabelFindings.some(
+      (f) => f.rule === "MR-HOST-PRIVATE" && f.message.includes("token_endpoint")
+    ),
+    `expected MR-HOST-PRIVATE on single-label token_endpoint, got ${JSON.stringify(singleLabelFindings)}`
   );
 });
 

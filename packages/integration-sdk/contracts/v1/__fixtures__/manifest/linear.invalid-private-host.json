@@ -79,7 +79,7 @@
   },
   "transport": "graphql",
   "provider_hosts": [
-    "https://10.0.0.5"
+    "https://api.linear.app"
   ],
   "auth": {
     "mode": "token",
@@ -153,7 +153,7 @@
     "reset_header": "X-RateLimit-Requests-Reset",
     "provider_unit": "epoch_milliseconds",
     "scope": "token",
-    "evidence_url": "https://linear.app/developers/rate-limiting"
+    "evidence_url": "https://metadata/rate-limiting"
   },
   "events": {
     "mode": "webhook",

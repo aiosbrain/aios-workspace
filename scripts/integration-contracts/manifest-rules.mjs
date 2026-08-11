@@ -56,6 +56,10 @@ export function isPrivateHost(hostname) {
   // dot and evade the exact same rules as the ordinary hostname.
   const host = hostname.toLowerCase().replace(/\.+$/, "");
   if (host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local")) return true;
+  // A single-label name is resolved relative to the machine's DNS search domains. Even when
+  // it is not literally `localhost`, a name such as `metadata` can therefore reach an
+  // internal service. Provider endpoints must be fully-qualified DNS names.
+  if (!host.includes(".")) return true;
 
   const labels = host.split(".");
   // A host whose labels are ALL numeric is an IPv4 literal in some notation. Resolvers accept

@@ -49,7 +49,7 @@
           "MR-HOST-PRIVATE"
         ]
       },
-      "note": "Private-address targets are rejected in production manifests."
+      "note": "Single-label rate-limit evidence hosts are rejected because DNS search domains can resolve them internally."
     },
     {
       "id": "linear-missing-canonical-test",
