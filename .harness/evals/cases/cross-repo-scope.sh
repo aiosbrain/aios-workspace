@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/usr/bin/env bash
 # Cross-repo scope cases for guard-worktree.sh. SOURCED by ../guards.test.sh (which owns
 # PASS/FAIL, $H and the wpc/wpe payload builders) — kept in its own file only to stay under
 # the repository file-size cap, not because it is a separate entry point. There is one eval

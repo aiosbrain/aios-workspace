@@ -77,16 +77,14 @@ is_default_branch() {
   return 1
 }
 
-# Repo identity + scope (probe, same_repository): .harness/hooks/repo-scope.sh.
-# This guard polices ONLY the repo that vendors this harness. The lib is required:
-# stubbing it out would make probe() answer "none" for everything and silently
-# disable the guard, so an incomplete install is exit 3 (could-not-evaluate ->
-# block) rather than a quiet pass.
-[ -f "$SCRIPT_DIR/repo-scope.sh" ] || exit 3
-. "$SCRIPT_DIR/repo-scope.sh" || exit 3
-# A truncated lib SOURCES cleanly but leaves same_repository undefined; an undefined
-# call returns non-zero, which callers read as "not our repo" — silently disabling the
-# guard. Require the whole surface before trusting it.
+# Repo identity + scope (probe, same_repository): .harness/hooks/repo-scope.sh. This
+# guard polices ONLY the repo that vendors this harness. The lib is REQUIRED: a missing
+# or truncated one sources cleanly yet leaves same_repository undefined, and an undefined
+# call returns non-zero — which callers read as "not our repo", silently disabling the
+# guard. So verify the whole surface arrived; anything less is exit 3 (block).
+# shellcheck source=./repo-scope.sh
+# shellcheck disable=SC1091  # path resolved at runtime; the function check below is the real gate
+[ -f "$SCRIPT_DIR/repo-scope.sh" ] && . "$SCRIPT_DIR/repo-scope.sh" || exit 3
 for _f in init_repo_scope same_repository probe; do command -v "$_f" >/dev/null 2>&1 || exit 3; done
 init_repo_scope "$SCRIPT_DIR"
 

@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/usr/bin/env bash
 # Synthetic tool-call payload builders for guards.test.sh. SOURCED by it — split out only
 # to keep that file under the repository size cap; there is still one eval entry point.
 #
