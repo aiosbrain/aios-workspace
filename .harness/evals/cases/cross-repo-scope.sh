@@ -14,11 +14,11 @@ echo "── cross-repo scope ────────────────�
 # torn down by now, and a missing guarded root falls back to "police everything", which
 # would invert every assertion below while still looking like a real result.
 GREPO=$(mktemp -d)
-( cd "$GREPO"; git init -q -b main; git config user.email t@t; git config user.name t; \
+( cd -- "$GREPO" || exit 1; git init -q -b main; git config user.email t@t; git config user.name t; \
   echo hi > a.txt; git add a.txt; git commit -qm init; \
   git worktree add -q "$GREPO-wt" -b feat/scope ) >/dev/null 2>&1
 OTHER=$(mktemp -d)
-( cd "$OTHER"; git init -q -b main; git config user.email t@t; git config user.name t; \
+( cd -- "$OTHER" || exit 1; git init -q -b main; git config user.email t@t; git config user.name t; \
   echo hi > a.txt; git add a.txt; git commit -qm init ) >/dev/null 2>&1
 
 tscope() { # name expected_exit json [policy_env]
@@ -44,4 +44,28 @@ tscope "guarded primary commit still blocked"    2 "$(wpc "$GREPO" 'git commit -
 tscope "worktree of the guarded repo allowed"    0 "$(wpc "$GREPO-wt" 'git commit -m x')" \
   HARNESS_PRIMARY_COMMIT_POLICY=strict
 rm -rf "$OTHER" "$GREPO" "$GREPO-wt"
+
+# The scope lib is load-bearing: a truncated one SOURCES cleanly but leaves
+# same_repository undefined, and an undefined call returns non-zero, which every
+# caller reads as "not our repo" — silently disabling the guard. Missing or
+# incomplete must be exit 3 (block), never a quiet pass.
+LIBSB=$(mktemp -d); mkdir -p "$LIBSB/.harness/hooks"
+cp "$H/"*.sh "$LIBSB/.harness/hooks/" 2>/dev/null
+LREPO="$LIBSB/repo"; mkdir -p "$LREPO"
+git -C "$LREPO" init -q -b main
+git -C "$LREPO" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
+tlib() { # name expected_exit
+  local got
+  printf '%s' "$(wpe "$LREPO" "$LREPO/a.txt")" | HARNESS_PRIMARY_EDIT_POLICY=strict \
+    HARNESS_GUARDED_ROOT="$LREPO" bash "$LIBSB/.harness/hooks/guard-worktree.sh" >/dev/null 2>&1
+  got=$?
+  if [ "$got" = "$2" ]; then PASS=$((PASS+1)); echo "PASS ($got): $1"
+  else FAIL=$((FAIL+1)); echo "FAIL (got $got, want $2): $1"; fi
+}
+tlib "intact scope lib polices the guarded repo" 2
+printf '#!/bin/sh\n' > "$LIBSB/.harness/hooks/repo-scope.sh"
+tlib "truncated scope lib blocks, never passes"  3
+rm -f "$LIBSB/.harness/hooks/repo-scope.sh"
+tlib "missing scope lib blocks, never passes"    3
+rm -rf "$LIBSB"
 

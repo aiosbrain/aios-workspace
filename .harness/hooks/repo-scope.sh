@@ -27,8 +27,8 @@
 common_dir_of() {
   _cdr=$(git -C "$1" rev-parse --git-common-dir 2>/dev/null) || return 1
   case "$_cdr" in
-    /*) (cd "$_cdr" 2>/dev/null && pwd -P) ;;
-    *)  (cd "$1" 2>/dev/null && cd "$_cdr" 2>/dev/null && pwd -P) ;;
+    /*) (cd -- "$_cdr" 2>/dev/null && pwd -P) ;;
+    *)  (cd -- "$1" 2>/dev/null && cd -- "$_cdr" 2>/dev/null && pwd -P) ;;
   esac
 }
 
@@ -54,7 +54,7 @@ same_repository() {
 probe() {
   _d=$1
   _gd=$(git -C "$_d" rev-parse --absolute-git-dir 2>/dev/null) || { echo none; return; }
-  _gd=$(cd "$_gd" 2>/dev/null && pwd -P) || { echo none; return; }
+  _gd=$(cd -- "$_gd" 2>/dev/null && pwd -P) || { echo none; return; }
   _cd=$(common_dir_of "$_d") || { echo none; return; }
   [ -n "$_cd" ] || { echo none; return; }
   _br=$(git -C "$_d" rev-parse --abbrev-ref HEAD 2>/dev/null || echo HEAD)

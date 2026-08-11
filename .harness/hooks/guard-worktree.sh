@@ -83,7 +83,11 @@ is_default_branch() {
 # disable the guard, so an incomplete install is exit 3 (could-not-evaluate ->
 # block) rather than a quiet pass.
 [ -f "$SCRIPT_DIR/repo-scope.sh" ] || exit 3
-. "$SCRIPT_DIR/repo-scope.sh"
+. "$SCRIPT_DIR/repo-scope.sh" || exit 3
+# A truncated lib SOURCES cleanly but leaves same_repository undefined; an undefined
+# call returns non-zero, which callers read as "not our repo" — silently disabling the
+# guard. Require the whole surface before trusting it.
+for _f in init_repo_scope same_repository probe; do command -v "$_f" >/dev/null 2>&1 || exit 3; done
 init_repo_scope "$SCRIPT_DIR"
 
 block() {
