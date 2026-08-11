@@ -14,25 +14,31 @@ notes, deliverables, decisions, and client work. It is **not** the AIOS product 
   back pending approval.
 - Prefer staging the paths your change touched over `git add -A`, so an unrelated in-flight
   edit doesn't ride along in your commit. That is tidiness, not a reason to delay.
-- **Do not** create feature branches, topic branches, or git worktrees in this workspace.
-- **Do not** switch branches, merge branches, rewrite history (`rebase`, `reset --hard`,
-  force-push), or open PRs here unless the owner **explicitly** asks. Pushing `master` to the
-  workspace's own remote is routine and needs no permission; everything else in this list is
-  not routine and does.
+- **Ask first** for these, every time — this is the one approval list, and `AGENTS.md` and
+  `RESOLVER.md` state it identically: creating feature/topic branches or git worktrees here,
+  switching branches, merging, rewriting history (`rebase`, `reset --hard`, force-push), and
+  opening PRs. Committing and pushing `master` to this workspace's own remote is **not** on
+  the list and needs no permission.
 - Research, onboarding notes, `2-work/` drafts, and dogfood observations are **content**,
   not release trains — they do not need branches.
 
-### The only two things that stop a push
+### What must be true before an automatic push
 
-1. A **secret** in the diff — a real credential, token, or key.
-2. **NDA or client material** heading somewhere it should not go.
+Pushing without being asked does not mean pushing without checks. Both of these are
+mandatory, and a failure **stops the push** — it is not a judgement call:
 
-Surface either instead of pushing, and say plainly what you found. Everything else ships. A
-workspace that pushes on a normal cadence is also how the owner gets an off-machine backup of
-their own context, so silence here has a cost.
+1. **The repository's own pre-push and pre-commit gates run and pass** — the secret scan,
+   the leak gate, and the team-ops guard. Never bypass them (`--no-verify` is not an option
+   here). If a gate fails, stop, report exactly what it flagged, and leave the commit
+   unpushed.
+2. **The remote is a verified private remote for this workspace.** Check it rather than
+   assume it (`gh repo view --json isPrivate`, or the equivalent for the host). If the
+   remote is public, points somewhere unexpected, or its visibility cannot be determined,
+   **do not auto-push**: commit locally, say which check was inconclusive, and let the owner
+   decide. Unknown is treated as unsafe, not as private.
 
-> If a workspace's remote is not private, the owner should say so in their own `AGENTS.md` —
-> this default assumes the private, single-owner repo that `scaffold-project.sh` creates.
+When both hold, everything ships — and a workspace that pushes on a normal cadence is also
+how the owner gets an off-machine backup of their own context, so silence has a cost too.
 
 ## Dogfood here, ship there
 
