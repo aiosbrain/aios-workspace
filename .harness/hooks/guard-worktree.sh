@@ -77,21 +77,16 @@ is_default_branch() {
   return 1
 }
 
-# probe <dir> -> "primary <branch>" | "worktree <branch>" | "none". Both git dirs
-# are physically resolved (pwd -P) so a /var<->/private symlink can't fool it.
-probe() {
-  _d=$1
-  _gd=$(git -C "$_d" rev-parse --absolute-git-dir 2>/dev/null) || { echo none; return; }
-  _gd=$(cd "$_gd" 2>/dev/null && pwd -P) || { echo none; return; }
-  _cd=$(git -C "$_d" rev-parse --git-common-dir 2>/dev/null) || { echo none; return; }
-  case "$_cd" in
-    /*) _cd=$(cd "$_cd" 2>/dev/null && pwd -P) ;;
-    *)  _cd=$(cd "$_d" 2>/dev/null && cd "$_cd" 2>/dev/null && pwd -P) ;;
-  esac
-  [ -n "$_cd" ] || { echo none; return; }
-  _br=$(git -C "$_d" rev-parse --abbrev-ref HEAD 2>/dev/null || echo HEAD)
-  if [ "$_gd" = "$_cd" ]; then echo "primary $_br"; else echo "worktree $_br"; fi
-}
+# Repo identity + scope (probe, same_repository): .harness/hooks/repo-scope.sh. This
+# guard polices ONLY the repo that vendors this harness. The lib is REQUIRED: a missing
+# or truncated one sources cleanly yet leaves same_repository undefined, and an undefined
+# call returns non-zero — which callers read as "not our repo", silently disabling the
+# guard. So verify the whole surface arrived; anything less is exit 3 (block).
+# shellcheck source=./repo-scope.sh
+# shellcheck disable=SC1091  # path resolved at runtime; the function check below is the real gate
+[ -f "$SCRIPT_DIR/repo-scope.sh" ] && . "$SCRIPT_DIR/repo-scope.sh" || exit 3
+for _f in init_repo_scope same_repository probe; do command -v "$_f" >/dev/null 2>&1 || exit 3; done
+init_repo_scope "$SCRIPT_DIR"
 
 block() {
   _reason=$1; _detail=$2
@@ -395,6 +390,7 @@ $(printf '%s\n' "$_nored" | tr ';|&(){}<>' ' ' | tr ' \t' '\n\n' | awk 'NF && $0
       _tpd=$_tok
       while [ ! -d "$_tpd" ] && [ "$_tpd" != "/" ] && [ -n "$_tpd" ]; do _tpd=$(dirname "$_tpd"); done
       [ -d "$_tpd" ] || continue
+      same_repository "$_tpd" || continue
       set -- $(probe "$_tpd"); [ "${1:-none}" = "primary" ] || continue
       _tb=$(basename "$_tok"); _tsk=0
       for e in $EXEMPT_BASENAMES; do [ "$_tb" = "$e" ] && _tsk=1; done
@@ -404,6 +400,7 @@ $(printf '%s\n' "$_nored" | tr ';|&(){}<>' ' ' | tr ' \t' '\n\n' | awk 'NF && $0
     done
   fi
 
+  same_repository "$TDIR" || return 0
   set -- $(probe "$TDIR"); KIND=${1:-none}; BRANCH=${2:-}
   [ "$KIND" = "primary" ] || return 0
 
@@ -478,6 +475,7 @@ while IFS= read -r p || [ -n "$p" ]; do
   # a primary checkout is still classified by that repo, not the session cwd.
   while [ ! -d "$pdir" ] && [ "$pdir" != "/" ] && [ -n "$pdir" ]; do pdir=$(dirname "$pdir"); done
   [ -d "$pdir" ] || pdir="$CWD"
+  same_repository "$pdir" || continue
   set -- $(probe "$pdir"); KIND=${1:-none}; BRANCH=${2:-}
   [ "$KIND" = "primary" ] || continue
   if [ "${HARNESS_PRIMARY_EDIT_POLICY:-default-ok}" != "strict" ]; then

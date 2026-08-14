@@ -12,10 +12,12 @@
 # this file never contains a literal secret-shaped string — otherwise secret
 # scanners (including our own guard-secrets.sh) rightly refuse to write it.
 
+# shellcheck disable=SC1091  # cases/*.sh are sourced via a runtime-resolved path
 set -u
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 H="$ROOT/hooks"
 PASS=0; FAIL=0
+. "$(dirname "$0")/cases/payloads.sh"
 
 # Runtime-assembled fixtures (never literal in this file)
 AWS_KEY="AKIA""ABCDEFGHIJKLMNOP"
@@ -25,10 +27,16 @@ PEM_HDR="-----BEGIN RSA ""PRIVATE KEY-----"
 DB_URL="postgres""://admin:hunter2@db.internal/prod"
 JWT="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9"".""eyJzdWIiOiIxMjM0NTY3ODkwIn0"".""dozjgNryP4J3jVmNHl0w5N3XgL0n3I9PlFUP0THsR8U"
 
-t() { # name  expected_exit  hook  json
-  local name="$1" want="$2" hook="$3" json="$4"
+# Fixtures are throwaway repos, so none is the repo this harness guards; without
+# HARNESS_GUARDED_ROOT every block-expecting case would pass asserting nothing (see
+# cases/cross-repo-scope.sh). The payload cwd is the repo under test.
+guarded_root_of() { printf '%s' "$1" | jq -r '.cwd // .tool_input.cwd // empty' 2>/dev/null; }
+
+t() { # name expected_exit hook json [guarded_root — when the TARGET repo is not the cwd]
+  local name="$1" want="$2" hook="$3" json="$4" root="${5:-}"
   local got
-  printf '%s' "$json" | bash "$hook" >/dev/null 2>&1
+  [ -n "$root" ] || root="$(guarded_root_of "$json")"
+  printf '%s' "$json" | HARNESS_GUARDED_ROOT="$root" bash "$hook" >/dev/null 2>&1
   got=$?
   if [ "$got" = "$want" ]; then
     PASS=$((PASS+1)); echo "PASS ($got): $name"
@@ -40,21 +48,13 @@ t() { # name  expected_exit  hook  json
 tc() { # name expected_exit event policy json -- Codex native adapter
   local name="$1" want="$2" event="$3" policy="$4" json="$5"
   local got
-  printf '%s' "$json" | "$ROOT/adapters/run-hook.sh" codex "$event" "$policy" >/dev/null 2>&1
+  printf '%s' "$json" | HARNESS_GUARDED_ROOT="$(guarded_root_of "$json")" "$ROOT/adapters/run-hook.sh" codex "$event" "$policy" >/dev/null 2>&1
   got=$?
   if [ "$got" = "$want" ]; then
     PASS=$((PASS+1)); echo "PASS ($got): $name"
   else
     FAIL=$((FAIL+1)); echo "FAIL (got $got, want $want): $name"
   fi
-}
-
-wjson() { # file_path content -> Write payload (jq-safe encoding)
-  jq -cn --arg fp "$1" --arg c "$2" '{tool_name:"Write",tool_input:{file_path:$fp,content:$c}}'
-}
-
-pjson() { # patch -> Codex apply_patch payload
-  jq -cn --arg c "$1" '{tool_name:"apply_patch",tool_input:{command:$c}}'
 }
 
 echo "── guard-secrets ──────────────────────────────────────────"
@@ -81,8 +81,6 @@ tc "blocks Codex rename to lockfile" 2 pre_edit guard-protected-paths.sh "$(pjso
 tc "allows normal Codex patch" 0 pre_edit guard-protected-paths.sh "$(pjson $'*** Begin Patch\n*** Add File: src/clean.ts\n+export const clean = true\n*** End Patch')"
 t "allows env-helper source"      0 "$H/guard-protected-paths.sh" "$(wjson src/env-helper.ts 'export const x=1')"
 t "allows normal markdown"        0 "$H/guard-protected-paths.sh" "$(wjson docs/notes.md 'hi')"
-
-bjson() { jq -cn --arg c "$1" '{tool_input:{command:$c}}'; }
 
 echo "── guard-destructive ──────────────────────────────────────"
 t "blocks rm -rf / (with args)"  2 "$H/guard-destructive.sh" "$(bjson 'rm -rf / --no-preserve-root')"
@@ -117,11 +115,9 @@ WT=$(mktemp -d)
 ( cd "$WT"; git init -q -b main; git config user.email t@t; git config user.name t; \
   echo hi > a.txt; git add a.txt; git commit -qm init; \
   git worktree add -q -b feat/x "$WT/wt" main ) >/dev/null 2>&1
-wpc() { jq -cn --arg cwd "$1" --arg cmd "$2" '{protocol_version:"1.0",event:"pre_command",runtime:{name:"mock"},cwd:$cwd,command:$cmd}'; }
-wpe() { jq -cn --arg cwd "$1" --arg p "$2" '{protocol_version:"1.0",event:"pre_edit",runtime:{name:"mock"},cwd:$cwd,paths:[{path:$p,action:"update"}],added_content:[]}'; }
 tcommit_strict() { # name expected_exit json — strict commit policy
   local name="$1" want="$2" json="$3" got
-  printf '%s' "$json" | HARNESS_PRIMARY_COMMIT_POLICY=strict bash "$H/guard-worktree.sh" >/dev/null 2>&1
+  printf '%s' "$json" | HARNESS_PRIMARY_COMMIT_POLICY=strict HARNESS_GUARDED_ROOT="$(guarded_root_of "$json")" bash "$H/guard-worktree.sh" >/dev/null 2>&1
   got=$?
   if [ "$got" = "$want" ]; then PASS=$((PASS+1)); echo "PASS ($got): $name"; else FAIL=$((FAIL+1)); echo "FAIL (got $got, want $want): $name"; fi
 }
@@ -130,7 +126,7 @@ t "blocks switch -c in primary"       2 "$H/guard-worktree.sh" "$(wpc "$WT" 'git
 t "blocks git branch <new> in primary" 2 "$H/guard-worktree.sh" "$(wpc "$WT" 'git branch newb')"
 t "allows git branch --all (read)"    0 "$H/guard-worktree.sh" "$(wpc "$WT" 'git branch --all')"
 t "allows commit on main in primary"  0 "$H/guard-worktree.sh" "$(wpc "$WT" 'git commit -m x')"
-printf '%s' "$(wpc "$WT" 'git commit -m x')" | HARNESS_PRIMARY_COMMIT_POLICY=strict bash "$H/guard-worktree.sh" >/dev/null 2>&1
+printf '%s' "$(wpc "$WT" 'git commit -m x')" | HARNESS_PRIMARY_COMMIT_POLICY=strict HARNESS_GUARDED_ROOT="$WT" bash "$H/guard-worktree.sh" >/dev/null 2>&1
 if [ $? = 2 ]; then PASS=$((PASS+1)); echo "PASS (2): strict policy blocks main commit (agent hook)"; else FAIL=$((FAIL+1)); echo "FAIL: strict agent-hook should block main commit"; fi
 t "allows commit inside worktree"     0 "$H/guard-worktree.sh" "$(wpc "$WT/wt" 'git commit -m x')"
 # AIO-637: command-local overrides are honored in direct and env-prefixed
@@ -217,14 +213,14 @@ tcommit_strict "HARNESS commit override does not unlock branch creation" 2 "$(wp
 t "branch-like heredoc body is inert" 0 "$H/guard-worktree.sh" \
   "$(wpc "$WT/wt" $'cat <<\'BODY\'\ngit -C '"$WT"$' checkout -b harmless-data\nBODY\ngit status')"
 t "allows edit on main in primary"    0 "$H/guard-worktree.sh" "$(wpe "$WT" "$WT/a.txt")"
-printf '%s' "$(wpe "$WT" "$WT/a.txt")" | HARNESS_PRIMARY_EDIT_POLICY=strict bash "$H/guard-worktree.sh" >/dev/null 2>&1
+printf '%s' "$(wpe "$WT" "$WT/a.txt")" | HARNESS_PRIMARY_EDIT_POLICY=strict HARNESS_GUARDED_ROOT="$WT" bash "$H/guard-worktree.sh" >/dev/null 2>&1
 if [ $? = 2 ]; then PASS=$((PASS+1)); echo "PASS (2): strict policy blocks main edit (agent hook)"; else FAIL=$((FAIL+1)); echo "FAIL: strict agent-hook should block main edit"; fi
 t "allows edit inside worktree"       0 "$H/guard-worktree.sh" "$(wpe "$WT/wt" "$WT/wt/a.txt")"
 t "no-op outside a git repo"          0 "$H/guard-worktree.sh" "$(wpe /tmp /tmp/x.txt)"
 # review round 4 (PR #431) — strict shell-write scan hardening
 ts() { # name expected_exit json — strict edit policy
   local name="$1" want="$2" json="$3" got
-  printf '%s' "$json" | HARNESS_PRIMARY_EDIT_POLICY=strict bash "$H/guard-worktree.sh" >/dev/null 2>&1
+  printf '%s' "$json" | HARNESS_PRIMARY_EDIT_POLICY=strict HARNESS_GUARDED_ROOT="$(guarded_root_of "$json")" bash "$H/guard-worktree.sh" >/dev/null 2>&1
   got=$?
   if [ "$got" = "$want" ]; then PASS=$((PASS+1)); echo "PASS ($got): $name"; else FAIL=$((FAIL+1)); echo "FAIL (got $got, want $want): $name"; fi
 }
@@ -396,7 +392,7 @@ if [ ! -e "$RCE_MARK" ]; then PASS=$((PASS+1)); echo "PASS: tilde target not eva
 # review round 2, finding 3 — git -C "<path with spaces>" commit caught by the agent hook
 SPW="$(mktemp -d)/my repo"; mkdir -p "$SPW"
 ( cd "$SPW"; git init -q -b main; git config user.email t@t; git config user.name t; echo hi > a.txt; git add a.txt; git commit -qm init; git checkout -q -b feat/s ) >/dev/null 2>&1
-t "blocks git -C <spaced primary> commit" 2 "$H/guard-worktree.sh" "$(wpc "$WT" "git -C \"$SPW\" commit -m x")"
+t "blocks git -C <spaced primary> commit" 2 "$H/guard-worktree.sh" "$(wpc "$WT" "git -C \"$SPW\" commit -m x")" "$SPW"
 rm -rf "$(dirname "$SPW")"
 git -C "$WT" checkout -q -b feat/stranded   # strand a feature branch in the primary checkout
 t "blocks edit on feat in primary"    2 "$H/guard-worktree.sh" "$(wpe "$WT" "$WT/a.txt")"
@@ -492,6 +488,8 @@ echo "── post-edit-format ────────────────�
 t "formatter no-ops on missing file" 0 "$H/post-edit-format.sh" "$(bjson x | jq -c '{tool_input:{file_path:"/nonexistent/x.ts"}}')"
 tc "formatter accepts Codex patch" 0 post_edit post-edit-format.sh "$(pjson $'*** Begin Patch\n*** Update File: /nonexistent/x.ts\n@@\n-old\n+new\n*** End Patch')"
 t "formatter no-ops on empty input"  0 "$H/post-edit-format.sh" '{}'
+
+. "$(dirname "$0")/cases/cross-repo-scope.sh"
 
 echo "────────────────────────────────────────────────────────────"
 echo "guards.test.sh: $PASS passed, $FAIL failed"
