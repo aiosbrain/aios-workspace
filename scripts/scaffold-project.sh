@@ -671,17 +671,14 @@ for hook in asks-capture.mjs asks-claim-recovery.cjs decision-capture.mjs sessio
 done
 [ -f "$SCAFFOLD/.claude/settings.json" ] && cp "$SCAFFOLD/.claude/settings.json" "$OUTPUT/.claude/settings.json"
 
-# Cursor cross-repo toolkit guard (dogfood workstations): deterministic enforcement
-# at the tool boundary so agents opened on this IC repo cannot mutate the toolkit
-# PRIMARY checkout. See scaffold/.cursor/hooks.json.
-if [ -f "$SCAFFOLD/.cursor/hooks.json" ]; then
-  mkdir -p "$OUTPUT/.cursor/hooks"
-  cp "$SCAFFOLD/.cursor/hooks.json" "$OUTPUT/.cursor/hooks.json"
-  if [ -d "$SCAFFOLD/.cursor/hooks" ]; then
-    cp "$SCAFFOLD/.cursor/hooks/"*.sh "$OUTPUT/.cursor/hooks/" 2>/dev/null || true
-    chmod +x "$OUTPUT/.cursor/hooks/"*.sh 2>/dev/null || true
-  fi
-fi
+# No Cursor cross-repo toolkit guard is stamped (AIO-864). Workspaces used to ship
+# .cursor/hooks.json + guard-toolkit-primary.sh to stop agents mutating the toolkit
+# PRIMARY checkout, but it gated on ${CURSOR_PROJECT_DIR} — one arbitrary root in a
+# multi-root Cursor window — so it fail-opened whenever the window was anchored
+# elsewhere (verified: never executed once in a real 5-root window), while its
+# marker-present/script-missing branch returned exit 3 under failClosed and denied
+# every command session-wide. The toolkit is now guarded only from inside itself:
+# aios-workspace's own .cursor/hooks.json plus the tracked pre-commit primary guard.
 
 # Slack per-channel tier map (AIO-354/AIO-369) — stamp the same starter config that
 # `aios update` seeds into older workspaces, so fresh and upgraded workspaces cannot drift.

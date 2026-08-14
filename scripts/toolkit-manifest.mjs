@@ -163,21 +163,13 @@ export const MANAGED_PATHS = [
     kind: "file",
     exec: true,
   },
-  // Cursor cross-repo toolkit guard (IC workspaces): block agent writes/commits to the
-  // toolkit PRIMARY checkout while dogfooding from a personal workstation.
-  { dest: ".cursor/hooks.json", src: "scaffold/.cursor/hooks.json", kind: "file" },
-  {
-    dest: ".cursor/hooks/guard-toolkit-primary.sh",
-    src: "scaffold/.cursor/hooks/guard-toolkit-primary.sh",
-    kind: "file",
-    exec: true,
-  },
-  {
-    dest: ".cursor/hooks/toolkit-primary-tripwire.sh",
-    src: "scaffold/.cursor/hooks/toolkit-primary-tripwire.sh",
-    kind: "file",
-    exec: true,
-  },
+  // AIO-864: the Cursor cross-repo toolkit guard (.cursor/hooks.json +
+  // guard-toolkit-primary.sh + toolkit-primary-tripwire.sh) was REMOVED from this list.
+  // Rationale in scripts/scaffold-project.sh. Keeping the entries here is what would
+  // undo the fix: MANAGED means `aios update` re-seeds the files into every workspace
+  // that already deleted them, which is exactly how the guard came back after being
+  // disabled once. Their absence from MANAGED_PATHS makes the deletion propagate on the
+  // next `aios update` instead.
   { dest: "validation/secret-patterns.txt", src: "validation/secret-patterns.txt", kind: "file" },
 ];
 

@@ -36,7 +36,7 @@
     "scripts/loop.mjs": 1036,
     "scripts/rails.mjs": 596,
     "scripts/review-bugbot.mjs": 598,
-    "scripts/scaffold-project.sh": 779,
+    "scripts/scaffold-project.sh": 775,
     "scripts/toolkit-pull/remote-state.mjs": 588,
     "scripts/update.mjs": 1012,
     "src/operator-loop/asks/store.ts": 788,
