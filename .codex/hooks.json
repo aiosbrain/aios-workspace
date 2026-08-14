@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"$(git rev-parse --show-toplevel)/.harness/adapters/codex/run-strict-guard.sh\" pre_edit guard-worktree.sh",
+            "command": "root=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0; guard=\"$root/.harness/adapters/codex/run-strict-guard.sh\"; if [ -d \"$root/.harness\" ]; then exec \"$guard\" pre_edit guard-worktree.sh; fi",
             "timeout": 30,
             "statusMessage": "Enforcing worktree discipline"
           }
@@ -17,7 +17,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"$(git rev-parse --show-toplevel)/.harness/adapters/codex/run-strict-guard.sh\" pre_command guard-worktree.sh",
+            "command": "root=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0; guard=\"$root/.harness/adapters/codex/run-strict-guard.sh\"; if [ -d \"$root/.harness\" ]; then exec \"$guard\" pre_command guard-worktree.sh; fi",
             "timeout": 30,
             "statusMessage": "Enforcing worktree discipline"
           }
