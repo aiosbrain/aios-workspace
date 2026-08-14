@@ -211,3 +211,36 @@ test("decision and task normalization preserves an explicit admin audience", () 
   assert.equal(stage.decisions[0].audience, "admin");
   assert.equal(stage.tasks[0].audience, "admin");
 });
+
+// Regression: normalizeAudience previously defaulted any value outside the exact
+// admin|team|external enum to "team" — including the documented "private" alias for
+// "admin" — which would silently upscope private/admin-tier content to team visibility.
+test("decision and task normalization maps the 'private' audience alias to 'admin', not 'team'", () => {
+  const extraction = {
+    decisions: [
+      {
+        decision: "Keep launch notes private",
+        audience: "private",
+        transcript: "1-inbox/transcripts/meeting.md",
+        sourceQuote: "We approved launch on August 4.",
+      },
+    ],
+    tasks: [
+      {
+        task: "Privately prepare the rollout",
+        audience: "private",
+        transcript: "1-inbox/transcripts/meeting.md",
+        sourceQuote: "Sam Rivera owns the rollout.",
+      },
+    ],
+    facts: [],
+    stakeholders: [],
+  };
+  const stage = prepareExtractionStage({
+    extraction,
+    transcriptTexts,
+    now: "2026-07-24T00:00:00.000Z",
+  });
+  assert.equal(stage.decisions[0].audience, "admin");
+  assert.equal(stage.tasks[0].audience, "admin");
+});

@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { normalizeTier } from "./workspace-parse.mjs";
 
 const KINDS = ["decisions", "tasks", "facts", "stakeholders"];
 
@@ -127,8 +128,15 @@ function groundedCandidate(kind, index, candidate, transcriptTexts) {
   return { candidate: { ...candidate, transcript, sourceQuote } };
 }
 
+const AUDIENCE_TIERS = new Set(["admin", "team", "external"]);
+
+// Route through the single-sourced alias map (private->admin, client/company->external)
+// before falling back — an unrecognized value should not silently become "team", since
+// that would upscope private/admin-tier content to team visibility. See the matching fix
+// in src/operator-loop/meetings/candidate-schema.ts (normalizeAudienceAlias).
 function normalizeAudience(value) {
-  return ["admin", "team", "external"].includes(value) ? value : "team";
+  const normalized = normalizeTier(typeof value === "string" ? value : "");
+  return AUDIENCE_TIERS.has(normalized) ? normalized : "team";
 }
 
 function normalizeCandidate(kind, candidate, now) {

@@ -19,7 +19,8 @@ const PHASE_INSTRUCTIONS = {
 const CANDIDATE_SCHEMA = `{"decisions":[{"id":"string","date":"YYYY-MM-DD","decision":"string","rationale":"string","decidedBy":"string","impact":"string","type":1|2|3,"audience":"admin|team|external","transcript":"repository path","sourceQuote":"verbatim quote"}],"tasks":[{"id":"string","task":"string","assignee":"named person","status":"string","sprint":"string","due":"string","linear":"string","transcript":"repository path","sourceQuote":"verbatim quote"}]}`;
 const CRITERION_SCHEMA = `{"id":"TDn","classification":"must|advisory","outcome":"pass|fail|error","findings":["string"],"candidateIds":["string"],"transcriptPaths":["string"],"evidence":["string"]}`;
 const CANONICAL_METADATA =
-  'TD5 classification is "advisory"; every other TD classification is "must". For unscheduled tasks use status "Todo" and "—" for sprint, due, and linear.';
+  'TD5 classification is "advisory"; every other TD classification is "must". For unscheduled tasks use status "Todo" and "—" for sprint, due, and linear. ' +
+  '"audience" is always exactly "admin", "team", or "external", even if the transcript itself uses a friendly synonym like "private" (which means "admin") — never copy the transcript\'s own wording into this field.';
 const PHASE_SCHEMAS = {
   extract: CANDIDATE_SCHEMA,
   deduplicate: CANDIDATE_SCHEMA,

@@ -16,6 +16,7 @@ import {
   stringValue,
   type UnknownRecord,
 } from "./parse.js";
+import { normalizeTier } from "../parsers.js";
 
 const TASK_SCHEDULE_DEFAULTS = {
   status: "Todo",
@@ -23,6 +24,20 @@ const TASK_SCHEDULE_DEFAULTS = {
   due: "—",
   linear: "—",
 } as const;
+
+/**
+ * The extraction model is instructed to emit only the canonical `audience` values
+ * (admin|team|external), but transcripts that themselves discuss access tiers (e.g. a
+ * meeting about ClickUp's team/admin task split) sometimes leak the friendly label
+ * `private` into the field instead of `admin`. Route through the single-sourced
+ * `normalizeTier` alias map (private→admin, client/company→external, per
+ * `.claude/rules/access-control.md`) before the strict enum check, so a documented
+ * alias doesn't hard-fail the whole batch. Non-string/missing values pass through
+ * unchanged so `literal()` still reports its own "must be a string" diagnostic.
+ */
+function normalizeAudienceAlias(value: unknown): unknown {
+  return typeof value === "string" ? normalizeTier(value) : value;
+}
 
 function fallbackId(kind: "decision" | "task", substance: string, index: number): string {
   const digest = createHash("sha256").update(`${kind}\0${substance}\0${index}`).digest("hex");
@@ -53,7 +68,7 @@ function decisionCandidate(value: unknown, index: number, legacy: boolean): Deci
     impact: stringValue(item["impact"], `decisions[${index}].impact`),
     type,
     audience: literal(
-      item["audience"],
+      normalizeAudienceAlias(item["audience"]),
       ["admin", "team", "external"] as const,
       `decisions[${index}].audience`
     ),
