@@ -47,7 +47,10 @@ test("parsePhaseCandidateBatch still accepts canonical audience values unchanged
 });
 
 test("parsePhaseCandidateBatch still rejects a genuinely unknown audience value", () => {
-  assert.throws(() => parsePhaseCandidateBatch(batch("bogus")), /audience has unknown value: bogus/);
+  assert.throws(
+    () => parsePhaseCandidateBatch(batch("bogus")),
+    /audience has unknown value: bogus/
+  );
 });
 
 test("parseLenientPhaseCandidateBatch (the live extract-phase parser) also normalizes 'private'", () => {
