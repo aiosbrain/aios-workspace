@@ -22,7 +22,12 @@ notes, deliverables, decisions, and client work. It is **not** the AIOS product 
 - Research, onboarding notes, `2-work/` drafts, and dogfood observations are **content**,
   not release trains — they do not need branches.
 
-### What must be true before an automatic push
+> `git push` and `aios push` are different operations. This section is about `git push`
+> — moving your own commits to this workspace's own private remote. `aios push` is the
+> outward sync to the Team Brain and is governed by `publishing.md`; nothing in this rule
+> makes that automatic.
+
+### What must be true before an automatic `git push`
 
 Pushing without being asked does not mean pushing without checks. Both of these are
 mandatory, and a failure **stops the push** — it is not a judgement call:
