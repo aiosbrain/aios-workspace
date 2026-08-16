@@ -163,22 +163,59 @@ export const MANAGED_PATHS = [
     kind: "file",
     exec: true,
   },
-  // Cursor cross-repo toolkit guard (IC workspaces): block agent writes/commits to the
-  // toolkit PRIMARY checkout while dogfooding from a personal workstation.
+  // AIO-864: the Cursor cross-repo toolkit guard (.cursor/hooks.json +
+  // guard-toolkit-primary.sh + toolkit-primary-tripwire.sh) was REMOVED from this list.
+  // Rationale in scripts/scaffold-project.sh. Keeping the entries here is what would
+  // undo the fix: MANAGED means `aios update` re-seeds the files into every workspace
+  // that already deleted them, which is exactly how the guard came back after being
+  // disabled once. Dropping them here stops the re-seed but does NOT clean up the copies
+  // already on disk — mergeManaged only ever visits the entries it is given, so a path
+  // simply deleted from this list becomes permanently unmanaged. RETIRED_PATHS below is
+  // what actually removes them.
+  { dest: "validation/secret-patterns.txt", src: "validation/secret-patterns.txt", kind: "file" },
+];
+
+/**
+ * Toolkit files that were WITHDRAWN — they used to be MANAGED, ship no longer, and must be
+ * removed from workspaces that already vendored them.
+ *
+ * Deleting an entry from MANAGED_PATHS is not enough on its own. `mergeManaged` iterates
+ * only the entry lists it is handed, so a path that leaves MANAGED_PATHS is never visited
+ * again: it stops being re-seeded, but the copy already in the workspace survives every
+ * subsequent `aios update`, permanently unmanaged. `applyDeletions` cannot cover it either —
+ * it walks `kind: "dir"` entries only, and these are file entries whose parent directory the
+ * toolkit no longer ships at all.
+ *
+ * So a withdrawal is TWO edits: remove the entry from MANAGED_PATHS, and add it here with the
+ * `src` it used to sync from. `src` is a HISTORICAL path — it does not exist in the toolkit
+ * working tree any more, and is used only to read the file's content at the workspace's pinned
+ * base sha, which is what an untouched vendored copy must equal.
+ *
+ * Safety is applyDeletions' rule: `mine === base` removes it, anything else is a local edit
+ * the owner keeps (reported, never deleted). Entries stay here permanently — they are cheap
+ * (one `git show` each against a path that is usually already gone from the base tree, which
+ * short-circuits to "keep nothing to do") and removing one would strand any workspace that
+ * had not updated since.
+ */
+export const RETIRED_PATHS = [
+  // AIO-864 — the Cursor cross-repo toolkit guard. ORDER MATTERS, and it is the reverse of
+  // the install order: the dispatching config goes FIRST, its helper scripts after. The
+  // guard's hooks.json is `failClosed` and gates on a marker (.aios-toolkit-version) that
+  // every workspace always has, so "marker present, script missing" returns exit 3 and denies
+  // every edit and shell call for the whole session. Removing the helpers first would create
+  // exactly that state for as long as the run takes — and permanently if it is interrupted.
+  // This order can only ever leave orphaned helper scripts that nothing dispatches to.
   { dest: ".cursor/hooks.json", src: "scaffold/.cursor/hooks.json", kind: "file" },
   {
     dest: ".cursor/hooks/guard-toolkit-primary.sh",
     src: "scaffold/.cursor/hooks/guard-toolkit-primary.sh",
     kind: "file",
-    exec: true,
   },
   {
     dest: ".cursor/hooks/toolkit-primary-tripwire.sh",
     src: "scaffold/.cursor/hooks/toolkit-primary-tripwire.sh",
     kind: "file",
-    exec: true,
   },
-  { dest: "validation/secret-patterns.txt", src: "validation/secret-patterns.txt", kind: "file" },
 ];
 
 /**

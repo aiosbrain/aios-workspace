@@ -25,6 +25,13 @@ needs vendoring). No shared build step — each script is a standalone entry poi
   `scaffold-project.sh` stamps. `test/toolkit-manifest-parity.test.mjs` fails the build
   if a new stamped path isn't classified — the "kept in lockstep by hand" footgun this
   test exists to catch.
+- **Withdrawing a managed file takes TWO edits.** Deleting an entry from `MANAGED_PATHS`
+  only stops the re-seed — `mergeManaged` visits the entry lists it is handed and nothing
+  else, so the copy a workspace already vendored survives every future `aios update`,
+  permanently unmanaged. Add the entry to **`RETIRED_PATHS`** (same `dest`, its historical
+  `src`) as well; that is the pass that removes it, on the same `mine === base` safety rule
+  applyDeletions uses. Order retirements so a fail-closed config is deleted BEFORE the
+  scripts it dispatches to.
 - **Registering a new script may need catalog gen too.** `gen-catalog.mjs` regenerates
   the skills/integrations catalog (`.claude/skills/INDEX.md`, `.claude/INTEGRATIONS.md`);
   `export-commands.mjs` mirrors `.claude/commands/*.md` into `.opencode/command/` for

@@ -17,7 +17,7 @@ import path from "node:path";
 import { existsSync, readFileSync, statSync, readdirSync, lstatSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { gitEnv, UpdateError } from "../cli-common.mjs";
-import { MANAGED_PATHS, SEED_IF_ABSENT } from "../toolkit-manifest.mjs";
+import { MANAGED_PATHS, RETIRED_PATHS, SEED_IF_ABSENT } from "../toolkit-manifest.mjs";
 import { lsTree } from "../toolkit-merge.mjs";
 
 /**
@@ -243,6 +243,37 @@ export function deletionCandidates(toolkitDir, srcRoot, entry, baseSha) {
 }
 
 /**
+ * Every destination ONE managed entry contributes: each of its files, that file's two conflict
+ * sidecars, and — for a `kind: "dir"` entry — the upstream-deletion targets applyDeletions
+ * would remove. Split out of plannedDestRels purely to keep that function readable; it holds
+ * no policy of its own.
+ */
+function managedEntryDestRels(srcDir, baseSha, entry) {
+  const out = [];
+  for (const file of entryFiles(srcDir, entry)) {
+    out.push(file.destRel, `${file.destRel}.aios-incoming`, `${file.destRel}.aios-merge`);
+  }
+  // In cmdVendorApplyOnly the snapshot IS the toolkit checkout (toolkitDir === srcRoot),
+  // so the snapshot's own history serves the baseSha lsTree.
+  if (entry.kind === "dir")
+    for (const { destRel } of deletionCandidates(srcDir, srcDir, entry, baseSha)) out.push(destRel);
+  return out;
+}
+
+/**
+ * Destinations for entries whose only effect is a delete — no sidecars to enumerate. Skips an
+ * entry whose `src` is absent from the snapshot, mirroring the write loop's own entry guard.
+ */
+function deleteOnlyDestRels(srcDir, entries) {
+  const out = [];
+  for (const entry of entries) {
+    if (!existsSync(path.join(srcDir, entry.src))) continue;
+    for (const file of entryFiles(srcDir, entry)) out.push(file.destRel);
+  }
+  return out;
+}
+
+/**
  * EVERY workspace-relative destination a vendor apply could possibly touch — the complete
  * write+delete set, enumerated as data BEFORE anything executes:
  *   - each managed/seed file's destRel (writes);
@@ -250,20 +281,25 @@ export function deletionCandidates(toolkitDir, srcRoot, entry, baseSha) {
  *     on merge conflicts and no-base fallbacks);
  *   - each dir entry's upstream-deletion targets (present at baseSha, gone from src —
  *     via the same `deletionCandidates` enumeration applyDeletions itself iterates);
- *   - each `prunablePaths` entry's files (config-gated removals — the pmTool prune pass).
+ *   - each `prunablePaths` entry's files (config-gated removals — the pmTool prune pass);
+ *   - each `retiredPaths` entry's dest (withdrawn toolkit files — the retirement pass).
  * This is what makes the pre-flight containment scan genuinely all-or-nothing: it derives
  * from the same helpers the write loop calls (`entryFiles`, `deletionCandidates`), so the
  * scanned set and the touched set cannot drift. Exported for tests.
  */
-export function plannedDestRels(srcDir, baseSha, managedPaths = MANAGED_PATHS, prunablePaths = []) {
-  const out = [];
-  // Prune targets are deletes, so they need no sidecars — but they DO have to be in the scan:
-  // applyPrune calls assertDestPathSafe, and the pre-flight must cover every path the write
-  // loop can touch, in both directions.
-  for (const entry of prunablePaths) {
-    if (!existsSync(path.join(srcDir, entry.src))) continue;
-    for (const file of entryFiles(srcDir, entry)) out.push(file.destRel);
-  }
+export function plannedDestRels(
+  srcDir,
+  baseSha,
+  managedPaths = MANAGED_PATHS,
+  prunablePaths = [],
+  retiredPaths = RETIRED_PATHS
+) {
+  // Retirement targets are deletes of paths the toolkit no longer ships, so there is no
+  // `src` on disk to guard on (the `existsSync` guard the other passes use would skip every
+  // one of them) and no sidecar to enumerate — but applyRetired calls assertDestPathSafe, so
+  // the pre-flight has to cover them. Prune targets are the same shape, minus that caveat.
+  const out = retiredPaths.map((entry) => entry.dest);
+  out.push(...deleteOnlyDestRels(srcDir, prunablePaths));
   for (const entry of managedPaths) {
     // Mirror mergeManaged's own entry guard EXACTLY: when an entry's src is absent from
     // the snapshot, the write loop skips the whole entry — writes AND deletions. Without
@@ -272,17 +308,11 @@ export function plannedDestRels(srcDir, baseSha, managedPaths = MANAGED_PATHS, p
     // an apply that was never going to go near it. The scanned set must equal the touched
     // set in BOTH directions.
     if (!existsSync(path.join(srcDir, entry.src))) continue;
-    for (const file of entryFiles(srcDir, entry)) {
-      out.push(file.destRel, `${file.destRel}.aios-incoming`, `${file.destRel}.aios-merge`);
-    }
-    if (entry.kind === "dir") {
-      // In cmdVendorApplyOnly the snapshot IS the toolkit checkout (toolkitDir === srcRoot),
-      // so the snapshot's own history serves the baseSha lsTree.
-      for (const { destRel } of deletionCandidates(srcDir, srcDir, entry, baseSha)) {
-        out.push(destRel);
-      }
-    }
+    out.push(...managedEntryDestRels(srcDir, baseSha, entry));
   }
+  // Seeds keep their own inline loop, without the src guard applySeeds applies — scanning a
+  // destination the seed pass would skip is safe (the scan may over-cover, never under-cover),
+  // and this is long-standing behaviour, not something to change under a readability edit.
   for (const entry of SEED_IF_ABSENT) {
     for (const file of entryFiles(srcDir, entry)) out.push(file.destRel);
   }

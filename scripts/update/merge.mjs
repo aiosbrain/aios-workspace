@@ -25,7 +25,7 @@ import {
 import path from "node:path";
 import { decideMerge, threeWayMerge, gitShow } from "../toolkit-merge.mjs";
 import { unmergedPaths } from "../toolkit-pull.mjs";
-import { MANAGED_PATHS, SEED_IF_ABSENT } from "../toolkit-manifest.mjs";
+import { MANAGED_PATHS, RETIRED_PATHS, SEED_IF_ABSENT } from "../toolkit-manifest.mjs";
 import {
   readIf,
   pathEntryExists,
@@ -189,6 +189,47 @@ function applyDeletions({ toolkitDir, srcRoot, repo, baseSha, entry, force, dryR
 }
 
 /**
+ * Remove a WITHDRAWN toolkit file — one that used to be MANAGED and ships no longer
+ * (`RETIRED_PATHS`). This is the same question applyDeletions answers ("did the toolkit stop
+ * shipping this?") for a case its dir-walk structurally cannot see: a file entry whose parent
+ * directory the toolkit dropped entirely, so there is no surviving `kind: "dir"` entry to walk
+ * and no `entryFiles` result to compare against.
+ *
+ * Without this pass, deleting the entry from MANAGED_PATHS only stops the re-seed —
+ * mergeManaged visits the entries it is given and nothing else, so the copy already vendored
+ * into the workspace survives every future `aios update`, permanently unmanaged. That is
+ * strictly worse than leaving it managed when the reason for withdrawing it is that the file
+ * is harmful.
+ *
+ * Safety is applyDeletions' rule exactly: the workspace copy must equal the toolkit's content
+ * at the workspace's pinned base sha — which is precisely what an untouched vendored copy is.
+ * Anything else (a local edit, or a base we can't read) is the owner's and is reported, never
+ * deleted. `force` propagates the removal the same way it does for an upstream deletion.
+ */
+function applyRetired({ toolkitDir, repo, baseSha, entry, force, dryRun }, r) {
+  assertDestPathSafe(repo, entry.dest, "delete");
+  const destAbs = path.join(repo, entry.dest);
+  const mine = readIf(destAbs);
+  if (mine === undefined) return; // never vendored here, or already removed
+  const base = gitShow(toolkitDir, baseSha, entry.src);
+  if (!force && (base === undefined || mine !== base)) {
+    r.retiredKept.push(entry.dest);
+    return;
+  }
+  if (!dryRun) {
+    unlinkSync(destAbs);
+    // Best-effort: drop the parent if the withdrawal emptied it. rmdirSync throws on a
+    // non-empty directory, which is the guard we want — anything the owner left inside keeps it.
+    try {
+      rmdirSync(path.dirname(destAbs));
+    } catch {
+      /* not empty, or not ours to remove */
+    }
+  }
+  r.retired.push(entry.dest);
+}
+
+/**
  * Remove assets this workspace's config no longer selects — today, the `pmTool`-gated Linear
  * paths after an owner switches `pm_tool` away from `linear` (AIO-844).
  *
@@ -237,6 +278,8 @@ function applyPrune({ srcRoot, repo, entry, dryRun }, r) {
  * pinned base is `baseSha`) into `repo`. Committed local edits are merged, not clobbered;
  * genuine conflicts are surfaced (never written inline). Dirty (uncommitted) files are
  * skipped up front. `force` overwrites with the toolkit version and propagates deletions.
+ * `retiredPaths` (default `RETIRED_PATHS`) additionally REMOVES files the toolkit has
+ * withdrawn — the only pass that can clean up a path after it leaves MANAGED_PATHS.
  * Returns per-category path lists. Exported for tests.
  */
 export function mergeManaged(toolkitDir, srcRoot, repo, baseSha, opts = {}) {
@@ -253,7 +296,13 @@ export function mergeManaged(toolkitDir, srcRoot, repo, baseSha, opts = {}) {
     skippedDirty: [],
     pruned: [],
     prunedKept: [],
+    retired: [],
+    retiredKept: [],
   };
+  // Withdrawals run BEFORE the managed writes: a retired file is one the toolkit judged
+  // harmful, so it should be gone even if a later managed write in the same run throws.
+  for (const entry of opts.retiredPaths || RETIRED_PATHS)
+    applyRetired({ toolkitDir, repo, baseSha, entry, force, dryRun }, r);
   for (const entry of opts.managedPaths || MANAGED_PATHS) {
     if (!existsSync(path.join(srcRoot, entry.src))) continue;
     for (const f of entryFiles(srcRoot, entry)) {

@@ -1,7 +1,8 @@
 #!/bin/sh
 # Toolkit product repo: strict primary-checkout policies for Claude Code guard hooks.
-# IC workspaces use scaffold/.cursor/hooks/guard-toolkit-primary.sh instead — they
-# must keep committing on master locally while blocking cross-repo toolkit edits.
+# IC workspaces ship no cross-repo guard (AIO-864): they must keep committing on
+# master locally, and the guard that used to enforce this from their side fail-opened
+# in the multi-root Cursor windows it targeted. This repo guards itself instead.
 set -u
 
 export HARNESS_PRIMARY_EDIT_POLICY=strict
