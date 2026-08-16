@@ -13,7 +13,15 @@
 /** @typedef {{ provider: string, modelId: string, raw: string }} ModelRef */
 
 export const AGENTIC_PROVIDERS = new Set(["claude", "cursor", "opencode", "codex"]);
-export const PROMPT_PROVIDERS = new Set(["openrouter", "deepseek", "opencode", "cursor", "claude"]);
+export const PROMPT_PROVIDERS = new Set(["openrouter", "deepseek", "opencode", "cursor", "claude", "codex"]);
+// Codex PROMPT calls run `codex exec --sandbox read-only` on the ChatGPT-subscription login
+// (model-call.mjs callCodexPrompt). Two failure shapes look identical but aren't (both
+// observed 2026-08-15/16, both printing "You have no credits remaining"): entitlement
+// propagation lag right after `codex login` (clears in ~5 min), and the subscription's
+// rolling usage window being exhausted (clears when the window rolls). Neither means the
+// transport is wrong — probe cheaply before concluding anything. This allowlist is the
+// models proven to serve exec on the subscription.
+export const CODEX_PROMPT_MODELS = new Set(["gpt-5.6", "gpt-5.5"]);
 // These are the approved Codex execution tiers for the AIO-381 delivery lane. Keeping the
 // allowlist here lets `aios ship` reject a typo before it creates a worktree or starts a run.
 export const CODEX_MODEL_TIERS = new Set(["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"]);

@@ -350,7 +350,7 @@ console.log("spec harness steps (EE5) resolve + runner-family guard");
 {
   const empty = mkdtempSync(path.join(tmpdir(), "lm-spec-"));
   const r = resolveLoopModels({ repo: empty });
-  check("spec_eval defaults to deepseek-v4-pro", r.spec_eval.model === "deepseek-v4-pro");
+  check("spec_eval defaults to codex:gpt-5.6 (the subscription exec transport)", r.spec_eval.model === "codex:gpt-5.6");
   check("spec_author defaults to Opus", r.spec_author.model === "claude-opus-4-8");
   check("spec_author defaults to high effort", r.spec_author.effort === "high");
   check("spec_fix defaults to Opus", r.spec_fix.model === "claude-opus-4-8");

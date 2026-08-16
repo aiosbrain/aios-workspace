@@ -678,7 +678,7 @@ export const EVAL_SAMPLING = Object.freeze({ temperature: 0, top_p: 1 });
 async function defaultEvalFn({ specText, rubric, deterministic, decisions, evalCfg }) {
   const stub = process.env.AIOS_SPEC_EVAL_STUB;
   if (stub != null) return existsSync(stub) ? readFileSync(stub, "utf8") : stub;
-  const model = evalCfg?.model ?? "deepseek-v4-pro";
+  const model = evalCfg?.model ?? "codex:gpt-5.6";
   const prompt = `${EVAL_SYSTEM}\n\n${buildEvalPrompt(specText, rubric, deterministic, decisions, evalCfg?.skillContext)}`;
   return callPromptModel({
     model,
@@ -959,7 +959,7 @@ export async function evaluateSpec({
     // with no injected evalFn). Quorum ≥ 3 already tolerates a minority parseError by majority vote,
     // so runAdversarialQuorum clears parseError on the aggregated path and this retry stays dormant.
     if (adversarial.parseError && !evalFn) {
-      const model = resolvedEvalCfg?.model ?? "deepseek-v4-pro";
+      const model = resolvedEvalCfg?.model ?? "codex:gpt-5.6";
       const retryEvalFn = async (args) => {
         const prompt = `${EVAL_SYSTEM}\n\nCRITICAL: output ONLY the JSON object. No markdown fences.\n\n${buildEvalPrompt(args.specText, args.rubric, args.deterministic, args.decisions, resolvedSkillContext)}`;
         return callPromptModel({

@@ -6,7 +6,8 @@
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { existsSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import {
   callClaudeAgent,
@@ -23,6 +24,7 @@ import {
   resolveOpencodeApiKey,
   isSupportedCodexModel,
   CODEX_MODEL_TIERS,
+  CODEX_PROMPT_MODELS,
 } from "./model-providers.mjs";
 
 const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
@@ -198,6 +200,41 @@ export async function callCodexAgent(prompt, timeoutMs, opts = {}) {
       `Codex tier '${model}' is unavailable — supported tiers: ${[...CODEX_MODEL_TIERS].join(", ")}`
     );
   }
+  return runCodexExec(prompt, timeoutMs, { ...opts, model });
+}
+
+/**
+ * Single-shot Codex PROMPT call (spec_eval and friends): `codex exec` in a READ-ONLY sandbox on
+ * the ChatGPT-subscription login. Billing reality, learned the hard way (2026-08-15/16): exec
+ * bills the subscription when the stored login's entitlements are fresh; the SAME "no credits
+ * remaining" error covers both post-login propagation lag (minutes) and an exhausted rolling
+ * usage window (a couple of ~150k-token reviews will do it) — neither means the transport is
+ * wrong. A pty-driven TUI was tried and abandoned: its composer treats a fast text+\r burst as
+ * a bracketed paste and never submits.
+ */
+export async function callCodexPrompt(prompt, timeoutMs, opts = {}) {
+  const model = String(opts.model ?? "")
+    .trim()
+    .toLowerCase();
+  if (!CODEX_PROMPT_MODELS.has(model)) {
+    throw new Error(
+      `Codex prompt model '${opts.model}' is not proven on the subscription exec lane — use one of: ` +
+        [...CODEX_PROMPT_MODELS].join(", ")
+    );
+  }
+  return runCodexExec(prompt, timeoutMs, {
+    ...opts,
+    model,
+    // Note: EVAL_SAMPLING-style temperature/top_p opts are silently DROPPED on this transport —
+    // codex exec has no sampling knobs. The spec-eval determinism pin therefore does not apply on
+    // this route; quorum-3 + parseAdversarial's fail-closed parsing are what contain run-to-run
+    // drift (review 2026-08-16, Medium 2).
+    codexExtraArgs: ["--sandbox", "read-only", "--skip-git-repo-check"],
+  });
+}
+
+async function runCodexExec(prompt, timeoutMs, opts = {}) {
+  const model = opts.model;
   const effort = opts.effort;
   if (effort != null && !CODEX_REASONING_EFFORTS.has(effort)) {
     throw new Error(
@@ -213,6 +250,10 @@ export async function callCodexAgent(prompt, timeoutMs, opts = {}) {
     "--model",
     model,
     ...(effort ? ["-c", `model_reasoning_effort=${JSON.stringify(effort)}`] : []),
+    // ONLY the prompt lane's own flags — never the caller's opts.extraArgs, which the agentic lane
+    // has always ignored (ship's plan lane passes claude-only flags unconditionally; forwarding
+    // them would break a codex plan_model override loudly — review 2026-08-16, Medium 3).
+    ...(opts.codexExtraArgs ?? []),
     "--cd",
     cwd,
     "--output-last-message",
@@ -283,6 +324,12 @@ export function requirePromptModelKey(model, step) {
     throw new Error(`OPENROUTER_API_KEY is not set — required for ${label}`);
   }
   if (
+    ref.provider === "codex" &&
+    !existsSync(path.join(process.env.CODEX_HOME?.trim() || path.join(homedir(), ".codex"), "auth.json"))
+  ) {
+    throw new Error(`Codex CLI is not logged in (auth.json missing) — run \`codex login\`; required for ${label}`);
+  }
+  if (
     ref.provider === "opencode" &&
     !process.env.OPENCODE_API_KEY?.trim() &&
     !process.env.OPENCODE_GO_API_KEY?.trim()
@@ -312,9 +359,11 @@ export async function callPromptModel({ model, prompt, timeoutMs, opts = {} }) {
         model: ref.modelId,
         extraArgs: [...(opts.extraArgs ?? []), ...NO_TOOLS_ARGS],
       });
+    case "codex":
+      return callCodexPrompt(prompt, timeoutMs, { ...opts, model: ref.modelId });
     default:
       throw new Error(
-        `unsupported prompt model '${model}' (provider '${ref.provider}') — use openrouter:, opencode:, deepseek:, claude:, or cursor:`
+        `unsupported prompt model '${model}' (provider '${ref.provider}') — use openrouter:, opencode:, deepseek:, claude:, cursor:, or codex:`
       );
   }
 }

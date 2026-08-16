@@ -48,9 +48,13 @@ export const DEFAULT_MODELS = {
   orchestrate: { model: "fable-5" },
   digest: { model: "claude-haiku-4-5" },
   // Spec readiness is a deliberate cross-family author/refuter pair: Opus authors/revises the
-  // spec, while DeepSeek adversarially evaluates it. Do not collapse these onto one family.
+  // spec, while Codex (OpenAI) adversarially evaluates it. Do not collapse these onto one
+  // family. Moved off deepseek-v4-pro 2026-08-16: DEEPSEEK_API_KEY is no longer provisioned in
+  // this environment, and the Codex ChatGPT subscription is — the codex: prompt provider runs
+  // `codex exec --sandbox read-only` on the subscription login (model-call.mjs callCodexPrompt;
+  // see its comment for the two look-alike "no credits" failure shapes).
   spec_author: { model: "claude-opus-4-8", effort: "high" },
-  spec_eval: { model: "deepseek-v4-pro" },
+  spec_eval: { model: "codex:gpt-5.6" },
   spec_fix: { model: "claude-opus-4-8", effort: "high" },
   // Decision-corpus distillation (EE4 / AIO-192): a single summarization pass over the local
   // steering-decision corpus. Like spec_eval it is NOT a producer/reviewer loop — no diversity

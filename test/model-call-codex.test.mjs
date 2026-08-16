@@ -66,6 +66,66 @@ check(
   /invalid Codex reasoning effort 'turbo'/.test(invalidEffort?.message)
 );
 
+
+// ── PCCC follow-on (2026-08-16): the codex PROMPT lane (spec_eval's transport) ────────────────
+// Review Medium 1: without these pins, deleting `--sandbox read-only` left every test green —
+// an adversarial evaluator prompt would then run under whatever ~/.codex/config.toml allows.
+{
+  const { callPromptModel } = await import("../scripts/model-call.mjs");
+  console.log("codex PROMPT lane (spec_eval transport)");
+  const promptResult = await callPromptModel({
+    model: "codex:gpt-5.6",
+    prompt: "evaluate the spec",
+    timeoutMs: 30_000,
+    opts: { cwd: worktree, temperature: 0, top_p: 1 },
+  });
+  const pargs = JSON.parse(readFileSync(argsFile, "utf8"));
+  check("prompt lane returns the final message", promptResult === "Codex final message");
+  check("prompt lane uses codex exec", pargs[0] === "exec");
+  check(
+    "prompt lane is SANDBOXED read-only",
+    pargs[pargs.indexOf("--sandbox") + 1] === "read-only"
+  );
+  check("prompt lane skips the git-repo check", pargs.includes("--skip-git-repo-check"));
+  check("prompt lane forwards the model", pargs[pargs.indexOf("--model") + 1] === "gpt-5.6");
+  check("prompt lane passes the prompt last", pargs.at(-1) === "evaluate the spec");
+  check(
+    "sampling opts are dropped, not forwarded as argv",
+    !pargs.some((a) => /temperature|top_p/.test(String(a)))
+  );
+
+  let rejectedTier = null;
+  try {
+    await callPromptModel({
+      model: "codex:gpt-5.6-sol",
+      prompt: "should not run",
+      timeoutMs: 30_000,
+      opts: { cwd: worktree },
+    });
+  } catch (error) {
+    rejectedTier = error.message;
+  }
+  check(
+    "agentic tiers are rejected on the prompt lane",
+    /not proven on the subscription exec lane/.test(rejectedTier ?? "")
+  );
+
+  const { requirePromptModelKey } = await import("../scripts/model-call.mjs");
+  const emptyHome = path.join(dir, "empty-codex-home");
+  await mkdir(emptyHome, { recursive: true });
+  const oldCodexHome = process.env.CODEX_HOME;
+  process.env.CODEX_HOME = emptyHome;
+  let authErr = null;
+  try {
+    requirePromptModelKey("codex:gpt-5.6", "spec_eval");
+  } catch (error) {
+    authErr = error.message;
+  }
+  check("a logged-out codex home fails LOUDLY at the key gate", /codex login/.test(authErr ?? ""));
+  if (oldCodexHome === undefined) delete process.env.CODEX_HOME;
+  else process.env.CODEX_HOME = oldCodexHome;
+}
+
 process.env.PATH = oldPath;
 rmSync(dir, { recursive: true, force: true });
 console.log(failed ? `${failed} check(s) failed` : "all checks passed");
