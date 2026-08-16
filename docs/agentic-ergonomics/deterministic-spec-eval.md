@@ -2,6 +2,10 @@
 
 ## Problem
 
+> **Path note:** `scripts/spec-eval.mjs` is **devtools-owned** since AIO-662 — it lives in
+> [`aiosbrain/aios-devtools`](https://github.com/aiosbrain/aios-devtools), not in this repo. The
+> paths below name it as it exists there; core reaches it via `scripts/devtools-dispatch.mjs`.
+
 The v1 adversarial evaluator (`EVAL_SYSTEM` in `scripts/spec-eval.mjs`) used a "REFUTE this spec"
 prompt with a subjective 0-100 score. Score variability (30+ point swings between runs on the same
 spec) made the adversarial layer a non-deterministic gate — fine for advisory use, unreliable for
@@ -102,8 +106,8 @@ is genuinely ambiguous** — fix the criterion or the spec, don't raise K.
 
 ## Migration
 
-No API or CLI change. The new prompt ships in `scripts/spec-eval.mjs`. Existing deterministic
-checks are unchanged. The rubric (`.claude/rubrics/spec-readiness.md`) is unchanged.
+No API or CLI change. The new prompt ships in `scripts/spec-eval.mjs` (in devtools — see the path
+note above). Existing deterministic checks are unchanged. The rubric (`.claude/rubrics/spec-readiness.md`) is unchanged.
 
 To validate: run the adversarial evaluator on known-good specs and compare PASS/FAIL counts across
 3 runs. Score variance should be in the ±5 range, not the ±30 range.

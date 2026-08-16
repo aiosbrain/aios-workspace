@@ -152,7 +152,9 @@ aios query "what's blocking sprint 2?"
 Chat with your repo in a browser instead of the terminal — the **local cockpit**:
 
 ```bash
-npm run gui -- --repo ~/Projects/acme-workspace
+git clone https://github.com/aiosbrain/aios-workspace-gui.git
+cd aios-workspace-gui && npm install && npm run build:client
+node gui/server/index.mjs --repo ~/Projects/acme-workspace --toolkit-dir /path/to/aios-workspace
 ```
 
 > **Repo topology note:** the GUI and desktop shell live in

@@ -25,8 +25,10 @@ Merge AIO-157 and verify:
 
 ## Integration points
 
-- `scripts/ship.mjs`
-- `test/build-fence.test.mjs`
+- `scripts/ship.mjs` — **devtools-owned** since AIO-662: the file lives in
+  [`aiosbrain/aios-devtools`](https://github.com/aiosbrain/aios-devtools), not in this repo. If it is
+  absent locally, that is expected — read it there, or drive it via `npm run aios -- ship`.
+- `test/build-fence.test.mjs` — moved with the ship pipeline under AIO-662; also in the devtools repo.
 
 ## Deps
 
