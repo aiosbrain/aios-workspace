@@ -13,6 +13,7 @@ import {
   looksLikeToolkit,
   locateToolkit,
   loadToolkitModule,
+  stripToolkitDirArgs,
 } from "../scripts/toolkit-locate.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -92,6 +93,26 @@ test("--toolkit-dir with a missing value is a hard, actionable error", () => {
     () => locateToolkit({ argv: ["--toolkit-dir", "--json"], env: {} }),
     /--toolkit-dir requires a path argument/
   );
+  // Any leading `-`, not just `--`: the normalizer drops the token it consumes, so a lenient
+  // rule would swallow a following short flag and report a nonsense toolkit path instead.
+  assert.throws(
+    () => locateToolkit({ argv: ["--toolkit-dir", "-h"], env: {} }),
+    /--toolkit-dir requires a path argument/
+  );
+  for (const argv of [["--toolkit-dir"], ["--toolkit-dir", "--json"], ["--toolkit-dir", "-h"]]) {
+    assert.throws(() => stripToolkitDirArgs(argv), /--toolkit-dir requires a path argument/);
+  }
+});
+
+// AIO-663 row 16: core has no in-repo caller for the normalizer (the devtools commands left in
+// AIO-662), but it stays exported so the two copies of the seam are byte-identical. Test it here
+// so core cannot break the contract it still publishes.
+test("shared arg normalizer accepts the flag before or after command positions without mutation", () => {
+  const before = ["--toolkit-dir", "/tmp/toolkit", "plan.md", "--json"];
+  const after = ["plan.md", "--json", "--toolkit-dir", "/tmp/toolkit"];
+  assert.deepEqual(stripToolkitDirArgs(before), ["plan.md", "--json"]);
+  assert.deepEqual(stripToolkitDirArgs(after), ["plan.md", "--json"]);
+  assert.deepEqual(before, ["--toolkit-dir", "/tmp/toolkit", "plan.md", "--json"]);
 });
 
 test("no source at all → actionable error naming AIOS_TOOLKIT_DIR", () => {

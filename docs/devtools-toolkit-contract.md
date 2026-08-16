@@ -20,9 +20,12 @@ One implementation. Every core-staying module a devtools file loads resolves thr
 
 Resolution order (`locateToolkit()`):
 
-1. explicit `--toolkit-dir <path>` argv flag (or a `toolkitDir` param) — the devtools arg
-   parsers must learn to tolerate the flag at cut time; today the env var is the supported
-   standalone mechanism;
+1. explicit `--toolkit-dir <path>` argv flag (or a `toolkitDir` param). The shared
+   `stripToolkitDirArgs()` normalizer removes the selector before the devtools commands parse
+   command-specific positions, without mutating `process.argv`, which remains available to the
+   locator. Both entry points validate the value through one rule: anything starting with `-`
+   is rejected, because the normalizer drops the token it consumes and would otherwise swallow a
+   following short flag;
 2. `AIOS_TOOLKIT_DIR` env var;
 3. the containing repo root (`scripts/..`), when it looks like a toolkit — pre-cut this is
    always true, so everything works unchanged in-monorepo;
