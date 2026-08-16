@@ -54,7 +54,7 @@ export const DEFAULT_MODELS = {
   // `codex exec --sandbox read-only` on the subscription login (model-call.mjs callCodexPrompt;
   // see its comment for the two look-alike "no credits" failure shapes).
   spec_author: { model: "claude-opus-4-8", effort: "high" },
-  spec_eval: { model: "codex:gpt-5.6" },
+  spec_eval: { model: "codex:gpt-5.6-sol" },
   spec_fix: { model: "claude-opus-4-8", effort: "high" },
   // Decision-corpus distillation (EE4 / AIO-192): a single summarization pass over the local
   // steering-decision corpus. Like spec_eval it is NOT a producer/reviewer loop — no diversity

@@ -74,7 +74,7 @@ check(
   const { callPromptModel } = await import("../scripts/model-call.mjs");
   console.log("codex PROMPT lane (spec_eval transport)");
   const promptResult = await callPromptModel({
-    model: "codex:gpt-5.6",
+    model: "codex:gpt-5.6-sol",
     prompt: "evaluate the spec",
     timeoutMs: 30_000,
     opts: { cwd: worktree, temperature: 0, top_p: 1 },
@@ -87,7 +87,7 @@ check(
     pargs[pargs.indexOf("--sandbox") + 1] === "read-only"
   );
   check("prompt lane skips the git-repo check", pargs.includes("--skip-git-repo-check"));
-  check("prompt lane forwards the model", pargs[pargs.indexOf("--model") + 1] === "gpt-5.6");
+  check("prompt lane forwards the model", pargs[pargs.indexOf("--model") + 1] === "gpt-5.6-sol");
   check("prompt lane passes the prompt last", pargs.at(-1) === "evaluate the spec");
   check(
     "sampling opts are dropped, not forwarded as argv",
@@ -97,7 +97,7 @@ check(
   let rejectedTier = null;
   try {
     await callPromptModel({
-      model: "codex:gpt-5.6-sol",
+      model: "codex:gpt-5.6",
       prompt: "should not run",
       timeoutMs: 30_000,
       opts: { cwd: worktree },
@@ -106,7 +106,7 @@ check(
     rejectedTier = error.message;
   }
   check(
-    "agentic tiers are rejected on the prompt lane",
+    "an unserved model id is rejected on the prompt lane",
     /not proven on the subscription exec lane/.test(rejectedTier ?? "")
   );
 
@@ -117,7 +117,7 @@ check(
   process.env.CODEX_HOME = emptyHome;
   let authErr = null;
   try {
-    requirePromptModelKey("codex:gpt-5.6", "spec_eval");
+    requirePromptModelKey("codex:gpt-5.6-sol", "spec_eval");
   } catch (error) {
     authErr = error.message;
   }

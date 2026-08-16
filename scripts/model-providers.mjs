@@ -21,7 +21,10 @@ export const PROMPT_PROVIDERS = new Set(["openrouter", "deepseek", "opencode", "
 // rolling usage window being exhausted (clears when the window rolls). Neither means the
 // transport is wrong — probe cheaply before concluding anything. This allowlist is the
 // models proven to serve exec on the subscription.
-export const CODEX_PROMPT_MODELS = new Set(["gpt-5.6", "gpt-5.5"]);
+// Bare "gpt-5.6" is REJECTED on the ChatGPT-account exec lane (HTTP 400 "not supported when
+// using Codex with a ChatGPT account", probed 2026-08-16 from two worktrees — it HAD worked the
+// previous day, so treat this set as plan-dependent and re-probe before widening/narrowing).
+export const CODEX_PROMPT_MODELS = new Set(["gpt-5.5", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"]);
 // These are the approved Codex execution tiers for the AIO-381 delivery lane. Keeping the
 // allowlist here lets `aios ship` reject a typo before it creates a worktree or starts a run.
 export const CODEX_MODEL_TIERS = new Set(["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"]);
