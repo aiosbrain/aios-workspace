@@ -19,11 +19,23 @@ export function printMergeReport(color, r, { preview = false } = {}) {
   };
   const pruned = r.pruned || [];
   const prunedKept = r.prunedKept || [];
+  const retired = r.retired || [];
+  const retiredKept = r.retiredKept || [];
   report("created", r.created);
   report("seeded (missing starter files)", r.seeded);
   report("updated", r.updated);
   report("merged (local edits + toolkit changes combined)", r.merged);
   report("removed (deleted upstream)", r.deleted);
+  report("removed (withdrawn from the toolkit)", retired);
+  report("kept — locally edited, withdrawn from the toolkit", retiredKept, color.yellow);
+  if (retiredKept.length) {
+    console.warn(
+      color.dim(
+        "  The toolkit no longer ships these and will not update them again. " +
+          "Delete them yourself once you've salvaged anything you want to keep."
+      )
+    );
+  }
   report("removed (not used by this workspace's pm_tool)", pruned);
   report("kept — locally edited, no longer used by this pm_tool", prunedKept, color.yellow);
   if (prunedKept.length) console.warn(color.dim(PRUNE_KEPT_HINT));
@@ -56,15 +68,16 @@ export function printMergeReport(color, r, { preview = false } = {}) {
       console.warn(color.dim(`    … and ${r.conflicts.length - 20} more`));
   }
 
-  // A prune IS a change to the workspace, so it counts — otherwise `aios update` could report
-  // "0 files would change" for a run whose only effect is removing the de-selected assets.
-  // prunedKept does NOT count: nothing was written.
+  // A prune or a retirement IS a change to the workspace, so both count — otherwise `aios
+  // update` could report "0 files would change" for a run whose only effect is removing the
+  // de-selected or withdrawn assets. prunedKept/retiredKept do NOT count: nothing was written.
   return (
     r.created.length +
     r.seeded.length +
     r.updated.length +
     r.merged.length +
     r.deleted.length +
-    pruned.length
+    pruned.length +
+    retired.length
   );
 }

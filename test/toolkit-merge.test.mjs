@@ -13,7 +13,7 @@ import { tmpdir } from "node:os";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
 
-import { MANAGED_PATHS } from "../scripts/toolkit-manifest.mjs";
+import { MANAGED_PATHS, RETIRED_PATHS } from "../scripts/toolkit-manifest.mjs";
 import { decideMerge, threeWayMerge } from "../scripts/toolkit-merge.mjs";
 import { mergeManaged } from "../scripts/update.mjs";
 
@@ -208,5 +208,136 @@ test("mergeManaged: preview classifies changes without writing live files or sid
   } finally {
     rmSync(tk, { recursive: true, force: true });
     rmSync(ws, { recursive: true, force: true });
+  }
+});
+
+// ---- RETIRED_PATHS: withdrawn toolkit files are actually removed --------
+//
+// The regression these cover: dropping a path from MANAGED_PATHS stops it being re-seeded
+// but does NOT delete the copy a workspace already vendored — mergeManaged only visits the
+// entry lists it is handed, applyDeletions walks `kind: "dir"` entries only, and applyPrune
+// runs over prunablePaths (pm-tool paths). Without a pass that processes RETIRED_PATHS, a
+// withdrawn file survives every future `aios update`, permanently unmanaged.
+
+/**
+ * A toolkit that SHIPPED the retired paths at `baseSha` and dropped them at HEAD, plus a
+ * workspace holding the vendored copies. Mirrors what a real workspace looks like the moment
+ * before the update that is supposed to clean it up.
+ */
+function retiredFixture() {
+  const tk = mkdtempSync(path.join(tmpdir(), "aios-tk-retired-"));
+  const ws = mkdtempSync(path.join(tmpdir(), "aios-ws-retired-"));
+  const git = (...a) => execFileSync("git", ["-C", tk, ...a], { encoding: "utf8" });
+  for (const e of RETIRED_PATHS) {
+    mkdirSync(path.dirname(path.join(tk, e.src)), { recursive: true });
+    writeFileSync(path.join(tk, e.src), `SHIPPED ${e.dest}\n`);
+  }
+  gitToolkit(tk); // inits, adds everything above too, and commits
+  const baseSha = git("rev-parse", "HEAD").trim();
+
+  for (const e of [...MANAGED_PATHS, ...RETIRED_PATHS]) {
+    mkdirSync(path.dirname(path.join(ws, e.dest)), { recursive: true });
+    cpSync(path.join(tk, e.src), path.join(ws, e.dest), { recursive: true });
+  }
+
+  // The withdrawal itself: HEAD no longer ships them.
+  rmSync(path.join(tk, "scaffold/.cursor"), { recursive: true, force: true });
+  git("add", "-A");
+  git("commit", "-qm", "withdraw");
+  return {
+    tk,
+    ws,
+    baseSha,
+    cleanup: () => [tk, ws].forEach((d) => rmSync(d, { recursive: true, force: true })),
+  };
+}
+
+test("mergeManaged: retired paths are deleted from a workspace that already vendored them", () => {
+  const { tk, ws, baseSha, cleanup } = retiredFixture();
+  try {
+    for (const e of RETIRED_PATHS)
+      assert.ok(existsSync(path.join(ws, e.dest)), `${e.dest} present`);
+
+    const r = mergeManaged(tk, tk, ws, baseSha, {});
+
+    for (const e of RETIRED_PATHS) {
+      assert.ok(r.retired.includes(e.dest), `${e.dest} reported retired`);
+      assert.equal(existsSync(path.join(ws, e.dest)), false, `${e.dest} removed from disk`);
+    }
+    assert.deepEqual(r.retiredKept, []);
+    // The emptied parent goes too, rather than leaving a bare .cursor/hooks/ behind.
+    assert.equal(existsSync(path.join(ws, ".cursor/hooks")), false);
+    // The config is removed before its helpers, so an interrupted run can only ever leave
+    // orphaned scripts — never a fail-closed hooks.json pointing at scripts that are gone.
+    assert.equal(r.retired[0], ".cursor/hooks.json");
+  } finally {
+    cleanup();
+  }
+});
+
+test("mergeManaged: removing a path from MANAGED_PATHS alone does NOT delete it", () => {
+  // The proof that RETIRED_PATHS is load-bearing: same fixture, retirement pass disabled.
+  const { tk, ws, baseSha, cleanup } = retiredFixture();
+  try {
+    assert.ok(
+      !MANAGED_PATHS.some((e) => RETIRED_PATHS.some((rp) => rp.dest === e.dest)),
+      "retired dests must be gone from MANAGED_PATHS"
+    );
+    const r = mergeManaged(tk, tk, ws, baseSha, { retiredPaths: [] });
+    for (const e of RETIRED_PATHS) {
+      assert.ok(existsSync(path.join(ws, e.dest)), `${e.dest} survives — unmanaged, not removed`);
+      assert.ok(!r.deleted.includes(e.dest));
+      assert.ok(!(r.pruned || []).includes(e.dest));
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+test("mergeManaged: a locally edited retired file is kept, not deleted", () => {
+  const { tk, ws, baseSha, cleanup } = retiredFixture();
+  try {
+    const edited = RETIRED_PATHS[0].dest;
+    writeFileSync(path.join(ws, edited), "I CHANGED THIS\n");
+
+    const r = mergeManaged(tk, tk, ws, baseSha, {});
+
+    assert.ok(r.retiredKept.includes(edited));
+    assert.ok(!r.retired.includes(edited));
+    assert.equal(readFileSync(path.join(ws, edited), "utf8"), "I CHANGED THIS\n");
+    // The untouched ones still go.
+    for (const e of RETIRED_PATHS.slice(1)) assert.ok(r.retired.includes(e.dest));
+  } finally {
+    cleanup();
+  }
+});
+
+test("mergeManaged: --force retires a locally edited file; --dry-run writes nothing", () => {
+  const { tk, ws, baseSha, cleanup } = retiredFixture();
+  try {
+    const edited = RETIRED_PATHS[0].dest;
+    writeFileSync(path.join(ws, edited), "I CHANGED THIS\n");
+
+    const preview = mergeManaged(tk, tk, ws, baseSha, { dryRun: true, force: true });
+    assert.ok(preview.retired.includes(edited));
+    assert.ok(existsSync(path.join(ws, edited)), "dry run must not delete");
+
+    const r = mergeManaged(tk, tk, ws, baseSha, { force: true });
+    assert.ok(r.retired.includes(edited));
+    assert.equal(existsSync(path.join(ws, edited)), false);
+  } finally {
+    cleanup();
+  }
+});
+
+test("mergeManaged: retirement is a no-op for a workspace that never had the files", () => {
+  const { tk, ws, baseSha, cleanup } = retiredFixture();
+  try {
+    rmSync(path.join(ws, ".cursor"), { recursive: true, force: true });
+    const r = mergeManaged(tk, tk, ws, baseSha, {});
+    assert.deepEqual(r.retired, []);
+    assert.deepEqual(r.retiredKept, []);
+  } finally {
+    cleanup();
   }
 });

@@ -17,7 +17,7 @@ import path from "node:path";
 import { existsSync, readFileSync, statSync, readdirSync, lstatSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { gitEnv, UpdateError } from "../cli-common.mjs";
-import { MANAGED_PATHS, SEED_IF_ABSENT } from "../toolkit-manifest.mjs";
+import { MANAGED_PATHS, RETIRED_PATHS, SEED_IF_ABSENT } from "../toolkit-manifest.mjs";
 import { lsTree } from "../toolkit-merge.mjs";
 
 /**
@@ -250,13 +250,25 @@ export function deletionCandidates(toolkitDir, srcRoot, entry, baseSha) {
  *     on merge conflicts and no-base fallbacks);
  *   - each dir entry's upstream-deletion targets (present at baseSha, gone from src —
  *     via the same `deletionCandidates` enumeration applyDeletions itself iterates);
- *   - each `prunablePaths` entry's files (config-gated removals — the pmTool prune pass).
+ *   - each `prunablePaths` entry's files (config-gated removals — the pmTool prune pass);
+ *   - each `retiredPaths` entry's dest (withdrawn toolkit files — the retirement pass).
  * This is what makes the pre-flight containment scan genuinely all-or-nothing: it derives
  * from the same helpers the write loop calls (`entryFiles`, `deletionCandidates`), so the
  * scanned set and the touched set cannot drift. Exported for tests.
  */
-export function plannedDestRels(srcDir, baseSha, managedPaths = MANAGED_PATHS, prunablePaths = []) {
+export function plannedDestRels(
+  srcDir,
+  baseSha,
+  managedPaths = MANAGED_PATHS,
+  prunablePaths = [],
+  retiredPaths = RETIRED_PATHS
+) {
   const out = [];
+  // Retirement targets are deletes of paths the toolkit no longer ships, so there is no
+  // `src` on disk to guard on (the `existsSync` guard the other loops use would skip every
+  // one of them) and no sidecar to enumerate — but applyRetired calls assertDestPathSafe, so
+  // the pre-flight has to cover them.
+  for (const entry of retiredPaths) out.push(entry.dest);
   // Prune targets are deletes, so they need no sidecars — but they DO have to be in the scan:
   // applyPrune calls assertDestPathSafe, and the pre-flight must cover every path the write
   // loop can touch, in both directions.
