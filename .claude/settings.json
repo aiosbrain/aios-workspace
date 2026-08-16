@@ -44,7 +44,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PROJECT_DIR}/.harness/adapters/claude-code/run-strict-guard.sh\" pre_edit guard-worktree.sh",
+            "command": "root=\"${CLAUDE_PROJECT_DIR}\"; guard=\"$root/.harness/adapters/claude-code/run-strict-guard.sh\"; if [ -d \"$root/.harness\" ]; then exec \"$guard\" pre_edit guard-worktree.sh; fi",
             "timeout": 30
           }
         ]
@@ -54,7 +54,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PROJECT_DIR}/.harness/adapters/claude-code/run-strict-guard.sh\" pre_command guard-worktree.sh",
+            "command": "root=\"${CLAUDE_PROJECT_DIR}\"; guard=\"$root/.harness/adapters/claude-code/run-strict-guard.sh\"; if [ -d \"$root/.harness\" ]; then exec \"$guard\" pre_command guard-worktree.sh; fi",
             "timeout": 30
           }
         ]

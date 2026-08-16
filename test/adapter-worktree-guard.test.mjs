@@ -73,6 +73,17 @@ function runGuard(runtime, event, payload, guardedRoot = sandbox) {
   return res.status;
 }
 
+function runConfiguredHook(runtime, command, cwd) {
+  const env = { ...process.env };
+  if (runtime === "claude-code") env.CLAUDE_PROJECT_DIR = cwd;
+  return spawnSync("/bin/sh", ["-c", command], {
+    cwd,
+    input: JSON.stringify({ tool_name: "Bash", tool_input: { command: "git status" }, cwd }),
+    encoding: "utf8",
+    env,
+  }).status;
+}
+
 const claudeWrite = (filePath, cwd) => ({
   tool_name: "Write",
   tool_input: { file_path: filePath, content: "x" },
@@ -182,6 +193,26 @@ test("active .codex/hooks.json wires guard-worktree.sh AND keeps the Bugbot Stop
 
   const stop = JSON.stringify(hooks.hooks.Stop);
   assert.match(stop, /run-local-bugbot-gate\.sh/);
+});
+
+test("active runtime hooks allow commands in a repository without a vendored harness", () => {
+  const noHarness = path.join(sandbox, "no-harness");
+  mkdirSync(noHarness, { recursive: true });
+  initRepo(noHarness, "main");
+
+  const claude = JSON.parse(readFileSync(path.join(REPO_ROOT, ".claude/settings.json"), "utf8"));
+  const codex = JSON.parse(readFileSync(path.join(REPO_ROOT, ".codex/hooks.json"), "utf8"));
+  const claudeCommand = claude.hooks.PreToolUse.find(({ matcher }) => matcher === "Bash").hooks[0]
+    .command;
+  const codexCommand = codex.hooks.PreToolUse.find(({ matcher }) => matcher === "Bash").hooks[0]
+    .command;
+
+  assert.equal(runConfiguredHook("claude-code", claudeCommand, noHarness), 0);
+  assert.equal(runConfiguredHook("codex", codexCommand, noHarness), 0);
+
+  mkdirSync(path.join(noHarness, ".harness"));
+  assert.notEqual(runConfiguredHook("claude-code", claudeCommand, noHarness), 0);
+  assert.notEqual(runConfiguredHook("codex", codexCommand, noHarness), 0);
 });
 
 // An `Edit|Write` matcher does not fire on Codex's actual file-edit tool, which is
