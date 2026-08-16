@@ -13,7 +13,10 @@ Opus 4.8 ⇄ Cursor /review-plan              Opus (Claude Code) ⇄ Cursor /ai-
    → PLAN_READY  → approved plan  ───────▶     → MERGE_READY  → secrets gate → merge
 ```
 
-It is wired into the `aios` CLI (`scripts/build.mjs`, exposed as `aios build`). Run it through the CLI:
+It is wired into the `aios` CLI as `aios build`. The implementation moved to
+[`@aiosbrain/aios-devtools`](https://github.com/aiosbrain/aios-devtools) (AIO-662) and is reached
+through `scripts/devtools-dispatch.mjs`; the `scripts/*.mjs` paths named in this document are
+devtools-owned and no longer present in this repo. Run it through the CLI:
 
 ```bash
 npm run aios -- build "<plan-file>" [branch] [options]
@@ -616,13 +619,17 @@ npm run aios -- build "Add a --version flag to aios.mjs" feat/version --task
 
 ## Files
 
+Paths marked **(devtools)** live in [`aiosbrain/aios-devtools`](https://github.com/aiosbrain/aios-devtools),
+not in this repo — they were cut out under AIO-662. Read or edit them there; a change to one is a
+PR in the devtools repo plus a version bump here.
+
 | File                                       | Purpose                                                        |
 | ------------------------------------------ | ------------------------------------------------------------- |
-| `scripts/build.mjs`                        | The build loop (`cmdBuild` / `runBuild`), exposed as `aios build` |
+| `scripts/build.mjs` **(devtools)**         | The build loop (`cmdBuild` / `runBuild`), exposed as `aios build` |
 | `scripts/pr.mjs`                           | `aios pr` — idempotent push + `gh pr create` (chained by `aios build --pr`) |
-| `scripts/consolidate-findings.mjs`         | `aios consolidate-findings` — merge CI + bot + GPT reviews into one fail-closed finding list |
+| `scripts/consolidate-findings.mjs` **(devtools)** | `aios consolidate-findings` — merge CI + bot + GPT reviews into one fail-closed finding list |
 | `scripts/loop-models.mjs`                  | Per-step model/effort/timeout resolver + cross-family diversity guard |
 | `scripts/relay-core.mjs`                   | Primitives shared with the plan phase (Cursor driver, git, tokens, `--log`) |
 | `~/.cursor/skills/ai-code-review/SKILL.md` | Cursor's code-review persona; emits `MERGE_READY`             |
-| `test/build.test.mjs`                      | Pure-function unit tests                                       |
-| `test/build-loop.test.mjs`                 | End-to-end loop test using a fake `cursor` on `PATH`          |
+| `test/build.test.mjs` **(devtools)**       | Pure-function unit tests                                       |
+| `test/build-loop.test.mjs` **(devtools)**  | End-to-end loop test using a fake `cursor` on `PATH`          |

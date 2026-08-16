@@ -38,7 +38,9 @@ Read-only — no code changes unless trivial doc fix.
 - `docs/brain-api.md`
 - `scripts/check-docs-drift.mjs`
 - `src/operator-loop/`
-- `scripts/ship.mjs`
+- `scripts/ship.mjs` — **devtools-owned** since AIO-662: the file lives in
+  [`aiosbrain/aios-devtools`](https://github.com/aiosbrain/aios-devtools), not in this repo. If it is
+  absent locally, that is expected — read it there, or drive it via `npm run aios -- ship`.
 
 ## Deps
 

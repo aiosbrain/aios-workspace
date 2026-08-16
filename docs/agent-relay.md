@@ -223,6 +223,6 @@ npm run aios -- relay "Add a --version flag to aios.mjs" feat/test-relay --merge
 |---|---|
 | `scripts/relay.mjs` | The plan loop implementation (`cmdRelay`), exposed as `aios relay` |
 | `scripts/relay-core.mjs` | Primitives shared by the plan and build phases (Cursor driver, git, tokens, `--log`) |
-| `scripts/build.mjs` | The build loop (`cmdBuild`/`runBuild`), exposed as `aios build` — see [`agent-build.md`](./agent-build.md) |
+| `scripts/build.mjs` | The build loop (`cmdBuild`/`runBuild`), exposed as `aios build` — see [`agent-build.md`](./agent-build.md). Lives in [`aiosbrain/aios-devtools`](https://github.com/aiosbrain/aios-devtools) since AIO-662, not in this repo |
 | `~/.cursor/skills/review-plan/SKILL.md` | Cursor's plan-review persona; emits `PLAN_READY` |
 | `~/.cursor/skills/ai-code-review/SKILL.md` | Cursor's code-review persona used by `aios build`; emits `MERGE_READY` |

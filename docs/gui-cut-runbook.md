@@ -1,5 +1,11 @@
 # GUI repo cut — runbook (AIO-594 / AIO-603)
 
+> **This cut is complete — historical record.** The GUI now lives in
+> [`aiosbrain/aios-workspace-gui`](https://github.com/aiosbrain/aios-workspace-gui), and `gui/` +
+> `src-tauri/` were deleted from this repo in AIO-612 (#549, merged 2026-08-04). The paths manifest
+> `scripts/gui-cut-paths.txt` was removed with it; recover it from git history
+> (`git show <pre-deletion-sha>:scripts/gui-cut-paths.txt`) if you ever need to replay these steps.
+
 Rehearsed end-to-end on 2026-07-30 against frozen SHA
 `0ae23a7fadf6ce36ac9ee54247bf4c7af2b07f98` (origin/main with all of AIO-600 C1–C5
 merged). Every step below was executed in throwaway directories; the numbers quoted are

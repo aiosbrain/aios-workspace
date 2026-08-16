@@ -157,8 +157,9 @@ gh auth status
 npm run aios -- relay "smoke: no-op task" feat/smoke --dry-run
 npm run aios -- build plan.md feat/smoke --dry-run
 
-# 3. The consolidator is invocable
-node scripts/consolidate-findings.mjs --help
+# 3. The consolidator is invocable (it lives in @aiosbrain/aios-devtools now,
+#    reached through scripts/devtools-dispatch.mjs — there is no local script)
+npm run aios -- consolidate-findings --help
 
 # 4. ship dry-run works offline (no LINEAR_API_KEY needed) and roadmap-run degrades cleanly
 env -u LINEAR_API_KEY npm run aios -- ship AIO-<n> --dry-run
