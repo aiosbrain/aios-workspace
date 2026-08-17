@@ -37,6 +37,19 @@ export const COMMANDS = [
     usage: U.status,
   },
   {
+    // AIO-864 follow-up: the OGR validators live in the TOOLKIT, so a scaffolded workspace
+    // cannot run `validation/validate-all.sh .` — its own validation/ holds only
+    // secret-patterns.txt. Offline, because a workspace is validated before it is configured;
+    // cwdFallback so `aios validate <path>` works from anywhere, including outside a workspace.
+    name: "validate",
+    resolution: "offline",
+    cwdFallback: (rest) => rest.some((a) => !a.startsWith("-")),
+    loader: () => import("../validate-cmd.mjs"),
+    adapt: (ctx, mod) => mod.cmdValidate(ctx.repo, ctx.rest),
+    exit: "exit-code",
+    usage: U.validate,
+  },
+  {
     name: "onboard",
     resolution: "offline",
     cwdFallback: (rest) => rest.includes("--inspect"),

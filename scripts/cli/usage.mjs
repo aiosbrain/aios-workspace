@@ -22,6 +22,11 @@ export const USAGE_FOOTER = [
 
 export const USAGE_LINES = {
   status: ["  aios status [--json|--porcelain]      what would sync (new/modified/blocked/clean)"],
+  validate: [
+    "  aios validate [path]                  run the toolkit's OGR validators against a workspace",
+    "    [--critical|--quick]                --critical = OGR03 secrets only; --quick = OGR01 only",
+    "                                         path defaults to the workspace root; exit 0 pass / 1 fail",
+  ],
   onboard: [
     "  aios onboard                          guided first-run setup (brain + tools, one multi-select)",
     "    --inspect [--json]                  read-only live preflight: workspace/toolkit/git/Brain state",

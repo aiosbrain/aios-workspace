@@ -10,15 +10,21 @@ person to act on the brain side, that person is **John** (the brain admin).
 
 ## 1. Where things live (read this first)
 
-Start from the immutable public release used for onboarding:
+Start from the immutable public release used for onboarding. Resolve the newest
+release tag rather than typing a version — a number written into a doc goes stale
+on the next release, and a stale one points new installs at a superseded build:
 
 ```bash
-git clone --branch v0.10.0 --depth 1 \
-  https://github.com/aiosbrain/aios-workspace.git aios-toolkit
+REPO=https://github.com/aiosbrain/aios-workspace.git
+LATEST=$(git ls-remote --tags --refs --sort=-v:refname "$REPO" 'v*' \
+  | head -1 | sed 's#.*refs/tags/##')
+echo "$LATEST"   # sanity-check what you are about to clone
+
+git clone --branch "$LATEST" --depth 1 "$REPO" aios-toolkit
 cd aios-toolkit
 ```
 
-Do not remove `--branch v0.10.0` for a normal install. A plain clone checks out
+Do not drop the `--branch "$LATEST"` for a normal install. A plain clone checks out
 the moving `main` branch, which is the pre-release development surface for
 contributors. Merging to `main` does not make a change part of the supported
 install; publishing a release tag does.
@@ -42,6 +48,8 @@ aios-toolkit/                   ← you are here after the stable clone + `cd`
 │   ├── aios.yaml.tmpl          ← turns into YOUR aios.yaml (folder B below), not this one
 │   └── .claude/CLAUDE.md.tmpl  ← turns into YOUR .claude/CLAUDE.md (folder B below)
 ├── validation/                 ← checkers you point at YOUR workspace, from here
+│                                 (or just run `aios validate` from inside folder B —
+│                                  folder B never gets its own copy of these)
 └── docs/                       ← this file, and the rest of the toolkit's own docs
 ```
 
@@ -111,12 +119,24 @@ a deliberate `aios push`.
 
 ## 3. Prerequisites
 
-- **Node ≥ 18** (`package.json` → `engines.node`). The `aios` CLI itself uses only
-  Node built-ins (fetch, crypto, fs) — zero npm dependencies — so for sync you just
-  need Node on `PATH`.
+- **Node ≥ 22** (`package.json` → `engines.node`). The `aios` CLI itself uses only
+  Node built-ins (fetch, crypto, fs) for sync, so for that you just need Node on
+  `PATH`. **Node is also what the write-time guard hook falls back to when `jq` is
+  absent, so it is not optional** — see the next bullet.
 - **git**.
-- `npm install` is only needed for the local GUI/cockpit and the test suite, not for
-  scaffolding or `aios` sync.
+- **`jq` — recommended, not required.** `hooks/team-ops-guard.sh` (the PreToolUse guard
+  that blocks secrets and admin-tier content before they are written) parses the tool
+  event with `jq` when it is present and with `node` when it is not. Install `jq` if you
+  want the cheaper path on a hook that fires on every write:
+  `apt-get install -y jq` / `brew install jq` / `apk add jq`. macOS already ships it at
+  `/usr/bin/jq`; bare `node:*` Docker images, Debian/Ubuntu slim and Alpine do not.
+  With **neither** `jq` nor `node` on `PATH` the guard has no way to read its input, so
+  it **blocks the write** with `AIOS_GUARD_NO_JSON_PARSER` rather than waving it
+  through — a guard that cannot parse its input must never report "allow". (Before
+  v0.11.1 it silently allowed, which meant secret scanning was off and nothing said so.)
+- **`npm install` is required before running the validators from a git-clone checkout.**
+  It is *not* needed for scaffolding or for `aios` sync. The npm install path
+  (`npm i -g @aiosbrain/aios`) ships its dependencies resolved, so it needs no extra step.
 - Once installed, `npm run help` lists every script grouped by category (Core / Dev /
   Build / Internal) — a bare `npm run` prints the same ~18 scripts with no grouping.
 
@@ -204,6 +224,26 @@ you scaffold or run `aios onboard --print-next-only`.
 The scaffolder also copies `bin/aios`, `.envrc` (`PATH_add bin`), and offers to run
 `scripts/install-aios-shell.sh` (adds an `aios()` function to `~/.zshrc` that finds
 `aios.yaml` walking up from cwd — no `npm run --` needed).
+
+### 5b. Check the workspace
+
+```bash
+cd ~/Projects/abe-workspace
+aios validate
+```
+
+Exit 0 means every OGR validator passed. `--critical` runs the secrets scan alone;
+`--quick` runs the folder-structure check alone.
+
+Run this from **inside your workspace** — `aios validate` finds the validators inside
+whichever toolkit is installed, so you never need the toolkit's path. That distinction
+matters: **your workspace has no `validation/validate-all.sh`.** Its `validation/`
+folder holds only `secret-patterns.txt`, so `validation/validate-all.sh .` from folder
+B fails with `No such file or directory`, and on a global npm install the real script
+is buried at
+`/usr/local/lib/node_modules/@aiosbrain/aios/validation/validate-all.sh`. If you are
+sitting in a toolkit checkout (folder A) you can still call it directly, but you must
+point it at folder B: `validation/validate-all.sh ~/Projects/abe-workspace`.
 
 ---
 
@@ -344,7 +384,7 @@ then push the selection. Run `aios --help` for the full command list.
 
 ## 8. Working offline
 
-No brain needed for: **scaffolding**, `validation/validate-all.sh`, the harness
+No brain needed for: **scaffolding**, `aios validate`, the harness
 skills, the whole **operator loop** (`aios loop daily|collect|weekly|verify|writeback`)
 and **human-operating layer** (`aios asks`, `aios mode`, `aios decisions`, `aios spec`,
 `aios rails`, `aios time`), `aios analyze` (agentic-maturity report from local logs),

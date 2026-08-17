@@ -1,0 +1,184 @@
+// test/team-ops-guard-json-parser.test.mjs — regression guard for the 0.11.0 clean-container
+// defect (AIO-864 follow-up).
+//
+// The bug: hooks/team-ops-guard.sh shelled out to `jq` with every call wrapped
+// `2>/dev/null || true`. `jq` was undeclared and ungated, so on any machine without it the
+// parse produced an empty string, `set -euo pipefail` never saw the missing binary, and the
+// script fell through to `exit 0  # allow`. A workspace's write-time secret guard was inert,
+// silently. An AWS key was written through it at exit 0 with no output.
+//
+// Why it hid from everyone: macOS ships /usr/bin/jq and GitHub's ubuntu-latest pre-installs
+// it, so the developer machine, the CI runner and the release gate all agreed it worked. The
+// only way to see it is to take the binary away.
+//
+// So these tests do exactly that — they run the SHIPPED hook under a PATH that has been
+// stripped down to a curated set of symlinks, with `jq` and/or `node` deliberately excluded.
+// Nothing is mocked and nothing is stubbed: it is the real file, reached the real way, with a
+// real missing interpreter. Every case below fails on the pre-fix hook.
+//
+// The container lane in .github/workflows/ci.yml ("clean-container (no jq)") is the same
+// assertion against a packed tarball installed in a bare node:22 image; this file is the fast,
+// deterministic version that runs in `npm test` on every push.
+
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, rmSync, symlinkSync, existsSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const DIR = path.dirname(fileURLToPath(import.meta.url));
+const HOOK = path.join(DIR, "..", "hooks", "team-ops-guard.sh");
+
+// Everything the hook shells out to, minus the JSON parsers. `printf`, `echo`, `command`,
+// `cd`, `pwd` and `case` are bash builtins and need no entry.
+const REQUIRED = ["bash", "cat", "dirname", "grep", "awk"];
+
+/** Absolute path of `name` on the real PATH, or null. */
+function which(name) {
+  const r = spawnSync("/usr/bin/env", ["sh", "-c", `command -v ${name}`], { encoding: "utf8" });
+  const p = (r.stdout || "").trim();
+  return p && existsSync(p) ? p : null;
+}
+
+/**
+ * A directory of symlinks that is a complete PATH for the hook, except for whichever
+ * interpreters `omit` names. Returns null when the host is missing a required tool (so the
+ * test skips rather than failing for an unrelated reason).
+ */
+function strippedPath(omit) {
+  const dir = mkdtempSync(path.join(tmpdir(), "guard-path-"));
+  for (const name of [...REQUIRED, "jq", "node"]) {
+    if (omit.includes(name)) continue;
+    const real = which(name);
+    if (!real) {
+      if (REQUIRED.includes(name)) {
+        rmSync(dir, { recursive: true, force: true });
+        return null;
+      }
+      continue; // jq genuinely absent on this host is fine — that IS the scenario
+    }
+    symlinkSync(real, path.join(dir, name));
+  }
+  return dir;
+}
+
+/** Run the shipped hook with `event` on stdin under a PATH that omits `omit`. */
+function runHook(event, { omit = [], env = {} } = {}) {
+  const dir = strippedPath(omit);
+  if (!dir) return null;
+  try {
+    const r = spawnSync(which("bash") ?? "/bin/bash", [HOOK], {
+      input: typeof event === "string" ? event : JSON.stringify(event),
+      encoding: "utf8",
+      env: { PATH: dir, HOME: process.env.HOME ?? "/tmp", ...env },
+    });
+    return { code: r.status, stdout: r.stdout ?? "", stderr: r.stderr ?? "" };
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+// A real AWS access key ID shape, split so this file never contains a scannable literal.
+const AWS_KEY = "AKIA" + "IOSFODNN7EXAMPLE";
+const SECRET_WRITE = {
+  tool_name: "Write",
+  tool_input: { file_path: "notes.md", content: `k=${AWS_KEY}` },
+};
+
+test("no jq: the guard still BLOCKS a secret (the 0.11.0 fail-open)", () => {
+  const r = runHook(SECRET_WRITE, { omit: ["jq"] });
+  if (!r) return; // host lacks a required coreutil
+  assert.notEqual(r.code, 0, "a secret was allowed through with jq absent — this is the bug");
+  assert.equal(r.code, 2, "a block must be exit 2 (Claude Code's deny signal)");
+  assert.match(r.stderr, /BLOCKED by team-ops-guard/);
+  assert.match(r.stderr, /Potential secret detected/);
+});
+
+test("no jq: a clean write is still allowed (the fix must not block everything)", () => {
+  const r = runHook(
+    { tool_name: "Write", tool_input: { file_path: "notes.md", content: "hello world" } },
+    { omit: ["jq"] }
+  );
+  if (!r) return;
+  assert.equal(r.code, 0, `clean write blocked: ${r.stderr}`);
+});
+
+test("no jq: MultiEdit batches are still scanned", () => {
+  const r = runHook(
+    {
+      tool_name: "MultiEdit",
+      tool_input: {
+        file_path: "notes.md",
+        edits: [{ new_string: "fine" }, { new_string: AWS_KEY }],
+      },
+    },
+    { omit: ["jq"] }
+  );
+  if (!r) return;
+  assert.equal(r.code, 2, `MultiEdit secret not blocked: ${r.stderr}`);
+});
+
+test("no jq: admin-tier content is still kept out of 4-shared/", () => {
+  const r = runHook(
+    {
+      tool_name: "Write",
+      tool_input: { file_path: "4-shared/x.md", content: "---\naccess: admin\n---\nbody" },
+    },
+    { omit: ["jq"] }
+  );
+  if (!r) return;
+  assert.equal(r.code, 2, `admin content allowed into 4-shared: ${r.stderr}`);
+});
+
+test("no parser at all: the guard refuses rather than reporting allow, and names jq", () => {
+  const r = runHook(SECRET_WRITE, { omit: ["jq", "node"] });
+  if (!r) return;
+  assert.equal(r.code, 2, "with no JSON parser the guard must not answer 'allow'");
+  assert.match(r.stderr, /AIOS_GUARD_NO_JSON_PARSER/, "the failure must be named");
+  assert.match(r.stderr, /\bjq\b/, "the user must be able to tell jq is the cause");
+  assert.match(r.stderr, /\bnode\b/, "and that node is the alternative");
+});
+
+test("no parser at all: silence is never an option", () => {
+  // The precise property the 0.11.0 defect violated: exit 0 AND no output.
+  for (const env of [{}, { AIOS_GUARD_ALLOW_UNPARSED: "1" }]) {
+    const r = runHook(SECRET_WRITE, { omit: ["jq", "node"], env });
+    if (!r) return;
+    assert.notEqual(
+      `${r.code}:${r.stderr.trim()}`,
+      "0:",
+      "the guard exited 0 with no diagnostic — exactly the 0.11.0 silent fail-open"
+    );
+  }
+});
+
+test("no parser at all: the documented escape hatch allows, but shouts every time", () => {
+  const r = runHook(SECRET_WRITE, {
+    omit: ["jq", "node"],
+    env: { AIOS_GUARD_ALLOW_UNPARSED: "1" },
+  });
+  if (!r) return;
+  assert.equal(r.code, 0, "the override must let work continue");
+  assert.match(r.stderr, /AIOS_GUARD_DEGRADED/, "and must say the guard is off");
+  assert.match(r.stderr, /UNCHECKED/);
+});
+
+test("unparseable input is not treated as an absent field", () => {
+  // "Parsed fine, no tool_input" allows; "could not read the document" must not borrow
+  // that branch. Both used to land on `exit 0`.
+  const garbage = runHook("this is not json{{", {});
+  if (!garbage) return;
+  assert.equal(garbage.code, 2, "malformed JSON must not be read as 'nothing to check'");
+
+  const noToolInput = runHook({ tool_name: "Read" }, {});
+  assert.equal(noToolInput.code, 0, "a well-formed event with no tool_input is a real allow");
+});
+
+test("an empty event is still a legitimate allow", () => {
+  // `bash hooks/team-ops-guard.sh </dev/null` must not start blocking.
+  const r = runHook("", {});
+  if (!r) return;
+  assert.equal(r.code, 0, `empty stdin should allow, got ${r.code}: ${r.stderr}`);
+});
