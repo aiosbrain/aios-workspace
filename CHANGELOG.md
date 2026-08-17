@@ -8,6 +8,63 @@ This is the **individual workspace** repo. The Team Brain sync contract
 (`docs/brain-api.md`) is versioned separately; it is currently at **v1.20**
 (additive within major `v1`). Entries predating a bump did not change the protocol.
 
+## [0.11.1] — 2026-08-17
+
+**Patch release. Install it if you installed `0.11.0`.** A clean-container test of the *published*
+`0.11.0` artifact — not the checkout, the tarball users actually get — found a defect worse than
+the one `0.11.0` was cut to fix.
+
+**On any machine without `jq`, the shipped write-time secret guard returned "allow" instead of
+blocking, and said nothing.** `hooks/team-ops-guard.sh` used `jq` to read the tool payload, but
+`jq` was never declared as a runtime dependency and every `jq` call was wrapped
+`2>/dev/null || true`. So `set -euo pipefail` never saw the missing binary, `TOOL_INPUT` came back
+empty, and the script fell through to its final `exit 0 # allow`. An AWS key was written straight
+through the guard in the sandbox at **exit 0, with no stdout and no stderr** — the guard did not
+fail loudly, it failed silently, which is the part that matters. The same silence covered
+access-tier enforcement and frontmatter enforcement, which run through the same hook.
+
+The bug hid from everyone who could have caught it: macOS ships `/usr/bin/jq` and GitHub's
+`ubuntu-latest` pre-installs it, so the dev machine, CI and the release gate all agreed the guard
+worked. That is the same shape as the `OGR09` and `ajv` defects `0.11.0` fixed — a dependency that
+is ambient everywhere it was tested and absent where it ships.
+
+### Fixed
+
+- **The secret guard no longer needs `jq`, and can no longer fail open silently (AIO-864).**
+  Payload extraction now tries `jq`, then falls back to `node` — not an assumption, since `node`
+  runs the toolkit, Claude Code itself, and the sibling `PreToolUse` hook registered in the same
+  `settings.json` array. `jq` is still preferred when present (a cheaper process on a per-write
+  hook). A parse *failure* is now distinguished from an absent field, and **no verdict fails
+  CLOSED** (`exit 2`) with a named `AIOS_GUARD_NO_JSON_PARSER` diagnostic that names `jq` as the
+  cause. `AIOS_GUARD_ALLOW_UNPARSED=1` restores the permissive behavior, but shouts on every
+  invocation — silence is not reachable in any branch. Regression coverage runs the *shipped* hook
+  under a `PATH` stripped to curated symlinks with `jq` and/or `node` removed (7 of its 9 cases
+  fail on the pre-fix hook), plus a new clean-container CI lane that installs the packed tarball
+  into a bare `node:22` image and asserts the guard blocks a secret both with and without `jq`.
+- **The install docs no longer pin a release that rots.** `GETTING-STARTED.md` and `README.md` told
+  new users, in bold, to clone **`v0.10.0`** — the release whose validators fail on a clean install,
+  which is exactly what `0.11.0` existed to fix. Both now resolve the newest tag at clone time with
+  `git ls-remote --sort=-v:refname`, so the instructions cannot point at a stale release again.
+  Prerequisites now document `jq` (and the `node` fallback) and the npm-install-before-validating
+  caveat.
+- **The brain-api revision claim in the `0.11.0` notes below.** That section said the contract moved
+  "v1.15 → v1.17"; the header of this file and `docs/brain-api.md` both said **1.20**, and 1.20 is
+  what the `v0.11.0` tag contains. The `0.11.0` paragraph is corrected in place, including the fact
+  that v1.20 is the one step in that range that is not a pure superset.
+
+### Added
+
+- **`aios validate`** — runs the toolkit's validators against a workspace. A scaffolded workspace's
+  own `validation/` holds only `secret-patterns.txt`, so `validation/validate-all.sh .` cannot work
+  there, and a global install previously had to know the path
+  `/usr/local/lib/node_modules/@aiosbrain/aios/validation/`. `aios validate <path>` works from
+  anywhere, including outside a workspace, and so does `aios validate --help` — asking a command
+  how to use it must never depend on standing in a workspace. It execs `validate-all.sh` through
+  its own shebang rather than spawning `bash` by name, so a writable `PATH` entry cannot choose the
+  shell that runs the security validators.
+
+**Public CLI command inventory: 53 → 54.**
+
 ## [0.11.0] — 2026-08-17
 
 **This release supersedes `0.10.1`, which was never tagged and never published.** A `0.10.1`
@@ -30,11 +87,28 @@ validator suite still died — on a different validator, with a different error.
 runtime dependency, and a packaging test asserts that **no** shipped module imports a
 devDependency, so there is no third instance.
 
-The Team Brain API document revision moves **v1.15 → v1.17** across this release. Both steps are
-additive within major `v1`: v1.16 documented the already-shipped authenticated
-`GET /api/v1/attribution` and `GET /api/v1/timeline` reads, and v1.17 accepts the
-backward-compatible v2 shape of `metrics.codebase_health`. No route's runtime or wire behavior
-changed, so no client is required to move.
+The Team Brain API document revision moves **v1.15 → v1.20** across this release — this paragraph
+said "v1.15 → v1.17" until `0.11.1`, having been written before the last two contract PRs landed
+in the same tag, and the header of this file and `docs/brain-api.md` both already said 1.20. Five
+steps, four of them additive within major `v1`:
+
+- **v1.16** documented the already-shipped authenticated `GET /api/v1/attribution` and
+  `GET /api/v1/timeline` reads.
+- **v1.17** accepts the backward-compatible v2 shape of `metrics.codebase_health`.
+- **v1.18** and **v1.19** are BACKFILLED: delegated agent tokens (`aiosd_*`) on
+  `GET /api/v1/items`, then on `POST /api/v1/query`. Both had already shipped in `aios-team-brain`
+  without landing in the contract first, so the canonical and vendored copies of the pinned
+  fixture had silently diverged at 1.17 vs 1.19. Recorded rather than skipped. Member `aios_*`
+  keys are byte-for-byte unchanged by both.
+- **v1.20** makes the `POST /api/v1/items` payload limits explicit: `rows` bounded at 5,000 per
+  payload, the transport ceiling raised 1.2 MB → 5.4 MB, `body` unchanged at 1 MB.
+
+**v1.20 is the one step that is not a pure superset.** A payload above 5,000 rows that was compact
+enough (~60–130 B/row) to fit under the old 1.2 MB gate was accepted before and now returns
+`422 invalid_payload`. That window is narrow and every realistic client gets strictly more room,
+but it is a behavior change rather than a documentation-only one, so it is called out here instead
+of being folded into an "additive, nobody has to move" summary. No route's runtime or wire behavior
+changed in v1.16–v1.19.
 
 ### Added
 
