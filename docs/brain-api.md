@@ -1,6 +1,6 @@
 # AIOS Team Brain — API Contract
 
-**Version: 1.17** is the shipped member-facing Brain API (`/api/v1`). **Document revision: 1.17**
+**Version: 1.20** is the shipped member-facing Brain API (`/api/v1`). **Document revision: 1.20**
 also carries the separately negotiated internal Executor gateway contract **1.10**; it does not
 claim unimplemented member-facing v1.10 routes. This document is the single pinned contract between the
 contributor repo (this toolkit's `aios` CLI) and the `aios-team-brain` service. Both
@@ -210,6 +210,61 @@ writeback/registration pulls), so a newer client still works against an older br
   repository capability profile, explicit evidence completeness, a fail-closed quality-gate and
   automation-admission verdict, per-dimension evidence state, and a redacted normalized finding
   ledger. It grants no write/remediation authority; all Phase 0 findings are report-only.*
+- *2026-08-17 — **v1.18** and **v1.19**, BACKFILLED. Both shipped in `aios-team-brain` without
+  landing here first, which `docs/OPS.md` §7 requires: the brain bumped `BRAIN_API_VERSION` and its
+  vendored `contract/brain-contract.json` to 1.19 while this document — the source of truth — stayed
+  at 1.17, so the two copies of the pinned fixture had silently diverged. Recorded now rather than
+  skipped, so 1.20 is not stacked on a gap.*
+  - ***v1.18*** — ADDITIVE: **delegated agent tokens** (`aiosd_<token_id>_<secret>`, spec §10 /
+    PCCA-2). Phase A surface: `GET /api/v1/items` accepts them, oracle-filtered to the token's
+    effective project set; `POST /api/v1/query` answers `403 delegation_not_supported`; every other
+    route rejects the prefix with `401`. Existing `aios_*` member keys are byte-for-byte unchanged —
+    an old server rejects the unknown prefix with today's `401`, so no negotiation is required.
+  - ***v1.19*** — `POST /api/v1/query` accepts delegated `aiosd_*` tokens (Phase B slice 3, spec
+    §10/§17-B): retrieval is ALWAYS attenuated to the token's live effective set (graph legs omitted,
+    §5.8b) regardless of `teams.access_enforcement`; delegated queries are stateless —
+    `conversation_id` answers `422`, no thread is read or written; rate limits and cost metering
+    attribute to the launching member. The Phase A `403 delegation_not_supported` is retired for this
+    route. Member `aios_*` keys are byte-for-byte unchanged.
+- *2026-08-17 — **v1.20**: `POST /api/v1/items` payload limits become EXPLICIT and, for every
+  realistic client, more permissive (AIO-923). `rows` is bounded at **5,000** per payload on every
+  row-bearing kind (`task`, `decision`, `fact`, `stakeholder_mention`), and the whole-request
+  transport ceiling rises from 1.2 MB to **5,400,000 bytes (5.4 MB)** so 5,000 rows actually fit.
+  `body` keeps its independent **1 MB** cap — enforced by the payload schema, so a body overflow
+  is `422 invalid_payload`, not the `413`.
+
+  **Why**: `rows` was unbounded, so the only thing that bounded an over-large push was the
+  `content-length` gate — firing at roughly **1,100 rows** with a bare
+  `413 {"error":"payload_too_large","message":"max 1 MB"}` that named no field and no ceiling
+  (measured: 1,000 rows = 1,089,970 B accepted; 3,500 = 1,918,564 B rejected). A 35-List ClickUp
+  workspace failed atomically at ~32 tasks per List.
+
+  **For `task`, a client MUST NOT work around this by chunking.** The brain's task sweep is
+  PROJECT-wide: it deletes every sync-origin task row in the project that the incoming item omits, so
+  a second `task` item in the same project deletes the first one's rows — splitting one project's
+  tasks across pushes silently destroys data. A task source above the row ceiling must be split into
+  separate **projects**, never into two pushes of the same project.
+
+  **`task` is the only kind with that property.** `decision`, `fact` and `stakeholder_mention` all
+  diff-delete per-ITEM (scoped to the syncing item's own `source_item_id`), so for those, splitting
+  across DISTINCT PATHS is safe and does not lose rows. The `422` message stays conservative — it
+  advises narrowing the selection, which is correct for every kind — but the constraint itself is
+  task-specific, and this document previously overstated it.
+
+  **Wire errors**: over the row ceiling → `422 invalid_payload`, with the limit named in the message.
+  Over the transport ceiling → `413 payload_too_large`, naming both bounds. Note that 5,000 rows are
+  not *guaranteed* to fit 5.4 MB — 700 B/row is a measured average, and 5,000 rows of schema-legal
+  maximums exceed it. The two limits are independent and neither implies the other.
+
+  **Compatibility**: not a pure superset. Payloads above 5,000 rows that were compact enough
+  (~60–130 B/row) to fit the old 1.2 MB gate were accepted before and now `422`. That window is
+  narrow, and the new failure names its cause where the old one did not. A new client sending
+  >1.2 MB to a pre-1.20 brain still gets the pre-1.20 `413` — the failure it already handles — so no
+  negotiation is required.
+
+  The row ceiling applies to the **wire only**: the brain re-parses in-process connector payloads
+  with an uncapped schema, because its own Linear/GitHub/Plane mirrors have no transport step and
+  legitimately build single items of up to 20,000 rows.*
 
 ---
 
@@ -344,7 +399,7 @@ All errors:
 Codes: `unauthorized` (401), `forbidden_tier` (422, admin content or managed-gateway tier
 violation), `forbidden_role`
 (403, endpoint requires a higher member role — v1.7), `invalid_payload` (422),
-`payload_too_large` (413, >1 MB), `rate_limited` (429, with `Retry-After`),
+`payload_too_large` (413 — request over the transport ceiling: 5.4 MB on `POST /api/v1/items` since v1.20, per-route elsewhere; a `rows` overflow is `invalid_payload`/422, not this), `rate_limited` (429, with `Retry-After`),
 `managed_gateway_unavailable` (client classification for an older Brain's 404),
 `github_invalid_token`, `github_insufficient_permissions`, `github_connection_exists`,
 `github_connection_not_found`,
@@ -387,6 +442,23 @@ the gate — see `lib/api/rate-limit.ts`):
 ## `POST /api/v1/items` — push (upsert)
 
 One item per request. Idempotent.
+
+### Payload limits (normative, since v1.20)
+
+| Limit | Value | Exceeded ⇒ |
+| --- | --- | --- |
+| `body` | 1,000,000 characters | `422 invalid_payload` |
+| `rows[]` length (`task`, `decision`, `fact`, `stakeholder_mention`) | **5,000** | `422 invalid_payload`, message names `rows` and the ceiling |
+| whole request (`Content-Length`) | **5,400,000 bytes** | `413 payload_too_large`, message names both bounds |
+
+The two ceilings are independent: 5,000 rows are not *guaranteed* to fit 5,400,000 bytes (that
+budget assumes ~700 B/row; rows at their schema maxima are larger), and a request under the byte
+ceiling can still exceed the row ceiling. A client should treat both as hard.
+
+⚠️ The versioned item-payload JSON Schema (`contract/item-payload-1.12.schema.json`) does **not**
+encode the `rows` ceiling — it predates v1.20 and carries no `maxItems`. A client validating only
+against that schema will accept a payload the brain rejects with `422`. This table is the normative
+statement until the item-payload contract is itself revised.
 
 ```json
 {
@@ -474,10 +546,12 @@ team/external-tier item.
    `200 {"status":"unchanged"}`; only `synced_at` is bumped.
 3. Otherwise upsert the item; if the body changed, append an immutable version record.
 4. If `rows[]` is present, rows upsert by their project-scoped `row_key`. Task rows retain the
-   existing origin-aware project diff (UI rows survive), and decision rows retain their existing
-   upsert behavior. Fact and stakeholder rows diff-delete only rows whose `source_item_id` is the
-   same item currently syncing. They inherit the containing item's normalized access as audience;
-   the wire cannot override it.
+   existing origin-aware **project-wide** diff (UI rows survive). Decision, fact and stakeholder rows
+   diff-delete **per item** — only rows whose `source_item_id` is the item currently syncing — so a
+   UI-created row (no `source_item_id`) and other items' rows are never touched. (Decisions were
+   described here as "retain their existing upsert behavior", i.e. never deleted; they have
+   diff-deleted per item since the brain gained that behaviour. Corrected at document revision 1.20.)
+   All rows inherit the containing item's normalized access as audience; the wire cannot override it.
 5. `access: client`/`company` → stored as `external`. `access: admin`/`private` →
    `422 forbidden_tier`.
 6. Every accepted push is audit-logged with key id, member, and item path.
@@ -732,8 +806,11 @@ CLI can merge them into the local `3-log/decision-log.md`. **Tier-scoped:** an
 
 Merge semantics mirror tasks: match by `row_key` (the decision-log `#` column); update
 existing rows in place; append unknown rows; never delete local rows. UI-created rows
-carry a `ui-…` key; the brain never diff-deletes decisions, so a UI row survives until
-it is written back and re-pushed.
+carry a `ui-…` key and survive until written back and re-pushed — **because they carry no
+`source_item_id`**, not because decisions are never diff-deleted. A decision row that a
+pushed item used to carry and no longer does IS deleted, scoped to that item's own rows.
+(This paragraph previously said "the brain never diff-deletes decisions". That stopped
+being true when the per-item decision diff shipped; corrected at document revision 1.20.)
 
 > **Reserved key namespace.** Row keys beginning `ui-` are **reserved** for rows created in
 > the dashboard (a `ui-` + random-hex id minted by the brain). Markdown authors must not
