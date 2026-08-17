@@ -78,7 +78,15 @@ export function cmdValidate(repo, rest = []) {
   }
 
   console.log(`aios validate — validators from ${TOOLKIT}`);
-  const r = spawnSync("bash", [script, target, ...modes], { stdio: "inherit" });
+  // Run the validator through its own shebang rather than resolving the interpreter name
+  // `bash` on PATH — a writable PATH entry would otherwise get to choose the shell that
+  // runs the security validators. npm preserves the executable bit, so the direct exec is
+  // the normal path; the absolute-path fallback covers a checkout on a noexec mount or one
+  // whose mode bits were lost (e.g. copied through a zip).
+  let r = spawnSync(script, [target, ...modes], { stdio: "inherit" });
+  if (r.error && (r.error.code === "EACCES" || r.error.code === "ENOEXEC")) {
+    r = spawnSync("/bin/bash", [script, target, ...modes], { stdio: "inherit" });
+  }
   if (r.error) {
     console.error(`aios validate: could not run the validators: ${r.error.message}`);
     return 2;

@@ -214,10 +214,16 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - run: npm ci
+      # This lane only needs tsc to build dist/ and then npm pack; nothing here runs the
+      # native better-sqlite3 binding, so dependency lifecycle scripts are not needed and
+      # are not run.
+      - run: npm ci --ignore-scripts
       - name: Pack the tarball
-        # --pack-destination does not create the directory; npm ENOENTs on a missing one.
+        # dist/ is gitignored, so build it first or the packed artifact is not what a
+        # release publishes. --pack-destination does not create its directory; npm ENOENTs
+        # on a missing one.
         run: |
+          npm run build:loop
           mkdir -p /tmp/pack
           npm pack --pack-destination /tmp/pack
           ls -l /tmp/pack
