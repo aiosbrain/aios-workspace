@@ -69,6 +69,26 @@ ts "864 allows wget -O - to stdout"         0 "$(wpc "$WT" 'wget -O - https://ex
 ts "864 allows rsync -t outside primary"    0 "$(wpc "$WT" 'rsync -t /tmp/src864 /tmp/dst864')"
 ts "864 allows process substitution"        0 "$(wpc "$WT" 'diff <(cat a.txt) >(sort)')"
 
+# ── option values and read-only modes are not destinations ───────────────────
+ts "864 allows truncate size operand outside primary" 0 "$(wpc "$WT" 'truncate -s 0 /tmp/f864t')"
+ts "864 blocks truncate on a primary file"    2 "$(wpc "$WT/wt" "truncate -s 0 $WT/a.txt")"
+ts "864 allows unzip -l listing in primary"   0 "$(wpc "$WT" 'unzip -l archive864.zip')"
+ts "864 allows unzip of a primary archive elsewhere" 0 "$(wpc "$WT/wt" "unzip $WT/a864.zip -d /tmp")"
+ts "864 blocks bare unzip into primary cwd"   2 "$(wpc "$WT" 'unzip /tmp/a864.zip')"
+ts "864 allows tar reading a primary archive elsewhere" 0 "$(wpc "$WT/wt" "tar -xf $WT/a431.tar -C /tmp")"
+ts "864 blocks bare tar extract into primary cwd" 2 "$(wpc "$WT" 'tar -xf /tmp/a431.tar')"
+ts "864 allows tar create whose operand starts with x" 0 "$(wpc "$WT" 'tar -cf /tmp/out864.tar xml')"
+ts "864 allows ditto reading from the primary" 0 "$(wpc "$WT/wt" "ditto $WT/a.txt /tmp/dst864d")"
+ts "864 blocks ditto into the primary"         2 "$(wpc "$WT/wt" "ditto /tmp/src864 $WT/dst864d")"
+# ── redirection operator forms the scanner used to lose ──────────────────────
+ts "864 blocks the second of two adjacent redirects" 2 "$(wpc "$WT/wt" "echo x >/tmp/x864r>$WT/f864r")"
+ts "864 blocks >& file redirect into primary"  2 "$(wpc "$WT/wt" "echo x >& $WT/f864a")"
+ts "864 blocks attached >&file into primary"   2 "$(wpc "$WT/wt" "echo x >&$WT/f864b")"
+ts "864 allows fd duplication 2>&1"            0 "$(wpc "$WT" 'echo x 2>&1')"
+ts "864 allows fd close >&-"                   0 "$(wpc "$WT" 'ls >&-')"
+ts "864 allows a backgrounded command"         0 "$(wpc "$WT" 'sleep 1 & echo done')"
+ts "864 still blocks a write after a background job" 2 "$(wpc "$WT/wt" "sleep 1 & echo x > $WT/bg864")"
+
 # the same verdicts must come out of BOTH strict adapters, not just the portable policy
 tadapter() { # name expected_exit adapter-relpath event json
   local name="$1" want="$2" rel="$3" event="$4" json="$5" got

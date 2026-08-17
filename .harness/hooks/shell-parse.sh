@@ -82,7 +82,10 @@ shell_redirection_targets() {
         i++
       }
       if (target != "") print target
-      return i
+      # Hand back the index BEFORE the character that ended the word: the calling loop
+      # increments it, so returning `i` would swallow that character. `cmd >/tmp/x>/primary/f` used to
+      # lose its second redirect that way, which is a write the guard never saw.
+      return i - 1
     }
     {
       if (in_heredoc_body($0)) next
@@ -109,7 +112,14 @@ shell_redirection_targets() {
           # substitution: neither names a path, and emitting `(cmd)` as a candidate was
           # exactly the false-positive shape AIO-864 exists to remove.
           if (after == "|") { i++; after = substr($0, i + 1, 1) }
-          if (after != "&" && after != "(") i = emit_target($0, i + 1)
+          if (after == "&") {
+            # `2>&1` and `>&-` duplicate or close a descriptor. `>&word` with anything
+            # else after it is a FILE redirect in bash, and skipping it wholesale let
+            # `echo x >& <primary>/f` write into the primary unseen.
+            if (substr($0, i + 2) !~ /^[ \t]*([0-9]+|-)([ \t;|&<>]|$)/) i = emit_target($0, i + 2)
+          } else if (after != "(") {
+            i = emit_target($0, i + 1)
+          }
         }
       }
       if (heredoc_current == 0 && heredoc_count > 0) heredoc_current = 1
@@ -195,10 +205,11 @@ shell_command_segments() {
         } else if (c == "|") {
           # `>|` is one redirection operator, not a redirect followed by a pipe. Splitting
           # there would strand the target in its own segment, where nothing reads it as a
-          # write — a silent bypass of the strict shell-write scan.
+          # write — a silent bypass of the strict shell-write scan. `>&` is the same shape.
           if (segment ~ />[ \t]*$/) { segment = segment c }
           else { emit("P"); in_pipeline = 1 }
         } else if (c == "&") {
+          if (segment ~ />[ \t]*$/) { segment = segment c; continue }
           emit("P"); in_pipeline = 0
         } else if (c == ";") {
           emit(in_pipeline ? "P" : "S"); in_pipeline = 0
@@ -275,6 +286,20 @@ drop_first_operand() {
   printf '%s\n' "$1" | awk 'NF { if (!dropped && $0 !~ /^-/) { dropped = 1; next } print }'
 }
 
+# drop_flag_values <ops> <ERE of value-taking flags> — remove those flags AND the word
+# each one consumes. `truncate -s 0 /tmp/f` otherwise contributes `0`, which resolves
+# against the shell cwd and blocks a command that never touches the primary checkout.
+drop_flag_values() {
+  printf '%s\n' "$1" | awk -v flags="$2" '
+    NF {
+      if (skip) { skip = 0; next }
+      if ($0 ~ ("^(" flags ")$")) { skip = 1; next }
+      if ($0 ~ ("^(" flags ")=")) next
+      print
+    }
+  '
+}
+
 # has_operand <ops> <ERE> — does any argument of the segment match?
 has_operand() { printf '%s\n' "$1" | grep -Eq "$2"; }
 
@@ -310,8 +335,10 @@ flag_destinations() {
   printf '%s\n' "$1" | awk -v letter="$2" -v longs="$3" -v cwd="$4" -v dfl="$5" '
     NF {
       if (take) { take = 0; got = 1; if ($0 != "-") print; next }
-      if ($0 ~ ("^--(" longs ")$")) { take = 1; next }
-      if ($0 ~ ("^--(" longs ")=")) { sub(/^[^=]*=/, ""); got = 1; if ($0 != "-") print; next }
+      if (longs != "" && $0 ~ ("^--(" longs ")$")) { take = 1; next }
+      if (longs != "" && $0 ~ ("^--(" longs ")=")) {
+        sub(/^[^=]*=/, ""); got = 1; if ($0 != "-") print; next
+      }
       if ($0 !~ /^--/ && $0 ~ ("^-[A-Za-z]*" letter "$")) { take = 1; next }
       if ($0 !~ /^--/ && $0 ~ ("^-" letter ".")) {
         got = 1; if (substr($0, 3) != "-") print substr($0, 3); next

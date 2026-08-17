@@ -219,9 +219,13 @@ check_command_segment() {
     split_segment "$CLASS_CMD"
     _mut_cands=''
     case "$SEG_CMD" in
-      rm|tee|truncate|touch|mkdir)
+      rm|tee|touch|mkdir)
         # Every operand of these IS a destination.
         _mut_cands=$SEG_OPS ;;
+      truncate)
+        # `-s <size>` / `-r <ref>` consume a word that is a number or a read, not a
+        # destination; every remaining operand is a file it truncates.
+        _mut_cands=$(drop_flag_values "$SEG_OPS" '-s|--size|-r|--reference') ;;
       ln|install)
         # Only the destination is written; the leading operands are sources, so
         # `ln -s <primary>/a /tmp/b` and `install <primary>/src /tmp/dst` read from the
@@ -233,17 +237,25 @@ check_command_segment() {
       chmod|chown)
         # The first operand is the mode/owner, not a path.
         _mut_cands=$(drop_first_operand "$SEG_OPS") ;;
-      unzip|ditto)
-        # Always write, and unzip defaults to the shell cwd.
-        _mut_cands="$SEG_OPS
-$SDIR" ;;
+      unzip)
+        # The archive is a READ; unzip writes into `-d <dir>`, or the shell cwd. The
+        # inspection modes (-l list, -t test, -v verbose list, -z comment, -p to stdout)
+        # write nothing at all.
+        if ! has_operand "$SEG_OPS" '^-[A-Za-z]*[ltvzp]'; then
+          _mut_cands=$(flag_destinations "$SEG_OPS" d '' "$SDIR" 1)
+        fi ;;
+      ditto)
+        _mut_cands=$(last_destination "$SEG_OPS" 0) ;;
       tar|bsdtar)
         # Extract mode writes files (-x/--extract, incl. old-style `tar xf`), into
-        # the shell cwd unless redirected with -C. Creation (`tar -cf`) only reads
-        # and is deliberately NOT matched.
-        if has_operand "$SEG_OPS" '^(--extract|-[A-Za-z]*x[A-Za-z]*|x[A-Za-z]*)$'; then
-          _mut_cands="$SEG_OPS
-$SDIR"
+        # `-C <dir>` or the shell cwd; the archive named by -f is a READ. Creation
+        # (`tar -cf`) only reads and is deliberately NOT matched — and the old-style
+        # mode letters are only the FIRST operand, so an ordinary file called `xml`
+        # in `tar -cf out.tar xml` is not mistaken for a mode.
+        _tar_first=$(printf '%s\n' "$SEG_OPS" | awk 'NF { print; exit }')
+        if has_operand "$SEG_OPS" '^(--extract|-[A-Za-z]*x[A-Za-z]*)$' ||
+           printf '%s' "$_tar_first" | grep -Eq '^x[A-Za-z]*$'; then
+          _mut_cands=$(flag_destinations "$SEG_OPS" C 'directory' "$SDIR" 1)
         fi ;;
       sed)
         if has_operand "$SEG_OPS" '^(--in-place([=].*)?|-[A-Za-z]*i.*)$'; then
