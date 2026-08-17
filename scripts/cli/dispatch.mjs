@@ -20,11 +20,24 @@
  */
 import { existsSync } from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { consumeDevtoolsDirArg } from "../devtools-dispatch.mjs";
 import { findAgentWorkspace } from "./agent-workspace.mjs";
 import { findCommand, nearestCommand, renderUsage } from "./registry.mjs";
 
 const HELP_TOKENS = new Set(["-h", "--help", "help"]);
+
+// `--version` used to fall through to the unknown-command branch: 190 lines of usage on stdout,
+// `error: unknown command: --version` on stderr, exit 1 — so there was no way to ask an installed
+// CLI what version it was. `-v` is free (nothing at this layer parses it as verbose), so both
+// spellings answer. Handled beside help, BEFORE any repo/config resolution, so it works with no
+// workspace anywhere above cwd — the same property `aios --help` has.
+const VERSION_TOKENS = new Set(["-v", "--version", "version"]);
+
+/** The toolkit checkout that owns this file: scripts/cli/dispatch.mjs → <toolkit>. */
+function toolkitRoot() {
+  return path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
+}
 
 /**
  * @param {object} o
@@ -41,6 +54,15 @@ export async function dispatch({ argv, local, resolvers }) {
 
   if (!cmd || HELP_TOKENS.has(cmd)) {
     console.log(renderUsage());
+    process.exit(0);
+  }
+
+  if (VERSION_TOKENS.has(cmd)) {
+    // Lazily imported so the version branch costs nothing on the hot path, matching how every
+    // command module is loaded. toolkit-meta.mjs is the one existing reader of this version —
+    // `aios update` stamps the same string — so there is no second copy of the lookup.
+    const { toolkitMeta } = await import("../toolkit-meta.mjs");
+    console.log(toolkitMeta(toolkitRoot()).label);
     process.exit(0);
   }
 

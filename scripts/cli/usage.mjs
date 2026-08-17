@@ -16,6 +16,8 @@ export const USAGE_FOOTER = [
   "options:",
   "  --repo <path>               team-ops repo (default: walk up from cwd)",
   "  --devtools-dir <path>       devtools checkout (build/spec/ship/roadmap/consolidate)",
+  "  -v, --version               print the toolkit version and its brain-api contract",
+  "  -h, --help                  print this help",
 ];
 
 export const USAGE_LINES = {
