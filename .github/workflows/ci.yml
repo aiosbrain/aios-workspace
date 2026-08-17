@@ -216,7 +216,11 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Pack the tarball
-        run: npm pack --pack-destination /tmp/pack
+        # --pack-destination does not create the directory; npm ENOENTs on a missing one.
+        run: |
+          mkdir -p /tmp/pack
+          npm pack --pack-destination /tmp/pack
+          ls -l /tmp/pack
       - name: Install + validate in a bare node:22 container with no jq
         run: |
           docker run --rm -v /tmp/pack:/pack:ro -v "$PWD/.github/scripts":/ci:ro \
