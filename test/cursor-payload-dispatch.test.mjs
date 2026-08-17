@@ -102,11 +102,14 @@ before(() => {
     assert.ok(target, `nojq PATH fixture needs ${tool}`);
     symlinkSync(target, path.join(nojqBin, tool));
   }
-  assert.equal(
-    spawnSync("/bin/sh", ["-c", "command -v jq"], { env: { PATH: nojqBin } }).status,
-    1,
-    "the nojq PATH fixture must not resolve jq"
-  );
+  // Assert on the RESOLVED PATH, not the exit code: `command -v` on a miss exits 1 under
+  // bash and 127 under dash, so an exit-code assertion here fails on Linux for a reason
+  // that has nothing to do with what the fixture is claiming.
+  const jqProbe = spawnSync("/bin/sh", ["-c", "command -v jq"], {
+    env: { PATH: nojqBin },
+    encoding: "utf8",
+  });
+  assert.equal(jqProbe.stdout.trim(), "", "the nojq PATH fixture must not resolve jq");
 });
 
 after(() => {
