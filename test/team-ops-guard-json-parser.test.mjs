@@ -186,6 +186,25 @@ test("unparseable input is not treated as an absent field", (t) => {
   assert.equal(noToolInput.code, 0, "a well-formed event with no tool_input is a real allow");
 });
 
+test("array shapes are unreadable to BOTH parsers, not empty to one of them", (t) => {
+  // jq errors on `[] | .file_path` ("Cannot index array with string") and so blocks. A
+  // bare `typeof o === "object"` check in the node extractor would let node answer "no
+  // such field" and ALLOW the same event. A parser difference landing on the permissive
+  // side is exactly the defect class this file guards, so both shapes are pinned for
+  // both parsers.
+  for (const event of [{ tool_name: "Write", tool_input: [] }, [1, 2]]) {
+    for (const omit of [[], ["jq"]]) {
+      const r = runHook(event, { omit });
+      if (!r) return skipHost(t);
+      assert.equal(
+        r.code,
+        2,
+        `${JSON.stringify(event)} with omit=${JSON.stringify(omit)} must block, got ${r.code}`
+      );
+    }
+  }
+});
+
 test("an empty event is still a legitimate allow", (t) => {
   // `bash hooks/team-ops-guard.sh </dev/null` must not start blocking.
   const r = runHook("", {});

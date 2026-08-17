@@ -78,7 +78,13 @@ process.stdin.on("data", (d) => { s += d; });
 process.stdin.on("end", () => {
   let o;
   try { o = JSON.parse(s); } catch { process.exit(3); }
-  if (o === null || typeof o !== "object") process.exit(3);
+  // Arrays are rejected, not treated as empty objects. jq errors when a filter indexes an
+  // array with a string ("Cannot index array"), which routes to guard_no_verdict and BLOCKS;
+  // a bare typeof check would let node answer "no such field" and ALLOW. A parser
+  // difference that lands on the permissive side is precisely the defect this file is
+  // being fixed for, so the two paths have to agree on unreadable shapes as well as
+  // readable ones.
+  if (o === null || typeof o !== "object" || Array.isArray(o)) process.exit(3);
   const str = (v) => (v === undefined || v === null || v === false ? null : String(v));
   const key = process.argv[1];
   let out = null;
