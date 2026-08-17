@@ -230,7 +230,8 @@ writeback/registration pulls), so a newer client still works against an older br
   realistic client, more permissive (AIO-923). `rows` is bounded at **5,000** per payload on every
   row-bearing kind (`task`, `decision`, `fact`, `stakeholder_mention`), and the whole-request
   transport ceiling rises from 1.2 MB to **5,400,000 bytes (5.4 MB)** so 5,000 rows actually fit.
-  `body` keeps its independent **1 MB** cap.
+  `body` keeps its independent **1 MB** cap — enforced by the payload schema, so a body overflow
+  is `422 invalid_payload`, not the `413`.
 
   **Why**: `rows` was unbounded, so the only thing that bounded an over-large push was the
   `content-length` gate — firing at roughly **1,100 rows** with a bare
@@ -238,11 +239,17 @@ writeback/registration pulls), so a newer client still works against an older br
   (measured: 1,000 rows = 1,089,970 B accepted; 3,500 = 1,918,564 B rejected). A 35-List ClickUp
   workspace failed atomically at ~32 tasks per List.
 
-  **A client MUST NOT work around this by chunking.** For `task` and `decision` the brain's row sweep
-  deletes every synced row in the PROJECT that the incoming item omits, so a second chunk deletes the
-  first — splitting one project's rows across pushes silently destroys data. A source above the row
-  ceiling must be split into separate **projects**, never into two pushes of the same project.
-  (`fact`/`stakeholder_mention` sweep per-ITEM, so distinct paths are safe there.)
+  **For `task`, a client MUST NOT work around this by chunking.** The brain's task sweep is
+  PROJECT-wide: it deletes every sync-origin task row in the project that the incoming item omits, so
+  a second `task` item in the same project deletes the first one's rows — splitting one project's
+  tasks across pushes silently destroys data. A task source above the row ceiling must be split into
+  separate **projects**, never into two pushes of the same project.
+
+  **`task` is the only kind with that property.** `decision`, `fact` and `stakeholder_mention` all
+  diff-delete per-ITEM (scoped to the syncing item's own `source_item_id`), so for those, splitting
+  across DISTINCT PATHS is safe and does not lose rows. The `422` message stays conservative — it
+  advises narrowing the selection, which is correct for every kind — but the constraint itself is
+  task-specific, and this document previously overstated it.
 
   **Wire errors**: over the row ceiling → `422 invalid_payload`, with the limit named in the message.
   Over the transport ceiling → `413 payload_too_large`, naming both bounds. Note that 5,000 rows are
@@ -436,6 +443,23 @@ the gate — see `lib/api/rate-limit.ts`):
 
 One item per request. Idempotent.
 
+### Payload limits (normative, since v1.20)
+
+| Limit | Value | Exceeded ⇒ |
+| --- | --- | --- |
+| `body` | 1,000,000 characters | `422 invalid_payload` |
+| `rows[]` length (`task`, `decision`, `fact`, `stakeholder_mention`) | **5,000** | `422 invalid_payload`, message names `rows` and the ceiling |
+| whole request (`Content-Length`) | **5,400,000 bytes** | `413 payload_too_large`, message names both bounds |
+
+The two ceilings are independent: 5,000 rows are not *guaranteed* to fit 5,400,000 bytes (that
+budget assumes ~700 B/row; rows at their schema maxima are larger), and a request under the byte
+ceiling can still exceed the row ceiling. A client should treat both as hard.
+
+⚠️ The versioned item-payload JSON Schema (`contract/item-payload-1.12.schema.json`) does **not**
+encode the `rows` ceiling — it predates v1.20 and carries no `maxItems`. A client validating only
+against that schema will accept a payload the brain rejects with `422`. This table is the normative
+statement until the item-payload contract is itself revised.
+
 ```json
 {
   "project": "northwind-aios",
@@ -522,10 +546,12 @@ team/external-tier item.
    `200 {"status":"unchanged"}`; only `synced_at` is bumped.
 3. Otherwise upsert the item; if the body changed, append an immutable version record.
 4. If `rows[]` is present, rows upsert by their project-scoped `row_key`. Task rows retain the
-   existing origin-aware project diff (UI rows survive), and decision rows retain their existing
-   upsert behavior. Fact and stakeholder rows diff-delete only rows whose `source_item_id` is the
-   same item currently syncing. They inherit the containing item's normalized access as audience;
-   the wire cannot override it.
+   existing origin-aware **project-wide** diff (UI rows survive). Decision, fact and stakeholder rows
+   diff-delete **per item** — only rows whose `source_item_id` is the item currently syncing — so a
+   UI-created row (no `source_item_id`) and other items' rows are never touched. (Decisions were
+   described here as "retain their existing upsert behavior", i.e. never deleted; they have
+   diff-deleted per item since the brain gained that behaviour. Corrected at document revision 1.20.)
+   All rows inherit the containing item's normalized access as audience; the wire cannot override it.
 5. `access: client`/`company` → stored as `external`. `access: admin`/`private` →
    `422 forbidden_tier`.
 6. Every accepted push is audit-logged with key id, member, and item path.
@@ -780,8 +806,11 @@ CLI can merge them into the local `3-log/decision-log.md`. **Tier-scoped:** an
 
 Merge semantics mirror tasks: match by `row_key` (the decision-log `#` column); update
 existing rows in place; append unknown rows; never delete local rows. UI-created rows
-carry a `ui-…` key; the brain never diff-deletes decisions, so a UI row survives until
-it is written back and re-pushed.
+carry a `ui-…` key and survive until written back and re-pushed — **because they carry no
+`source_item_id`**, not because decisions are never diff-deleted. A decision row that a
+pushed item used to carry and no longer does IS deleted, scoped to that item's own rows.
+(This paragraph previously said "the brain never diff-deletes decisions". That stopped
+being true when the per-item decision diff shipped; corrected at document revision 1.20.)
 
 > **Reserved key namespace.** Row keys beginning `ui-` are **reserved** for rows created in
 > the dashboard (a `ui-` + random-hex id minted by the brain). Markdown authors must not
