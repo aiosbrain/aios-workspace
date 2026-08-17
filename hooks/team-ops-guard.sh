@@ -24,7 +24,7 @@ HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # This guard used to shell out to `jq` with every call wrapped `2>/dev/null || true`.
 # `jq` is not in package.json, was not a documented prerequisite, and is absent from
 # `node:*` images, Debian/Ubuntu slim, Alpine, and most self-hosted runners — while
-# macOS ships it at /usr/bin/jq and GitHub's ubuntu-latest pre-installs it. So on a
+# macOS 15+ ships it at /usr/bin/jq and GitHub's ubuntu-latest pre-installs it. So on a
 # clean install the parse produced an empty string, `set -euo pipefail` never saw the
 # missing binary, and the script fell through to `exit 0  # allow`. A workspace's
 # write-time secret/tier guard was inert, silently, and an AWS key was written through

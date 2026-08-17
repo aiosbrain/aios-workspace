@@ -133,7 +133,8 @@ aios validate --critical                       # OGR03 secrets scan only
 
 `aios validate` resolves the validators inside whichever toolkit is installed, so a
 global npm install does not need
-`/usr/local/lib/node_modules/@aiosbrain/aios/validation/validate-all.sh`. The
+`$(npm root --global)/@aiosbrain/aios/validation/validate-all.sh` — a path that differs
+per Node install manager (nvm, fnm, Homebrew, Windows). The
 underlying script is still directly runnable **from a toolkit checkout**, pointed at a
 workspace — a scaffolded workspace has no `validation/validate-all.sh` of its own:
 

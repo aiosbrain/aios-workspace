@@ -7,7 +7,7 @@
 // script fell through to `exit 0  # allow`. A workspace's write-time secret guard was inert,
 // silently. An AWS key was written through it at exit 0 with no output.
 //
-// Why it hid from everyone: macOS ships /usr/bin/jq and GitHub's ubuntu-latest pre-installs
+// Why it hid from everyone: macOS 15+ ships /usr/bin/jq and GitHub's ubuntu-latest pre-installs
 // it, so the developer machine, the CI runner and the release gate all agreed it worked. The
 // only way to see it is to take the binary away.
 //

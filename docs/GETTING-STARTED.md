@@ -128,12 +128,14 @@ a deliberate `aios push`.
   that blocks secrets and admin-tier content before they are written) parses the tool
   event with `jq` when it is present and with `node` when it is not. Install `jq` if you
   want the cheaper path on a hook that fires on every write:
-  `apt-get install -y jq` / `brew install jq` / `apk add jq`. macOS already ships it at
-  `/usr/bin/jq`; bare `node:*` Docker images, Debian/Ubuntu slim and Alpine do not.
+  `apt-get install -y jq` / `brew install jq` / `apk add jq`. macOS 15 (Sequoia) and
+  later ship it at `/usr/bin/jq`; earlier macOS, bare `node:*` Docker images,
+  Debian/Ubuntu slim and Alpine do not.
   With **neither** `jq` nor `node` on `PATH` the guard has no way to read its input, so
   it **blocks the write** with `AIOS_GUARD_NO_JSON_PARSER` rather than waving it
-  through — a guard that cannot parse its input must never report "allow". (Before
-  v0.11.1 it silently allowed, which meant secret scanning was off and nothing said so.)
+  through — a guard that cannot parse its input must never report "allow". Before the
+  node fallback landed it silently allowed instead, which meant secret scanning was off
+  on any machine without `jq` and nothing said so.
 - **`npm install` is required before running the validators from a git-clone checkout.**
   It is *not* needed for scaffolding or for `aios` sync. The npm install path
   (`npm i -g @aiosbrain/aios`) ships its dependencies resolved, so it needs no extra step.
@@ -240,8 +242,9 @@ whichever toolkit is installed, so you never need the toolkit's path. That disti
 matters: **your workspace has no `validation/validate-all.sh`.** Its `validation/`
 folder holds only `secret-patterns.txt`, so `validation/validate-all.sh .` from folder
 B fails with `No such file or directory`, and on a global npm install the real script
-is buried at
-`/usr/local/lib/node_modules/@aiosbrain/aios/validation/validate-all.sh`. If you are
+is buried at `$(npm root --global)/@aiosbrain/aios/validation/validate-all.sh` — a
+location that depends on your Node install (nvm, fnm, Homebrew and Windows all put it
+somewhere different), which is exactly why you should not have to name it. If you are
 sitting in a toolkit checkout (folder A) you can still call it directly, but you must
 point it at folder B: `validation/validate-all.sh ~/Projects/abe-workspace`.
 

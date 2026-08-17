@@ -6,7 +6,7 @@
 # matters — proves the shipped PreToolUse guard does not silently allow a secret.
 #
 # This exists because the 0.11.0 defect class (undeclared `jq`, before it the OGR09 skill
-# library path and `ajv`) is invisible everywhere the maintainers look: macOS ships
+# library path and `ajv`) is invisible everywhere the maintainers look: macOS 15+ ships
 # /usr/bin/jq and GitHub's runner image pre-installs it. A bare container is the only place
 # the missing dependency shows up. If this script fails, install the missing dependency in
 # the PRODUCT or gate it in the code — never in this script.

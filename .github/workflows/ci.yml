@@ -202,7 +202,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     # THE lane that would have caught the 0.11.0 jq fail-open, and the OGR09 and ajv defects
-    # before it. All three were invisible in exactly the same way: macOS ships /usr/bin/jq and
+    # before it. All three were invisible in exactly the same way: macOS 15+ ships /usr/bin/jq and
     # the ubuntu-latest runner image pre-installs it, so the developer machine, every other job
     # in this file, and the release gate all agreed the release worked. A bare node:22 image is
     # the only place the missing dependency is observable. Do NOT "fix" a failure here by
