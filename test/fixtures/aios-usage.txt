@@ -2,6 +2,9 @@ aios — AIOS Team Brain sync client (contract: docs/brain-api.md)
 
 usage:
   aios status [--json|--porcelain]      what would sync (new/modified/blocked/clean)
+  aios validate [path]                  run the toolkit's OGR validators against a workspace
+    [--critical|--quick]                --critical = OGR03 secrets only; --quick = OGR01 only
+                                         path defaults to the workspace root; exit 0 pass / 1 fail
   aios onboard                          guided first-run setup (brain + tools, one multi-select)
     --inspect [--json]                  read-only live preflight: workspace/toolkit/git/Brain state
   aios connect [<id>]                   connect an integration (guided + live-validated)

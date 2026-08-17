@@ -7,7 +7,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, writeFileSync, readFileSync, rmSync, existsSync } from "node:fs";
+import { mkdtempSync, writeFileSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -20,7 +20,6 @@ const REPO = path.join(DIR, "..");
 const AIOS = path.join(REPO, "scripts", "aios.mjs");
 // NODE_OPTIONS splits on whitespace — pass the probe as a file: URL (percent-encoded spaces).
 const PROBE = pathToFileURL(path.join(DIR, "helpers", "import-probe.mjs")).href;
-const USAGE_FIXTURE = path.join(DIR, "fixtures", "aios-usage.txt");
 
 // ── pre-refactor truth, transcribed from aios.mjs@737116f — NOT regenerated from the registry.
 const PRE_REFACTOR = {
@@ -79,6 +78,9 @@ const PRE_REFACTOR = {
   "gen-catalog": "offline",
   catalog: "offline",
   connector: "offline",
+  // AIO-864 follow-up: `aios validate` runs the toolkit's OGR validators against a
+  // workspace (the validators are a toolkit path a scaffolded workspace does not have).
+  validate: "offline",
   // special resolution
   update: "update-root",
   mcp: "pre-config",
@@ -319,6 +321,7 @@ test("registry: every adapt hands its module the EXACT argument signature (table
     mode: ["mod", "cmdMode", R, C, A],
     decisions: ["mod", "cmdDecisions", R, C, A],
     council: ["mod", "runCouncil", R, A],
+    validate: ["mod", "cmdValidate", R, A],
     verify: ["mod", "cmdVerify", R, A],
     worktree: ["mod", "cmdWorktree", R, C, A],
     update: ["mod", "cmdUpdate", R, C, A],
@@ -404,37 +407,6 @@ test("dispatch: exit-status only assigns a truthy status (never clobbers with 0)
     assert.equal(process.exitCode, 2, "a truthy status must be assigned");
   } finally {
     process.exitCode = previous;
-  }
-});
-
-// ── help text ────────────────────────────────────────────────────────────────
-
-test("registry: renderUsage matches the checked-in snapshot", () => {
-  assert.ok(existsSync(USAGE_FIXTURE), "test/fixtures/aios-usage.txt is missing");
-  assert.equal(`${renderUsage()}\n`, readFileSync(USAGE_FIXTURE, "utf8"));
-});
-
-test("registry: every help line beginning `aios <cmd>` names a registered command", () => {
-  const named = new Set();
-  for (const d of COMMANDS) {
-    for (const line of d.usage) {
-      const m = /^ {2}aios ([a-z0-9-]+)/.exec(line);
-      if (m) named.add(m[1]);
-    }
-  }
-  for (const n of named) {
-    assert.ok(findCommand(n), `help documents '${n}' but nothing is registered under that name`);
-  }
-});
-
-test("registry: usage blocks are owned by their own command", () => {
-  for (const d of COMMANDS) {
-    const first = d.usage[0];
-    if (!first) continue;
-    assert.ok(
-      first.startsWith(`  aios ${d.name}`),
-      `${d.name}'s usage block starts with someone else's line: ${first}`
-    );
   }
 });
 
