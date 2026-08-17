@@ -8,7 +8,33 @@ This is the **individual workspace** repo. The Team Brain sync contract
 (`docs/brain-api.md`) is versioned separately; it is currently at **v1.17**
 (additive within major `v1`). Entries predating a bump did not change the protocol.
 
-## [Unreleased]
+## [0.11.0] — 2026-08-17
+
+**This release supersedes `0.10.1`, which was never tagged and never published.** A `0.10.1`
+version string reached `package.json` and a changelog heading, but no npm artifact and no git tag
+ever existed for it — so the `0.10.1` install and the `0.10.1` checkout its notes pointed at were
+never runnable. Everything that section described ships here instead. `0.10.0` is the previous
+installable release, and this is the upgrade from it.
+
+**The headline fix is that a fresh global install can now complete its own documented validation
+step.** In `0.10.0`, `validation/validate-all.sh` ran `OGR09 — Skill Library`, which reads
+`gui/server/skill-library/`. That path was never in `package.json`'s `files` array, so the
+validator that the install instructions tell you to run exited `ENOENT` on every clean
+`npm i -g @aiosbrain/aios`. OGR09 now lives in `aiosbrain/aios-workspace-gui` with the tree it
+actually owns, and the core validator suite no longer reaches outside the published tarball.
+
+A second instance of that same shape was found while cutting this release and fixed here too:
+`ajv` was a **devDependency**, but OGR15 (`validation/check-delivery-skill-suite.mjs`) imports it
+at module scope and ships in the tarball. A global install resolves only `dependencies`, so the
+validator suite still died — on a different validator, with a different error. `ajv` is now a
+runtime dependency, and a packaging test asserts that **no** shipped module imports a
+devDependency, so there is no third instance.
+
+The Team Brain API document revision moves **v1.15 → v1.17** across this release. Both steps are
+additive within major `v1`: v1.16 documented the already-shipped authenticated
+`GET /api/v1/attribution` and `GET /api/v1/timeline` reads, and v1.17 accepts the
+backward-compatible v2 shape of `metrics.codebase_health`. No route's runtime or wire behavior
+changed, so no client is required to move.
 
 ### Added
 
@@ -24,37 +50,51 @@ This is the **individual workspace** repo. The Team Brain sync contract
   score from evidence completeness and automation admission, loads per-repository capability
   profiles, and emits stable redacted findings for Team Brain. Missing, stale, or errored required
   evidence now produces an `unknown` gate and can never admit background remediation.
-
-## [0.10.1] — 2026-08-03
-
-This patch completes the Workspace changes that landed after the exact `0.10.0` tag and npm
-artifact. It adds structured maturity guidance, restores current Codex analysis, and hardens the
-coverage, routing, and validation paths. The top-level command registry and the exact
-`@aiosbrain/aios-devtools@0.2.0` delegation boundary are unchanged.
-
-Separately, the Team Brain API document revision is now **v1.16**. It documents the already-shipped
-authenticated `GET /api/v1/attribution` and `GET /api/v1/timeline` reads. This is contract and
-conformance-fixture alignment only: neither route's runtime or wire behavior changed.
-
-### Added
-
-- `aios analyze --json` now exposes typed `chat`, `command`, `edit`, and `doc` actions for every
+- **v1 integration contract artifacts (AIO-835)** — `packages/integration-sdk/contracts/v1/`
+  ships the versioned integration contract, its JSON schemas, and the evidence fixtures that pin
+  it. The validator rejects single-label provider hosts, repeated DNS root dots, and
+  `mutation_class` values outside the capability taxonomy, and distinguishes an unknown
+  capability from a declared extension rather than silently accepting either.
+- **`aios --version` / `aios -v`** now print the installed package version instead of the usage
+  banner. Previously neither flag matched a command, so the CLI fell through to help text and
+  there was no way to ask an installed CLI what version it was.
+- **Global connector install and Slack multiline preservation** — connectors install globally
+  rather than per-workspace, and the `slack-personal` connector stops collapsing multiline
+  message bodies into a single line.
+- **Runtime-agnostic reviewer presets for adversarial-review steps** — `loop-models` presets are
+  no longer tied to one agent runtime.
+- `aios analyze --json` exposes typed `chat`, `command`, `edit`, and `doc` actions for every
   maturity axis, plus the exact blockers to the next maturity spine level when the workspace is
   below L5 (AIO-706).
 - The maturity capture hook accepts `AIOS_MATURITY_TRANSCRIPT_MAX_MB`. Its safe default is now
   50 MB instead of 10 MB so high-activity sessions are not silently omitted; invalid overrides
   fall back to the default (#550).
+- Scaffolded workspaces get the Linear factory harness, gated on `pm_tool` so it is only wired
+  up where Linear is actually the configured tracker (AIO-844).
+- The `evolve` skill ships into scaffold, so every newly scaffolded workspace gets it
+  (AIO-741).
 
 ### Changed
 
-- Codex maturity analysis now recognizes current custom-tool events and delegated child sessions,
+- **BREAKING — `gui/` and `src-tauri/` are deleted from this repo.** Authority for the Workspace
+  GUI and the Tauri shell moved to `aiosbrain/aios-workspace-gui`. Neither directory was ever
+  part of the `@aiosbrain/aios` tarball, so a CLI install is unaffected; this changes what a
+  **source checkout or fork** contains. See the migration note below.
+- **BREAKING — core no longer owns or runs the Skill Library writer or OGR09.** `validate-all.sh`
+  now runs **14** validators instead of 15 (OGR01–OGR08 and OGR10–OGR15). The writer
+  (`scripts/lock-skill-library.mjs`) and the validator (`validation/check-skill-library.mjs`) are
+  removed. The equivalent gate runs in `aiosbrain/aios-workspace-gui` CI against the vendored
+  library it owns. The separate marketplace catalog writer remains in core and now fails closed
+  when its catalog is absent (AIO-612).
+- **`engines.node` is now `>=22`, with the upper bound dropped.** `0.10.0` declared
+  `>=22 <23`, which made `npm i -g @aiosbrain/aios` warn or fail on Node 23+ for no reason the
+  code required. CI now proves the supported range rather than asserting it (AIO-628).
+- Codex maturity analysis recognizes current custom-tool events and delegated child sessions,
   attributes them to their human-root session, and counts only shell-backed execution wrappers as
   verification. The analysis cache schema moves to v2, so the first run reparses stale v1 cache
   entries (AIO-722).
-- Core no longer owns or runs the Skill Library writer and OGR09. That validation moved to
-  `aiosbrain/aios-workspace-gui`, where the vendored library lives and the equivalent gate runs in
-  CI. The separate marketplace catalog writer remains in core during the GUI cut and now fails
-  closed when its catalog is absent (AIO-612).
+- Brain reporting in CI is **opt-in** rather than on by default (AIO-809).
+- Every CI job carries an explicit timeout, so a hung job fails in minutes instead of hours.
 
 ### Fixed
 
@@ -68,7 +108,20 @@ conformance-fixture alignment only: neither route's runtime or wire behavior cha
   re-scaffold. An old shim that cannot find its checkout needs a one-time bootstrap through the
   global/toolkit CLI, a recognized sibling layout, or `AIOS_TOOLKIT_DIR`; after the update, the
   stamp removes that layout requirement. `AIOS_TOOLKIT_DIR` is unchanged and still wins, and is
-  still how the GUI is pointed at a checkout (AIO-814).
+  still how the GUI is pointed at a checkout (AIO-814). A follow-up made the resolution one seam
+  contract shared across the repo split rather than a per-caller guess (AIO-663).
+- **Cursor multi-root sessions no longer have every tool call denied.** The fail-closed hook
+  configuration misfired when a Cursor workspace had more than one root folder, so the guard
+  denied everything instead of only what it was scoping out (AIO-864).
+- **The worktree guard is scoped to the repo that vendors it**, so it stops firing on unrelated
+  sibling repositories in a multi-repo session (AIO-858).
+- **Scaffolded workspaces no longer receive the cross-repo Cursor guard.** That guard is a
+  toolkit-development control and was never meant to govern an individual contributor's own
+  workspace (AIO-864).
+- Harness hooks allow commands to run in a checkout that has no vendored harness, instead of
+  blocking them outright (AIO-864).
+- Transcript ingestion normalizes the `private` audience alias instead of hard-failing the whole
+  batch on it.
 - Optional coverage dependency installation is now genuinely fail-open: an `npm ci`
   failure cannot prevent the repository or a newly scaffolded consumer from reaching its Brain
   scan. Regression guards enforce the behavior in both workflow copies (AIO-697).
@@ -77,49 +130,70 @@ conformance-fixture alignment only: neither route's runtime or wire behavior cha
   (AIO-695).
 - Explicit skill routing now ignores URL, filesystem-path, and embedded-token sigil substrings
   while preserving real `$skill` and `/skill` invocations (AIO-741).
-- Root and merge coverage paths now treat `gui/client/package.json` as ownership of the client
-  suite and run it with `npm --prefix gui/client`. Client coverage therefore continues through npm
-  workspace deregistration and skips only after the client manifest is removed (AIO-742).
+- Root and merge coverage paths treated `gui/client/package.json` as ownership of the client
+  suite and ran it with `npm --prefix gui/client`, keeping client coverage alive through npm
+  workspace deregistration until the source was removed (AIO-742). The CI coverage artifact is
+  now the sole scanner input (AIO-729).
 - The public-secret gate classifies a narrow set of committed dummy fixtures without suppressing
   nearby opaque credentials, and forces text-mode scanning so a tracked NUL byte cannot hide a
   later finding (AIO-726).
 - Secret-scan failures still identify the rule, relative file, and exact line number, but replace
   the matched source line with `[REDACTED]` before findings are written or printed. Exit behavior
   remains fail-closed (AIO-743).
+- **`ajv` moved from `devDependencies` to `dependencies`.** OGR15's
+  `validation/check-delivery-skill-suite.mjs` and `scripts/integration-contracts/fixtures.mjs`
+  both ship in the npm tarball and import `ajv` at module scope, but a global install resolves
+  only runtime dependencies — so both crashed with `ERR_MODULE_NOT_FOUND` outside a dev checkout.
+  A new packaging test walks every `.mjs`/`.cjs`/`.js` file `npm pack` would ship and fails if any
+  of them imports a devDependency.
+- Debt patrol resolves its target before scoring it, instead of scoring an unresolved reference
+  (AIO-787).
+- The installer persists the personal agent workspace rather than dropping it on reinstall.
+- Worktree creation restores incomplete shared dependencies instead of leaving a half-linked
+  tree (AIO-765).
+- Toolkit commit/push policy is never injected into a scaffolded workspace by the worktree
+  tooling.
+- The `aios-linear` skill supports exact relation removal, and its diverged copies were
+  consolidated into one (AIO-810).
 
 ### Repository-only changes and package boundary
 
-- The new `evolve` skill audits actual local skill reads, routing evidence, and catalog parity with
+- The `evolve` skill audits actual local skill reads, routing evidence, and catalog parity with
   prompt text omitted by default. When an operator opts into excerpts, secret-bearing assignments
   are redacted in full, including short, punctuated, whitespace-containing, and URL values
-  (AIO-741). The skill lives under root `.claude/skills/` and is available from a source checkout;
-  that tree is **not** part of the `@aiosbrain/aios` npm tarball (#541).
-- The Workspace cost chart now uses canonical `--aios-*` design variables instead of hard-coded
-  provider colors. `gui/` is not included in the CLI tarball, so this ships only in the Workspace
-  source/tag, not with the global CLI install (AIO-703).
-- Root `.github/` workflows and regression tests remain source-only. The npm tarball does include
-  `scripts/`, `hooks/`, `validation/`, the managed `scaffold/` workflow, `CHANGELOG.md`, and the
-  pinned Brain contract documents. The routing, analysis, capture, validation, and scaffold
-  changes above are therefore inside the published package boundary; only the `evolve` half of
-  AIO-741 is source-only.
+  (AIO-741).
+- Root `.github/` workflows, `.harness/`, `.cursor/`, and regression tests remain source-only.
+  The npm tarball ships `scripts/`, `hooks/`, `validation/`, `dist/`, `packages/foundation/src`,
+  the managed `scaffold/` tree, `CHANGELOG.md`, and the pinned Brain contract documents. The
+  routing, analysis, capture, validation, scaffold, connector, and `--version` changes above are
+  therefore inside the published package boundary; the `evolve` audit half of AIO-741, the
+  integration-contract fixtures, and the harness/Cursor guard fixes are source-only.
 
 ### Breaking, migration, and rollback
 
 - Upgrade the CLI and the template used for newly scaffolded workspaces with
-  `npm install -g @aiosbrain/aios@0.10.1`. There is no configuration, stored-data, or Brain API
+  `npm install -g @aiosbrain/aios@0.11.0`. There is no configuration, stored-data, or Brain API
   migration from `0.10.0`. The optional transcript-size environment variable needs no action.
-- **Validation ownership change:** `validation/validate-all.sh` no longer runs OGR09. Consumers
-  that vendor or operate the GUI Skill Library must run its integrity gate from
-  `aiosbrain/aios-workspace-gui`; treating the core validator as an OGR09 substitute is no longer
-  supported.
+- **Node version:** the `<23` upper bound is gone. Node 22 and newer are supported. If you pinned
+  an older Node to work around the previous bound, you can unpin it.
+- **GUI relocation:** if you consumed `gui/` or `src-tauri/` from a **source checkout** of this
+  repo, clone `aiosbrain/aios-workspace-gui` and build from there. Point it at a toolkit checkout
+  with `AIOS_TOOLKIT_DIR`, which is unchanged. A global `@aiosbrain/aios` install never contained
+  these directories, so CLI users have nothing to do.
+- **Validation ownership change:** `validation/validate-all.sh` no longer runs OGR09 and now runs
+  14 validators. Consumers that vendor or operate the GUI Skill Library must run its integrity
+  gate from `aiosbrain/aios-workspace-gui`; treating the core validator as an OGR09 substitute is
+  no longer supported. This is also what makes `validate-all.sh` pass on a clean global install
+  for the first time.
 - A global install does not rewrite the managed workflow already copied into an existing
   workspace. To apply the scaffold workflow fix there, use the explicit managed-file update below.
-- To apply the fix to an existing workspace, check out Workspace `v0.10.1`, then run
-  `aios update --from <path-to-v0.10.1-checkout> --no-pull` from that workspace. Review and
+- To apply the fix to an existing workspace, check out Workspace `v0.11.0`, then run
+  `aios update --from <path-to-v0.11.0-checkout> --no-pull` from that workspace. Review and
   commit the resulting managed-file update normally.
 - To roll back the copied workflow, repeat that update from a Workspace `v0.10.0` checkout;
   reinstall `@aiosbrain/aios@0.10.0` as well if the CLI must also be rolled back. The `0.10.0`
-  line retains the devtools extraction, preflight, and migration docs.
+  line retains the devtools extraction, preflight, and migration docs. Note that rolling the CLI
+  back to `0.10.0` restores the `ENOENT` on `validation/validate-all.sh` described above.
 
 ## [0.10.0] — 2026-08-03
 
