@@ -2185,7 +2185,9 @@ exist (never `403` — existence isn't distinguishable from non-ownership).
 > `lib/member-secrets/manage.ts`). **No `aios-workspace` client calls this today** — server-only
 > from this repo's point of view; it exists for an agent runtime (e.g. Hermes) to fetch or set
 > the owning member's own Slack **user** token ("act as me"), the personal counterpart to the
-> team's read-only Slack ingestion (`POST /api/v1/integrations` type `slack`, config-only).
+> team's read-only Slack ingestion — which is configured from the **admin dashboard** (a
+> session-authed server action behind `requireAdmin`, outside this API-key contract; no API-key
+> route creates an ingestion integration).
 
 ### `GET`/`POST`/`DELETE /api/v1/me/slack-token`
 
