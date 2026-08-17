@@ -1,6 +1,6 @@
 # AIOS Team Brain — API Contract
 
-**Version: 1.17** is the shipped member-facing Brain API (`/api/v1`). **Document revision: 1.17**
+**Version: 1.20** is the shipped member-facing Brain API (`/api/v1`). **Document revision: 1.20**
 also carries the separately negotiated internal Executor gateway contract **1.10**; it does not
 claim unimplemented member-facing v1.10 routes. This document is the single pinned contract between the
 contributor repo (this toolkit's `aios` CLI) and the `aios-team-brain` service. Both
@@ -210,6 +210,54 @@ writeback/registration pulls), so a newer client still works against an older br
   repository capability profile, explicit evidence completeness, a fail-closed quality-gate and
   automation-admission verdict, per-dimension evidence state, and a redacted normalized finding
   ledger. It grants no write/remediation authority; all Phase 0 findings are report-only.*
+- *2026-08-17 — **v1.18** and **v1.19**, BACKFILLED. Both shipped in `aios-team-brain` without
+  landing here first, which `docs/OPS.md` §7 requires: the brain bumped `BRAIN_API_VERSION` and its
+  vendored `contract/brain-contract.json` to 1.19 while this document — the source of truth — stayed
+  at 1.17, so the two copies of the pinned fixture had silently diverged. Recorded now rather than
+  skipped, so 1.20 is not stacked on a gap.*
+  - ***v1.18*** — ADDITIVE: **delegated agent tokens** (`aiosd_<token_id>_<secret>`, spec §10 /
+    PCCA-2). Phase A surface: `GET /api/v1/items` accepts them, oracle-filtered to the token's
+    effective project set; `POST /api/v1/query` answers `403 delegation_not_supported`; every other
+    route rejects the prefix with `401`. Existing `aios_*` member keys are byte-for-byte unchanged —
+    an old server rejects the unknown prefix with today's `401`, so no negotiation is required.
+  - ***v1.19*** — `POST /api/v1/query` accepts delegated `aiosd_*` tokens (Phase B slice 3, spec
+    §10/§17-B): retrieval is ALWAYS attenuated to the token's live effective set (graph legs omitted,
+    §5.8b) regardless of `teams.access_enforcement`; delegated queries are stateless —
+    `conversation_id` answers `422`, no thread is read or written; rate limits and cost metering
+    attribute to the launching member. The Phase A `403 delegation_not_supported` is retired for this
+    route. Member `aios_*` keys are byte-for-byte unchanged.
+- *2026-08-17 — **v1.20**: `POST /api/v1/items` payload limits become EXPLICIT and, for every
+  realistic client, more permissive (AIO-923). `rows` is bounded at **5,000** per payload on every
+  row-bearing kind (`task`, `decision`, `fact`, `stakeholder_mention`), and the whole-request
+  transport ceiling rises from 1.2 MB to **5,400,000 bytes (5.4 MB)** so 5,000 rows actually fit.
+  `body` keeps its independent **1 MB** cap.
+
+  **Why**: `rows` was unbounded, so the only thing that bounded an over-large push was the
+  `content-length` gate — firing at roughly **1,100 rows** with a bare
+  `413 {"error":"payload_too_large","message":"max 1 MB"}` that named no field and no ceiling
+  (measured: 1,000 rows = 1,089,970 B accepted; 3,500 = 1,918,564 B rejected). A 35-List ClickUp
+  workspace failed atomically at ~32 tasks per List.
+
+  **A client MUST NOT work around this by chunking.** For `task` and `decision` the brain's row sweep
+  deletes every synced row in the PROJECT that the incoming item omits, so a second chunk deletes the
+  first — splitting one project's rows across pushes silently destroys data. A source above the row
+  ceiling must be split into separate **projects**, never into two pushes of the same project.
+  (`fact`/`stakeholder_mention` sweep per-ITEM, so distinct paths are safe there.)
+
+  **Wire errors**: over the row ceiling → `422 invalid_payload`, with the limit named in the message.
+  Over the transport ceiling → `413 payload_too_large`, naming both bounds. Note that 5,000 rows are
+  not *guaranteed* to fit 5.4 MB — 700 B/row is a measured average, and 5,000 rows of schema-legal
+  maximums exceed it. The two limits are independent and neither implies the other.
+
+  **Compatibility**: not a pure superset. Payloads above 5,000 rows that were compact enough
+  (~60–130 B/row) to fit the old 1.2 MB gate were accepted before and now `422`. That window is
+  narrow, and the new failure names its cause where the old one did not. A new client sending
+  >1.2 MB to a pre-1.20 brain still gets the pre-1.20 `413` — the failure it already handles — so no
+  negotiation is required.
+
+  The row ceiling applies to the **wire only**: the brain re-parses in-process connector payloads
+  with an uncapped schema, because its own Linear/GitHub/Plane mirrors have no transport step and
+  legitimately build single items of up to 20,000 rows.*
 
 ---
 
@@ -344,7 +392,7 @@ All errors:
 Codes: `unauthorized` (401), `forbidden_tier` (422, admin content or managed-gateway tier
 violation), `forbidden_role`
 (403, endpoint requires a higher member role — v1.7), `invalid_payload` (422),
-`payload_too_large` (413, >1 MB), `rate_limited` (429, with `Retry-After`),
+`payload_too_large` (413 — request over the transport ceiling: 5.4 MB on `POST /api/v1/items` since v1.20, per-route elsewhere; a `rows` overflow is `invalid_payload`/422, not this), `rate_limited` (429, with `Retry-After`),
 `managed_gateway_unavailable` (client classification for an older Brain's 404),
 `github_invalid_token`, `github_insufficient_permissions`, `github_connection_exists`,
 `github_connection_not_found`,
