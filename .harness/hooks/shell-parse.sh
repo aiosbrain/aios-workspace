@@ -103,7 +103,13 @@ shell_redirection_targets() {
           i = remember_heredoc($0, i + 2)
         } else if (c == ">") {
           if (nextc == ">") i++
-          if (substr($0, i + 1, 1) != "&") i = emit_target($0, i + 1)
+          after = substr($0, i + 1, 1)
+          # `>|` is the noclobber OVERRIDE, so it still truncates its target — skip the
+          # bar and read the path. `>&` is a file-descriptor dup and `>(…)` is process
+          # substitution: neither names a path, and emitting `(cmd)` as a candidate was
+          # exactly the false-positive shape AIO-864 exists to remove.
+          if (after == "|") { i++; after = substr($0, i + 1, 1) }
+          if (after != "&" && after != "(") i = emit_target($0, i + 1)
         }
       }
       if (heredoc_current == 0 && heredoc_count > 0) heredoc_current = 1
@@ -144,7 +150,7 @@ shell_words() {
           if (started && word ~ /^[0-9]+$/) { word = ""; started = 0 }
           flush()
           while (i < n && (substr($0, i + 1, 1) == ">" || substr($0, i + 1, 1) == "<" ||
-                           substr($0, i + 1, 1) == "&")) i++
+                           substr($0, i + 1, 1) == "&" || substr($0, i + 1, 1) == "|")) i++
           redir = 1
           continue
         }
@@ -187,7 +193,11 @@ shell_command_segments() {
         } else if ((c == "&" || c == "|") && nextc == c) {
           emit(in_pipeline ? "P" : "S"); i++; in_pipeline = 0
         } else if (c == "|") {
-          emit("P"); in_pipeline = 1
+          # `>|` is one redirection operator, not a redirect followed by a pipe. Splitting
+          # there would strand the target in its own segment, where nothing reads it as a
+          # write — a silent bypass of the strict shell-write scan.
+          if (segment ~ />[ \t]*$/) { segment = segment c }
+          else { emit("P"); in_pipeline = 1 }
         } else if (c == "&") {
           emit("P"); in_pipeline = 0
         } else if (c == ";") {
@@ -220,15 +230,30 @@ shell_command_segments() {
 # can never reach SEG_CMD, which is what kills the whole false-positive class. The
 # scan looks past compound-command keywords, `VAR=val` prefixes and process wrappers
 # (`env`, `sudo`, `command`, `xargs`, …) so `xargs rm` still resolves to `rm`.
+#
+# A wrapper's own OPTION VALUE is consumed too: without that, `sudo -u alex rm -rf …`
+# resolves its command word to `alex`, which is no mutating command, and the `rm` behind
+# it goes unexamined. The value-taking set is the union across the recognised wrappers
+# (sudo/doas `-u -g -p -C -h -D -R -T -U`, nice/xargs `-n -P -I -i -d -s -E -e -a -L -l`,
+# timeout `-k -s`, stdbuf `-i -o -e`); it is consulted only AFTER a wrapper has been
+# seen, so an ordinary command's own flags are never treated as taking a value.
 split_segment() {
   SEG_CMD=''
   SEG_OPS=''
   _sg_seeking=1
+  _sg_wrapped=0
+  _sg_skip=0
   while IFS= read -r _sg_w || [ -n "$_sg_w" ]; do
     [ -n "$_sg_w" ] || continue
     if [ "$_sg_seeking" = 1 ]; then
+      if [ "$_sg_skip" = 1 ]; then _sg_skip=0; continue; fi
       case "$_sg_w" in
-        '{'|'}'|'('|')'|'!'|'--'|if|elif|while|until|then|do|else|time|nohup|nice|sudo|doas|command|builtin|env|xargs|exec) continue ;;
+        '{'|'}'|'('|')'|'!'|'--'|if|elif|while|until|then|do|else) continue ;;
+        time|nohup|exec|command|builtin) continue ;;
+        nice|sudo|doas|env|xargs|timeout|stdbuf) _sg_wrapped=1; continue ;;
+        -u|-g|-p|-C|-h|-D|-R|-T|-U|-n|-P|-I|-i|-d|-s|-E|-e|-a|-L|-l|-k|-o)
+          [ "$_sg_wrapped" = 1 ] && _sg_skip=1
+          continue ;;
         -*) continue ;;
         [A-Za-z_]*=*) continue ;;
       esac
@@ -252,3 +277,46 @@ drop_first_operand() {
 
 # has_operand <ops> <ERE> — does any argument of the segment match?
 has_operand() { printf '%s\n' "$1" | grep -Eq "$2"; }
+
+# last_destination <ops> <honor_target_flag> — where a copy/link/install-style command
+# writes. Normally the last non-flag operand, but coreutils `-t <dir>` /
+# `--target-directory=<dir>` names the destination explicitly and makes EVERY positional
+# operand a source, so `cp -t <primary>/dir a b` would otherwise report `b` and allow a
+# real write. Pass 0 for rsync, where `-t` means --times and consuming the next word
+# would both invent a candidate and hide the true destination.
+last_destination() {
+  printf '%s\n' "$1" | awk -v honor="$2" '
+    NF {
+      if (take) { take = 0; got = 1; if ($0 != "-") print; next }
+      if (honor == 1) {
+        if ($0 == "-t" || $0 == "--target-directory") { take = 1; next }
+        if ($0 ~ /^--target-directory=/) { sub(/^[^=]*=/, ""); print; got = 1; next }
+        if ($0 ~ /^-t./ && $0 !~ /^--/) { print substr($0, 3); got = 1; next }
+      }
+      if ($0 !~ /^-/) last = $0
+    }
+    END { if (!got && last != "") print last }
+  '
+}
+
+# flag_destinations <ops> <letter> <long-names ERE> <cwd> <cwd-when-absent 0|1>
+# Destinations named by an OUTPUT FLAG rather than by position — how curl and wget say
+# where bytes land. Bundled short-option clusters count: `curl -sLo <path>` and
+# `wget -qO <path>` are the ordinary spellings, and matching only the exact word `-o`
+# would let the most common real write walk straight past the guard. `-` is stdout, not
+# a path. With <cwd-when-absent>, a command that writes into the shell cwd by default
+# (wget) reports that cwd when no explicit destination was given.
+flag_destinations() {
+  printf '%s\n' "$1" | awk -v letter="$2" -v longs="$3" -v cwd="$4" -v dfl="$5" '
+    NF {
+      if (take) { take = 0; got = 1; if ($0 != "-") print; next }
+      if ($0 ~ ("^--(" longs ")$")) { take = 1; next }
+      if ($0 ~ ("^--(" longs ")=")) { sub(/^[^=]*=/, ""); got = 1; if ($0 != "-") print; next }
+      if ($0 !~ /^--/ && $0 ~ ("^-[A-Za-z]*" letter "$")) { take = 1; next }
+      if ($0 !~ /^--/ && $0 ~ ("^-" letter ".")) {
+        got = 1; if (substr($0, 3) != "-") print substr($0, 3); next
+      }
+    }
+    END { if (dfl == 1 && !got) print cwd }
+  '
+}

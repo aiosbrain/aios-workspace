@@ -219,8 +219,17 @@ check_command_segment() {
     split_segment "$CLASS_CMD"
     _mut_cands=''
     case "$SEG_CMD" in
-      rm|tee|truncate|ln|touch|mkdir|dd|install)
+      rm|tee|truncate|touch|mkdir)
+        # Every operand of these IS a destination.
         _mut_cands=$SEG_OPS ;;
+      ln|install)
+        # Only the destination is written; the leading operands are sources, so
+        # `ln -s <primary>/a /tmp/b` and `install <primary>/src /tmp/dst` read from the
+        # primary checkout without writing to it.
+        _mut_cands=$(last_destination "$SEG_OPS" 1) ;;
+      dd)
+        # `of=` is the destination; `if=` is the source it reads.
+        _mut_cands=$(printf '%s\n' "$SEG_OPS" | awk 'NF && $0 ~ /^of=/ { sub(/^of=/, ""); print }') ;;
       chmod|chown)
         # The first operand is the mode/owner, not a path.
         _mut_cands=$(drop_first_operand "$SEG_OPS") ;;
@@ -243,34 +252,28 @@ $SDIR"
         fi ;;
       curl)
         # curl writes nothing unless asked to: -o/--output/--output-dir name the
-        # destination, -O/--remote-name writes into the shell cwd. A bare
+        # destination (bundled clusters included — `curl -sLo <path>` is the ordinary
+        # spelling), and -O/--remote-name writes into the shell cwd. A bare
         # `curl <url>` streams to stdout and is not a write.
-        _mut_cands=$(printf '%s\n' "$SEG_OPS" | awk -v sdir="$SDIR" '
-          NF {
-            if (take) { print; take = 0; next }
-            if ($0 == "-o" || $0 == "--output" || $0 == "--output-dir") { take = 1; next }
-            if ($0 ~ /^--output(-dir)?=/) { sub(/^[^=]*=/, ""); print; next }
-            if ($0 ~ /^-o./ && $0 !~ /^--/) { print substr($0, 3); next }
-            if ($0 == "--remote-name" || ($0 ~ /^-[A-Za-z]*O/ && $0 !~ /^--/)) { remote = 1 }
-          }
-          END { if (remote) print sdir }') ;;
+        _mut_cands=$(flag_destinations "$SEG_OPS" o 'output|output-dir' "$SDIR" 0)
+        if has_operand "$SEG_OPS" '^(--remote-name|-[A-Za-z]*O.*)$'; then
+          _mut_cands="$_mut_cands
+$SDIR"
+        fi ;;
       wget)
-        # wget writes into the shell cwd by DEFAULT, so the cwd is a candidate
-        # unless an explicit destination was given.
-        _mut_cands=$(printf '%s\n' "$SEG_OPS" | awk -v sdir="$SDIR" '
-          NF {
-            if (take) { print; take = 0; got = 1; next }
-            if ($0 == "-O" || $0 == "--output-document" ||
-                $0 == "-P" || $0 == "--directory-prefix") { take = 1; next }
-            if ($0 ~ /^--(output-document|directory-prefix)=/) { sub(/^[^=]*=/, ""); print; got = 1; next }
-            if ($0 ~ /^-[OP]./ && $0 !~ /^--/) { print substr($0, 3); got = 1; next }
-          }
-          END { if (!got) print sdir }') ;;
-      cp|mv|rsync)
-        # The destination is the last non-flag operand. Redirection targets were
-        # already dropped by the tokenizer, so `cp src <primary>/dst >/tmp/log`
-        # cannot hide its real destination behind the redirect.
-        _mut_cands=$(printf '%s\n' "$SEG_OPS" | awk 'NF && $0 !~ /^-/' | tail -1) ;;
+        # wget writes into the shell cwd by DEFAULT, so the cwd is a candidate unless an
+        # explicit destination was given (-O/-P, bundled clusters included).
+        _mut_cands="$(flag_destinations "$SEG_OPS" 'O' 'output-document' "$SDIR" 0)
+$(flag_destinations "$SEG_OPS" 'P' 'directory-prefix' "$SDIR" 0)"
+        if ! has_operand "$SEG_OPS" '^(--(output-document|directory-prefix)(=.*)?|-[A-Za-z]*[OP].*)$'; then
+          _mut_cands="$_mut_cands
+$SDIR"
+        fi ;;
+      cp|mv)
+        _mut_cands=$(last_destination "$SEG_OPS" 1) ;;
+      rsync)
+        _mut_cands=$(last_destination "$SEG_OPS" 0) ;;
+      *) ;;
     esac
     [ -z "$_mut_cands" ] || _cands="$_cands
 $_mut_cands"

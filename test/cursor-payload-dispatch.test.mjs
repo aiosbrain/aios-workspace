@@ -198,6 +198,27 @@ test("anchored ON the toolkit still enforces (no regression for single-root wind
   );
 });
 
+test("only the top-level cwd counts — a nested decoy does not steer dispatch", () => {
+  // The locator reads the payload with jq, so `.cwd` means the top-level field and nothing
+  // else. A nested `cwd` — a tool argument, which a caller does influence — pointing at a
+  // repo carrying its own marker and a permissive dispatcher must not take over the
+  // decision. A text scan that takes the last match of `"cwd"` hands the session to it.
+  const decoy = path.join(sandbox, "decoy");
+  mkdirSync(path.join(decoy, "scripts"), { recursive: true });
+  mkdirSync(path.join(decoy, ".harness/adapters/cursor"), { recursive: true });
+  initRepo(decoy, "main");
+  writeFileSync(path.join(decoy, "scripts/toolkit-manifest.mjs"), "export default {};\n");
+  writeFileSync(path.join(decoy, ".harness/adapters/cursor/dispatch.sh"), "#!/bin/sh\nexit 0\n");
+
+  const payload = {
+    hook_event_name: "preToolUse",
+    cwd: toolkit,
+    tool_name: "Write",
+    tool_input: { file_path: path.join(toolkit, "notes.md"), content: "x", cwd: decoy },
+  };
+  assertGuardBlocked(runHook(EDIT_GUARD, { payload }), "nested decoy cwd");
+});
+
 test("a payload cwd that is not the toolkit cannot switch enforcement off", () => {
   // ${CURSOR_PROJECT_DIR} stays in the candidate list, so payload text can only ADD a
   // root. Anchored on the toolkit, a spoofed cwd elsewhere must not disable the guard.
@@ -301,7 +322,8 @@ test("every Cursor hook uses the identical payload-cwd locator and no bare ancho
   const locatorOf = (command) => command.slice(0, command.lastIndexOf("' aios-cursor-hook ") + 1);
   const [first, ...rest] = commands.map(locatorOf);
   assert.ok(first.includes("rev-parse --show-toplevel"), "locator must resolve a git root");
-  assert.ok(first.includes('"(cwd|file_path)"'), "locator must read the payload, not the anchor");
+  assert.ok(first.includes(".cwd // .file_path"), "locator must read the payload, not the anchor");
+  assert.ok(first.includes('"(cwd|file_path)"'), "locator must survive a machine without jq");
   for (const other of rest) {
     assert.equal(other, first, "every hook must share one reviewed locator");
   }

@@ -45,6 +45,30 @@ ts "864 control blocks cp into primary"          2 "$(wpc "$WT/wt" "cp /tmp/x864
 ts "864 control blocks sed -i into primary"      2 "$(wpc "$WT/wt" "sed -i '' s/a/b/ $WT/a.txt")"
 ts "864 control blocks tee into primary"         2 "$(wpc "$WT/wt" "tee $WT/f864")"
 ts "864 control blocks quoted path with spaces"  2 "$(wpc "$WT/wt" "rm -f \"$WT/a file 864.txt\"")"
+# ── destination detection, once the token shatter stops hiding it ────────────
+# Removing the shatter removes a crude safety net: it used to make EVERY token a
+# candidate, so a flag-carried destination was caught by accident. Each form below is a
+# real write into the primary and must be found deliberately.
+ts "864 blocks curl bundled -sLo into primary" 2 "$(wpc "$WT/wt" "curl -sLo $WT/f864c https://example.com")"
+ts "864 blocks wget bundled -qO into primary"  2 "$(wpc "$WT/wt" "wget -qO $WT/f864w https://example.com")"
+ts "864 blocks wget -P prefix into primary"    2 "$(wpc "$WT/wt" "wget -P $WT https://example.com")"
+ts "864 blocks cp -t target-dir in primary"    2 "$(wpc "$WT/wt" "cp -t $WT/dir864 a b")"
+ts "864 blocks cp --target-directory= primary" 2 "$(wpc "$WT/wt" "cp --target-directory=$WT/dir864 a")"
+ts "864 blocks sudo -u <user> rm in primary"   2 "$(wpc "$WT/wt" "sudo -u alex rm -rf $WT/a.txt")"
+ts "864 blocks noclobber-override redirect"    2 "$(wpc "$WT/wt" "echo x >| $WT/f864n")"
+ts "864 blocks ln destination in primary"      2 "$(wpc "$WT/wt" "ln -s /tmp/x864 $WT/link864")"
+ts "864 blocks install destination in primary" 2 "$(wpc "$WT/wt" "install /tmp/src864 $WT/dst864")"
+ts "864 blocks dd of= into primary"            2 "$(wpc "$WT/wt" "dd if=/tmp/x864 of=$WT/y864")"
+ts "864 blocks rsync destination in primary"   2 "$(wpc "$WT/wt" "rsync -t /tmp/src864 $WT/rdst864")"
+# …and the SOURCE operands of those same commands are reads, not writes
+ts "864 allows ln source from primary"      0 "$(wpc "$WT/wt" "ln -s $WT/a.txt /tmp/b864")"
+ts "864 allows install source from primary" 0 "$(wpc "$WT/wt" "install $WT/a.txt /tmp/dst864b")"
+ts "864 allows dd if= source from primary"  0 "$(wpc "$WT/wt" "dd if=$WT/a.txt of=/tmp/y864b")"
+ts "864 allows curl bundled -o outside"     0 "$(wpc "$WT" 'curl -sSo /tmp/o864 https://example.com')"
+ts "864 allows wget -O - to stdout"         0 "$(wpc "$WT" 'wget -O - https://example.com')"
+ts "864 allows rsync -t outside primary"    0 "$(wpc "$WT" 'rsync -t /tmp/src864 /tmp/dst864')"
+ts "864 allows process substitution"        0 "$(wpc "$WT" 'diff <(cat a.txt) >(sort)')"
+
 # the same verdicts must come out of BOTH strict adapters, not just the portable policy
 tadapter() { # name expected_exit adapter-relpath event json
   local name="$1" want="$2" rel="$3" event="$4" json="$5" got

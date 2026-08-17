@@ -43,11 +43,15 @@ resolved root so `normalize.sh`'s own fallback agrees with the dispatch decision
 | `afterFileEdit` | payload `.file_path`'s directory — the only location it carries |
 | `stop`, `sessionStart` | the window anchor: these are session-scoped and no per-repo answer exists |
 
-Keeping the anchor in the list is also what makes the payload safe to trust: a
-payload-supplied cwd can only ever **add** a candidate root, so agent-authored text (a
-file whose *content* contains `"cwd": …`) cannot remove the anchor and switch enforcement
-off. Marker absent at every candidate → exit 0. Marker present but the dispatcher missing
-→ exit 3, so a deleted guard is loud rather than silently unenforced.
+The payload cwd is read with **`jq`**, so `.cwd` means the top-level field and nothing
+else — a nested `cwd` in a tool argument, or a string that merely looks like one, is
+ordinary data. A `sed` fallback exists purely so the dispatch decision does not *require*
+`jq`, and it cannot be used to slip past a guard: with `jq` absent, `dispatch.sh` degrades
+every hook before the resolved root can influence anything (see below), so the fallback
+only ever picks which root receives a decision that is already fixed.
+
+Marker absent at every candidate → exit 0. Marker present but the dispatcher missing →
+exit 3, so a deleted guard is loud rather than silently unenforced.
 
 ## Missing `jq` is an environment failure, not a policy violation
 
