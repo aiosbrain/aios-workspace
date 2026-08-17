@@ -64,6 +64,15 @@ function strippedPath(omit) {
   return dir;
 }
 
+/**
+ * The host cannot supply a coreutil the hook needs, so the scenario was never exercised.
+ * Report that as SKIPPED, never as a pass — a silent early return would make this file look
+ * green on a machine where it proved nothing, which is the same shape as the defect it guards.
+ */
+function skipHost(t) {
+  t.skip(`host is missing one of: ${REQUIRED.join(", ")}`);
+}
+
 /** Run the shipped hook with `event` on stdin under a PATH that omits `omit`. */
 function runHook(event, { omit = [], env = {} } = {}) {
   const dir = strippedPath(omit);
@@ -87,25 +96,25 @@ const SECRET_WRITE = {
   tool_input: { file_path: "notes.md", content: `k=${AWS_KEY}` },
 };
 
-test("no jq: the guard still BLOCKS a secret (the 0.11.0 fail-open)", () => {
+test("no jq: the guard still BLOCKS a secret (the 0.11.0 fail-open)", (t) => {
   const r = runHook(SECRET_WRITE, { omit: ["jq"] });
-  if (!r) return; // host lacks a required coreutil
+  if (!r) return skipHost(t);
   assert.notEqual(r.code, 0, "a secret was allowed through with jq absent — this is the bug");
   assert.equal(r.code, 2, "a block must be exit 2 (Claude Code's deny signal)");
   assert.match(r.stderr, /BLOCKED by team-ops-guard/);
   assert.match(r.stderr, /Potential secret detected/);
 });
 
-test("no jq: a clean write is still allowed (the fix must not block everything)", () => {
+test("no jq: a clean write is still allowed (the fix must not block everything)", (t) => {
   const r = runHook(
     { tool_name: "Write", tool_input: { file_path: "notes.md", content: "hello world" } },
     { omit: ["jq"] }
   );
-  if (!r) return;
+  if (!r) return skipHost(t);
   assert.equal(r.code, 0, `clean write blocked: ${r.stderr}`);
 });
 
-test("no jq: MultiEdit batches are still scanned", () => {
+test("no jq: MultiEdit batches are still scanned", (t) => {
   const r = runHook(
     {
       tool_name: "MultiEdit",
@@ -116,11 +125,11 @@ test("no jq: MultiEdit batches are still scanned", () => {
     },
     { omit: ["jq"] }
   );
-  if (!r) return;
+  if (!r) return skipHost(t);
   assert.equal(r.code, 2, `MultiEdit secret not blocked: ${r.stderr}`);
 });
 
-test("no jq: admin-tier content is still kept out of 4-shared/", () => {
+test("no jq: admin-tier content is still kept out of 4-shared/", (t) => {
   const r = runHook(
     {
       tool_name: "Write",
@@ -128,24 +137,24 @@ test("no jq: admin-tier content is still kept out of 4-shared/", () => {
     },
     { omit: ["jq"] }
   );
-  if (!r) return;
+  if (!r) return skipHost(t);
   assert.equal(r.code, 2, `admin content allowed into 4-shared: ${r.stderr}`);
 });
 
-test("no parser at all: the guard refuses rather than reporting allow, and names jq", () => {
+test("no parser at all: the guard refuses rather than reporting allow, and names jq", (t) => {
   const r = runHook(SECRET_WRITE, { omit: ["jq", "node"] });
-  if (!r) return;
+  if (!r) return skipHost(t);
   assert.equal(r.code, 2, "with no JSON parser the guard must not answer 'allow'");
   assert.match(r.stderr, /AIOS_GUARD_NO_JSON_PARSER/, "the failure must be named");
   assert.match(r.stderr, /\bjq\b/, "the user must be able to tell jq is the cause");
   assert.match(r.stderr, /\bnode\b/, "and that node is the alternative");
 });
 
-test("no parser at all: silence is never an option", () => {
+test("no parser at all: silence is never an option", (t) => {
   // The precise property the 0.11.0 defect violated: exit 0 AND no output.
   for (const env of [{}, { AIOS_GUARD_ALLOW_UNPARSED: "1" }]) {
     const r = runHook(SECRET_WRITE, { omit: ["jq", "node"], env });
-    if (!r) return;
+    if (!r) return skipHost(t);
     assert.notEqual(
       `${r.code}:${r.stderr.trim()}`,
       "0:",
@@ -154,31 +163,32 @@ test("no parser at all: silence is never an option", () => {
   }
 });
 
-test("no parser at all: the documented escape hatch allows, but shouts every time", () => {
+test("no parser at all: the documented escape hatch allows, but shouts every time", (t) => {
   const r = runHook(SECRET_WRITE, {
     omit: ["jq", "node"],
     env: { AIOS_GUARD_ALLOW_UNPARSED: "1" },
   });
-  if (!r) return;
+  if (!r) return skipHost(t);
   assert.equal(r.code, 0, "the override must let work continue");
   assert.match(r.stderr, /AIOS_GUARD_DEGRADED/, "and must say the guard is off");
   assert.match(r.stderr, /UNCHECKED/);
 });
 
-test("unparseable input is not treated as an absent field", () => {
+test("unparseable input is not treated as an absent field", (t) => {
   // "Parsed fine, no tool_input" allows; "could not read the document" must not borrow
   // that branch. Both used to land on `exit 0`.
   const garbage = runHook("this is not json{{", {});
-  if (!garbage) return;
-  assert.equal(garbage.code, 2, "malformed JSON must not be read as 'nothing to check'");
-
   const noToolInput = runHook({ tool_name: "Read" }, {});
+  // Guard BOTH results. Leaning on the first check to cover the second is a TypeError
+  // waiting for the first host that cannot build the stripped PATH.
+  if (!garbage || !noToolInput) return skipHost(t);
+  assert.equal(garbage.code, 2, "malformed JSON must not be read as 'nothing to check'");
   assert.equal(noToolInput.code, 0, "a well-formed event with no tool_input is a real allow");
 });
 
-test("an empty event is still a legitimate allow", () => {
+test("an empty event is still a legitimate allow", (t) => {
   // `bash hooks/team-ops-guard.sh </dev/null` must not start blocking.
   const r = runHook("", {});
-  if (!r) return;
+  if (!r) return skipHost(t);
   assert.equal(r.code, 0, `empty stdin should allow, got ${r.code}: ${r.stderr}`);
 });
