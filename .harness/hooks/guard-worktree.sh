@@ -219,9 +219,15 @@ check_command_segment() {
     split_segment "$CLASS_CMD"
     _mut_cands=''
     case "$SEG_CMD" in
-      rm|tee|touch|mkdir)
+      rm|tee)
         # Every operand of these IS a destination.
         _mut_cands=$SEG_OPS ;;
+      mkdir)
+        # `-m <mode>` consumes a word that is a permission mask, not a path.
+        _mut_cands=$(drop_flag_values "$SEG_OPS" '-m|--mode') ;;
+      touch)
+        # `-d/-t <stamp>` and `-r <ref>` consume a timestamp or a file it only reads.
+        _mut_cands=$(drop_flag_values "$SEG_OPS" '-d|--date|-t|-r|--reference') ;;
       truncate)
         # `-s <size>` / `-r <ref>` consume a word that is a number or a read, not a
         # destination; every remaining operand is a file it truncates.
@@ -235,8 +241,14 @@ check_command_segment() {
         # `of=` is the destination; `if=` is the source it reads.
         _mut_cands=$(printf '%s\n' "$SEG_OPS" | awk 'NF && $0 ~ /^of=/ { sub(/^of=/, ""); print }') ;;
       chmod|chown)
-        # The first operand is the mode/owner, not a path.
-        _mut_cands=$(drop_first_operand "$SEG_OPS") ;;
+        # The first operand is the mode/owner, not a path — UNLESS --reference supplies
+        # it, in which case every positional operand is a file being changed and
+        # dropping the first one would drop the real destination.
+        if has_operand "$SEG_OPS" '^--reference(=|$)'; then
+          _mut_cands=$(drop_flag_values "$SEG_OPS" '--reference')
+        else
+          _mut_cands=$(drop_first_operand "$SEG_OPS")
+        fi ;;
       unzip)
         # The archive is a READ; unzip writes into `-d <dir>`, or the shell cwd. The
         # inspection modes (-l list, -t test, -v verbose list, -z comment, -p to stdout)

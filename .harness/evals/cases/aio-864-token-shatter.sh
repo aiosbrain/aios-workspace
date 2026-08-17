@@ -89,6 +89,19 @@ ts "864 allows fd close >&-"                   0 "$(wpc "$WT" 'ls >&-')"
 ts "864 allows a backgrounded command"         0 "$(wpc "$WT" 'sleep 1 & echo done')"
 ts "864 still blocks a write after a background job" 2 "$(wpc "$WT/wt" "sleep 1 & echo x > $WT/bg864")"
 
+# ── option values attached to, or consumed by, a short option ────────────────
+ts "864 allows mkdir -m mode outside primary"  0 "$(wpc "$WT" 'mkdir -m 755 /tmp/new864m')"
+ts "864 blocks mkdir -m mode into primary"     2 "$(wpc "$WT/wt" "mkdir -m 755 $WT/new864m")"
+ts "864 allows touch -d stamp outside primary" 0 "$(wpc "$WT" 'touch -d 2026-01-01 /tmp/f864d')"
+ts "864 blocks touch -d stamp into primary"    2 "$(wpc "$WT/wt" "touch -d 2026-01-01 $WT/f864d")"
+ts "864 blocks chmod --reference on a primary file" 2 "$(wpc "$WT/wt" "chmod --reference=/tmp/ref864 $WT/a.txt")"
+ts "864 blocks chown --reference on a primary file" 2 "$(wpc "$WT/wt" "chown --reference=/tmp/ref864 $WT/a.txt")"
+ts "864 allows chmod --reference outside primary"   0 "$(wpc "$WT" 'chmod --reference=/tmp/ref864 /tmp/x864')"
+ts "864 blocks curl attached bundled -sLo<path>" 2 "$(wpc "$WT/wt" "curl -sLo$WT/f864ca https://example.com")"
+ts "864 blocks wget attached bundled -qO<path>"  2 "$(wpc "$WT/wt" "wget -qO$WT/f864wa https://example.com")"
+ts "864 allows curl with no output option"       0 "$(wpc "$WT" 'curl -sSL https://example.com')"
+ts "864 allows wget -qO- to stdout"              0 "$(wpc "$WT" 'wget -qO- https://example.com')"
+
 # the same verdicts must come out of BOTH strict adapters, not just the portable policy
 tadapter() { # name expected_exit adapter-relpath event json
   local name="$1" want="$2" rel="$3" event="$4" json="$5" got

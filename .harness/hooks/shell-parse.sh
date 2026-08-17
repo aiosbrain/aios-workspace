@@ -333,15 +333,33 @@ last_destination() {
 # (wget) reports that cwd when no explicit destination was given.
 flag_destinations() {
   printf '%s\n' "$1" | awk -v letter="$2" -v longs="$3" -v cwd="$4" -v dfl="$5" '
+    # Walk the cluster one character at a time rather than pattern-matching it: the
+    # value may be ATTACHED at the position where the option letter appears, as in
+    # `curl -sLo<path>`, and a regex cannot say where that letter was without
+    # ambiguity once the value itself contains letters. Returns "\001" when this token
+    # is not a short-option cluster carrying the letter, "" when the value is the next
+    # word, and otherwise the attached value.
+    function cluster_value(tok, want,   j, ch) {
+      if (tok !~ /^-[A-Za-z]/) return "\001"
+      for (j = 2; j <= length(tok); j++) {
+        ch = substr(tok, j, 1)
+        if (ch == want) return substr(tok, j + 1)
+        if (ch !~ /[A-Za-z]/) return "\001"
+      }
+      return "\001"
+    }
     NF {
       if (take) { take = 0; got = 1; if ($0 != "-") print; next }
       if (longs != "" && $0 ~ ("^--(" longs ")$")) { take = 1; next }
       if (longs != "" && $0 ~ ("^--(" longs ")=")) {
         sub(/^[^=]*=/, ""); got = 1; if ($0 != "-") print; next
       }
-      if ($0 !~ /^--/ && $0 ~ ("^-[A-Za-z]*" letter "$")) { take = 1; next }
-      if ($0 !~ /^--/ && $0 ~ ("^-" letter ".")) {
-        got = 1; if (substr($0, 3) != "-") print substr($0, 3); next
+      if ($0 !~ /^--/) {
+        value = cluster_value($0, letter)
+        if (value != "\001") {
+          if (value == "") { take = 1; next }
+          got = 1; if (value != "-") print value; next
+        }
       }
     }
     END { if (dfl == 1 && !got) print cwd }
