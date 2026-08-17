@@ -83,7 +83,7 @@ mkdir -p .claude/agents && cp -R .harness/agents/. .claude/agents/
 # make EVERY hook + adapter script executable (all runtimes, not just claude)
 chmod +x .harness/hooks/*.sh .harness/hooks/git/install-primary-commit-guard.sh \
   .harness/adapters/run-hook.sh .harness/adapters/*/normalize.sh \
-  .harness/adapters/cursor/stop-gate.sh
+  .harness/adapters/cursor/stop-gate.sh .harness/adapters/cursor/dispatch.sh
 # MERGE (never overwrite) .harness/adapters/claude-code/settings.json into
 # .claude/settings.json — keep your existing hooks/permissions keys. If a target
 # already exists, create a separate merge file or abort; never replace it in place.

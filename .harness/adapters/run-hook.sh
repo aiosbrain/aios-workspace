@@ -16,6 +16,22 @@ EVENT=${2:-}
 POLICY=${3:-}
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 
+# Environmental preflight, once, at the single entry point every runtime shares. Each
+# normalizer and policy still carries its own `command -v jq || exit 3`; this decides
+# the OUTCOME centrally so a missing interpreter degrades identically on Claude Code,
+# Codex, Cursor and OpenCode instead of deadlocking the one runtime that fails closed.
+# See adapters/jq-preflight.sh for why this is an allow and not a block.
+# shellcheck source=./jq-preflight.sh
+# shellcheck disable=SC1091  # path resolved at runtime
+. "$SCRIPT_DIR/jq-preflight.sh"
+if ! harness_jq_available; then
+  if [ "${HARNESS_REQUIRE_JQ:-0}" = "1" ]; then
+    echo "BLOCKED by harness adapter: jq is required (HARNESS_REQUIRE_JQ=1)" >&2
+    exit 2
+  fi
+  exit 0
+fi
+
 case "$RUNTIME" in
   claude-code) NORMALIZER="$SCRIPT_DIR/claude-code/normalize.sh" ;;
   codex) NORMALIZER="$SCRIPT_DIR/codex/normalize.sh" ;;
