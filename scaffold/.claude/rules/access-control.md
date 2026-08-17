@@ -11,12 +11,25 @@ structural layer of defense: some directories sit **outside** `aios.yaml`'s
    outward). Default-deny: untagged content never syncs. Full vocabulary:
    `.claude/rules/frontmatter.md`.
 2. **Path-level (per directory):** `aios.yaml`'s `sync_include` lists which
-   parts of the spine are even *considered* for sync. `1-inbox/` and
-   `5-personal/` are already outside it by default. **`6-business/`** (present
-   only in **business-owner**-context workspaces) is the same kind of
-   exclusion — a sanctioned sibling root for running the business itself
-   (bookkeeping, entities, engagements, insurance, administration,
-   partnerships, portfolio), never client delivery.
+   parts of the spine are even *considered* for sync. It is a whitelist of
+   **paths**, not of whole folders — read your own `aios.yaml` literally rather
+   than assuming a numbered folder is excluded because it sounds private. In
+   the default scaffold:
+   - **`5-personal/`** is outside it entirely, and named in `sync_exclude` too.
+   - **`1-inbox/` is only PARTLY outside it: `1-inbox/transcripts` IS
+     whitelisted.** A meeting transcript filed there is considered for sync, and
+     once it carries a `team`-or-wider `access:` tag it leaves your machine.
+     Raw inbox material you do not want pushed must stay out of
+     `1-inbox/transcripts/`, or stay untagged / `private`.
+   - **`3-log/` is partial**, not excluded: only `3-log/decision-log.md`,
+     `3-log/tasks-team.md` and `3-log/ai-spend.md` are listed. The rest of
+     `3-log/` — including `tasks-private.md`, `hours-log.md` and `time-log.md` —
+     is outside the whitelist.
+
+   **`6-business/`** (present only in **business-owner**-context workspaces) is
+   the whole-root kind of exclusion — a sanctioned sibling root for running the
+   business itself (bookkeeping, entities, engagements, insurance,
+   administration, partnerships, portfolio), never client delivery.
 
 ## Rule: `6-business/` never syncs — never add it to `sync_include`
 
