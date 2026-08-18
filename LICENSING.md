@@ -31,7 +31,12 @@ for. MIT already delivers that guarantee, so leaving it alone costs nothing.
 Second, and decisively: `.harness/LICENSE` names **Pravos LLC (Vibrana / AIOS)** as the
 copyright holder — a legal entity, not the individual authors named at the top of this file.
 Relicensing code held by an entity is that entity's decision, so it is not ours to make here.
-The directory is therefore untouched and remains MIT. This does not weaken anything: MIT is
+The licence terms of that directory are therefore unchanged and it remains MIT.
+
+The one edit made inside it is a factual correction, not a licensing change:
+`.harness/modules/aios-cli/README.md` described *this* repository as MIT, which stops being
+true the moment this lands. The same sentence needs the same fix in the upstream harness
+repository, and that is tracked separately along with the Pravos question. This does not weaken anything: MIT is
 permissive, it composes into an AGPL work without friction, and it satisfies the
 dependency-direction rule below for the same reason Apache-2.0 would.
 

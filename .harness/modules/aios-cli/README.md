@@ -1,7 +1,7 @@
 # Module — AIOS CLI (loop engineering + Team Brain)
 
 **Coupling:** this module ties the harness into the AIOS ecosystem —
-[`aiosbrain/aios-workspace`](https://github.com/aiosbrain/aios-workspace) (MIT) and,
+[`aiosbrain/aios-workspace`](https://github.com/aiosbrain/aios-workspace) (AGPL-3.0-only) and,
 for the team surfaces, a deployed [Team Brain](https://github.com/aiosbrain/aios-team-brain).
 That coupling is the point: the portable core harnesses *a repo*; this module harnesses
 *a team*. Skip it if you only want the repo-level pack.

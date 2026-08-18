@@ -22,7 +22,8 @@ repository's default license. The rest of AIOS Workspace is AGPL-3.0-only; see
 ../../LICENSE and ../../LICENSING.md.
 
 Earlier releases of this software were published under the MIT License, which is
-reproduced in LICENSE-MIT and continues to govern those releases.
+reproduced in the repository root's LICENSE-MIT (../../LICENSE-MIT) and continues to
+govern those releases.
 
 The full text of the Apache License, Version 2.0 follows.
 

@@ -33,7 +33,9 @@ Vendored code NOT covered by this relicense
 
     A vendored copy of aiosbrain/aios-engineering-harness. Its copyright is held by a
     legal entity rather than by the authors of this repository, so it was deliberately
-    excluded from the relicense and remains MIT under its existing notice. `aios
+    excluded from the relicense and remains MIT under its existing notice. The only edit
+    made inside that directory is a factual correction to a sentence describing THIS
+    repository's license; no licence term of the vendored code was changed. `aios
     repo-bootstrap` copies it into target repositories; MIT means doing so places no
     obligation on the repository receiving it.
 
