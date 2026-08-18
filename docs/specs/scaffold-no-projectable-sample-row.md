@@ -92,17 +92,26 @@ already-populated task file is unchanged by this slice and is not what this slic
   illustration is preserved, in a form the parser cannot see.
 - A future contributor who re-adds a sample data row (or moves one into the comment block believing
   that is inert) **fails CI**, with a message that says why the row is not free.
-- `AIO-524`'s guarantee — every sample item a fresh workspace ships is pushable — still holds, and its
-  em-dash date-shape coverage is unchanged.
+- `AIO-524`'s guarantee — every sample item a fresh workspace ships is pushable — still holds. Its
+  em-dash date-shape coverage **moves rather than persists**: the per-context walk over real scaffold
+  output no longer has a task row to check, so the standalone fixture test becomes the only guard on
+  `parseTaskRows`' em-dash handling. (Round-2 review, confirmed: draft 2 claimed here that the coverage
+  was "unchanged" while Scope §4 of the same document said the walk's loop is disarmed. Both could not
+  be true, and the honest one is this.)
 
 ## Interface / integration points
 
-- `scripts/scaffold-project.sh` — line 386, the one data row, inside the heredoc that emits a fresh
+- `scripts/scaffold-project.sh` — the one data row, inside the heredoc that emits a fresh
   workspace's team task file (lines 372–395). Lines 366–371 already warn that the em-dash normalization is load-bearing and
   name the guard to re-run; this change is in that spirit.
 - `test/scaffold-push-item-validation.test.mjs` — `AIO-524`'s guard. It scaffolds all three contexts,
-  walks every syncable file exactly as `buildPlan` does, and validates each payload. Extended here,
-  not replaced.
+  walks the workspace with its **own** helper (`collectPushItems`), and validates each payload.
+  Extended here, not replaced. That helper is **not** `buildPlan`: it walks every markdown file minus a
+  hardcoded skip list, whereas the real planner walks the `sync_include` whitelist — so it is a
+  superset, and a team-tier file outside `sync_include` is walked by the test but never pushed. (Draft 1
+  and draft 2 described it as walking "exactly as `buildPlan` does"; round-2 review caught that this
+  contradicted the rationale in Scope §3 of the same document. The new guard is built on the real
+  planner precisely because of this gap.)
 - `scripts/tasks-table.mjs` (`parseTaskRows`) — **not modified.** Teaching it to skip HTML comments
   would be a parser change affecting every workspace's real files, to fix a problem the scaffold
   should not create. Out of scope, and named as a non-goal below.
@@ -228,8 +237,20 @@ have teeth against the *current* scaffold before the scaffold changes.
 - `node --test test/task-tier-split.test.mjs test/transcripts.test.mjs` passes — these write their own
   `TT1` rows and must be unaffected by the scaffold no longer shipping one.
 - `npm test` passes.
-- **Mutation:** re-inserting `  | TT1 | Example team task | alex | ready | — | — | — |` inside the
-  comment block makes the new zero-rows case **fail**, and restoring makes it pass.
+- **Mutation 1:** re-inserting `  | TT1 | Example team task | alex | ready | — | — | — |` inside the
+  comment block makes the new case's **`rows=0`** assertion fail, and restoring makes it pass.
+- **Mutation 2:** renaming the emitted file (or otherwise breaking its task classification) makes the
+  new case's **presence** assertion fail. Required as its own criterion (round-2 review, confirmed):
+  draft 2 named this mutant in the implementation approach but left it out of the formal gate, so the
+  half of the guard the spec itself calls load-bearing could have shipped unverified — the exact vacuity
+  hole this slice exists to close.
+- **Mutation 3:** the same rename **with the presence assertion deleted** must go **green** — that is
+  what proves mutation 2 is caught by the presence assertion specifically, and not incidentally by the
+  pre-existing "at least one task/decision file" check, which the scaffolded decision log satisfies
+  on its own.
+- `node scripts/check-file-size.mjs` passes. `scripts/scaffold-project.sh` sits exactly **at** its
+  grandfathered 775-line ceiling on `main`, and that ceiling may never rise, so the added comments are
+  funded by tightening prose in the same two comment blocks. Net line delta must be ≤ 0.
 
 ### Manual
 

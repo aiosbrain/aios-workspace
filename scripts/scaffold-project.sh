@@ -361,23 +361,12 @@ type: "Decision Log"
 |---|------|----------|-----------|------------|--------|------|----------|
 EOF
 
-# AIO-524: placeholder \`Due\`/\`decided_at\` cells in this file's tables use the workspace-wide
-# "no value" sentinel (\`—\`, em dash). That's safe ONLY because scripts/tasks-table.mjs's
-# parseTaskRows() (and scripts/workspace-parse.mjs's decision row parser) normalize a bare \`—\` to
-# null for those date-shaped fields — they alone flow into a Postgres \`date\` column on the Team
-# Brain and previously round-tripped the literal em dash straight into a push payload, 500ing on the
-# very first \`aios push\`. If you ever touch that normalization, re-run
-# test/scaffold-push-item-validation.test.mjs against all three contexts first.
-#
-# SAMPLEROW-1: the team task table below ships with NO data rows, and must stay that way. A row here
-# syncs to the brain and the brain projects it onto the team's PM board, so a sample row is a real
-# issue on someone's board. Worse, before aios-team-brain#588 the brain matched an existing issue on
-# the footer \`aios-ext: <row_key>\` alone — and this table's first key is \`TT1\` in EVERY workspace —
-# so a scaffolded sample row ADOPTED whatever issue already carried that key. Two projects did that
-# to the same real issue and renamed it "Example team task". Do not re-add a row here to be helpful,
-# and note that commenting one out does NOT help: the row parser trims each line and reads any line
-# that then starts with \`|\`, HTML comment or not. Guarded by
-# test/scaffold-push-item-validation.test.mjs ("ships ZERO projectable task rows").
+# AIO-524: \`—\` in \`Due\`/\`decided_at\` is safe ONLY because parseTaskRows (scripts/tasks-table.mjs)
+# and the decision row parser normalize it to null — those two fields alone reach a Postgres \`date\`
+# column on the Team Brain, which 500s on a literal em dash.
+# SAMPLEROW-1: the table below must ship NO data rows; each becomes a real issue on the team's PM
+# board (and pre aios-team-brain#588, ADOPTED any existing issue keyed \`TT1\` — two projects did that
+# to one real issue). Both guarded by test/scaffold-push-item-validation.test.mjs, all three contexts.
 idx "$OUTPUT/$D_LOG/tasks-team.md" << EOF
 ---
 access: team
@@ -386,28 +375,21 @@ scope: $SLUG
 ---
 # Team Tasks — $STAKEHOLDER
 
-Tasks visible to the team — this file syncs to the Team Brain (\`aios push\`) and
-projects into the connected PM tool. Anything you don't want the team or the
-brain to see belongs in \`tasks-private.md\` or \`../$D_PERSONAL/tasks.md\` instead.
+Tasks visible to the team — this file syncs to the Team Brain (\`aios push\`) and projects into the
+connected PM tool. Anything the team/brain must not see goes in \`tasks-private.md\` or \`../$D_PERSONAL/tasks.md\`.
 
 | ID | Task | Assignee | Status | Sprint | Due | Linear |
 |----|------|----------|--------|--------|-----|--------|
 
 <!--
-This table ships EMPTY on purpose. Every row in it syncs to the Team Brain and the brain projects
-each one into your connected PM tool — so a row here is a real issue on your team's board from the
-first \`aios push\`, not a sample. Write your own first row in the table above; the shape is:
-
+This table ships EMPTY on purpose: every row syncs to the brain, which projects it onto your PM board
+as a REAL issue — write your own first row above. The \`e.g.\` prefix below is load-bearing: the parser
+reads ANY trimmed line starting with \`|\` as a row, comment or not, so commenting one out does NOT work.
 e.g.  | TT1 | Ship the onboarding fix | $OWNER | ready | — | — | — |
 
-That \`e.g.\` prefix is doing real work. The row parser (scripts/tasks-table.mjs) trims each line and
-reads ANY line that then begins with \`|\` as a task row — it does not know about HTML comments. So
-commenting a row out does NOT stop it syncing; only a non-pipe prefix does.
-
-Optional columns (brain-api v1.2) — add any of these to project a structured board into your
-PM tool (Plane/Linear): \`Parent\` (the epic's ID), \`Labels\` (comma-separated), \`Priority\`
-(none|low|medium|high|urgent). The columns above stay valid on their own. A task's long
-description/body is edited in the brain dashboard — it does not live in this table.
+Optional columns (brain-api v1.2) — project a structured board into your PM tool (Plane/Linear) with
+\`Parent\` (the epic's ID), \`Labels\` (comma-separated), \`Priority\` (none|low|medium|high|urgent). The
+columns above stay valid on their own; a task's long body is edited in the brain dashboard, not here.
 e.g.  | ID | Task | Assignee | Status | Sprint | Due | Linear | Parent | Labels | Priority |
 -->
 EOF
