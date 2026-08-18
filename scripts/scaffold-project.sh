@@ -387,7 +387,7 @@ as a REAL issue — write your own first row above. The \`e.g.\` prefix below is
 reads ANY trimmed line starting with \`|\` as a row, comment or not, so commenting one out does NOT work.
 e.g.  | TT1 | Ship the onboarding fix | $OWNER | ready | — | — | — |
 
-Optional columns (brain-api v1.2) — project a structured board into your PM tool (Plane/Linear) with
+Optional columns (brain-api v1.2) — project a structured board into your PM tool (Linear) with
 \`Parent\` (the epic's ID), \`Labels\` (comma-separated), \`Priority\` (none|low|medium|high|urgent). The
 columns above stay valid on their own; a task's long body is edited in the brain dashboard, not here.
 e.g.  | ID | Task | Assignee | Status | Sprint | Due | Linear | Parent | Labels | Priority |

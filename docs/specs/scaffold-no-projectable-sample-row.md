@@ -104,8 +104,8 @@ already-populated task file is unchanged by this slice and is not what this slic
 ## Interface / integration points
 
 - `scripts/scaffold-project.sh` — the one data row, inside the heredoc that emits a fresh
-  workspace's team task file (lines 372–395). Lines 366–371 already warn that the em-dash normalization is load-bearing and
-  name the guard to re-run; this change is in that spirit.
+  workspace's team task file (lines 370–395 at this branch's HEAD). Lines 364–369 already warn that the
+  em-dash normalization is load-bearing and name the guard to re-run; this change is in that spirit.
 - `test/scaffold-push-item-validation.test.mjs` — `AIO-524`'s guard. It scaffolds all three contexts,
   walks the workspace with its **own** helper (`collectPushItems`), and validates each payload.
   Extended here, not replaced. That helper is **not** `buildPlan`: it walks every markdown file minus a
@@ -153,7 +153,7 @@ defect in the Plane adapter, unreachable today at 1 Plane link against 959 Linea
    unpinned the moment it was created.
 
    **Why the real planner and not `collectPushItems`** (round-1 review, confirmed): that helper walks
-   every markdown file except a hardcoded skip list (`test/scaffold-push-item-validation.test.mjs:88`),
+   every markdown file except a hardcoded skip list (`test/scaffold-push-item-validation.test.mjs:86`),
    whereas what actually leaves the machine is `buildPlan` over `aios.yaml` `sync_include`
    (`scripts/sync-plan.mjs:138`, `walkFiles` at `:31`). Those two disagree in both directions: drop
    `3-log/tasks-team.md` from `sync_include` and a `collectPushItems`-based guard stays green while the
@@ -185,6 +185,14 @@ defect in the Plane adapter, unreachable today at 1 Plane link against 959 Linea
   change across two repos. Not justified by one scaffold row.
 - **`parseTaskRows` remains comment-blind.** Named as a non-goal above; this spec's acceptance
   criteria are written so that the blindness cannot silently defeat the fix.
+- **A fresh workspace's first REAL task will now be keyed `TT1`.** The sample row used to occupy that
+  key, so hand-written work started at `TT2`. This matters only for a self-hosted brain that PREDATES
+  `aios-team-brain#588`: the toolkit ships independently of brain upgrades, and on an older brain the
+  footer rung still matches `row_key` alone, so that first real task can adopt another workspace's
+  `TT1` issue — with real content rather than a placeholder. Named, not fixed here: the fix is the
+  brain-side one that already shipped, and the workspace cannot detect which brain version it faces.
+  Raised by round-3 review; the Dependencies section above sequences after `#588` as though it were
+  merged everywhere, which is true of the AIOS install and not of self-hosters.
 - **`TP1` in `tasks-private.md` stays**, on the refuted-hypothesis evidence above: it cannot reach the
   brain, so removing it would delete an illustration for zero safety gain.
 

@@ -239,6 +239,27 @@ for (const context of ["consultant", "employee", "business-owner"]) {
           `issue on the team's PM board on the first push (SAMPLEROW-1). Plan line: ${teamTaskLines[0]}`
       );
 
+      // The table SHAPE survives, even though the rows are gone. `rows=0` cannot see this: item
+      // classification is path/frontmatter-based, so deleting the header and separator outright
+      // still plans as `[task, team] rows=0` and every other assertion here stays green (verified
+      // by mutation — round-3 review found this surviving mutant). The header is load-bearing:
+      // `mergeTaskWriteback` (packages/foundation/src/tasks-table.mjs:311-333) falls back to a
+      // LEGACY SIX-COLUMN append when it finds no `id`/`task` header, silently dropping the
+      // `Linear` column from written-back rows — and its own comment justifies that branch with
+      // "the scaffold always ships one". This is that guarantee, asserted.
+      const emitted = readFileSync(path.join(output, "3-log", "tasks-team.md"), "utf8");
+      assert.match(
+        emitted,
+        /^\| ID \| Task \| Assignee \| Status \| Sprint \| Due \| Linear \|$/m,
+        "the scaffolded team task table must keep its 7-column header — writeback degrades to a " +
+          "six-column legacy append without it, dropping the Linear column"
+      );
+      assert.match(
+        emitted,
+        /^\|-+\|-+\|-+\|-+\|-+\|-+\|-+\|$/m,
+        "the scaffolded team task table must keep its separator row"
+      );
+
       // The private sibling must not appear in the plan AT ALL — neither pushed nor held.
       //
       // "Not pushed as a task" was too weak (round-2 review): add `3-log/tasks-private.md` to the
@@ -261,8 +282,13 @@ for (const context of ["consultant", "employee", "business-owner"]) {
       assert.ok(start >= 0, "generated aios.yaml has no sync_include block");
       const syncInclude = [];
       for (const line of yaml.slice(start + 1)) {
+        // Blank lines and comments sit INSIDE the block in the shipped template, so stopping at the
+        // first non-list line would end the walk early and miss every entry after them (round-3
+        // review). Only a non-list, non-comment, non-blank line — i.e. the next top-level key —
+        // ends the block.
+        if (/^\s*(#.*)?$/.test(line)) continue;
         const item = /^\s+-\s*(.+?)\s*$/.exec(line);
-        if (!item) break; // first non-list-item line ends the block
+        if (!item) break;
         syncInclude.push(item[1]);
       }
       assert.ok(
