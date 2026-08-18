@@ -30,9 +30,10 @@ This directory was initially held back from the relicense: its LICENSE named **P
 (Vibrana / AIOS)**, a legal entity rather than the individual authors, and relicensing code
 an entity holds is that entity's decision rather than an assumption to make. The copyright
 holders have since authorised it. The prior MIT notice is preserved verbatim in
-`.harness/LICENSE-MIT`, naming Pravos LLC, as the MIT License requires. This does not weaken anything: MIT is
-permissive, it composes into an AGPL work without friction, and it satisfies the
-dependency-direction rule below for the same reason Apache-2.0 would.
+`.harness/LICENSE-MIT`, naming Pravos LLC, as the MIT License requires. Nothing anyone
+received under the earlier terms is weakened: MIT was permissive, it composed into an AGPL
+work without friction, and it satisfied the dependency-direction rule below for the same
+reason Apache-2.0 does.
 
 Prior releases were published under the MIT License. **They remain MIT** — the change is
 going-forward only and takes nothing away. That text is preserved verbatim in

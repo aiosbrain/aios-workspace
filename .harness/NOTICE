@@ -9,9 +9,11 @@ A deliberate exception to the repository default of AGPL-3.0-only, for two reaso
      which is Apache-2.0 upstream. Aligning the licenses keeps the two copies syncable
      in both directions instead of making every sync a licensing question.
 
-  2. `aios repo-bootstrap` copies this directory into a TARGET repository as that repo's
-     own `.harness`. A copyleft license here would reach into every repository that
-     bootstraps a workspace, which would make the harness unadoptable.
+  2. `aios repo-bootstrap` stamps files from this directory into a TARGET repository as
+     that repo's own `.harness`, carrying this LICENSE, this NOTICE and LICENSE-MIT along
+     with them so the recipient actually holds the terms (Apache-2.0 s4(a) and s4(d)). A
+     copyleft license here would reach into every repository that bootstraps a workspace,
+     which would make the harness unadoptable.
 
 Adopting the harness therefore does not license your repository. Nothing here attaches to
 the code it guards, inspects, or generates.

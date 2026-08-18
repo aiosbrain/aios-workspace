@@ -40,6 +40,16 @@ export const BOOTSTRAP_VERSION_FILE = ".aios-bootstrap-version";
  * `asset` is relative to scripts/repo-bootstrap/assets/.
  */
 export const BOOTSTRAP_MANAGED = [
+  // ── The harness license, carried with the files it covers. `.harness/` is Apache-2.0
+  //    (see LICENSING.md), and Apache s4(a)/(d) require a recipient of those files to get
+  //    a copy of the License and the NOTICE. We stamp harness files into a target repo,
+  //    so without these three the target holds Apache-licensed work with no license text
+  //    and cannot redistribute it compliantly — our own installer would be stripping the
+  //    license off our own files.
+  { dest: ".harness/LICENSE", src: ".harness/LICENSE" },
+  { dest: ".harness/NOTICE", src: ".harness/NOTICE" },
+  { dest: ".harness/LICENSE-MIT", src: ".harness/LICENSE-MIT" },
+
   // ── Worktree guard pack (the repo's OWN .harness copy — works with no adjacent
   //    core checkout). Git-level backstops + the agent-hook edit/command guard.
   {
