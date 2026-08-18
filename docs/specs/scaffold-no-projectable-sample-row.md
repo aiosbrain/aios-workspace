@@ -47,7 +47,14 @@ is that the scaffold **ships work**. The fix is that the shipped table is empty.
   (`packages/foundation/src/workspace-parse/core.mjs:34`), `scripts/sync-plan.mjs:167` blocks
   `admin`, and the brain independently rejects it (`app/api/v1/items/route.ts:95`, 422
   `forbidden_tier`). The production brain holds **zero** items from any `tasks-private` path and zero
-  `TP`-keyed tasks, which is the observable confirmation. TP1 stays.
+  `TP`-keyed tasks, which is the observable confirmation. Stronger still, from the real planner rather
+  than a code reading: `aios push --dry-run` in a freshly scaffolded workspace does not list
+  `3-log/tasks-team.md`'s private sibling at all — it is absent from the generated `sync_include`, with
+  a comment in `scaffold/aios.yaml.tmpl` saying so and citing `AIO-364`. TP1 stays.
+- **The personal task row is out of reach too.** `5-personal/tasks.md` ships a `P1` sample row, and
+  `5-personal` is in the generated `sync_exclude`; the planner does not list it. Enumerated here
+  because "is `:386` really the only shipped row that reaches a board?" is the question this slice
+  lives or dies on, and the answer is yes for all three contexts, which share the one heredoc.
 - **The projector's missing audience filter is unreachable.** A private/admin item cannot become a
   task at all (same 422), and `tasks.audience` is the two-value `access_tier` enum — production shows
   1,177 tasks, all `team`. There is no private-task-onto-a-shared-board leak here.
@@ -127,10 +134,36 @@ defect in the Plane adapter, unreachable today at 1 Plane link against 959 Linea
 2. Add the row's illustration to the existing comment block using the `e.g. ` prefix the block
    already uses, plus two sentences stating that a row here becomes a real PM issue and that
    commenting a row out does **not** make it inert.
-3. Add a guard to `test/scaffold-push-item-validation.test.mjs`: for each of the three contexts, the
-   scaffolded workspace yields **zero** parsed task rows across every syncable task file. This is the
-   inverse assertion — the walk today asserts every shipped row is *valid*, which an empty table
-   satisfies vacuously, so without this the invariant would be unpinned the moment it was created.
+3. Add a guard to `test/scaffold-push-item-validation.test.mjs` that asserts against **the real push
+   planner, not the test's own walker**. For each context: scaffold, then run `aios push --dry-run` in
+   the scaffolded workspace and assert its plan (a) **contains a line for `3-log/tasks-team.md`**, and
+   (b) reports `rows=0` for it. This is the inverse assertion — the existing walk asserts every shipped
+   row is *valid*, which an empty table satisfies vacuously, so without this the invariant would be
+   unpinned the moment it was created.
+
+   **Why the real planner and not `collectPushItems`** (round-1 review, confirmed): that helper walks
+   every markdown file except a hardcoded skip list (`test/scaffold-push-item-validation.test.mjs:88`),
+   whereas what actually leaves the machine is `buildPlan` over `aios.yaml` `sync_include`
+   (`scripts/sync-plan.mjs:138`, `walkFiles` at `:31`). Those two disagree in both directions: drop
+   `3-log/tasks-team.md` from `sync_include` and a `collectPushItems`-based guard stays green while the
+   file no longer syncs at all; add a team-tier task-shaped file outside `sync_include` and it fails a
+   guard for a file that can never reach a board. Measured: `aios push --dry-run` runs offline in a
+   freshly scaffolded workspace, needs no API key, and today prints
+   `3-log/tasks-team.md [task, team] rows=1` — the defect, in the planner's own words.
+
+   **Part (a) is not decoration** (round-1 review, confirmed). Without it the guard is vacuous under a
+   real mutant: rename the generated file, or break task classification, and the set of task items is
+   empty, every `rows.length === 0` assertion passes, and the guard reports success for a scaffold that
+   has *lost* its task surface rather than emptied its table. The same hole already exists one level up —
+   `test/scaffold-push-item-validation.test.mjs:138` asserts only "at least one task **or decision**
+   file", which `decision-log.md` satisfies alone.
+4. State the disarmament in the test file itself (round-1 review, confirmed in substance): after this
+   change the per-context walk's `due`-shape loop iterates **no task rows**, so the standalone
+   `a '—' placeholder cell normalizes to null…` fixture is the only remaining guard on `parseTaskRows`'
+   em-dash handling. One detail of that finding is **refuted**: it claimed the loop "will still run for
+   decision rows", but a freshly scaffolded `3-log/decision-log.md` ships **zero** data rows too
+   (`aios push --dry-run` reports `rows=0` for it), so that loop is already vacuous today and this
+   change does not disarm something that was live.
 
 **Deferred, with reasons:**
 
@@ -149,22 +182,31 @@ defect in the Plane adapter, unreachable today at 1 Plane link against 959 Linea
 Single-file behaviour change plus its guard; the ordering is guard-first so the guard is proven to
 have teeth against the *current* scaffold before the scaffold changes.
 
-1. Add the zero-task-rows guard first and watch it **fail** against today's scaffold (it must report
-   the shipped `TT1`). A guard that is written after the fix cannot distinguish "invariant holds" from
-   "assertion never ran".
+1. Add the zero-task-rows guard first and watch it **fail** against today's scaffold — it must report
+   `rows=1`, the shipped `TT1`. A guard written after the fix cannot distinguish "invariant holds" from
+   "assertion never ran". (Already observed by hand: the planner prints
+   `3-log/tasks-team.md [task, team] rows=1` in a probe workspace scaffolded from this branch.)
 2. Edit the heredoc: drop the data row, extend the comment block.
 3. Re-run the guard — now green — plus the whole `AIO-524` suite for all three contexts.
-4. Mutation-verify: re-insert the row inside the comment block (the plausible wrong fix) and confirm
-   the new guard **reddens**. This is the mutation that matters, because that edit is what a
-   reasonable contributor would try.
+4. Mutation-verify **two** mutants, each against the assertion it is meant to catch:
+   - re-insert the row inside the comment block (the plausible wrong fix) → the `rows=0` half must
+     redden. This is the mutation that matters most, because that edit is what a reasonable
+     contributor would try;
+   - rename the emitted file (or otherwise stop it being classified as a task) → the **presence** half
+     must redden. Without that half this mutant survives, which is the vacuity hole named in Scope §3.
 
 ## Acceptance criteria
 
 ### Automated
 
 - `node --test test/scaffold-push-item-validation.test.mjs` passes, including a new per-context case
-  asserting that every syncable `kind === "task"` file in a freshly scaffolded workspace parses to
-  **zero** rows.
+  that runs the real `aios push --dry-run` in a freshly scaffolded workspace and asserts its plan
+  contains a `3-log/tasks-team.md` line **and** that the line reports `rows=0`. Both halves are
+  required: the presence half is what stops the emptiness half passing vacuously.
+- `node --test test/scaffold-push-item-validation.test.mjs` asserts the same plan does **not** list
+  `3-log/tasks-private.md` — pinning the private-row refutation against the real planner rather than
+  against a code reading (it is absent from scaffolded `sync_include`, and `access: private`
+  normalizes to `admin`, which `scripts/sync-plan.mjs:167` blocks).
 - `node --test test/scaffold-push-item-validation.test.mjs` still passes its existing three
   `every sample item pushes clean` cases — an empty task table must not break payload validation
   (confirmed already: the brain's task schema is `rows(taskRowSchema).optional()`, no `.min(1)`, and
@@ -172,9 +214,17 @@ have teeth against the *current* scaffold before the scaffold changes.
 - `node --test test/scaffold-push-item-validation.test.mjs` still passes the standalone
   `a '—' placeholder cell normalizes to null…` case, which pins the `AIO-524` date shape from its own
   fixture and therefore does not depend on the shipped row.
-- `grep -c '| TT1 |' scripts/scaffold-project.sh` returns `0`.
+- `grep -cE '^[[:space:]]*\| TT1 \|' scripts/scaffold-project.sh` returns `0` — **anchored**, because
+  the criterion is "no line the row parser would read as a row", and `parseTaskRows` trims leading
+  whitespace and takes any line that then starts with `|`.
 - `grep -q 'e.g.  | TT1' scripts/scaffold-project.sh` exits 0 — the illustration is present in the
   parser-invisible form, not merely deleted.
+
+  These two criteria **contradicted each other in draft 1** (round-1 review, confirmed): the first was
+  written unanchored as `grep -c '| TT1 |'`, and since `|` is literal in a basic regex, the illustration
+  the second criterion *requires* made the first return `1`. A builder implementing the slice exactly as
+  intended would have failed its own acceptance check. Verified after the fix: against the illustration
+  line alone, the unanchored form returns `1` and the anchored form returns `0`.
 - `node --test test/task-tier-split.test.mjs test/transcripts.test.mjs` passes — these write their own
   `TT1` rows and must be unaffected by the scaffold no longer shipping one.
 - `npm test` passes.
