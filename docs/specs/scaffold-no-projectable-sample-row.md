@@ -9,8 +9,10 @@ type: issue-spec
 
 ## What / why
 
-`scripts/scaffold-project.sh:386` seeds every new workspace's `3-log/tasks-team.md` with one data
-row:
+**Written against the pre-fix tree** (`origin/main`, `scripts/scaffold-project.sh:386`), where the
+heredoc that emits every new workspace's team task file seeded one data row. At this branch's HEAD the
+row is gone and the table is header-only, so line 386 no longer points at it — read the quote below as
+the state this slice removes, not as current behaviour (round-2 review, confirmed):
 
 ```
 | TT1 | Example team task | $OWNER | ready | — | — | — |
@@ -194,7 +196,9 @@ have teeth against the *current* scaffold before the scaffold changes.
 1. Add the zero-task-rows guard first and watch it **fail** against today's scaffold — it must report
    `rows=1`, the shipped `TT1`. A guard written after the fix cannot distinguish "invariant holds" from
    "assertion never ran". (Already observed by hand: the planner prints
-   `3-log/tasks-team.md [task, team] rows=1` in a probe workspace scaffolded from this branch.)
+   `3-log/tasks-team.md [task, team] rows=1` in a probe workspace scaffolded from `origin/main` — i.e.
+   BEFORE this fix. At this branch's HEAD the same probe prints `rows=0`, so do not expect to
+   reproduce the red baseline by rerunning it here.)
 2. Edit the heredoc: drop the data row, extend the comment block.
 3. Re-run the guard — now green — plus the whole `AIO-524` suite for all three contexts.
 4. Mutation-verify **two** mutants, each against the assertion it is meant to catch:

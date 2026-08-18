@@ -235,13 +235,37 @@ for (const context of ["consultant", "employee", "business-owner"]) {
           `issue on the team's PM board on the first push (SAMPLEROW-1). Plan line: ${teamTaskLines[0]}`
       );
 
-      // The private sibling must not be in the plan at all: it is absent from the generated
-      // `sync_include` and its `access: private` normalizes to `admin`, which buildPlan blocks.
-      // Asserted against the planner rather than trusted from a code reading.
+      // The private sibling must not appear in the plan AT ALL — neither pushed nor held.
+      //
+      // "Not pushed as a task" was too weak (round-2 review): add `3-log/tasks-private.md` to the
+      // scaffolded `sync_include` and, because its frontmatter stays `access: private` (→ `admin`),
+      // buildPlan HOLDS it (scripts/sync-plan.mjs:167). It then appears in the held list with no
+      // `[task` marker, so a "not pushed" assertion passes while the file has in fact been added to
+      // `sync_include` — which is the thing AIO-364 says never to do. Assert the absence of any
+      // mention, and assert the generated `sync_include` directly, so neither half can drift.
       assert.equal(
-        lines.filter((l) => l.includes("3-log/tasks-private.md") && l.includes("[task")).length,
+        lines.filter((l) => l.includes("tasks-private")).length,
         0,
-        "3-log/tasks-private.md must never appear as a pushable item"
+        `3-log/tasks-private.md must appear nowhere in the push plan — pushed OR held (AIO-364). ` +
+          `Plan was:\n${lines.join("\n")}`
+      );
+      // Read the generated sync_include list itself: the scaffolded aios.yaml also *mentions*
+      // tasks-private.md in a comment saying never to add it, so grepping the file would match that
+      // comment. Take only the indented list items under `sync_include:`.
+      const yaml = readFileSync(path.join(output, "aios.yaml"), "utf8").split("\n");
+      const start = yaml.findIndex((l) => l.startsWith("sync_include:"));
+      assert.ok(start >= 0, "generated aios.yaml has no sync_include block");
+      const syncInclude = [];
+      for (const line of yaml.slice(start + 1)) {
+        const item = /^\s+-\s*(.+?)\s*$/.exec(line);
+        if (!item) break; // first non-list-item line ends the block
+        syncInclude.push(item[1]);
+      }
+      assert.ok(syncInclude.includes("3-log/tasks-team.md"), `sync_include parsed wrong: ${syncInclude}`);
+      assert.deepEqual(
+        syncInclude.filter((p) => p.includes("tasks-private")),
+        [],
+        "3-log/tasks-private.md must never be added to the generated sync_include (AIO-364)"
       );
     } finally {
       rmSync(output, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
