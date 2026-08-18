@@ -180,9 +180,83 @@ for (const context of ["consultant", "employee", "business-owner"]) {
   });
 }
 
+// SAMPLEROW-1 — a freshly scaffolded workspace must ship NO task rows.
+//
+// Every row in `3-log/tasks-team.md` syncs to the Team Brain, and the brain projects each one into
+// the team's connected PM tool (Linear/Plane) with no status or audience filter. So a shipped sample
+// row is not inert — it is a work item on a real board. Until aios-team-brain#588 it was worse than
+// that: the brain resolved an existing issue by the footer `aios-ext: <row_key>` alone, and this
+// row's key is `TT1` in every workspace, so a fresh scaffold's sample row ADOPTED whoever already
+// had an issue keyed `TT1`. Two projects in the AIOS install did that to the same real issue and
+// renamed it "Example team task". #588 closed the adoption path, which leaves creation: without this
+// guard every new workspace mints a junk issue on its board.
+//
+// TWO ASSERTIONS, AND BOTH ARE LOAD-BEARING:
+//   • the plan CONTAINS `3-log/tasks-team.md` — without this, `rows=0` is asserted over an empty set
+//     and the guard passes for a scaffold that LOST its task surface (rename the emitted file, or
+//     break task classification, and the mutant survives). The pre-existing assertion one level up
+//     (`at least one task/decision file`) does not close this: `decision-log.md` satisfies it alone.
+//   • that line reports `rows=0`.
+//
+// AND IT ASSERTS AGAINST THE REAL PLANNER, not `collectPushItems` above. That helper walks all
+// markdown minus a hardcoded skip list; what actually leaves the machine is `buildPlan` over
+// `aios.yaml` `sync_include` (scripts/sync-plan.mjs). They disagree in both directions — drop the
+// file from `sync_include` and a walker-based guard stays green while nothing syncs; add a team-tier
+// task-shaped file outside it and the guard fails for a file that can never reach a board.
+function pushPlanLines(repo) {
+  const stdout = execFileSync(process.execPath, [path.join(ROOT, "scripts", "aios.mjs"), "push", "--dry-run"], {
+    cwd: repo,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  return stdout.split("\n");
+}
+
+for (const context of ["consultant", "employee", "business-owner"]) {
+  test(`scaffold --context ${context}: ships ZERO projectable task rows (SAMPLEROW-1)`, () => {
+    const output = tmpOut(`scaffold-norows-${context}-`);
+    try {
+      scaffold(context, output);
+      const lines = pushPlanLines(output);
+
+      const teamTaskLines = lines.filter((l) => l.includes("3-log/tasks-team.md"));
+      assert.equal(
+        teamTaskLines.length,
+        1,
+        `expected the push plan to list 3-log/tasks-team.md exactly once — if it is absent, this ` +
+          `guard's rows=0 assertion below would pass vacuously over an empty set. Plan was:\n${lines.join("\n")}`
+      );
+      const rowCount = /\brows=(\d+)\b/.exec(teamTaskLines[0]);
+      assert.ok(rowCount, `no rows= count in plan line: ${teamTaskLines[0]}`);
+      assert.equal(
+        rowCount[1],
+        "0",
+        `a freshly scaffolded workspace must ship NO task rows — every row here becomes a real ` +
+          `issue on the team's PM board on the first push (SAMPLEROW-1). Plan line: ${teamTaskLines[0]}`
+      );
+
+      // The private sibling must not be in the plan at all: it is absent from the generated
+      // `sync_include` and its `access: private` normalizes to `admin`, which buildPlan blocks.
+      // Asserted against the planner rather than trusted from a code reading.
+      assert.equal(
+        lines.filter((l) => l.includes("3-log/tasks-private.md") && l.includes("[task")).length,
+        0,
+        "3-log/tasks-private.md must never appear as a pushable item"
+      );
+    } finally {
+      rmSync(output, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    }
+  });
+}
+
 // Direct unit-level regression for the exact scaffold-shipped placeholder, independent of the
 // scaffold-+-walk above — pins the precise fixture that broke the staging smoke test, without
 // the cost of shelling out to scaffold-project.sh.
+//
+// SAMPLEROW-1 note: this is now the ONLY guard on `parseTaskRows`' em-dash handling. The per-context
+// walk above no longer iterates any scaffolded task rows (the table ships empty by design), and it
+// never iterated decision rows either — a fresh `decision-log.md` ships zero data rows too. So the
+// fixture below is load-bearing, not a convenience copy of a case the walk also covers.
 test("a '—' placeholder cell normalizes to null for both due (task) and decided_at (decision)", () => {
   const taskRows = parseTaskRows(
     [
