@@ -1,0 +1,17 @@
+AIOS Workspace — integration SDK contracts
+Copyright (C) 2026 Chetan Nandakumar and John Ellison
+
+This directory is licensed under the Apache License, Version 2.0. See LICENSE here.
+
+A deliberate exception to the repository default of AGPL-3.0-only. These are the normative
+integration contracts under `contracts/v1/` — JSON schemas, capability and compatibility
+declarations, invariants, and fixtures. An integration author writes against them, so they
+must be implementable by anyone in any software, including closed-source.
+
+The directory contains data, not code: there is nothing here that can import anything, so
+the dependency-direction rule is satisfied structurally. The traffic runs the other way —
+`scripts/integration-contracts*.mjs` on the AGPL side READS these contracts, which is the
+permitted direction (AGPL may absorb Apache-2.0; the reverse is the violation). See
+../../LICENSING.md.
+
+No third-party components.
