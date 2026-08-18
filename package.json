@@ -2,7 +2,7 @@
   "name": "@aiosbrain/aios",
   "version": "0.11.1",
   "description": "Agent-native operating system for an individual contributor: governed workspace scaffold, multi-agent harnesses with rubric-gated self-correction, AIOS Team Brain sync client, and a local GUI.",
-  "license": "MIT",
+  "license": "AGPL-3.0-only",
   "type": "module",
   "repository": {
     "type": "git",
