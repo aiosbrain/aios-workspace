@@ -1,0 +1,26 @@
+AIOS Engineering Harness (vendored into AIOS Workspace)
+Copyright (C) 2026 Chetan Nandakumar and John Ellison
+
+This directory is licensed under the Apache License, Version 2.0. See LICENSE here.
+
+A deliberate exception to the repository default of AGPL-3.0-only, for two reasons:
+
+  1. It is a vendored copy of https://github.com/aiosbrain/aios-engineering-harness,
+     which is Apache-2.0 upstream. Aligning the licenses keeps the two copies syncable
+     in both directions instead of making every sync a licensing question.
+
+  2. `aios repo-bootstrap` copies this directory into a TARGET repository as that repo's
+     own `.harness`. A copyleft license here would reach into every repository that
+     bootstraps a workspace, which would make the harness unadoptable.
+
+Adopting the harness therefore does not license your repository. Nothing here attaches to
+the code it guards, inspects, or generates.
+
+Earlier releases were published under the MIT License, reproduced in LICENSE-MIT here.
+That prior notice named Pravos LLC (Vibrana / AIOS); it is retained verbatim as the MIT
+License requires, and the relicense was made on the authority of the copyright holders.
+
+Because this directory is Apache-2.0, nothing in it may import from the AGPL portions of
+this repository (`src/`, `scripts/`, `bin/`, `packages/foundation/`). See ../LICENSING.md.
+
+Provenance for the curated practices and prompts is maintained in PROVENANCE.md.

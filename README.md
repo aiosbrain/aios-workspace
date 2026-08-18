@@ -316,8 +316,9 @@ GUI are here; more harnesses and integration adapters are on the
 
 **AGPL-3.0-only** — see [`LICENSE`](LICENSE) and [`LICENSING.md`](LICENSING.md).
 
-Running a workspace is unrestricted; the AGPL places no obligation on internal use. `packages/integration-sdk/` (the integration contracts) is **Apache-2.0** deliberately, and
-`.harness/` stays **MIT** — so writing an integration, or bootstrapping your own repo with
-`aios repo-bootstrap`, never licenses your code. Prior releases remain MIT, preserved in
+Running a workspace is unrestricted; the AGPL places no obligation on internal use. Two directories are **Apache-2.0** deliberately: `packages/integration-sdk/` (the
+integration contracts) and `.harness/` (which `aios repo-bootstrap` stamps into *your*
+repository) — so writing an integration, or bootstrapping your own repo, never licenses
+your code. Prior releases remain MIT, preserved in
 [`LICENSE-MIT`](LICENSE-MIT). If your organization's policy bans AGPL, there is a
 [free commercial license](COMMERCIAL-LICENSE.md) for internal use — email cn@fluora.ai.

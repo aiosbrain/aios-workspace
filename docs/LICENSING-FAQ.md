@@ -1,8 +1,8 @@
 # Licensing FAQ
 
 AIOS Workspace is licensed under the **GNU AGPL v3.0** (`AGPL-3.0-only`).
-`packages/integration-sdk/` is **Apache-2.0**, and the vendored `.harness/` remains **MIT**.
-All three are OSI-approved open source licenses.
+`packages/integration-sdk/` and the vendored `.harness/` are **Apache-2.0**.
+Both are OSI-approved open source licenses.
 
 This page answers the questions people actually ask. If yours isn't here, email
 **cn@fluora.ai** — we'd rather answer it than have you guess.
@@ -103,11 +103,9 @@ true.
 contracts, and a contract has to be freely implementable by anyone, including in
 closed-source software.
 
-`.harness/` remains **MIT**. It is a vendored copy of the AIOS engineering harness whose
-copyright notice names a legal entity rather than this repository's authors, so it was
-deliberately excluded from the relicense. It needed to stay permissive regardless: `aios
-repo-bootstrap` copies it into *your* repository, and copyleft there would attach to the
-repo being bootstrapped.
+`.harness/` is **Apache-2.0**, matching its upstream repository. `aios repo-bootstrap`
+copies it into *your* repository, and copyleft there would attach to the repo being
+bootstrapped — so it has to be permissive.
 
 Both are meant to end up inside someone else's system, and copyleft would defeat that.
 

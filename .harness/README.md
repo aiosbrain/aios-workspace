@@ -123,4 +123,8 @@ run `.harness/install.sh`, and fill in the blanks — no manual steps.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+**Apache-2.0** — see [`LICENSE`](LICENSE) and [`NOTICE`](NOTICE) in this directory.
+
+Permissive on purpose, and a deliberate exception to this repository's AGPL-3.0 default:
+`aios repo-bootstrap` copies this harness into *your* repository, so nothing here attaches
+to the code it guards or generates. Prior releases were MIT and remain MIT.
