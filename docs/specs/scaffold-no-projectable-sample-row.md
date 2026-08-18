@@ -1,0 +1,202 @@
+---
+eval_tier: full
+spec_gate: block
+safety: false
+type: issue-spec
+---
+
+# SAMPLEROW-1: a fresh workspace must not ship a task row that lands on someone's PM board
+
+## What / why
+
+`scripts/scaffold-project.sh:386` seeds every new workspace's `3-log/tasks-team.md` with one data
+row:
+
+```
+| TT1 | Example team task | $OWNER | ready | — | — | — |
+```
+
+That file is **team tier**, so `scripts/sync-plan.mjs` pushes it on the first `aios push`, the Team
+Brain materializes the row into `tasks`, and the brain's PM projector applies **no status filter and
+no audience filter** — so the row is projected into whatever PM tool the team connected. A sample
+row is therefore not inert: it is a work item on a real board.
+
+**What that has already cost, measured in the AIOS install's own production brain on 2026-08-18.**
+Until `aios-team-brain#588` (`ADOPTFOOT-1`, merged 2026-08-18) the brain's Linear adapter resolved an
+existing issue by the footer `aios-ext: <row_key>` alone, and `row_key` for this row is `TT1` in
+*every* workspace. So a fresh workspace's sample row did not create an issue — it **adopted** whoever
+already had one keyed `TT1`. Two of the nineteen projects in that brain (`chetan`, 2026-08-03;
+`acme-workspace`, 2026-08-16) adopted the same real issue, `AIO-444` ("Finish verified operator
+loop"), and renamed it: its production URL slug is now `…/AIO-444/example-team-task`. Three
+`task_pm_links` rows point at that one issue, each with a different projection fingerprint.
+
+`ADOPTFOOT-1` closed the adoption hole. It did **not** close this one — it converted the failure
+mode: a sample row that may no longer adopt someone's issue now **creates its own**. Every new
+workspace that connects a PM tool mints an "Example team task" issue on its board. Better than
+hijacking a colleague's ticket; still junk that a human has to clean up, in the one place a team
+looks to decide what to work on.
+
+The root cause is not in the brain's projector — the projector is doing exactly what it is asked. It
+is that the scaffold **ships work**. The fix is that the shipped table is empty.
+
+**Two adjacent hypotheses were tested and REFUTED before writing this, so nobody re-derives them:**
+
+- **The private sample row is not at risk.** `scripts/scaffold-project.sh:410` seeds
+  `| TP1 | Example private task | … |` into `3-log/tasks-private.md`, whose frontmatter is
+  `access: private`. `normalizeTier("private")` returns `"admin"`
+  (`packages/foundation/src/workspace-parse/core.mjs:34`), `scripts/sync-plan.mjs:167` blocks
+  `admin`, and the brain independently rejects it (`app/api/v1/items/route.ts:95`, 422
+  `forbidden_tier`). The production brain holds **zero** items from any `tasks-private` path and zero
+  `TP`-keyed tasks, which is the observable confirmation. TP1 stays.
+- **The projector's missing audience filter is unreachable.** A private/admin item cannot become a
+  task at all (same 422), and `tasks.audience` is the two-value `access_tier` enum — production shows
+  1,177 tasks, all `team`. There is no private-task-onto-a-shared-board leak here.
+
+**And one trap this spec exists to name, found by running the parser rather than reasoning about
+it.** The obvious fix — move the sample row into the illustrative `<!-- … -->` block already in that
+heredoc — **does not work**. `parseTaskRows` (`scripts/tasks-table.mjs`) is a line scanner with no
+HTML-comment awareness: it trims each line and takes any `|`-delimited line as a row. A commented,
+indented `| TT1 | … |` still parses, still syncs, still projects. Verified:
+
+```
+  | TT1 | Ship the thing | alex | ready | — | — | — |   → 1 row   (commented out; still parsed)
+e.g.  | TT1 | Ship the thing | alex | ready | — | — | — | → 0 rows (non-pipe prefix; invisible)
+```
+
+So the illustration must carry a non-pipe prefix — which is the convention the **same comment block
+already uses** for its optional-columns example (`e.g.  | ID | Task | …`). A fix that looked right
+and changed nothing is the specific outcome the acceptance criteria below are written to make
+impossible.
+
+**One consequence of an empty table, checked rather than assumed.** A task item pushed with `rows: []`
+is accepted (the brain's task payload schema is `rows(taskRowSchema).optional()` with no `.min(1)`;
+the local `validateItemPayload` accepts both `rows: []` and an omitted `rows`), and the brain's
+`materializeTasks` then runs its **project-wide diff-delete**: every `origin='sync'` task in that
+project whose `row_key` is absent from the push is deleted. In a freshly scaffolded workspace — the
+only state this change affects, since the scaffold refuses to write into a non-empty directory — there
+are no such tasks, so it is a no-op. The pre-existing behaviour for a workspace that empties an
+already-populated task file is unchanged by this slice and is not what this slice is about.
+
+## Outcomes
+
+- A freshly scaffolded workspace's first `aios push` sends the team task file with **zero** rows, so
+  no issue is created on the connected PM board by anything the scaffold shipped.
+- A reader of the scaffolded file still learns the row shape and the optional columns — the
+  illustration is preserved, in a form the parser cannot see.
+- A future contributor who re-adds a sample data row (or moves one into the comment block believing
+  that is inert) **fails CI**, with a message that says why the row is not free.
+- `AIO-524`'s guarantee — every sample item a fresh workspace ships is pushable — still holds, and its
+  em-dash date-shape coverage is unchanged.
+
+## Interface / integration points
+
+- `scripts/scaffold-project.sh` — line 386, the one data row, inside the heredoc that emits a fresh
+  workspace's team task file (lines 372–395). Lines 366–371 already warn that the em-dash normalization is load-bearing and
+  name the guard to re-run; this change is in that spirit.
+- `test/scaffold-push-item-validation.test.mjs` — `AIO-524`'s guard. It scaffolds all three contexts,
+  walks every syncable file exactly as `buildPlan` does, and validates each payload. Extended here,
+  not replaced.
+- `scripts/tasks-table.mjs` (`parseTaskRows`) — **not modified.** Teaching it to skip HTML comments
+  would be a parser change affecting every workspace's real files, to fix a problem the scaffold
+  should not create. Out of scope, and named as a non-goal below.
+- `packages/foundation/src/workspace-parse/core.mjs` (`normalizeTier`) and `scripts/sync-plan.mjs` —
+  read only, to establish that the private row is out of reach.
+- The Team Brain's PM projector — lib/pm-sync/project.ts in the aiosbrain/aios-team-brain repo, not
+  this one — is **not modified, and deliberately not depended on.** This slice removes the input; it
+  does not ask the brain to special-case a sample.
+
+## Dependencies
+
+Depends on: nothing in this repo. Sequenced **after** `aios-team-brain#588` (`ADOPTFOOT-1`, merged),
+which is what makes this the remaining defect rather than a lesser one — before it, an empty scaffold
+table would still have left two live hijacks in place, and the adoption rung would have re-formed
+them on the next push.
+
+Traceability: `SAMPLEROW-1` (brain row key; Linear `AIO-971`). Siblings, neither blocked by nor
+blocking this: `ADOPTUNIQ-1` (reconcile the two live hijacked links, then add the DB uniqueness
+backstop — needs a human call because detaching mints issues) and `ADOPTPLANE-1` (the same adoption
+defect in the Plane adapter, unreachable today at 1 Plane link against 959 Linear).
+
+## Scope
+
+**In:** one PR against `scripts/scaffold-project.sh` and `test/scaffold-push-item-validation.test.mjs`.
+
+1. Remove the single `TT1` data row from the `tasks-team.md` heredoc. The header and separator rows
+   stay — the table shape is part of the contract, and `parseTaskRows` returns `[]` for a
+   header-only table.
+2. Add the row's illustration to the existing comment block using the `e.g. ` prefix the block
+   already uses, plus two sentences stating that a row here becomes a real PM issue and that
+   commenting a row out does **not** make it inert.
+3. Add a guard to `test/scaffold-push-item-validation.test.mjs`: for each of the three contexts, the
+   scaffolded workspace yields **zero** parsed task rows across every syncable task file. This is the
+   inverse assertion — the walk today asserts every shipped row is *valid*, which an empty table
+   satisfies vacuously, so without this the invariant would be unpinned the moment it was created.
+
+**Deferred, with reasons:**
+
+- **The two live hijacked links are not repaired here.** They hold `provider_resource_id`, so they
+  resolve before any adoption rung and nothing in this repo touches them. `ADOPTUNIQ-1`.
+- **A brain-side "hold this task, never project it" capability** is the more general answer (it would
+  let a sample row exist in the brain but stay off the board) and is a schema + `brain-api` payload
+  change across two repos. Not justified by one scaffold row.
+- **`parseTaskRows` remains comment-blind.** Named as a non-goal above; this spec's acceptance
+  criteria are written so that the blindness cannot silently defeat the fix.
+- **`TP1` in `tasks-private.md` stays**, on the refuted-hypothesis evidence above: it cannot reach the
+  brain, so removing it would delete an illustration for zero safety gain.
+
+## Implementation approach
+
+Single-file behaviour change plus its guard; the ordering is guard-first so the guard is proven to
+have teeth against the *current* scaffold before the scaffold changes.
+
+1. Add the zero-task-rows guard first and watch it **fail** against today's scaffold (it must report
+   the shipped `TT1`). A guard that is written after the fix cannot distinguish "invariant holds" from
+   "assertion never ran".
+2. Edit the heredoc: drop the data row, extend the comment block.
+3. Re-run the guard — now green — plus the whole `AIO-524` suite for all three contexts.
+4. Mutation-verify: re-insert the row inside the comment block (the plausible wrong fix) and confirm
+   the new guard **reddens**. This is the mutation that matters, because that edit is what a
+   reasonable contributor would try.
+
+## Acceptance criteria
+
+### Automated
+
+- `node --test test/scaffold-push-item-validation.test.mjs` passes, including a new per-context case
+  asserting that every syncable `kind === "task"` file in a freshly scaffolded workspace parses to
+  **zero** rows.
+- `node --test test/scaffold-push-item-validation.test.mjs` still passes its existing three
+  `every sample item pushes clean` cases — an empty task table must not break payload validation
+  (confirmed already: the brain's task schema is `rows(taskRowSchema).optional()`, no `.min(1)`, and
+  the local `validateItemPayload` accepts both `rows: []` and an omitted `rows`).
+- `node --test test/scaffold-push-item-validation.test.mjs` still passes the standalone
+  `a '—' placeholder cell normalizes to null…` case, which pins the `AIO-524` date shape from its own
+  fixture and therefore does not depend on the shipped row.
+- `grep -c '| TT1 |' scripts/scaffold-project.sh` returns `0`.
+- `grep -q 'e.g.  | TT1' scripts/scaffold-project.sh` exits 0 — the illustration is present in the
+  parser-invisible form, not merely deleted.
+- `node --test test/task-tier-split.test.mjs test/transcripts.test.mjs` passes — these write their own
+  `TT1` rows and must be unaffected by the scaffold no longer shipping one.
+- `npm test` passes.
+- **Mutation:** re-inserting `  | TT1 | Example team task | alex | ready | — | — | — |` inside the
+  comment block makes the new zero-rows case **fail**, and restoring makes it pass.
+
+### Manual
+
+- `bash scripts/scaffold-project.sh --context consultant --slug tmp-ws … --output <tmpdir>`, then read
+  `3-log/tasks-team.md`: the table has a header and no rows, and the comment block still shows the row
+  shape and the optional columns.
+- In that scaffolded workspace, `aios push --dry-run` lists `3-log/tasks-team.md` with `rows=0` rather
+  than omitting it or erroring.
+
+## Build-with
+
+Build-with: Sonnet 5, medium effort. One heredoc edit plus one guard; the only subtlety — that a
+commented row is still parsed — is already measured and written down above.
+
+## Tier safety
+
+No tier boundary moves. The team task file stays `access: team`; the private file is untouched and
+stays out of reach of the brain (`normalizeTier("private") === "admin"`). Nothing here changes what
+syncs, only what the scaffold puts in a file that already synced. The change strictly **reduces**
+what leaves a fresh workspace on its first push, from one row to none.
