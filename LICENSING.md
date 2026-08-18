@@ -1,9 +1,9 @@
 # Licensing
 
 AIOS Workspace is open source. The workspace itself is under the **GNU Affero General
-Public License v3.0 only** (`AGPL-3.0-only`); `packages/integration-sdk/`, which is meant to
-end up inside other people's software, is under the **Apache License 2.0**. `.harness/` is
-vendored third-party-held code and remains **MIT**.
+Public License v3.0 only** (`AGPL-3.0-only`); the two directories meant to end up inside
+other people's repositories — `packages/integration-sdk/` and `.harness/` — are under the
+**Apache License 2.0**.
 
 Both are OSI-approved, and both are listed by the FSF as free software licenses.
 
@@ -17,28 +17,23 @@ Copyright (C) 2026 Chetan Nandakumar and John Ellison.
 | --- | --- | --- |
 | `src/`, `scripts/`, `bin/`, `packages/foundation/`, `evals/`, `test/`, and everything else not listed below | `AGPL-3.0-only` | The workspace application and its library. |
 | `packages/integration-sdk/` | `Apache-2.0` | The normative integration contracts — JSON schemas, capability and compatibility declarations, invariants, fixtures. A contract an integration author writes against has to be freely implementable by anyone, including in closed-source software. |
-| `.harness/` | **`MIT` (unchanged)** | A vendored copy of [`aios-engineering-harness`](https://github.com/aiosbrain/aios-engineering-harness). Its copyright notice names **Pravos LLC (Vibrana / AIOS)**, not the authors of this repository, so it was deliberately left out of this relicense. See below. |
+| `.harness/` | `Apache-2.0` | A vendored copy of [`aios-engineering-harness`](https://github.com/aiosbrain/aios-engineering-harness), which is Apache-2.0 upstream, and which `aios repo-bootstrap` stamps into **target repositories** as their own `.harness`. See below. |
 
-**Why `.harness/` was not relicensed.** Two independent reasons, and the second is the
-binding one.
-
-First, on the merits it must stay permissive whatever happens: `aios repo-bootstrap` copies
-that directory into a consuming repository as that repo's own harness. If it were copyleft,
+**Why `.harness/` is Apache-2.0 and not AGPL.** `aios repo-bootstrap` copies that
+directory into a consuming repository as that repo's own harness. If it were copyleft,
 bootstrapping a workspace would attach the AGPL to the repository being bootstrapped — which
 would make the harness unadoptable and is the exact opposite of what a drop-in harness is
-for. MIT already delivers that guarantee, so leaving it alone costs nothing.
+for. Keeping it aligned with its upstream license also keeps the two copies syncable in both
+directions, rather than making every sync a licensing question.
 
-Second, and decisively: `.harness/LICENSE` names **Pravos LLC (Vibrana / AIOS)** as the
-copyright holder — a legal entity, not the individual authors named at the top of this file.
-Relicensing code held by an entity is that entity's decision, so it is not ours to make here.
-The licence terms of that directory are therefore unchanged and it remains MIT.
-
-The one edit made inside it is a factual correction, not a licensing change:
-`.harness/modules/aios-cli/README.md` described *this* repository as MIT, which stops being
-true the moment this lands. The same sentence needs the same fix in the upstream harness
-repository, and that is tracked separately along with the Pravos question. This does not weaken anything: MIT is
-permissive, it composes into an AGPL work without friction, and it satisfies the
-dependency-direction rule below for the same reason Apache-2.0 would.
+This directory was initially held back from the relicense: its LICENSE named **Pravos LLC
+(Vibrana / AIOS)**, a legal entity rather than the individual authors, and relicensing code
+an entity holds is that entity's decision rather than an assumption to make. The copyright
+holders have since authorised it. The prior MIT notice is preserved verbatim in
+`.harness/LICENSE-MIT`, naming Pravos LLC, as the MIT License requires. Nothing anyone
+received under the earlier terms is weakened: MIT was permissive, it composed into an AGPL
+work without friction, and it satisfied the dependency-direction rule below for the same
+reason Apache-2.0 does.
 
 Prior releases were published under the MIT License. **They remain MIT** — the change is
 going-forward only and takes nothing away. That text is preserved verbatim in
@@ -54,7 +49,7 @@ however many people use it, however much you modify it. A workspace is plain fil
 repository you already own.
 
 **Bootstrapping your repo with the harness does not license your repo.** `.harness/` is
-MIT, which guarantees exactly that.
+Apache-2.0, which guarantees exactly that.
 
 **Writing an integration against the contracts does not license your integration.**
 `packages/integration-sdk/` is Apache-2.0 for the same reason.
@@ -84,7 +79,7 @@ repo may not depend on an AGPL-3.0 one.
 
 In practice, for this repository:
 
-- `packages/integration-sdk/` (Apache-2.0) and `.harness/` (MIT) **must not** import from
+- `packages/integration-sdk/` and `.harness/`, both Apache-2.0, **must not** import from
   `src/`, `scripts/`, `bin/`, or `packages/foundation/`. Neither does today: the integration
   SDK is JSON data with nothing to import from, and the harness is shell and markdown that
   shells out to user-installed CLIs.
@@ -106,5 +101,4 @@ In practice, for this repository:
 ## Contributing
 
 Contributions are accepted under `AGPL-3.0-only`, or `Apache-2.0` for
-`packages/integration-sdk/`. `.harness/` remains MIT — see above. See
-[`CONTRIBUTING.md`](CONTRIBUTING.md).
+`packages/integration-sdk/` and `.harness/`. See [`CONTRIBUTING.md`](CONTRIBUTING.md).

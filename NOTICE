@@ -3,7 +3,7 @@ Copyright (C) 2026 Chetan Nandakumar and John Ellison
 
 This software is licensed under the GNU Affero General Public License v3.0 only
 (AGPL-3.0-only), except for the directories listed in LICENSING.md, which are licensed
-under the Apache License 2.0 or, in the case of the vendored .harness/, remain MIT.
+under the Apache License 2.0.
 
 The grant is version 3 ONLY, not "version 3 or (at your option) any later version": a
 future FSF revision does not apply to this software on its own. The LICENSE file is the
@@ -32,21 +32,13 @@ Apache-2.0 directories within this repository
 ---------------------------------------------
 
 packages/integration-sdk/  — the normative integration contracts (data, not code)
-packages/integration-sdk/  carries its own LICENSE and NOTICE explaining why.
+.harness/                  — a vendored copy of aiosbrain/aios-engineering-harness,
+                             which `aios repo-bootstrap` stamps into target repositories
 
-
-Vendored code NOT covered by this relicense
--------------------------------------------
-
-.harness/  — MIT License, Copyright (c) 2026 Pravos LLC (Vibrana / AIOS)
-
-    A vendored copy of aiosbrain/aios-engineering-harness. Its copyright is held by a
-    legal entity rather than by the authors of this repository, so it was deliberately
-    excluded from the relicense and remains MIT under its existing notice. The only edit
-    made inside that directory is a factual correction to a sentence describing THIS
-    repository's license; no licence term of the vendored code was changed. `aios
-    repo-bootstrap` copies it into target repositories; MIT means doing so places no
-    obligation on the repository receiving it.
+Each carries its own LICENSE and NOTICE explaining why. `.harness/` was initially held back
+from the relicense because its notice named Pravos LLC (Vibrana / AIOS), a legal entity
+rather than this repository's authors; the copyright holders have since authorised it, and
+the prior MIT notice is preserved verbatim in .harness/LICENSE-MIT.
 
 
 Third-party components

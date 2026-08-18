@@ -159,8 +159,7 @@ issue tracker.
 ## Licensing of contributions
 
 Contributions are accepted under **AGPL-3.0-only**, or **Apache-2.0** for
-`packages/integration-sdk/`. `.harness/` is vendored and remains MIT — see
-[`LICENSING.md`](LICENSING.md). A
+`packages/integration-sdk/` and `.harness/` — see [`LICENSING.md`](LICENSING.md). A
 Contributor License Agreement will be introduced once our company is formed, at which point
 contributors will be asked to sign one.
 
