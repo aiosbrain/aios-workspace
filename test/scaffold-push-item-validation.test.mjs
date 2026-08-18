@@ -204,11 +204,15 @@ for (const context of ["consultant", "employee", "business-owner"]) {
 // file from `sync_include` and a walker-based guard stays green while nothing syncs; add a team-tier
 // task-shaped file outside it and the guard fails for a file that can never reach a board.
 function pushPlanLines(repo) {
-  const stdout = execFileSync(process.execPath, [path.join(ROOT, "scripts", "aios.mjs"), "push", "--dry-run"], {
-    cwd: repo,
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"],
-  });
+  const stdout = execFileSync(
+    process.execPath,
+    [path.join(ROOT, "scripts", "aios.mjs"), "push", "--dry-run"],
+    {
+      cwd: repo,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    }
+  );
   return stdout.split("\n");
 }
 
@@ -261,7 +265,10 @@ for (const context of ["consultant", "employee", "business-owner"]) {
         if (!item) break; // first non-list-item line ends the block
         syncInclude.push(item[1]);
       }
-      assert.ok(syncInclude.includes("3-log/tasks-team.md"), `sync_include parsed wrong: ${syncInclude}`);
+      assert.ok(
+        syncInclude.includes("3-log/tasks-team.md"),
+        `sync_include parsed wrong: ${syncInclude}`
+      );
       assert.deepEqual(
         syncInclude.filter((p) => p.includes("tasks-private")),
         [],
