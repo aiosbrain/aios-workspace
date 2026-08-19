@@ -28,17 +28,37 @@ import { readFileSync, statSync, openSync, readSync, closeSync } from "node:fs";
 const TAIL_BYTES = 128 * 1024;
 
 /** Assertions that something previously broken is now good. Deliberately narrow: these are claims,
- *  not descriptions. "I'm fixing" and "should work" are not here. */
+ *  not descriptions. "I'm fixing" is not here.
+ *
+ *  NOTE ON SHAPE: the words "verified", "confirmed" and "resolved" are NOT matched bare. Measured
+ *  over 150 turn-final assistant messages from real transcripts, bare forms fired on 8.7% of them —
+ *  and almost none were claims: "I have not verified this yet", "confirmed with John that…", "the
+ *  import path resolved to…", "the promise resolved before the timeout", "once you've confirmed the
+ *  credentials". They are only claims in predicate position ("is resolved", "now confirmed"), so
+ *  that is all we match. Same anchoring reason keeps this list free of bare "done" and "fixed". */
 const CLAIM_RE =
-  /\b(?:it works|now works|working now|verified|confirmed|fully (?:working|extracted|fixed)|is fixed|now fixed|resolved|all green|is live and working|proved? out|succeeded)\b/i;
+  /\b(?:it (?:now )?works|now works|working now|works (?:now|as expected|correctly)|(?:is|are|it'?s|that'?s|now|fully)\s+(?:verified|confirmed|resolved|fixed|working)|fully (?:working|extracted|fixed)|all green|all set|good to go|should be good|the fix is in|that did it|proved? out|is live and working|succeeded|(?:all )?tests (?:now )?pass(?:ing)?\b)/i;
+
+/** Hedges and conditionals. A claim word inside the SAME clause as one of these is not an assertion —
+ *  it is a denial ("not verified"), a condition ("if it is resolved"), or a request ("once you've
+ *  confirmed"). Checked against the text between the previous clause break and the match. */
+const HEDGE_RE =
+  /\b(?:not|never|isn'?t|aren'?t|wasn'?t|weren'?t|hasn'?t|haven'?t|hadn'?t|don'?t|doesn'?t|didn'?t|can'?t|cannot|couldn'?t|won'?t|unable|unclear|if|whether|once|when|unless|until|assuming|hope|hoping|need|needs|needed|would|might)\b/i;
+
+function hedged(text, idx) {
+  let start = -1;
+  for (const ch of [".", "\n", "!", "?", ";", ",", ":"])
+    start = Math.max(start, text.lastIndexOf(ch, idx - 1));
+  return HEDGE_RE.test(text.slice(start + 1, idx));
+}
 
 /** Signs a measurement actually happened — a number, a table, a command, a quoted result. If any of
  *  these are present the message is showing its work, and the reminder would be noise. */
 const EVIDENCE_RE = [
-  /\d+\s*\/\s*\d+/,            // 9/56 style progress
-  /\bHTTP\s*\d{3}\b/i,          // status codes
-  /```/,                        // a quoted command or output block
-  /\|\s*-{2,}/,                 // a markdown table separator
+  /\d+\s*\/\s*\d+/, // 9/56 style progress
+  /\bHTTP\s*\d{3}\b/i, // status codes
+  /```/, // a quoted command or output block
+  /\|\s*-{2,}/, // a markdown table separator
   /\b(?:before|baseline)\b[^.]{0,40}\b(?:after|now)\b/i, // an explicit before/after
   /\bcount\s*[=:]\s*\d+/i,
   /\b\d+\s+(?:tests?|rows?|items?|episodes?|records?|facts?|passed)\b/i,
@@ -101,6 +121,7 @@ function main() {
 
   const claims = CLAIM_RE.exec(text);
   if (!claims) return;
+  if (hedged(text, claims.index)) return; // negated, conditional, or asking — not an assertion
   if (EVIDENCE_RE.some((re) => re.test(text))) return; // it showed its work
 
   const systemMessage =
