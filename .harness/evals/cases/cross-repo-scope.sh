@@ -67,5 +67,15 @@ printf '#!/bin/sh\n' > "$LIBSB/.harness/hooks/repo-scope.sh"
 tlib "truncated scope lib blocks, never passes"  3
 rm -f "$LIBSB/.harness/hooks/repo-scope.sh"
 tlib "missing scope lib blocks, never passes"    3
+cp "$H/repo-scope.sh" "$LIBSB/.harness/hooks/repo-scope.sh"
+# shell-parse.sh (the quote-aware command scanners, extracted from guard-worktree.sh)
+# is held to the same rule: a truncated lib sources cleanly and leaves the scanners
+# undefined, which would yield an EMPTY write-candidate list — enforcement dropped in
+# silence. It must be exit 3, exactly like a truncated repo-scope.sh.
+tlib "intact parse lib polices the guarded repo" 2
+printf '#!/bin/sh\n' > "$LIBSB/.harness/hooks/shell-parse.sh"
+tlib "truncated parse lib blocks, never passes"  3
+rm -f "$LIBSB/.harness/hooks/shell-parse.sh"
+tlib "missing parse lib blocks, never passes"    3
 rm -rf "$LIBSB"
 

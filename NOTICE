@@ -1,0 +1,55 @@
+AIOS Workspace
+Copyright (C) 2026 Chetan Nandakumar and John Ellison
+
+This software is licensed under the GNU Affero General Public License v3.0 only
+(AGPL-3.0-only), except for the directories listed in LICENSING.md, which are licensed
+under the Apache License 2.0.
+
+The grant is version 3 ONLY, not "version 3 or (at your option) any later version": a
+future FSF revision does not apply to this software on its own. The LICENSE file is the
+verbatim FSF text with a copyright line and nothing else, so that automated license
+detection recognises it; this NOTICE, LICENSING.md and the package manifests are where
+the version choice is recorded.
+
+Earlier releases were published under the MIT License, reproduced in LICENSE-MIT, and
+those releases remain available under those terms.
+
+This file records third-party components carrying an attribution or notice obligation. It
+is not a complete dependency list — see package.json and package-lock.json for that.
+
+
+Published packages
+------------------
+
+@aiosbrain/aios          — AGPL-3.0-only (this repository root)
+@aiosbrain/foundation    — AGPL-3.0-only (packages/foundation)
+
+`packages/foundation` is AGPL. Anything depending on it must therefore also be AGPL —
+including aiosbrain/aios-devtools, which does. See LICENSING.md.
+
+
+Apache-2.0 directories within this repository
+---------------------------------------------
+
+packages/integration-sdk/  — the normative integration contracts (data, not code)
+.harness/                  — a vendored copy of aiosbrain/aios-engineering-harness,
+                             which `aios repo-bootstrap` stamps into target repositories
+
+Each carries its own LICENSE and NOTICE explaining why. `.harness/` was initially held back
+from the relicense because its notice named Pravos LLC (Vibrana / AIOS), a legal entity
+rather than this repository's authors; the copyright holders have since authorised it, and
+the prior MIT notice is preserved verbatim in .harness/LICENSE-MIT.
+
+
+Third-party components
+----------------------
+
+The dependency tree is predominantly MIT / ISC / BSD / Apache-2.0. None carries a copyleft
+obligation that conflicts with distributing this work under the AGPL.
+
+fast-check — MIT License
+    https://github.com/dubzzz/fast-check
+    Property-based testing. Single transitive dependency, pure-rand (MIT).
+
+Model-provider and platform CLIs the workspace shells out to (git, gh, and the coding
+agents) are installed by the user and are not redistributed here.

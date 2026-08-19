@@ -56,11 +56,15 @@ aios-workspace/
 ## Install the current stable workspace
 
 For onboarding, clone the immutable public release rather than the moving `main`
-branch:
+branch. Resolve the newest tag instead of typing a version, so this never points
+at a superseded release:
 
 ```bash
-git clone --branch v0.10.0 --depth 1 \
-  https://github.com/aiosbrain/aios-workspace.git aios-toolkit
+REPO=https://github.com/aiosbrain/aios-workspace.git
+LATEST=$(git ls-remote --tags --refs --sort=-v:refname "$REPO" 'v*' \
+  | head -1 | sed 's#.*refs/tags/##')
+
+git clone --branch "$LATEST" --depth 1 "$REPO" aios-toolkit
 cd aios-toolkit
 ```
 
@@ -119,10 +123,23 @@ scripts/scaffold-project.sh --context employee \
 (Legacy flags still work: `--profile engagement` maps to `--context consultant`,
 and `--lead`/`--captain`/`--client`/`--members` are accepted as aliases.)
 
-Validate any workspace:
+Validate any workspace — from anywhere, including from inside the workspace itself:
 
 ```bash
-validation/validate-all.sh ~/Projects/acme-workspace
+aios validate                                  # the workspace you are standing in
+aios validate ~/Projects/acme-workspace        # or name one
+aios validate --critical                       # OGR03 secrets scan only
+```
+
+`aios validate` resolves the validators inside whichever toolkit is installed, so a
+global npm install does not need
+`$(npm root --global)/@aiosbrain/aios/validation/validate-all.sh` — a path that differs
+per Node install manager (nvm, fnm, Homebrew, Windows). The
+underlying script is still directly runnable **from a toolkit checkout**, pointed at a
+workspace — a scaffolded workspace has no `validation/validate-all.sh` of its own:
+
+```bash
+validation/validate-all.sh ~/Projects/acme-workspace   # run from the toolkit checkout
 ```
 
 Run a harness (via Claude Code's Workflow tool) against the included sample:
@@ -297,4 +314,11 @@ GUI are here; more harnesses and integration adapters are on the
 
 ## License
 
-[MIT](LICENSE).
+**AGPL-3.0-only** — see [`LICENSE`](LICENSE) and [`LICENSING.md`](LICENSING.md).
+
+Running a workspace is unrestricted; the AGPL places no obligation on internal use. Two directories are **Apache-2.0** deliberately: `packages/integration-sdk/` (the
+integration contracts) and `.harness/` (which `aios repo-bootstrap` stamps into *your*
+repository) — so writing an integration, or bootstrapping your own repo, never licenses
+your code. Prior releases remain MIT, preserved in
+[`LICENSE-MIT`](LICENSE-MIT). If your organization's policy bans AGPL, there is a
+[free commercial license](COMMERCIAL-LICENSE.md) for internal use — email cn@fluora.ai.

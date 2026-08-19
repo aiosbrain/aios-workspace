@@ -47,7 +47,7 @@ node .claude/descriptors/skills/granola-direct/granola-pull.mjs \
 | `--limit` | cap how many notes are pulled (default 25) |
 | `--match` | only write meetings whose **title or participants** contain SUBSTR (case-insensitive) — target one engagement without dumping everything |
 | `--access` | frontmatter `access:` tier for written files (default `team`; use `private` for sensitive/prospect calls) |
-| `--speaker` | label for the non-microphone party on 1:1 calls (default `Speaker`) — e.g. `--speaker "Abdul Bahri"` |
+| `--speaker` | label for the non-microphone party on 1:1 calls (default `Speaker`) — e.g. `--speaker "Jordan Ellis"` |
 | `--local` | force the local-app-token path (skip the public API) |
 | `--force` | explicitly replace an existing transcript's content while preserving its local `access:` tier |
 | `--dry-run` | list what would be written without touching the filesystem |

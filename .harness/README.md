@@ -83,7 +83,7 @@ mkdir -p .claude/agents && cp -R .harness/agents/. .claude/agents/
 # make EVERY hook + adapter script executable (all runtimes, not just claude)
 chmod +x .harness/hooks/*.sh .harness/hooks/git/install-primary-commit-guard.sh \
   .harness/adapters/run-hook.sh .harness/adapters/*/normalize.sh \
-  .harness/adapters/cursor/stop-gate.sh
+  .harness/adapters/cursor/stop-gate.sh .harness/adapters/cursor/dispatch.sh
 # MERGE (never overwrite) .harness/adapters/claude-code/settings.json into
 # .claude/settings.json — keep your existing hooks/permissions keys. If a target
 # already exists, create a separate merge file or abort; never replace it in place.
@@ -123,4 +123,8 @@ run `.harness/install.sh`, and fill in the blanks — no manual steps.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+**Apache-2.0** — see [`LICENSE`](LICENSE) and [`NOTICE`](NOTICE) in this directory.
+
+Permissive on purpose, and a deliberate exception to this repository's AGPL-3.0 default:
+`aios repo-bootstrap` copies this harness into *your* repository, so nothing here attaches
+to the code it guards or generates. Prior releases were MIT and remain MIT.

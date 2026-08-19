@@ -11,6 +11,62 @@ so the policies' native exit codes flow straight through `run-hook.sh` — no
 permission-JSON translation is needed for edits or commands. `failClosed: true` on the
 safety hooks makes an unexpected hook failure block rather than fall open.
 
+## Which repo a hook applies to (payload-cwd dispatch)
+
+This is the one place Cursor differs structurally from the other runtimes, and getting
+it wrong produced both of the failure modes people actually hit.
+
+`.codex/hooks.json` resolves `git rev-parse --show-toplevel` **per invocation**. Claude
+Code uses `${CLAUDE_PROJECT_DIR}`, which is correct because a Claude session is
+single-root by construction. Cursor's `${CURSOR_PROJECT_DIR}` is **one root, chosen when
+the window opened** — in a multi-root window it may name a repo the agent is not
+touching, and one that vendors no harness at all. Keying the dispatch on it meant:
+
+- anchored on a repo without the harness → the marker test found nothing → **exit 0, the
+  guards never ran**, silently, for the whole session; and
+- an unwrapped `/bin/sh <path that does not exist>` → exit 127 → `failClosed` → **every
+  edit and shell call in the session denied**.
+
+Cursor does send a real `.cwd` for `beforeShellExecution` and `preToolUse` — `normalize.sh`
+already prefers it (`cwd: (.cwd // $cwd)`); only the dispatch decision ignored it. So each
+entry in `hooks.json` is now a **locator**: read stdin once, resolve the repo root from the
+payload, check the marker there, re-emit the captured payload into `cursor/dispatch.sh`.
+Everything past that decision is in `dispatch.sh`, which is tracked and testable rather
+than nine copies of a one-liner. `dispatch.sh` re-exports `CURSOR_PROJECT_DIR` as the
+resolved root so `normalize.sh`'s own fallback agrees with the dispatch decision.
+
+`${CURSOR_PROJECT_DIR}` survives as the **second** candidate, never a replacement:
+
+| Event | Location signal used |
+|---|---|
+| `beforeShellExecution`, `preToolUse` | payload `.cwd` (the fix) |
+| `afterFileEdit` | payload `.file_path`'s directory — the only location it carries |
+| `stop`, `sessionStart` | the window anchor: these are session-scoped and no per-repo answer exists |
+
+The payload cwd is read with **`jq`**, so `.cwd` means the top-level field and nothing
+else — a nested `cwd` in a tool argument, or a string that merely looks like one, is
+ordinary data. A `sed` fallback exists purely so the dispatch decision does not *require*
+`jq`, and it cannot be used to slip past a guard: with `jq` absent, `dispatch.sh` degrades
+every hook before the resolved root can influence anything (see below), so the fallback
+only ever picks which root receives a decision that is already fixed.
+
+Marker absent at every candidate → exit 0. Marker present but the dispatcher missing →
+exit 3, so a deleted guard is loud rather than silently unenforced.
+
+## Missing `jq` is an environment failure, not a policy violation
+
+Every portable policy parses its event with `jq` and answered a missing `jq` with exit 3,
+which the adapter maps to a native block. On Claude Code and Codex that costs one tool
+call. On Cursor, `failClosed: true` turns it into a deny for **every** edit and shell call
+in the session — including `brew install jq`, so the deadlock cannot be cleared from
+inside the session that hit it.
+
+`adapters/jq-preflight.sh` holds the decision: name the missing tool, say how to install
+it, say plainly that the guards are not enforcing, then **allow**. Loudly unenforced,
+never silently unenforced, never bricked — and the commit-time backstop
+(`hooks/git/pre-commit-primary-guard`) does not depend on `jq`. Set `HARNESS_REQUIRE_JQ=1`
+to fail closed on a missing interpreter instead.
+
 ## Event mapping
 
 | Harness event | Cursor hook | Policies | Blocks? |
@@ -58,7 +114,8 @@ overwrite a pre-existing merge artifact.
 ## Honest limitations / thin spots
 
 - **`afterFileEdit` carries no `cwd`** and cannot block (the edit already landed); it is
-  used only for non-blocking formatting. `cwd` falls back to `${CURSOR_PROJECT_DIR:-$PWD}`.
+  used only for non-blocking formatting. Dispatch locates it by its `file_path`, and the
+  normalized event's `cwd` falls back to the dispatch-resolved root.
 - **`preToolUse` `tool_input` shape** for the built-in edit tools is normalized
   defensively (`file_path` / `filePath` / `path` / `target_file`, plus `content`,
   `new_string`, `newString`, and edit-array aliases). If a future Cursor build renames

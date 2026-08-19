@@ -339,6 +339,8 @@ ts "strict blocks unzip -d into primary"         2 "$(wpc "$WT/wt" "unzip /tmp/a
 ts "strict blocks unzip attached -d into primary" 2 "$(wpc "$WT/wt" "unzip /tmp/a431.zip -d$WT")"
 ts "strict allows tar CREATE reading from primary" 0 "$(wpc "$WT/wt" "tar -cf /tmp/b431.tar -C $WT a.txt")"
 ts "strict allows tar extract outside primary"   0 "$(wpc "$WT/wt" 'tar -C /tmp -xf /tmp/a431.tar')"
+
+. "$(dirname "$0")/cases/aio-864-token-shatter.sh"
 # a move DESTINATION into the primary is a write into it (.to on normalized events)
 ts "strict blocks move .to destination in primary" 2 "$(jq -cn --arg cwd "$WT/wt" --arg p /tmp/x431.txt --arg to "$WT/moved431.txt" '{protocol_version:"1.0",event:"pre_edit",runtime:{name:"mock"},cwd:$cwd,paths:[{path:$p,action:"update",to:$to}],added_content:[]}')"
 # cursor adapter maps Move/Rename destination keys into paths[]

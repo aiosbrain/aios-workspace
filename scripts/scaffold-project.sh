@@ -361,14 +361,12 @@ type: "Decision Log"
 |---|------|----------|-----------|------------|--------|------|----------|
 EOF
 
-# AIO-524: the example row's \`Due\` cell below is the workspace-wide "no value" sentinel
-# (\`—\`, em dash), same as every other placeholder cell in this file's tables. That's safe ONLY
-# because scripts/tasks-table.mjs's parseTaskRows() (and scripts/workspace-parse.mjs's decision
-# row parser) normalize a bare \`—\` to null for date-shaped fields (\`due\`/\`decided_at\`) — those
-# two fields alone flow into a Postgres \`date\` column on the Team Brain and previously
-# round-tripped the literal em dash straight into a push payload, 500ing on the very first
-# \`aios push\`. If you ever touch that normalization, re-run
-# test/scaffold-push-item-validation.test.mjs against all three contexts first.
+# AIO-524: \`—\` in \`Due\`/\`decided_at\` is safe ONLY because parseTaskRows (scripts/tasks-table.mjs)
+# and the decision row parser normalize it to null — those two fields alone reach a Postgres \`date\`
+# column on the Team Brain, which 500s on a literal em dash.
+# SAMPLEROW-1: the table below must ship NO data rows; each becomes a real issue on the team's PM
+# board (and pre aios-team-brain#588, ADOPTED any existing issue keyed \`TT1\` — two projects did that
+# to one real issue). Both guarded by test/scaffold-push-item-validation.test.mjs, all three contexts.
 idx "$OUTPUT/$D_LOG/tasks-team.md" << EOF
 ---
 access: team
@@ -377,19 +375,21 @@ scope: $SLUG
 ---
 # Team Tasks — $STAKEHOLDER
 
-Tasks visible to the team — this file syncs to the Team Brain (\`aios push\`) and
-projects into the connected PM tool. Anything you don't want the team or the
-brain to see belongs in \`tasks-private.md\` or \`../$D_PERSONAL/tasks.md\` instead.
+Tasks visible to the team — this file syncs to the Team Brain (\`aios push\`) and projects into the
+connected PM tool. Anything the team/brain must not see goes in \`tasks-private.md\` or \`../$D_PERSONAL/tasks.md\`.
 
 | ID | Task | Assignee | Status | Sprint | Due | Linear |
 |----|------|----------|--------|--------|-----|--------|
-| TT1 | Example team task | $OWNER | ready | — | — | — |
 
 <!--
-Optional columns (brain-api v1.2) — add any of these to project a structured board into your
-PM tool (Plane/Linear): \`Parent\` (the epic's ID), \`Labels\` (comma-separated), \`Priority\`
-(none|low|medium|high|urgent). The columns above stay valid on their own. A task's long
-description/body is edited in the brain dashboard — it does not live in this table.
+This table ships EMPTY on purpose: every row syncs to the brain, which projects it onto your PM board
+as a REAL issue — write your own first row above. The \`e.g.\` prefix below is load-bearing: the parser
+reads ANY trimmed line starting with \`|\` as a row, comment or not, so commenting one out does NOT work.
+e.g.  | TT1 | Ship the onboarding fix | $OWNER | ready | — | — | — |
+
+Optional columns (brain-api v1.2) — project a structured board into your PM tool (Linear) with
+\`Parent\` (the epic's ID), \`Labels\` (comma-separated), \`Priority\` (none|low|medium|high|urgent). The
+columns above stay valid on their own; a task's long body is edited in the brain dashboard, not here.
 e.g.  | ID | Task | Assignee | Status | Sprint | Due | Linear | Parent | Labels | Priority |
 -->
 EOF
@@ -651,14 +651,12 @@ if [ -d "$SCAFFOLD/.opencode" ]; then
   [ -f "$OUTPUT/.opencode/.gitignore" ] || echo "node_modules/" > "$OUTPUT/.opencode/.gitignore"
 fi
 
-# Governance guard: ship the PreToolUse hook + its secret patterns + the hook
-# registration so Claude Code's native guard (secrets / tier leaks / frontmatter)
-# fires in this workspace, not just in the toolkit repo. The hook reads stdin
-# JSON and blocks with exit 2.
-mkdir -p "$OUTPUT/hooks" "$OUTPUT/validation"
-cp "$REPO_ROOT/hooks/team-ops-guard.sh" "$OUTPUT/hooks/team-ops-guard.sh"
-chmod +x "$OUTPUT/hooks/team-ops-guard.sh"
-cp "$REPO_ROOT/validation/secret-patterns.txt" "$OUTPUT/validation/secret-patterns.txt"
+# Governance surface: the PreToolUse guard hook, its secret patterns, and the validators this
+# workspace's own .claude/ docs cite (AIO-965). All of it lives in scaffold-validators.sh — one
+# cohesive concern, and this file is at its grandfathered size cap. The shipped list is kept in
+# lockstep with MANAGED_PATHS in scripts/toolkit-manifest.mjs, which is how EXISTING workspaces
+# get the same set via `aios update`; OGR16 fails the build if the two diverge.
+bash "$SCRIPT_DIR/scaffold-validators.sh" "$REPO_ROOT" "$OUTPUT"
 
 # Operator-loop capture hooks (AIO-167/AIO-170/AIO-293): dependency-free hooks shipped
 # standalone so IC workspaces auto-capture asks + steering decisions without the toolkit.

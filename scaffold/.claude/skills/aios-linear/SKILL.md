@@ -48,11 +48,11 @@ LIN="dotenvx run --quiet -f .env -- node .claude/skills/aios-linear/linear.mjs"
 $LIN get AIO-75                 # one line: identifier, title, state, id
 $LIN get AIO-75 --full         # + url + full metadata + description + comments
 $LIN export-desc AIO-75 spec.md # exact UTF-8 description + SHA-256
-$LIN verify-desc AIO-75 spec.md # refetch + byte-compare description, print UTF-8 SHA-256
+$LIN verify-desc AIO-75 spec.md # refetch + compare description (content, not bytes)
 $LIN template aios              # print issue scaffold
 $LIN create "My slice" --template aios --state Triage
-$LIN set-desc AIO-75 spec.md   # replace description from a file
-$LIN patch-desc AIO-75 patch.md  # SEARCH/REPLACE blocks — partial update
+$LIN set-desc AIO-75 spec.md [--force]  # replace description; force bypasses the table lint
+$LIN patch-desc AIO-75 patch.md [--force]  # SEARCH/REPLACE; force bypasses the table lint
 $LIN set-title AIO-75 "New title"
 $LIN set-state AIO-75 "In Progress"
 $LIN set-priority AIO-75 high  # priority: none, urgent, high, medium, low
@@ -72,6 +72,33 @@ $LIN list AIO                  # all AIO-team issues, id-sorted
 ```
 
 For a long description, write it to a temp file first, then `set-desc <IDENT> <file>` — avoids quoting hell and keeps it out of the transcript.
+
+### Descriptions do not round-trip byte-for-byte (AIO-942)
+
+Linear parses a description into its own document model and re-serialises it, so what comes
+back is never quite what you sent. Most of that is cosmetic — YAML frontmatter becomes a
+```yaml fence, emphasis is re-bracketed around inline code (`**not `x` icon**` →
+`**not** `x` **icon**`), table delimiter rows are restyled.
+
+**One case is not cosmetic. A markdown table indented under a list item is corrupted:** Linear
+strips leading characters from every cell after the first column. Observed on VIB-348,
+2026-08-19 — `| I2 (#8) | `components/…` | `CircleX` |` came back as
+`| (#8) | mponents/…` | rcleX` |`. That is stored text, not a rendering artifact, and it is
+silent.
+
+So:
+
+* `set-desc` and `patch-desc` **lint before sending** and block any indented table, with line
+  numbers. `--force` after the filename is the explicit escape hatch. They **re-read after
+  writing** and exit non-zero on real content drift; at that point the write already happened,
+  so repair the description immediately, rerun the write, and then run `verify-desc`.
+* `verify-desc` compares on a normalised form. A byte difference caused only by Linear's
+  re-serialisation now **passes**; genuine content loss **fails**. Before this, it failed on
+  essentially every write, which made it noise nobody could act on — and that is how the
+  VIB-348 corruption nearly shipped unnoticed.
+
+**Keep tables at column 0.** If a table belongs to a numbered step, put it in a section below
+rather than indenting it under the list item.
 
 `create` defaults to team key `AIO`; override it with `AIOS_LINEAR_TEAM_KEY`. Optional
 origin attribution is configuration, not public toolkit data: set both

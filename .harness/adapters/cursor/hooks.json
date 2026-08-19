@@ -1,21 +1,21 @@
 {
-  "$comment": "Copy to <repo>/.cursor/hooks.json (merge if one exists). Assumes the pack is vendored at .harness/. Cursor honors exit code 2 = deny, so the portable policies' exit codes flow straight through run-hook.sh; failClosed:true blocks on unexpected hook failure. `stop` goes through cursor/stop-gate.sh because Cursor continues via {followup_message}, not an exit code. `sessionStart` context injection is ADDITIVE and smoke-gated (verified on cursor-agent 2026.07.23): the generated always-apply rule (.cursor/rules/harness-context.mdc, written by install.sh) is the guaranteed context path; no failClosed here because losing injection must never block a session.",
+  "$comment": "Copy to <repo>/.cursor/hooks.json (merge if one exists). Assumes the pack is vendored at .harness/. Cursor honors exit code 2 = deny, so the portable policies' exit codes flow straight through run-hook.sh; failClosed:true blocks on unexpected hook failure. `stop` goes through cursor/stop-gate.sh because Cursor continues via {followup_message}, not an exit code. `sessionStart` context injection is ADDITIVE and smoke-gated (verified on cursor-agent 2026.07.23): the generated always-apply rule (.cursor/rules/harness-context.mdc, written by install.sh) is the guaranteed context path; no failClosed here because losing injection must never block a session. Each command is a LOCATOR rather than a direct call. Cursor resolves ${CURSOR_PROJECT_DIR} to ONE root, chosen when the WINDOW opened — in a multi-root window that root may be a repo with no .harness/ at all, and an unwrapped `/bin/sh <missing path>` exits 127, which failClosed turns into a deny for every edit and shell call in the session. So the locator reads the payload from stdin ONCE, resolves the repo the agent is actually touching (`git -C <payload .cwd> rev-parse --show-toplevel`, the same shape .codex/hooks.json uses), checks for .harness/ THERE, and re-emits the captured payload into .harness/adapters/cursor/dispatch.sh. ${CURSOR_PROJECT_DIR} stays as the SECOND candidate — never a replacement — so the events that carry no per-repo location (stop, sessionStart) keep working. The payload cwd is read with jq so a string that merely looks like a cwd field is never mistaken for the real one; the sed fallback exists only so the decision does not REQUIRE jq, and with jq absent cursor/dispatch.sh degrades every hook before the resolved root can influence anything. No .harness/ at the resolved root means the hook does not apply (exit 0); .harness/ present but the dispatcher missing is exit 3, so a broken vendoring is loud rather than silently unenforced.",
   "version": 1,
   "hooks": {
     "sessionStart": [
       {
-        "command": "/bin/sh \"${CURSOR_PROJECT_DIR}/.harness/adapters/run-hook.sh\" cursor session_start inject-context.sh",
+        "command": "/bin/sh -c 'P=$(cat); M=$1; D=$2; shift 2; R=; X=$(printf '\\''%s'\\'' \"$P\" | jq -r '\\''.cwd // .file_path // empty'\\'' 2>/dev/null) || X=$(printf '\\''%s'\\'' \"$P\" | sed -nE '\\''s/.*\"(cwd|file_path)\"[[:space:]]*:[[:space:]]*\"([^\"]*)\".*/\\2/p'\\'' | tail -1); for C in \"$X\" \"${CURSOR_PROJECT_DIR:-$PWD}\"; do [ -n \"$C\" ] || continue; [ -d \"$C\" ] || C=$(dirname -- \"$C\"); T=$(git -C \"$C\" rev-parse --show-toplevel 2>/dev/null) || continue; [ -e \"$T/$M\" ] || continue; R=$T; break; done; [ -n \"$R\" ] || exit 0; [ -f \"$R/$D\" ] || { echo \"AIOS hook: $R has the harness marker but $D is missing - refusing to run unguarded\" >&2; exit 3; }; printf '\\''%s'\\'' \"$P\" | /bin/sh \"$R/$D\" \"$R\" \"$@\"' aios-cursor-hook .harness .harness/adapters/cursor/dispatch.sh hook session_start inject-context.sh",
         "timeout": 15
       }
     ],
     "beforeShellExecution": [
       {
-        "command": "/bin/sh \"${CURSOR_PROJECT_DIR}/.harness/adapters/run-hook.sh\" cursor pre_command guard-destructive.sh",
+        "command": "/bin/sh -c 'P=$(cat); M=$1; D=$2; shift 2; R=; X=$(printf '\\''%s'\\'' \"$P\" | jq -r '\\''.cwd // .file_path // empty'\\'' 2>/dev/null) || X=$(printf '\\''%s'\\'' \"$P\" | sed -nE '\\''s/.*\"(cwd|file_path)\"[[:space:]]*:[[:space:]]*\"([^\"]*)\".*/\\2/p'\\'' | tail -1); for C in \"$X\" \"${CURSOR_PROJECT_DIR:-$PWD}\"; do [ -n \"$C\" ] || continue; [ -d \"$C\" ] || C=$(dirname -- \"$C\"); T=$(git -C \"$C\" rev-parse --show-toplevel 2>/dev/null) || continue; [ -e \"$T/$M\" ] || continue; R=$T; break; done; [ -n \"$R\" ] || exit 0; [ -f \"$R/$D\" ] || { echo \"AIOS hook: $R has the harness marker but $D is missing - refusing to run unguarded\" >&2; exit 3; }; printf '\\''%s'\\'' \"$P\" | /bin/sh \"$R/$D\" \"$R\" \"$@\"' aios-cursor-hook .harness .harness/adapters/cursor/dispatch.sh hook pre_command guard-destructive.sh",
         "timeout": 30,
         "failClosed": true
       },
       {
-        "command": "/bin/sh \"${CURSOR_PROJECT_DIR}/.harness/adapters/run-hook.sh\" cursor pre_command guard-worktree.sh",
+        "command": "/bin/sh -c 'P=$(cat); M=$1; D=$2; shift 2; R=; X=$(printf '\\''%s'\\'' \"$P\" | jq -r '\\''.cwd // .file_path // empty'\\'' 2>/dev/null) || X=$(printf '\\''%s'\\'' \"$P\" | sed -nE '\\''s/.*\"(cwd|file_path)\"[[:space:]]*:[[:space:]]*\"([^\"]*)\".*/\\2/p'\\'' | tail -1); for C in \"$X\" \"${CURSOR_PROJECT_DIR:-$PWD}\"; do [ -n \"$C\" ] || continue; [ -d \"$C\" ] || C=$(dirname -- \"$C\"); T=$(git -C \"$C\" rev-parse --show-toplevel 2>/dev/null) || continue; [ -e \"$T/$M\" ] || continue; R=$T; break; done; [ -n \"$R\" ] || exit 0; [ -f \"$R/$D\" ] || { echo \"AIOS hook: $R has the harness marker but $D is missing - refusing to run unguarded\" >&2; exit 3; }; printf '\\''%s'\\'' \"$P\" | /bin/sh \"$R/$D\" \"$R\" \"$@\"' aios-cursor-hook .harness .harness/adapters/cursor/dispatch.sh hook pre_command guard-worktree.sh",
         "timeout": 30,
         "failClosed": true
       }
@@ -23,32 +23,32 @@
     "preToolUse": [
       {
         "matcher": "Write|Edit|MultiEdit|StrReplace",
-        "command": "/bin/sh \"${CURSOR_PROJECT_DIR}/.harness/adapters/run-hook.sh\" cursor pre_edit guard-secrets.sh",
+        "command": "/bin/sh -c 'P=$(cat); M=$1; D=$2; shift 2; R=; X=$(printf '\\''%s'\\'' \"$P\" | jq -r '\\''.cwd // .file_path // empty'\\'' 2>/dev/null) || X=$(printf '\\''%s'\\'' \"$P\" | sed -nE '\\''s/.*\"(cwd|file_path)\"[[:space:]]*:[[:space:]]*\"([^\"]*)\".*/\\2/p'\\'' | tail -1); for C in \"$X\" \"${CURSOR_PROJECT_DIR:-$PWD}\"; do [ -n \"$C\" ] || continue; [ -d \"$C\" ] || C=$(dirname -- \"$C\"); T=$(git -C \"$C\" rev-parse --show-toplevel 2>/dev/null) || continue; [ -e \"$T/$M\" ] || continue; R=$T; break; done; [ -n \"$R\" ] || exit 0; [ -f \"$R/$D\" ] || { echo \"AIOS hook: $R has the harness marker but $D is missing - refusing to run unguarded\" >&2; exit 3; }; printf '\\''%s'\\'' \"$P\" | /bin/sh \"$R/$D\" \"$R\" \"$@\"' aios-cursor-hook .harness .harness/adapters/cursor/dispatch.sh hook pre_edit guard-secrets.sh",
         "timeout": 30,
         "failClosed": true
       },
       {
         "matcher": "Write|Edit|MultiEdit|StrReplace",
-        "command": "/bin/sh \"${CURSOR_PROJECT_DIR}/.harness/adapters/run-hook.sh\" cursor pre_edit guard-protected-paths.sh",
+        "command": "/bin/sh -c 'P=$(cat); M=$1; D=$2; shift 2; R=; X=$(printf '\\''%s'\\'' \"$P\" | jq -r '\\''.cwd // .file_path // empty'\\'' 2>/dev/null) || X=$(printf '\\''%s'\\'' \"$P\" | sed -nE '\\''s/.*\"(cwd|file_path)\"[[:space:]]*:[[:space:]]*\"([^\"]*)\".*/\\2/p'\\'' | tail -1); for C in \"$X\" \"${CURSOR_PROJECT_DIR:-$PWD}\"; do [ -n \"$C\" ] || continue; [ -d \"$C\" ] || C=$(dirname -- \"$C\"); T=$(git -C \"$C\" rev-parse --show-toplevel 2>/dev/null) || continue; [ -e \"$T/$M\" ] || continue; R=$T; break; done; [ -n \"$R\" ] || exit 0; [ -f \"$R/$D\" ] || { echo \"AIOS hook: $R has the harness marker but $D is missing - refusing to run unguarded\" >&2; exit 3; }; printf '\\''%s'\\'' \"$P\" | /bin/sh \"$R/$D\" \"$R\" \"$@\"' aios-cursor-hook .harness .harness/adapters/cursor/dispatch.sh hook pre_edit guard-protected-paths.sh",
         "timeout": 30,
         "failClosed": true
       },
       {
         "matcher": "Write|Edit|MultiEdit|StrReplace|Delete|Remove|Move|Rename",
-        "command": "/bin/sh \"${CURSOR_PROJECT_DIR}/.harness/adapters/run-hook.sh\" cursor pre_edit guard-worktree.sh",
+        "command": "/bin/sh -c 'P=$(cat); M=$1; D=$2; shift 2; R=; X=$(printf '\\''%s'\\'' \"$P\" | jq -r '\\''.cwd // .file_path // empty'\\'' 2>/dev/null) || X=$(printf '\\''%s'\\'' \"$P\" | sed -nE '\\''s/.*\"(cwd|file_path)\"[[:space:]]*:[[:space:]]*\"([^\"]*)\".*/\\2/p'\\'' | tail -1); for C in \"$X\" \"${CURSOR_PROJECT_DIR:-$PWD}\"; do [ -n \"$C\" ] || continue; [ -d \"$C\" ] || C=$(dirname -- \"$C\"); T=$(git -C \"$C\" rev-parse --show-toplevel 2>/dev/null) || continue; [ -e \"$T/$M\" ] || continue; R=$T; break; done; [ -n \"$R\" ] || exit 0; [ -f \"$R/$D\" ] || { echo \"AIOS hook: $R has the harness marker but $D is missing - refusing to run unguarded\" >&2; exit 3; }; printf '\\''%s'\\'' \"$P\" | /bin/sh \"$R/$D\" \"$R\" \"$@\"' aios-cursor-hook .harness .harness/adapters/cursor/dispatch.sh hook pre_edit guard-worktree.sh",
         "timeout": 30,
         "failClosed": true
       }
     ],
     "afterFileEdit": [
       {
-        "command": "/bin/sh \"${CURSOR_PROJECT_DIR}/.harness/adapters/run-hook.sh\" cursor post_edit post-edit-format.sh",
+        "command": "/bin/sh -c 'P=$(cat); M=$1; D=$2; shift 2; R=; X=$(printf '\\''%s'\\'' \"$P\" | jq -r '\\''.cwd // .file_path // empty'\\'' 2>/dev/null) || X=$(printf '\\''%s'\\'' \"$P\" | sed -nE '\\''s/.*\"(cwd|file_path)\"[[:space:]]*:[[:space:]]*\"([^\"]*)\".*/\\2/p'\\'' | tail -1); for C in \"$X\" \"${CURSOR_PROJECT_DIR:-$PWD}\"; do [ -n \"$C\" ] || continue; [ -d \"$C\" ] || C=$(dirname -- \"$C\"); T=$(git -C \"$C\" rev-parse --show-toplevel 2>/dev/null) || continue; [ -e \"$T/$M\" ] || continue; R=$T; break; done; [ -n \"$R\" ] || exit 0; [ -f \"$R/$D\" ] || { echo \"AIOS hook: $R has the harness marker but $D is missing - refusing to run unguarded\" >&2; exit 3; }; printf '\\''%s'\\'' \"$P\" | /bin/sh \"$R/$D\" \"$R\" \"$@\"' aios-cursor-hook .harness .harness/adapters/cursor/dispatch.sh hook post_edit post-edit-format.sh",
         "timeout": 120
       }
     ],
     "stop": [
       {
-        "command": "/bin/sh \"${CURSOR_PROJECT_DIR}/.harness/adapters/cursor/stop-gate.sh\"",
+        "command": "/bin/sh -c 'P=$(cat); M=$1; D=$2; shift 2; R=; X=$(printf '\\''%s'\\'' \"$P\" | jq -r '\\''.cwd // .file_path // empty'\\'' 2>/dev/null) || X=$(printf '\\''%s'\\'' \"$P\" | sed -nE '\\''s/.*\"(cwd|file_path)\"[[:space:]]*:[[:space:]]*\"([^\"]*)\".*/\\2/p'\\'' | tail -1); for C in \"$X\" \"${CURSOR_PROJECT_DIR:-$PWD}\"; do [ -n \"$C\" ] || continue; [ -d \"$C\" ] || C=$(dirname -- \"$C\"); T=$(git -C \"$C\" rev-parse --show-toplevel 2>/dev/null) || continue; [ -e \"$T/$M\" ] || continue; R=$T; break; done; [ -n \"$R\" ] || exit 0; [ -f \"$R/$D\" ] || { echo \"AIOS hook: $R has the harness marker but $D is missing - refusing to run unguarded\" >&2; exit 3; }; printf '\\''%s'\\'' \"$P\" | /bin/sh \"$R/$D\" \"$R\" \"$@\"' aios-cursor-hook .harness .harness/adapters/cursor/dispatch.sh stop",
         "timeout": 600,
         "loop_limit": 5
       }

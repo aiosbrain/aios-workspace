@@ -197,6 +197,54 @@ jobs:
             --results-dir /tmp/ci-eval-lab-smoke
           jq -e '.total > 0 and .by_status.pass == .total' /tmp/ci-eval-lab-smoke/summary.json
 
+  clean-container:
+    name: clean-container install (no jq)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # THE lane that would have caught the 0.11.0 jq fail-open, and the OGR09 and ajv defects
+    # before it. All three were invisible in exactly the same way: macOS 15+ ships /usr/bin/jq and
+    # the ubuntu-latest runner image pre-installs it, so the developer machine, every other job
+    # in this file, and the release gate all agreed the release worked. A bare node:22 image is
+    # the only place the missing dependency is observable. Do NOT "fix" a failure here by
+    # apt-get installing the missing tool in this job — that is the mistake this lane exists to
+    # make impossible.
+    #
+    # This lane builds and then EXECUTES repository code (tsc, then a container running the
+    # packed tarball), so it gets the narrowest credentials that still let it do that: a
+    # read-only token, and no checkout credentials left behind in .git/config for that code
+    # to find.
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      # This lane only needs tsc to build dist/ and then npm pack; nothing here runs the
+      # native better-sqlite3 binding, so dependency lifecycle scripts are not needed and
+      # are not run.
+      - run: npm ci --ignore-scripts
+      - name: Pack the tarball
+        # dist/ is gitignored, so build it first or the packed artifact is not what a
+        # release publishes. --pack-destination does not create its directory; npm ENOENTs
+        # on a missing one.
+        run: |
+          npm run build:loop
+          mkdir -p /tmp/pack
+          npm pack --pack-destination /tmp/pack
+          ls -l /tmp/pack
+      - name: Install + validate in a bare node:22 container with no jq
+        run: |
+          docker run --rm -v /tmp/pack:/pack:ro -v "$PWD/.github/scripts":/ci:ro \
+            node:22 bash /ci/clean-container-check.sh
+      - name: Same container, with jq installed — nothing may regress
+        run: |
+          docker run --rm -v /tmp/pack:/pack:ro -v "$PWD/.github/scripts":/ci:ro \
+            node:22 bash -c 'apt-get update -qq && apt-get install -y -qq jq >/dev/null && bash /ci/clean-container-check.sh'
+
   lint:
     name: lint + format
     runs-on: ubuntu-latest

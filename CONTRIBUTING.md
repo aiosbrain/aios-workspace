@@ -155,3 +155,16 @@ The integrations layer (sync pipeline, knowledge base, scheduling adapters) and
 additional harnesses (e.g. a weekly-synthesis harness with a fidelity verifier, a
 ticket-hygiene harness) are open. Look for issues tagged **`good first issue`** on the
 issue tracker.
+
+## Licensing of contributions
+
+Contributions are accepted under **AGPL-3.0-only**, or **Apache-2.0** for
+`packages/integration-sdk/` and `.harness/` — see [`LICENSING.md`](LICENSING.md). A
+Contributor License Agreement will be introduced once our company is formed, at which point
+contributors will be asked to sign one.
+
+One rule worth knowing before you write an import: **Apache-2.0 code must never import from
+AGPL-3.0 code.** Apache → AGPL is fine; the reverse is a license violation. That means
+nothing in `packages/integration-sdk/` or `.harness/` may reach into `src/`, `scripts/`,
+`bin/`, or `packages/foundation/`. Reading the integration contracts *from* the AGPL side is
+fine — that direction is permitted.
