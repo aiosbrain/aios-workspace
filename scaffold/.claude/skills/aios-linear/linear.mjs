@@ -15,7 +15,7 @@
 //                             write the exact UTF-8 issue description to a file
 //   verify-desc <IDENT> <file>
 //                             refetch description and compare CONTENT (not bytes) to a file
-//   set-desc <IDENT> <file>   replace description from a file (markdown ok)
+//   set-desc <IDENT> <file>   replace description from a file (markdown ok; --force to bypass\n//                             the indented-table lint)
 //   patch-desc <IDENT> <patch.md>
 //                             SEARCH/REPLACE blocks on description only — partial update
 //   set-title <IDENT> <title> replace the issue title
@@ -80,15 +80,26 @@ const argv = process.argv.slice(2);
  * under a list item comes back with leading characters stripped from every cell after the
  * first column — silent content loss, so it is worth refusing to be quiet about.
  */
-function lintDescription(md) {
+function lintDescription(md, { force = false } = {}) {
   const indented = findIndentedTables(md);
   if (!indented.length) return;
+  const label = force ? "warning" : "REFUSING TO SEND";
   console.error(
-    `warning: ${indented.length} indented table row(s) — Linear corrupts tables nested under a list item,`
+    `${label}: ${indented.length} indented table row(s) — Linear corrupts tables nested under a list item.`
   );
-  console.error("         stripping leading characters from cells. Move the table to column 0.");
-  for (const hit of indented.slice(0, 6)) console.error(`         line ${hit.line}: ${hit.text}`);
-  if (indented.length > 6) console.error(`         ... ${indented.length - 6} more`);
+  console.error(
+    "  It strips leading characters from every cell after the first column, and what that eats is"
+  );
+  console.error(
+    "  file paths and identifiers — `components/x.tsx` becomes mponents/x.tsx`. A spec that has lost"
+  );
+  console.error(
+    "  its paths still READS fine, which is how this shipped unnoticed once already (VIB-348)."
+  );
+  for (const hit of indented.slice(0, 6)) console.error(`  line ${hit.line}: ${hit.text}`);
+  if (indented.length > 6) console.error(`  ... ${indented.length - 6} more`);
+  console.error("  Fix: move the table to column 0. Override with --force if you truly mean it.");
+  if (!force) process.exit(1);
 }
 
 /**
@@ -182,7 +193,7 @@ if (cmd === "get") {
   }
   const n = await findIssue(ident);
   const description = readFileSync(arg, "utf8");
-  lintDescription(description);
+  lintDescription(description, { force: argv.includes("--force") });
   await gql(
     `mutation($id:String!,$d:String!){ issueUpdate(id:$id, input:{ description:$d }){ success } }`,
     { id: n.id, d: description }
@@ -210,6 +221,7 @@ if (cmd === "get") {
     console.error(`patch failed: ${e.message}`);
     process.exit(1);
   }
+  lintDescription(updated, { force: argv.includes("--force") });
   await gql(
     `mutation($id:String!,$d:String!){ issueUpdate(id:$id, input:{ description:$d }){ success } }`,
     {

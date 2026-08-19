@@ -87,6 +87,19 @@ test("findIndentedTables ignores tables that are safe", () => {
   assert.deepEqual(findIndentedTables("- a bullet\n  - nested\n\ntext | with a pipe"), []);
 });
 
+test("the corruption eats identifiers, which is why the lint blocks rather than warns", () => {
+  // What Linear strips is the START of each cell — in a spec that is the file path and the
+  // symbol, i.e. exactly the part a builder acts on. The prose around it survives intact, so
+  // a corrupted spec still READS correctly. That is why this is caught before sending rather
+  // than reported after: by the time a post-write check fires, the bad description is stored.
+  const cell = "| `components/experiments/outcome-marker.tsx:24` | `CircleX` |";
+  const eaten = "| mponents/experiments/outcome-marker.tsx:24` | rcleX` |";
+  const drift = describeContentDrift(cell, eaten);
+  assert.ok(drift, "identifier loss must be reported");
+  assert.match(cell, /components\/experiments/);
+  assert.doesNotMatch(eaten, /components\/experiments/, "the path is what gets destroyed");
+});
+
 test("normalizeForCompare preserves visible characters", () => {
   // normalisation must not be so aggressive that it hides loss
   const a = normalizeForCompare("**bold** `code` plain");
