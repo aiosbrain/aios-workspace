@@ -104,7 +104,7 @@ const HEDGE_WORDS = [
   "would",
   "might",
 ];
-const HEDGE_RE = new RegExp(`\\b(?:${HEDGE_WORDS.join("|")})\\b`, "i");
+const HEDGE_RE = new RegExp(String.raw`\b(?:${HEDGE_WORDS.join("|")})\b`, "i");
 
 const CLAUSE_BREAKS = [".", "\n", "!", "?", ";", ",", ":"];
 
@@ -117,7 +117,7 @@ function hedged(text, idx) {
 /** Signs a measurement actually happened — a number, a table, a command, a quoted result. If any of
  *  these are present the message is showing its work, and the reminder would be noise. */
 const EVIDENCE_RE = [
-  /\d+\s*\/\s*\d+/, // 9/56 style progress
+  /\d\s*\/\s*\d/, // 9/56 style progress
   /\bHTTP\s*\d{3}\b/i, // status codes
   /```/, // a quoted command or output block
   /\|\s*-{2,}/, // a markdown table separator
