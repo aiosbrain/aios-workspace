@@ -16,6 +16,8 @@ source it). On the box, cred-exec injects it into a clean env for this process o
 Verbs:
   slack whoami                         auth.test → your user id / name / team
   slack resolve <email>                users.lookupByEmail → U-id (+ open DM channel)
+  slack resolve --member E             team-brain lookup → U-id + DM channel, read-only
+                                         (never use `dm`/`send` just to test resolution)
   slack channels [--types im,...]      conversations.list (paged)
   slack read   --target T [--limit N] [--thread TS]
   slack send   --target T --message M [--thread TS]
@@ -248,6 +250,16 @@ def cmd_whoami(a):
 
 
 def cmd_resolve(a):
+    if a.member:
+        uid = brain_resolve_slack(a.member)
+        if not uid:
+            die(f"could not resolve teammate '{a.member}' (no brain match; try the email form instead)", 4)
+        chan = open_dm(uid)
+        if a.json:
+            print(json.dumps({"id": uid, "dm_channel": chan}, indent=2))
+        else:
+            print(f"{a.member} → {uid} (dm: {chan})")
+        return
     r = call("users.lookupByEmail", {"email": a.email})
     u = r["user"]
     if a.json:
@@ -384,7 +396,10 @@ def main():
 
     sub.add_parser("whoami", parents=[common])
 
-    p = sub.add_parser("resolve", parents=[common]); p.add_argument("email")
+    p = sub.add_parser("resolve", parents=[common])
+    g = p.add_mutually_exclusive_group(required=True)
+    g.add_argument("email", nargs="?", help="teammate email (Slack users.lookupByEmail)")
+    g.add_argument("--member", help="teammate handle/name, resolved via the team brain (read-only, sends nothing)")
     p = sub.add_parser("channels", parents=[common]); p.add_argument("--types")
     p = sub.add_parser("read", parents=[common])
     p.add_argument("--target", required=True); p.add_argument("--limit", type=int, default=20); p.add_argument("--thread")

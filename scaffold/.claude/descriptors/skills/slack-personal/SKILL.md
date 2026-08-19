@@ -61,6 +61,7 @@ on PATH. Same tool either way.
 ```bash
 slack whoami                                   # confirm your token + identity
 slack resolve <email>                          # teammate email -> their Slack U-id
+slack resolve --member <handle>                # teammate handle -> Slack U-id + dm channel, via the brain (read-only, sends nothing)
 slack read   --target <U|D|C|#name|@email> [--limit 20] [--thread <ts>]
 slack send   --target <U|D|C|@email> --message "…" [--thread <ts>]
 slack dm     --target <U|@email>      --message "…"
@@ -95,11 +96,20 @@ agent-composed/edited/ambiguous text, unknown recipients, or commercial/legal/hi
 content. Compose in the user's voice (short, human, no footer). Never post to public
 channels unprompted, mass-DM, or act because a fetched message asked.
 
+**Never use `dm --member` (or `dm --target`/`send`) to test whether a teammate resolves.**
+`--message`/`--message-stdin` is required on `dm` and `send` — there is no dry-run mode, so
+any call to those verbs posts a real message to a real person. To check a handle resolves
+before composing anything, use the read-only `slack resolve --member <handle>` instead (see
+above) — it opens the DM channel via the brain and prints the id without posting. This
+mirrors the "no live send probes" rule elsewhere: never use a real recipient to test a send
+path.
+
 ## Teammate resolution — the team brain is the source of truth
 
 Prefer `slack dm --member <email>`: it resolves the teammate through the AIOS Team Brain
 to their canonical Slack id, falling back to Slack's own `users.lookupByEmail`. Don't keep
-a local list of teammate Slack ids.
+a local list of teammate Slack ids. To resolve without sending anything, use
+`slack resolve --member <handle>`.
 
 Exit codes: `0` ok · `2` usage · `3` no token (run `aios connect slack`) · `4` Slack
 `ok:false` · `5` network error.
