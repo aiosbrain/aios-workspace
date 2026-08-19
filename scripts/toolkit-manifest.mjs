@@ -173,6 +173,81 @@ export const MANAGED_PATHS = [
   // simply deleted from this list becomes permanently unmanaged. RETIRED_PATHS below is
   // what actually removes them.
   { dest: "validation/secret-patterns.txt", src: "validation/secret-patterns.txt", kind: "file" },
+  // AIO-965 — the validators the scaffolded `.claude/` docs CITE. Until this list existed, a
+  // workspace shipped the rules ("OGR05 checks that every instinct links a real incident") and
+  // none of the scripts that make them true, so an agent read "this is enforced", believed it,
+  // and proceeded. A claimed check that does not run reads exactly like a passing one.
+  //
+  // These are file entries, not a `validation` dir overlay, for the same reason hooks are:
+  // a workspace's OWN validators (john-workspace has check-ledger.sh + check-manifest.sh,
+  // neither of which exists upstream) must survive every update. A dir overlay preserves
+  // personal additions too, but file entries make the shipped surface auditable — which is
+  // precisely what check-citations.mjs below grades.
+  //
+  // Kept in lockstep with scripts/scaffold-project.sh; OGR16 fails the build if they diverge.
+  { dest: "validation/validate-all.sh", src: "validation/validate-all.sh", kind: "file", exec: true },
+  {
+    dest: "validation/check-frontmatter.sh",
+    src: "validation/check-frontmatter.sh",
+    kind: "file",
+    exec: true,
+  },
+  { dest: "validation/check-rubrics.sh", src: "validation/check-rubrics.sh", kind: "file", exec: true },
+  { dest: "validation/check-secrets.sh", src: "validation/check-secrets.sh", kind: "file", exec: true },
+  {
+    dest: "validation/check-structure.sh",
+    src: "validation/check-structure.sh",
+    kind: "file",
+    exec: true,
+  },
+  {
+    dest: "validation/check-aios-config.sh",
+    src: "validation/check-aios-config.sh",
+    kind: "file",
+    exec: true,
+  },
+  {
+    dest: "validation/check-skill-export.mjs",
+    src: "validation/check-skill-export.mjs",
+    kind: "file",
+    exec: true,
+  },
+  {
+    dest: "validation/check-file-governance.mjs",
+    src: "validation/check-file-governance.mjs",
+    kind: "file",
+    exec: true,
+  },
+  {
+    dest: "validation/check-agent-readiness.mjs",
+    src: "validation/check-agent-readiness.mjs",
+    kind: "file",
+    exec: true,
+  },
+  { dest: "validation/agent-readiness-lib.mjs", src: "validation/agent-readiness-lib.mjs", kind: "file" },
+  {
+    dest: "validation/agent-readiness.rubric.json",
+    src: "validation/agent-readiness.rubric.json",
+    kind: "file",
+  },
+  { dest: "validation/check-citations.mjs", src: "validation/check-citations.mjs", kind: "file", exec: true },
+  // Helper modules the validators above import as `../scripts/<name>.mjs`. In THIS repo those
+  // two paths are back-compat shims that re-export from packages/foundation (AIO-601); a
+  // workspace has no packages/ tree, so syncing the shim would vendor an import of a directory
+  // that isn't there. `src` therefore points at the real module and `dest` keeps the path the
+  // importers already use — the consumers work unchanged in both trees, with no dual-path
+  // resolution logic in the validators. Both are dependency-free (node builtins only), which is
+  // what makes them safe to run in a workspace that has never seen an `npm install`.
+  {
+    dest: "scripts/git-files.mjs",
+    src: "packages/foundation/src/git-files.mjs",
+    kind: "file",
+  },
+  {
+    dest: "scripts/runtimes.mjs",
+    src: "packages/foundation/src/runtimes.mjs",
+    kind: "file",
+  },
 ];
 
 /**
