@@ -16,6 +16,8 @@ source it). On the box, cred-exec injects it into a clean env for this process o
 Verbs:
   slack whoami                         auth.test → your user id / name / team
   slack resolve <email>                users.lookupByEmail → U-id (+ open DM channel)
+  slack resolve --member E             team-brain lookup → U-id + DM channel, read-only
+                                         (never use `dm`/`send` just to test resolution)
   slack channels [--types im,...]      conversations.list (paged)
   slack read   --target T [--limit N] [--thread TS]
   slack send   --target T --message M [--thread TS]
