@@ -1,6 +1,15 @@
 ---
 name: evolve
-description: Analyze recent Codex session history, actual skill-loading evidence, resolver usage, installed skill catalogs, and accumulated Claude instincts to identify repeated friction, missed skill-routing opportunities, and reusable workflow improvements. Use when asked what skills are being used, which skills are being missed, whether skill diversity or routing is healthy, what to create or improve from recent work, or how to compound session learnings. Generate or modify skills only when explicitly requested.
+description: Analyze recent Codex session history, actual skill-loading evidence, resolver usage, installed skill catalogs, and accumulated Claude instincts to identify repeated friction, missed skill-routing opportunities, and reusable workflow improvements. Use when asked what skills are being used, which skills are being missed, whether skill diversity or routing is healthy, what to create or improve from recent work, or how to compound session learnings. Generate or modify skills only when explicitly requested. Requires a Codex CLI session history (`~/.codex/history.jsonl`) to analyze — most useful when this workspace's `agent_runtime` is `codex`, or alongside a Codex-driven session on the same machine.
+version: 1.0.0
+access: team
+triggers:
+  - what skills are we using
+  - which skills are we missing
+  - audit skill routing
+  - skill diversity
+  - compound session learnings
+  - what should I create from recent work
 ---
 
 # Evolve
@@ -110,3 +119,12 @@ Do not generate Claude commands or Claude agent frontmatter. Codex skills are th
 - `--full-text` disables prompt truncation and implies `--include-prompts`; use only when exact wording is necessary.
 - `--max-sessions 200` widens the default recent sample.
 - `--skill-root PATH` adds a catalog root that is not discovered automatically; repeat as needed.
+
+## When Codex history isn't available
+
+This workspace defaults to the `claude-code` agent runtime (see `docs/byoa.md` in the
+toolkit repo, or `agent_runtime` in `aios.yaml`). If `~/.codex/history.jsonl` and
+`~/.codex/sessions/` don't exist, the extractor's Codex-derived evidence layers will be
+empty — report that plainly rather than inventing signal, and fall back to the
+`--include-instincts` layer (`.claude/memory/instincts.md`) plus a manual skim of the
+installed catalog and resolver.

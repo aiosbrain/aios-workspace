@@ -14,8 +14,9 @@
 //   export-desc <IDENT> <file>
 //                             write the exact UTF-8 issue description to a file
 //   verify-desc <IDENT> <file>
-//                             refetch description and byte-compare it to a UTF-8 file
-//   set-desc <IDENT> <file>   replace description from a file (markdown ok)
+//                             refetch description and compare CONTENT (not bytes) to a file
+//   set-desc <IDENT> <file>   replace description from a file (markdown ok; --force to bypass
+//                             the indented-table lint)
 //   patch-desc <IDENT> <patch.md>
 //                             SEARCH/REPLACE blocks on description only — partial update
 //   set-title <IDENT> <title> replace the issue title
@@ -49,6 +50,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { applyDescriptionPatch, resolveLinearTemplate } from "./linear-template.mjs";
+import { confirmStored, describeContentDrift, lintDescription } from "./linear-desc-guard.mjs";
 import {
   DEFAULT_TEAM_KEY,
   findExactRelation,
@@ -108,18 +110,27 @@ if (cmd === "get") {
   const local = readFileSync(arg);
   const sha256 = createHash("sha256").update(remote).digest("hex");
   if (!remote.equals(local)) {
-    let first = 0;
-    while (first < remote.length && first < local.length && remote[first] === local[first]) first++;
-    const start = Math.max(0, first - 60);
-    const end = first + 120;
+    // A byte mismatch is the NORMAL case: Linear re-serialises every description it stores
+    // (yaml fence, emphasis re-bracketing, table delimiters). Failing on that made this
+    // command noise. Only real content drift is worth a non-zero exit — see AIO-942.
+    const localText = local.toString("utf8");
+    const remoteText = remote.toString("utf8");
+    const drift = describeContentDrift(localText, remoteText);
+    if (!drift) {
+      console.log(
+        `${n.identifier} content matches; stored bytes differ only by Linear's re-serialisation ` +
+          `(remote=${remote.length} local=${local.length} sha256=${sha256})`
+      );
+      process.exit(0);
+    }
     console.error(
-      `${n.identifier} description mismatch (remote=${remote.length} bytes local=${local.length} bytes sha256=${sha256})`
+      `${n.identifier} CONTENT DRIFT (remote=${remote.length} bytes local=${local.length} bytes sha256=${sha256})`
     );
+    console.error(`first divergence at normalised offset ${drift.at}`);
+    console.error(`  local : ${JSON.stringify(drift.local)}`);
+    console.error(`  remote: ${JSON.stringify(drift.remote)}`);
     console.error(
-      `first mismatch byte ${first}; remote=${JSON.stringify(remote.subarray(start, end).toString("utf8"))}`
-    );
-    console.error(
-      `first mismatch byte ${first}; local=${JSON.stringify(local.subarray(start, end).toString("utf8"))}`
+      "This is content loss, not reformatting. Check for a table indented under a list."
     );
     process.exit(1);
   }
@@ -135,11 +146,16 @@ if (cmd === "get") {
   }
   const n = await findIssue(ident);
   const description = readFileSync(arg, "utf8");
+  lintDescription(description, { force: argv.slice(3).includes("--force") });
   await gql(
     `mutation($id:String!,$d:String!){ issueUpdate(id:$id, input:{ description:$d }){ success } }`,
     { id: n.id, d: description }
   );
-  console.log(`updated ${n.identifier} (${description.length} chars)`);
+  const storedOk = await confirmStored(n, description);
+  console.log(
+    `updated ${n.identifier} (${description.length} chars)${storedOk ? "" : " - CONTENT DRIFT"}`
+  );
+  if (!storedOk) process.exit(1);
 } else if (cmd === "patch-desc") {
   const ident = argv[1];
   const patchFile = argv[2];
@@ -158,6 +174,7 @@ if (cmd === "get") {
     console.error(`patch failed: ${e.message}`);
     process.exit(1);
   }
+  lintDescription(updated, { force: argv.slice(3).includes("--force") });
   await gql(
     `mutation($id:String!,$d:String!){ issueUpdate(id:$id, input:{ description:$d }){ success } }`,
     {
@@ -165,7 +182,11 @@ if (cmd === "get") {
       d: updated,
     }
   );
-  console.log(`patched ${n.identifier} (${original.length} → ${updated.length} chars)`);
+  const patchedOk = await confirmStored(n, updated);
+  console.log(
+    `patched ${n.identifier} (${original.length} → ${updated.length} chars)${patchedOk ? "" : " - CONTENT DRIFT"}`
+  );
+  if (!patchedOk) process.exit(1);
 } else if (cmd === "set-title") {
   const ident = argv[1];
   const title = argv[2];
@@ -463,7 +484,8 @@ if (cmd === "get") {
 } else {
   console.log(
     "usage: linear.mjs get <IDENT> [--full] | export-desc <IDENT> <file> | verify-desc <IDENT> <file> | " +
-      "set-desc <IDENT> <file> | patch-desc <IDENT> <patch.md> | set-title <IDENT> <title> | " +
+      "set-desc <IDENT> <file> [--force] | patch-desc <IDENT> <patch.md> [--force] | " +
+      "set-title <IDENT> <title> | " +
       "set-state <IDENT> <name> | set-priority <IDENT> <priority> | comment <IDENT> <text> | " +
       "comments <IDENT> | list <TEAMKEY> | relations <IDENT> | blocks <BLOCKER> <BLOCKED> | " +
       "related <ISSUE_A> <ISSUE_B> | remove-relation <ISSUE_A> <ISSUE_B> <blocks|related> | " +

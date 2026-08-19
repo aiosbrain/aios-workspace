@@ -90,6 +90,16 @@ strip_known_non_secrets() {
     sanitized=$(printf '%s\n' "$sanitized" | sed -E "s/(^|[^A-Za-z0-9_-])${placeholder}([^A-Za-z0-9_-]|$)/\\1\\2/g")
   done
 
+  # AIO-965: the roster above is a hardcoded list of THIS repo's own fixtures, which cannot work
+  # for the arbitrary workspaces that now vendor this scanner — every workspace would have to get
+  # its own test doubles added upstream. Generalize it: drop any credential-shaped token carrying
+  # an explicit not-a-secret marker. A real credential does not contain the string "SENTINEL"; a
+  # deliberately-fake one in a test log or a doc almost always does. This is what lets a workspace
+  # document how its auth failure modes behave without the guard going red forever.
+  # Scoped to whole tokens so a marker can never allowlist an adjacent real value.
+  sanitized=$(printf '%s\n' "$sanitized" | sed -E \
+    's/(^|[^A-Za-z0-9_-])[A-Za-z0-9_-]*(SENTINEL|EXAMPLE|PLACEHOLDER|REDACTED|CHANGEME|DUMMY|BOGUS|NOT-?A-?REAL|NOT-?REAL|FAKE)[A-Za-z0-9_-]*([^A-Za-z0-9_-]|$)/\1\3/gI')
+
   # This is Railway's prompt shown to the operator, not a configured value.
   if [ "$label" = "Password Assignment" ] &&
     [[ "$sanitized" == *"ADMIN_PASSWORD: 'A strong first-login password'"* ]]; then
@@ -137,6 +147,27 @@ strip_known_non_secrets() {
 SCAN_LIST=$(mktemp "${TMPDIR:-/tmp}/aios-scan.XXXXXX")
 trap 'rm -f "$SCAN_LIST"' EXIT
 
+# AIO-965: `.aios-secretignore` — a workspace-controlled scope file, read from the repo root.
+#
+# WHY THIS EXISTS. This scanner now ships into personal workspaces, which hold content the toolkit
+# never anticipated: pulled issue trackers, meeting transcripts, battletest logs that deliberately
+# quote malformed tokens. Those produce matches that are not secrets and cannot be fixed by editing
+# the content. Before this, the only lever was a hardcoded fixture list upstream — so the realistic
+# outcome was a permanently-red OGR03, and a guard that is always red is a guard nobody reads.
+#
+# The mechanism is deliberately DUMB and VISIBLE: literal shell globs, one per line, in a file the
+# owner commits. No auto-suppression, no severity tiers, no "seen before" state. Silencing a path
+# is an explicit, reviewable act — which is the property that keeps the remaining red meaningful.
+# A trailing "/" matches everything beneath that directory.
+SECRET_IGNORES=()
+if [ -f "$REPO/.aios-secretignore" ]; then
+  while IFS= read -r ignore_line || [ -n "$ignore_line" ]; do
+    ignore_line="${ignore_line%%$'\r'}"
+    case "$ignore_line" in ""|\#*) continue ;; esac
+    SECRET_IGNORES+=("$ignore_line")
+  done < "$REPO/.aios-secretignore"
+fi
+
 # One filter for both enumeration modes so their semantics cannot drift.
 # $1 = path relative to $REPO. Emits the absolute path, NUL-terminated, when scannable.
 emit_if_scannable() {
@@ -146,7 +177,19 @@ emit_if_scannable() {
     */.env | */.env.example) return 0 ;;
     *.pdf | *.png | *.jpg | *.jpeg | *.gif | *.xlsx | *.docx) return 0 ;;
     */check-secrets.sh | */secret-patterns.txt) return 0 ;;
+    # The scope file names the shapes it is silencing, so it contains credential-shaped text
+    # by construction — self-scanning it is the same self-reference already excluded above.
+    */.aios-secretignore) return 0 ;;
   esac
+  # Owner-declared exclusions. Matched against the repo-relative path, both bare and "/"-anchored,
+  # so "1-inbox/from-brain/" and "/1-inbox/from-brain/" both read naturally.
+  local ignore_pattern
+  for ignore_pattern in ${SECRET_IGNORES+"${SECRET_IGNORES[@]}"}; do
+    case "$ignore_pattern" in
+      */) [[ "$1/" == ${ignore_pattern}* || "$1/" == ${ignore_pattern#/}* ]] && return 0 ;;
+      *) [[ "$1" == $ignore_pattern || "/$1" == $ignore_pattern ]] && return 0 ;;
+    esac
+  done
   local abs="$REPO/$1"
   # Mirror `find -type f`: skip symlinks, directories, gitlinks and vanished paths.
   [ -L "$abs" ] && return 0
