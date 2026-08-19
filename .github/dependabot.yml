@@ -24,6 +24,14 @@ updates:
         update-types: ["version-update:semver-major"]
       - dependency-name: "@eslint/js"
         update-types: ["version-update:semver-major"]
+      # typescript 7 (the native compiler) is blocked by typescript-eslint 8.67.0, whose
+      # peer range is `>=4.8.4 <6.1.0`. Dependabot proposed 5.9.3 -> 7.0.2 in PR #607 and
+      # produced an unresolvable lockfile: `npm ci` died with ERESOLVE, and because every
+      # CI job installs first, EVERY lane went red. Remove this ignore once typescript-eslint
+      # widens that peer range to admit TS 7. Note the range DOES admit typescript 6.0.x, so
+      # a 6.x hop is available today as its own deliberate PR.
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: "github-actions"
     directory: "/"
