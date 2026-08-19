@@ -36,19 +36,81 @@ const TAIL_BYTES = 128 * 1024;
  *  import path resolved to…", "the promise resolved before the timeout", "once you've confirmed the
  *  credentials". They are only claims in predicate position ("is resolved", "now confirmed"), so
  *  that is all we match. Same anchoring reason keeps this list free of bare "done" and "fixed". */
-const CLAIM_RE =
-  /\b(?:it (?:now )?works|now works|working now|works (?:now|as expected|correctly)|(?:is|are|it'?s|that'?s|now|fully)\s+(?:verified|confirmed|resolved|fixed|working)|fully (?:working|extracted|fixed)|all green|all set|good to go|should be good|the fix is in|that did it|proved? out|is live and working|succeeded|(?:all )?tests (?:now )?pass(?:ing)?\b)/i;
+const CLAIM_PATTERNS = [
+  /\bit (?:now )?works\b/i,
+  /\bnow works\b/i,
+  /\bworking now\b/i,
+  /\bworks (?:now|as expected|correctly)\b/i,
+  /\b(?:is|are|it'?s|that'?s|now|fully)\s+(?:verified|confirmed|resolved|fixed|working)\b/i,
+  /\bfully (?:working|extracted|fixed)\b/i,
+  /\ball green\b/i,
+  /\ball set\b/i,
+  /\bgood to go\b/i,
+  /\bshould be good\b/i,
+  /\bthe fix is in\b/i,
+  /\bthat did it\b/i,
+  /\bproved? out\b/i,
+  /\bis live and working\b/i,
+  /\bsucceeded\b/i,
+  /\btests (?:now )?pass(?:ing)?\b/i,
+];
+
+/** The earliest claim in the text, or null. One pattern per idiom rather than one long
+ *  alternation: the alternation was unreadable and tripped the repo's complexity gate. */
+function firstClaim(text) {
+  let earliest = null;
+  for (const pattern of CLAIM_PATTERNS) {
+    const match = pattern.exec(text);
+    if (match && (earliest === null || match.index < earliest.index)) earliest = match;
+  }
+  return earliest;
+}
 
 /** Hedges and conditionals. A claim word inside the SAME clause as one of these is not an assertion —
  *  it is a denial ("not verified"), a condition ("if it is resolved"), or a request ("once you've
- *  confirmed"). Checked against the text between the previous clause break and the match. */
-const HEDGE_RE =
-  /\b(?:not|never|isn'?t|aren'?t|wasn'?t|weren'?t|hasn'?t|haven'?t|hadn'?t|don'?t|doesn'?t|didn'?t|can'?t|cannot|couldn'?t|won'?t|unable|unclear|if|whether|once|when|unless|until|assuming|hope|hoping|need|needs|needed|would|might)\b/i;
+ *  confirmed"). Checked against the text between the previous clause break and the match.
+ *  Kept as a word list, not a hand-written alternation, so it stays legible as it grows. */
+const HEDGE_WORDS = [
+  "not",
+  "never",
+  "isn'?t",
+  "aren'?t",
+  "wasn'?t",
+  "weren'?t",
+  "hasn'?t",
+  "haven'?t",
+  "hadn'?t",
+  "don'?t",
+  "doesn'?t",
+  "didn'?t",
+  "can'?t",
+  "cannot",
+  "couldn'?t",
+  "won'?t",
+  "unable",
+  "unclear",
+  "if",
+  "whether",
+  "once",
+  "when",
+  "unless",
+  "until",
+  "assuming",
+  "hope",
+  "hoping",
+  "need",
+  "needs",
+  "needed",
+  "would",
+  "might",
+];
+const HEDGE_RE = new RegExp(`\\b(?:${HEDGE_WORDS.join("|")})\\b`, "i");
+
+const CLAUSE_BREAKS = [".", "\n", "!", "?", ";", ",", ":"];
 
 function hedged(text, idx) {
   let start = -1;
-  for (const ch of [".", "\n", "!", "?", ";", ",", ":"])
-    start = Math.max(start, text.lastIndexOf(ch, idx - 1));
+  for (const ch of CLAUSE_BREAKS) start = Math.max(start, text.lastIndexOf(ch, idx - 1));
   return HEDGE_RE.test(text.slice(start + 1, idx));
 }
 
@@ -119,7 +181,7 @@ function main() {
   }
   if (!text) return;
 
-  const claims = CLAIM_RE.exec(text);
+  const claims = firstClaim(text);
   if (!claims) return;
   if (hedged(text, claims.index)) return; // negated, conditional, or asking — not an assertion
   if (EVIDENCE_RE.some((re) => re.test(text))) return; // it showed its work
