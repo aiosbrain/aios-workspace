@@ -177,6 +177,9 @@ emit_if_scannable() {
     */.env | */.env.example) return 0 ;;
     *.pdf | *.png | *.jpg | *.jpeg | *.gif | *.xlsx | *.docx) return 0 ;;
     */check-secrets.sh | */secret-patterns.txt) return 0 ;;
+    # The scope file names the shapes it is silencing, so it contains credential-shaped text
+    # by construction — self-scanning it is the same self-reference already excluded above.
+    */.aios-secretignore) return 0 ;;
   esac
   # Owner-declared exclusions. Matched against the repo-relative path, both bare and "/"-anchored,
   # so "1-inbox/from-brain/" and "/1-inbox/from-brain/" both read naturally.

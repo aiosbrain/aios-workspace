@@ -146,3 +146,35 @@ test("validate-all.sh auto-detects workspace mode and runs to completion", () =>
     rmSync(output, { recursive: true, force: true });
   }
 });
+
+test("H1 counting ignores fenced code blocks", async () => {
+  // AIO-965: check-skill-export.mjs counted `^# ` with /gm, so a `# comment` inside a ```bash
+  // fence read as a heading. Four correct skills in a real workspace failed on it —
+  // aios-spec-write reported 6 H1s for one heading plus five shell comments in its worked
+  // example. A validator that fires on correct content is one people learn to route around.
+  // countH1 is module-private. Re-derive it from source rather than widening the validator's
+  // API for a test.
+  const src = readFileSync(path.join(ROOT, "validation", "check-skill-export.mjs"), "utf8");
+  const body = src.slice(src.indexOf("function countH1"), src.indexOf("\nconst repo ="));
+  const { countH1 } = await import(
+    `data:text/javascript,${encodeURIComponent(`${body}\nexport { countH1 };`)}`
+  );
+
+  assert.equal(countH1("# Title\n\nprose"), 1);
+  assert.equal(
+    countH1("# Title\n\n```bash\n# 1. step one\n# 2. step two\n```\n"),
+    1,
+    "shell comments inside a fence must not count"
+  );
+  assert.equal(countH1("# One\n\n# Two\n"), 2, "two real headings still count as two");
+  assert.equal(
+    countH1("# Title\n\n~~~sh\n# fake\n~~~\n"),
+    1,
+    "tilde fences must be tracked too"
+  );
+  assert.equal(
+    countH1("# Title\n\n````\n```\n# still fenced\n````\n"),
+    1,
+    "a longer fence is closed only by an equally long marker"
+  );
+});
