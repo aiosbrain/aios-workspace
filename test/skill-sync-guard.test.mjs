@@ -7,7 +7,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { cpSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -56,7 +56,11 @@ test("a drifted shared skill fails and names the file", () => {
   try {
     const { code, out } = run(repo);
     assert.equal(code, 1);
-    assert.match(out, /shared\/SKILL\.md/, "the guard must name the differing file, not just report drift");
+    assert.match(
+      out,
+      /shared\/SKILL\.md/,
+      "the guard must name the differing file, not just report drift"
+    );
     assert.match(out, /changed line/);
   } finally {
     rmSync(repo, { recursive: true, force: true });

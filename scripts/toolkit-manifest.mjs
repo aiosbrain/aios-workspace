@@ -185,15 +185,30 @@ export const MANAGED_PATHS = [
   // precisely what check-citations.mjs below grades.
   //
   // Kept in lockstep with scripts/scaffold-project.sh; OGR16 fails the build if they diverge.
-  { dest: "validation/validate-all.sh", src: "validation/validate-all.sh", kind: "file", exec: true },
+  {
+    dest: "validation/validate-all.sh",
+    src: "validation/validate-all.sh",
+    kind: "file",
+    exec: true,
+  },
   {
     dest: "validation/check-frontmatter.sh",
     src: "validation/check-frontmatter.sh",
     kind: "file",
     exec: true,
   },
-  { dest: "validation/check-rubrics.sh", src: "validation/check-rubrics.sh", kind: "file", exec: true },
-  { dest: "validation/check-secrets.sh", src: "validation/check-secrets.sh", kind: "file", exec: true },
+  {
+    dest: "validation/check-rubrics.sh",
+    src: "validation/check-rubrics.sh",
+    kind: "file",
+    exec: true,
+  },
+  {
+    dest: "validation/check-secrets.sh",
+    src: "validation/check-secrets.sh",
+    kind: "file",
+    exec: true,
+  },
   {
     dest: "validation/check-structure.sh",
     src: "validation/check-structure.sh",
@@ -224,13 +239,22 @@ export const MANAGED_PATHS = [
     kind: "file",
     exec: true,
   },
-  { dest: "validation/agent-readiness-lib.mjs", src: "validation/agent-readiness-lib.mjs", kind: "file" },
+  {
+    dest: "validation/agent-readiness-lib.mjs",
+    src: "validation/agent-readiness-lib.mjs",
+    kind: "file",
+  },
   {
     dest: "validation/agent-readiness.rubric.json",
     src: "validation/agent-readiness.rubric.json",
     kind: "file",
   },
-  { dest: "validation/check-citations.mjs", src: "validation/check-citations.mjs", kind: "file", exec: true },
+  {
+    dest: "validation/check-citations.mjs",
+    src: "validation/check-citations.mjs",
+    kind: "file",
+    exec: true,
+  },
   // Helper modules the validators above import as `../scripts/<name>.mjs`. In THIS repo those
   // two paths are back-compat shims that re-export from packages/foundation (AIO-601); a
   // workspace has no packages/ tree, so syncing the shim would vendor an import of a directory

@@ -10,7 +10,18 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { accessSync, constants, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs";
+import {
+  accessSync,
+  constants,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -21,7 +32,17 @@ const SCAFFOLD_SCRIPT = path.join(ROOT, "scripts", "scaffold-project.sh");
 function scaffold(output) {
   execFileSync(
     "bash",
-    [SCAFFOLD_SCRIPT, "--context", "employee", "--slug", "val-ws", "--owner", "tester", "--output", output],
+    [
+      SCAFFOLD_SCRIPT,
+      "--context",
+      "employee",
+      "--slug",
+      "val-ws",
+      "--owner",
+      "tester",
+      "--output",
+      output,
+    ],
     { stdio: ["ignore", "ignore", "pipe"] }
   );
 }
@@ -63,12 +84,18 @@ test("a scaffolded workspace ships every validator its own .claude/ docs cite", 
         cited.get(m[1]).push(path.relative(output, file));
       }
     }
-    assert.ok(cited.size > 0, "no validator citations found — the scan or the scaffold changed shape");
+    assert.ok(
+      cited.size > 0,
+      "no validator citations found — the scan or the scaffold changed shape"
+    );
 
     for (const [validator, docs] of cited) {
       if (EXEMPT.has(validator)) continue;
       const target = path.join(output, "validation", validator);
-      assert.ok(existsSync(target), `${validator} is cited by ${docs.join(", ")} but was not shipped`);
+      assert.ok(
+        existsSync(target),
+        `${validator} is cited by ${docs.join(", ")} but was not shipped`
+      );
       if (/\.(sh|mjs)$/.test(validator)) {
         // Present but not runnable is the same broken promise with extra steps.
         assert.doesNotThrow(
@@ -82,6 +109,45 @@ test("a scaffolded workspace ships every validator its own .claude/ docs cite", 
   }
 });
 
+test("OGR16 rejects a missing validator cited by a shipped markdown template", () => {
+  const repo = mkdtempSync(path.join(tmpdir(), "citation-template-"));
+  try {
+    mkdirSync(path.join(repo, "scripts"), { recursive: true });
+    mkdirSync(path.join(repo, "scaffold", ".claude"), { recursive: true });
+    mkdirSync(path.join(repo, "validation"), { recursive: true });
+    writeFileSync(
+      path.join(repo, "scripts", "toolkit-manifest.mjs"),
+      'export const MANAGED_PATHS = [{ dest: "validation/check-frontmatter.sh" }];\n'
+    );
+    writeFileSync(
+      path.join(repo, "scripts", "scaffold-validators.sh"),
+      'cp "$REPO_ROOT/validation/check-frontmatter.sh" "$OUTPUT/validation/check-frontmatter.sh"\n'
+    );
+    writeFileSync(path.join(repo, "scripts", "scaffold-project.sh"), "");
+    writeFileSync(path.join(repo, "validation", "check-frontmatter.sh"), "#!/bin/bash\n");
+    writeFileSync(
+      path.join(repo, "scaffold", ".claude", "CLAUDE.md.tmpl"),
+      "Run `validation/check-missing.mjs` before claiming success.\n"
+    );
+
+    let code = 0;
+    let out = "";
+    try {
+      out = execFileSync("node", [path.join(ROOT, "validation", "check-citations.mjs"), repo], {
+        encoding: "utf8",
+      });
+    } catch (error) {
+      code = error.status ?? 1;
+      out = (error.stdout ?? "") + (error.stderr ?? "");
+    }
+
+    assert.equal(code, 1, out);
+    assert.match(out, /check-missing\.mjs/);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
 test("the vendored validators resolve their helper imports with no node_modules", () => {
   const output = freshOutput("scaffold-validator-deps-");
   try {
@@ -89,7 +155,10 @@ test("the vendored validators resolve their helper imports with no node_modules"
     // A scaffolded workspace has never had an npm install. In THIS repo scripts/git-files.mjs and
     // scripts/runtimes.mjs are shims re-exporting packages/foundation (AIO-601), which a workspace
     // has no copy of — so the real modules must be vendored under the path the importers use.
-    assert.ok(!existsSync(path.join(output, "node_modules")), "scaffold unexpectedly created node_modules");
+    assert.ok(
+      !existsSync(path.join(output, "node_modules")),
+      "scaffold unexpectedly created node_modules"
+    );
     for (const helper of ["scripts/git-files.mjs", "scripts/runtimes.mjs"]) {
       const src = readFileSync(path.join(output, helper), "utf8");
       assert.ok(
@@ -98,9 +167,17 @@ test("the vendored validators resolve their helper imports with no node_modules"
       );
     }
     // The importers must actually load. agent-readiness-lib is the one that pulls git-files.
-    execFileSync("node", ["--input-type=module", "-e", `await import(${JSON.stringify(path.join(output, "validation", "agent-readiness-lib.mjs"))})`], {
-      stdio: ["ignore", "ignore", "pipe"],
-    });
+    execFileSync(
+      "node",
+      [
+        "--input-type=module",
+        "-e",
+        `await import(${JSON.stringify(path.join(output, "validation", "agent-readiness-lib.mjs"))})`,
+      ],
+      {
+        stdio: ["ignore", "ignore", "pipe"],
+      }
+    );
   } finally {
     rmSync(output, { recursive: true, force: true });
   }
@@ -140,8 +217,16 @@ test("validate-all.sh auto-detects workspace mode and runs to completion", () =>
     }
     assert.match(stdout, /Mode: --workspace/, "validate-all.sh did not auto-detect workspace mode");
     assert.match(stdout, /OGR16/, "the citation check did not run in workspace mode");
-    assert.doesNotMatch(stdout, /No such file or directory/, "a shipped validator was missing at run time");
-    assert.doesNotMatch(stdout, /ERR_MODULE_NOT_FOUND/, "a shipped validator failed to resolve an import");
+    assert.doesNotMatch(
+      stdout,
+      /No such file or directory/,
+      "a shipped validator was missing at run time"
+    );
+    assert.doesNotMatch(
+      stdout,
+      /ERR_MODULE_NOT_FOUND/,
+      "a shipped validator failed to resolve an import"
+    );
   } finally {
     rmSync(output, { recursive: true, force: true });
   }
@@ -167,11 +252,7 @@ test("H1 counting ignores fenced code blocks", async () => {
     "shell comments inside a fence must not count"
   );
   assert.equal(countH1("# One\n\n# Two\n"), 2, "two real headings still count as two");
-  assert.equal(
-    countH1("# Title\n\n~~~sh\n# fake\n~~~\n"),
-    1,
-    "tilde fences must be tracked too"
-  );
+  assert.equal(countH1("# Title\n\n~~~sh\n# fake\n~~~\n"), 1, "tilde fences must be tracked too");
   assert.equal(
     countH1("# Title\n\n````\n```\n# still fenced\n````\n"),
     1,

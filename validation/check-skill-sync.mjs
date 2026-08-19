@@ -43,7 +43,12 @@ const SHIP_TREE = path.join(repo, "scaffold", ".claude", "skills");
  * this, an untracked __pycache__ beside one copy reports as drift and buries the real one-file
  * divergence in noise — which is how a guard gets muted.
  */
-const IGNORED = [/(^|\/)__pycache__(\/|$)/, /(^|\/)node_modules(\/|$)/, /(^|\/)\.DS_Store$/, /\.pyc$/];
+const IGNORED = [
+  /(^|\/)__pycache__(\/|$)/,
+  /(^|\/)node_modules(\/|$)/,
+  /(^|\/)\.DS_Store$/,
+  /\.pyc$/,
+];
 const ignored = (rel) => IGNORED.some((re) => re.test(rel));
 
 let errors = 0;
@@ -56,7 +61,9 @@ console.log(`OGR17: shared skills are identical in both trees`);
 console.log("================================================");
 
 if (!existsSync(SHIP_TREE) || !existsSync(DEV_TREE)) {
-  console.log(`  ${YELLOW}!${NC} not a toolkit checkout (no scaffold/ skills tree) — nothing to check`);
+  console.log(
+    `  ${YELLOW}!${NC} not a toolkit checkout (no scaffold/ skills tree) — nothing to check`
+  );
   process.exit(0);
 }
 
@@ -93,7 +100,8 @@ for (const skill of shared) {
   for (const f of filesA)
     if (!filesB.has(f)) fail(`${skill}/${f} — only in .claude/skills (missing from scaffold/)`);
   for (const f of filesB)
-    if (!filesA.has(f)) fail(`${skill}/${f} — only in scaffold/.claude/skills (missing from .claude/)`);
+    if (!filesA.has(f))
+      fail(`${skill}/${f} — only in scaffold/.claude/skills (missing from .claude/)`);
 
   for (const f of filesA) {
     if (!filesB.has(f)) continue;

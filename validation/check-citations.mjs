@@ -77,9 +77,15 @@ const TOOLKIT_ONLY = [
   ["check-scaffold-guard.mjs", "takes no argv — grades the toolkit repo whatever path is passed"],
   ["check-scaffold-git-workflow.mjs", "takes no argv — grades the toolkit repo"],
   ["check-opencode-scaffold.mjs", "takes no argv — grades the toolkit repo"],
-  ["check-runtime-adapters.mjs", "validates scripts/runtimes.mjs internals + the GUI adapter registry"],
+  [
+    "check-runtime-adapters.mjs",
+    "validates scripts/runtimes.mjs internals + the GUI adapter registry",
+  ],
   ["check-modularity.mjs", "needs external codebase-memory-mcp; ratchets on a toolkit baseline"],
-  ["check-delivery-skill-suite.mjs", "imports ajv + a toolkit script; a workspace has no node_modules"],
+  [
+    "check-delivery-skill-suite.mjs",
+    "imports ajv + a toolkit script; a workspace has no node_modules",
+  ],
 ];
 
 const CITATION = /validation\/([A-Za-z0-9_.-]+\.(?:sh|mjs|json|txt))/g;
@@ -113,7 +119,7 @@ function walk(dir, out = []) {
       continue;
     }
     if (st.isDirectory()) walk(full, out);
-    else if (/\.(md|mdx)$/.test(entry)) out.push(full);
+    else if (/\.(md|mdx)(?:\.tmpl)?$/.test(entry)) out.push(full);
   }
   return out;
 }
@@ -134,7 +140,8 @@ function collectCitations(claudeDir, repoRoot) {
 
 const exemptFor = (validator, docs) =>
   NOT_ENFORCEMENT_CLAIMS.find(
-    (e) => e.validator === validator && [...docs].every((d) => d.replace(/^scaffold\//, "") === e.in)
+    (e) =>
+      e.validator === validator && [...docs].every((d) => d.replace(/^scaffold\//, "") === e.in)
   );
 
 const isToolkitOnly = (v) => TOOLKIT_ONLY.find(([name]) => name === v);
@@ -172,14 +179,14 @@ if (TOOLKIT_MODE) {
       .filter((n) => !n.startsWith("$"))
   );
   const loop = /for\s+validator\s+in\s+([\s\S]*?);\s*do/.exec(scaffoldSrc);
-  if (loop)
-    for (const name of loop[1].split(/[\s\\]+/).filter(Boolean)) scaffolded.add(name);
+  if (loop) for (const name of loop[1].split(/[\s\\]+/).filter(Boolean)) scaffolded.add(name);
 
   console.log(`\nShipped set: ${managed.size} file(s) in MANAGED_PATHS`);
 
   // 1. Lockstep — the two lists are the single definition of the workspace toolkit surface.
   for (const f of managed)
-    if (!scaffolded.has(f)) fail(`${f} is in MANAGED_PATHS but scaffold-project.sh never copies it`);
+    if (!scaffolded.has(f))
+      fail(`${f} is in MANAGED_PATHS but scaffold-project.sh never copies it`);
   for (const f of scaffolded)
     if (!managed.has(f)) fail(`${f} is copied by scaffold-project.sh but is not in MANAGED_PATHS`);
   if (errors === 0) ok(`MANAGED_PATHS and scaffold-project.sh agree on ${managed.size} file(s)`);
@@ -191,7 +198,8 @@ if (TOOLKIT_MODE) {
 
   // 3. The exclusions hold.
   for (const [name, why] of TOOLKIT_ONLY)
-    if (managed.has(name)) fail(`${name} is recorded toolkit-only (${why}) but appears in MANAGED_PATHS`);
+    if (managed.has(name))
+      fail(`${name} is recorded toolkit-only (${why}) but appears in MANAGED_PATHS`);
 
   // 4. THE CORE CHECK — every citation in the scaffolded .claude tree resolves to a shipped file.
   const citations = collectCitations(scaffoldClaude, repo);
