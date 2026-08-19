@@ -14,7 +14,7 @@
 //   export-desc <IDENT> <file>
 //                             write the exact UTF-8 issue description to a file
 //   verify-desc <IDENT> <file>
-//                             refetch description and byte-compare it to a UTF-8 file
+//                             refetch description and compare CONTENT (not bytes) to a file
 //   set-desc <IDENT> <file>   replace description from a file (markdown ok)
 //   patch-desc <IDENT> <patch.md>
 //                             SEARCH/REPLACE blocks on description only — partial update
@@ -48,7 +48,12 @@
 //   assign <IDENT> <name-or-email>
 import { readFileSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
-import { applyDescriptionPatch, resolveLinearTemplate } from "./linear-template.mjs";
+import {
+  applyDescriptionPatch,
+  describeContentDrift,
+  findIndentedTables,
+  resolveLinearTemplate,
+} from "./linear-template.mjs";
 import {
   DEFAULT_TEAM_KEY,
   findExactRelation,
@@ -70,6 +75,41 @@ import {
 } from "./linear-core.mjs";
 
 const argv = process.argv.slice(2);
+/**
+ * Warn about markdown Linear is known to corrupt on write (AIO-942). A table indented
+ * under a list item comes back with leading characters stripped from every cell after the
+ * first column — silent content loss, so it is worth refusing to be quiet about.
+ */
+function lintDescription(md) {
+  const indented = findIndentedTables(md);
+  if (!indented.length) return;
+  console.error(
+    `warning: ${indented.length} indented table row(s) — Linear corrupts tables nested under a list item,`
+  );
+  console.error("         stripping leading characters from cells. Move the table to column 0.");
+  for (const hit of indented.slice(0, 6)) console.error(`         line ${hit.line}: ${hit.text}`);
+  if (indented.length > 6) console.error(`         ... ${indented.length - 6} more`);
+}
+
+/**
+ * Re-read what Linear actually stored and compare it to what we sent, ignoring Linear's
+ * cosmetic rewrites (yaml fence, emphasis re-bracketing, table delimiter restyling).
+ * A byte-compare cannot do this — it fails on every write, which is why it stopped being
+ * a usable gate. Returns true when the stored content matches.
+ */
+async function confirmStored(issue, sent) {
+  const check = await gql(`query($id:String!){ issue(id:$id){ description } }`, { id: issue.id });
+  const stored = check.issue.description || "";
+  const drift = describeContentDrift(sent, stored);
+  if (!drift) return true;
+  console.error(`ERROR: ${issue.identifier} did not store what was sent - content differs.`);
+  console.error(`  first divergence at normalised offset ${drift.at}`);
+  console.error(`  sent  : ${JSON.stringify(drift.local)}`);
+  console.error(`  stored: ${JSON.stringify(drift.remote)}`);
+  console.error("  This is content loss, not reformatting. Check for a table indented under a list.");
+  return false;
+}
+
 const cmd = argv[0];
 
 if (cmd === "get") {
@@ -108,19 +148,26 @@ if (cmd === "get") {
   const local = readFileSync(arg);
   const sha256 = createHash("sha256").update(remote).digest("hex");
   if (!remote.equals(local)) {
-    let first = 0;
-    while (first < remote.length && first < local.length && remote[first] === local[first]) first++;
-    const start = Math.max(0, first - 60);
-    const end = first + 120;
+    // A byte mismatch is the NORMAL case: Linear re-serialises every description it stores
+    // (yaml fence, emphasis re-bracketing, table delimiters). Failing on that made this
+    // command noise. Only real content drift is worth a non-zero exit — see AIO-942.
+    const localText = local.toString("utf8");
+    const remoteText = remote.toString("utf8");
+    const drift = describeContentDrift(localText, remoteText);
+    if (!drift) {
+      console.log(
+        `${n.identifier} content matches; stored bytes differ only by Linear's re-serialisation ` +
+          `(remote=${remote.length} local=${local.length} sha256=${sha256})`
+      );
+      process.exit(0);
+    }
     console.error(
-      `${n.identifier} description mismatch (remote=${remote.length} bytes local=${local.length} bytes sha256=${sha256})`
+      `${n.identifier} CONTENT DRIFT (remote=${remote.length} bytes local=${local.length} bytes sha256=${sha256})`
     );
-    console.error(
-      `first mismatch byte ${first}; remote=${JSON.stringify(remote.subarray(start, end).toString("utf8"))}`
-    );
-    console.error(
-      `first mismatch byte ${first}; local=${JSON.stringify(local.subarray(start, end).toString("utf8"))}`
-    );
+    console.error(`first divergence at normalised offset ${drift.at}`);
+    console.error(`  local : ${JSON.stringify(drift.local)}`);
+    console.error(`  remote: ${JSON.stringify(drift.remote)}`);
+    console.error("This is content loss, not reformatting. Check for a table indented under a list.");
     process.exit(1);
   }
   console.log(
@@ -135,11 +182,16 @@ if (cmd === "get") {
   }
   const n = await findIssue(ident);
   const description = readFileSync(arg, "utf8");
+  lintDescription(description);
   await gql(
     `mutation($id:String!,$d:String!){ issueUpdate(id:$id, input:{ description:$d }){ success } }`,
     { id: n.id, d: description }
   );
-  console.log(`updated ${n.identifier} (${description.length} chars)`);
+  const storedOk = await confirmStored(n, description);
+  console.log(
+    `updated ${n.identifier} (${description.length} chars)${storedOk ? "" : " - CONTENT DRIFT"}`
+  );
+  if (!storedOk) process.exit(1);
 } else if (cmd === "patch-desc") {
   const ident = argv[1];
   const patchFile = argv[2];
@@ -165,7 +217,11 @@ if (cmd === "get") {
       d: updated,
     }
   );
-  console.log(`patched ${n.identifier} (${original.length} → ${updated.length} chars)`);
+  const patchedOk = await confirmStored(n, updated);
+  console.log(
+    `patched ${n.identifier} (${original.length} → ${updated.length} chars)${patchedOk ? "" : " - CONTENT DRIFT"}`
+  );
+  if (!patchedOk) process.exit(1);
 } else if (cmd === "set-title") {
   const ident = argv[1];
   const title = argv[2];
