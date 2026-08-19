@@ -9,6 +9,8 @@ import {
   mergeTaskWriteback,
   planSyncOriginWriteback,
   syncOriginRowsFor,
+  canonicalTaskStatus,
+  CANONICAL_TASK_STATUSES,
 } from "../scripts/tasks-table.mjs";
 
 let failed = 0;
@@ -278,6 +280,56 @@ const formatting = planned([
   { row_key: "T-02", status: "in_progress", assignee: "alex", raw_status: null },
 ]);
 check("canonicalization-only difference is skipped", formatting.rows.length === 0);
+
+// 3b. THE MIRROR MUST TRACK THE CONTRACT (brain-api 1.21, AIO-950). `CANONICAL_TASK_STATUSES` is a
+//     client-side copy of the brain's `normalizeTaskStatus`. When the contract gained `in_review`
+//     and this copy did not, BOTH halves of the echo guard failed at once for that one status:
+//     the brain now returns `in_review` with raw_status NULL (it canonicalized our push, so there
+//     is nothing raw to preserve), and `canonicalTaskStatus("In Review")` returned null instead of
+//     `in_review`, so the "already canonicalizes to the brain's status" test missed too. The echo
+//     of our own push then read as a real brain-side change, which unlocks the assignee merge and
+//     reverts a local reassignment — the exact data loss the guard exists to prevent.
+check("canonicalTaskStatus folds `In Review`", canonicalTaskStatus("In Review") === "in_review");
+check("…and `in-review`", canonicalTaskStatus("in-review") === "in_review");
+check("…and `in_review`", canonicalTaskStatus("in_review") === "in_review");
+check(
+  "the canonical set mirrors the contract's six statuses in order",
+  JSON.stringify(CANONICAL_TASK_STATUSES) ===
+    JSON.stringify(["backlog", "ready", "in_progress", "in_review", "blocked", "done"])
+);
+
+const IN_REVIEW_TABLE = `
+| ID | Task | Assignee | Status | Sprint | Due |
+| --- | --- | --- | --- | --- | --- |
+| T-11 | Reviewed thing | sam | In Review | sprint-1 | — |
+| T-12 | Started thing | sam | In Progress | sprint-1 | — |
+`;
+// Pushed as `In Review` / `sam`; the owner then reassigned locally to `sam` without pushing, so the
+// brain still echoes the old assignee `alex`. Both rows are pure echoes and must be skipped.
+const echoInReview = planSyncOriginWriteback(IN_REVIEW_TABLE, [
+  { row_key: "T-11", status: "in_review", assignee: "alex", raw_status: null },
+  { row_key: "T-12", status: "in_progress", assignee: "alex", raw_status: null },
+]);
+check(
+  "an `in_review` canonicalization echo is skipped (control: in_progress too)",
+  echoInReview.rows.length === 0
+);
+check(
+  "…both rows reported as skipped",
+  echoInReview.skipped.includes("T-11") && echoInReview.skipped.includes("T-12")
+);
+check(
+  "…so the local assignee is never reverted to the brain's echo",
+  !/\| T-11 \| Reviewed thing \| alex \|/.test(
+    mergeTaskWriteback(IN_REVIEW_TABLE, echoInReview.rows)
+  )
+);
+// A REAL brain-side move INTO in_review still applies (the guard is not just "ignore in_review").
+const realInReview = planSyncOriginWriteback(IN_REVIEW_TABLE, [
+  { row_key: "T-12", status: "in_review", assignee: "alex", raw_status: null },
+]);
+check("a real move into in_review is still applied", realInReview.rows[0]?.status === "in_review");
+check("…carrying the brain assignee", realInReview.rows[0]?.assignee === "alex");
 
 // 4. Assignee rides along with a REAL status change only. The brain has no independent assignee
 //    author for sync-origin rows, so on an otherwise-unchanged row its value is the echo of our own

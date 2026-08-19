@@ -1,6 +1,6 @@
 # AIOS Team Brain — API Contract
 
-**Version: 1.20** is the shipped member-facing Brain API (`/api/v1`). **Document revision: 1.20**
+**Version: 1.21** is the shipped member-facing Brain API (`/api/v1`). **Document revision: 1.21**
 also carries the separately negotiated internal Executor gateway contract **1.10**; it does not
 claim unimplemented member-facing v1.10 routes. This document is the single pinned contract between the
 contributor repo (this toolkit's `aios` CLI) and the `aios-team-brain` service. Both
@@ -226,6 +226,19 @@ writeback/registration pulls), so a newer client still works against an older br
     `conversation_id` answers `422`, no thread is read or written; rate limits and cost metering
     attribute to the launching member. The Phase A `403 delegation_not_supported` is retired for this
     route. Member `aios_*` keys are byte-for-byte unchanged.
+- *2026-08-17 — **v1.21**: the canonical task status set gains **`in_review`**, between
+  `in_progress` and `blocked` (AIO-950). The wire SHAPE is unchanged: `rows[].status` is still a
+  free `string(120)` that the server normalizes, so no client must change its WIRE handling and
+  none can send an illegal value — but a client that MIRRORS the status set does have to change
+  (this toolkit's `CANONICAL_TASK_STATUSES` did; a stale mirror silently broke the sync-origin echo
+  guard). Two observable effects. (1) A row a pre-1.21 client read as `in_progress` may now
+  read as `in_review` — a Linear workflow state named "In Review" is type `started`, so it
+  previously fell through the name match to its type; that fidelity was being silently discarded,
+  because the adapter canonicalized before ingest and `raw_status` was therefore written NULL.
+  (2) A client pushing the literal string `"In Review"` now lands on `in_review` rather than
+  `backlog` with `raw_status` set. `raw_status` semantics are otherwise unchanged. Adding a member
+  to the set is additive for readers that treat status as an opaque string, and breaking only for a
+  reader that hardcodes the five-member list.*
 - *2026-08-17 — **v1.20**: `POST /api/v1/items` payload limits become EXPLICIT and, for every
   realistic client, more permissive (AIO-923). `rows` is bounded at **5,000** per payload on every
   row-bearing kind (`task`, `decision`, `fact`, `stakeholder_mention`), and the whole-request
@@ -491,7 +504,7 @@ newer CLIs also accept optional `PM`, `PM URL`, and the v1.2 `Parent`, `Labels`,
 ```
 
 Status values the client sends verbatim; the server normalizes to
-`backlog|ready|in_progress|blocked|done` (unknown → `backlog`, raw value preserved).
+`backlog|ready|in_progress|in_review|blocked|done` (unknown → `backlog`, raw value preserved).
 The PM-link fields are optional and provider-neutral. `pm_provider` identifies the
 external project-management system (`plane` or `linear` in v1), `pm_external_id` is
 the provider's durable issue/work-item key, and `pm_url` is display/provenance only.
@@ -687,7 +700,7 @@ which case it merges nothing and pull still succeeds).
 ```
 
 **`raw_status` (1.13, this mode only).** The original markdown status string the workspace pushed
-when it did not map onto a canonical status (`backlog|ready|in_progress|blocked|done`) — e.g. a
+when it did not map onto a canonical status (`backlog|ready|in_progress|in_review|blocked|done`) — e.g. a
 local `todo` is stored as `status: "backlog"`, `raw_status: "todo"`. **Every authoritative status
 writer on the brain clears it** (provider inbound apply/adopt, dashboard board move, work-event
 completion, meetings bulk apply; the push path is the only writer that sets it). So a **non-null
