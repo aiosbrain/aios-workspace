@@ -23,6 +23,41 @@ const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const AIOS = path.join(SCRIPT_DIR, "..", "scripts", "aios.mjs");
 const RUNTIMES = ["claude-code", "hermes", "openclaw", "codex", "opencode", "claude-api"];
 
+/**
+ * Count real H1 headings, ignoring fenced code blocks.
+ *
+ * AIO-965: this used to be `text.match(/^# /gm)`, which counts every shell comment inside a
+ * ```bash fence as a heading. Four correct skills in a real workspace failed on it —
+ * aios-spec-write reported 6 H1s for one heading plus five `# 1. Fast pass first…` comments in
+ * its worked example. The rule is right (one H1 per SKILL.md); the reading of it was not, and a
+ * validator that fires on correct content is one people route around.
+ *
+ * Tracks ``` and ~~~ fences, including longer runs and info strings, per CommonMark: a fence is
+ * closed only by a marker of the same character and at least the same length.
+ */
+function countH1(text) {
+  let count = 0;
+  let fence = null; // { char, len }
+  for (const line of text.split(/\r?\n/)) {
+    const m = /^\s{0,3}(`{3,}|~{3,})(.*)$/.exec(line);
+    if (m) {
+      const char = m[1][0];
+      const len = m[1].length;
+      if (!fence) {
+        // An opening fence may carry an info string; a closing one may not.
+        fence = { char, len };
+        continue;
+      }
+      if (char === fence.char && len >= fence.len && m[2].trim() === "") {
+        fence = null;
+      }
+      continue;
+    }
+    if (!fence && /^# /.test(line)) count++;
+  }
+  return count;
+}
+
 const repo = process.argv[2];
 if (!repo) {
   console.error("Usage: check-skill-export.mjs <repo>");
@@ -86,7 +121,7 @@ for (const rt of RUNTIMES) {
       const desc = (fm.match(/^description:\s*(.*)$/m) || [])[1]?.trim() ?? "";
       if (!desc || /^["']?[|>][-+]?["']?$/.test(desc))
         fail(`${rt}/${name} — empty/block-scalar description`);
-      const h1 = (text.match(/^# /gm) || []).length;
+      const h1 = countH1(text);
       if (h1 !== 1) fail(`${rt}/${name} — expected exactly 1 H1, got ${h1}`);
     }
   } else {

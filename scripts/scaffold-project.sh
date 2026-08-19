@@ -651,14 +651,12 @@ if [ -d "$SCAFFOLD/.opencode" ]; then
   [ -f "$OUTPUT/.opencode/.gitignore" ] || echo "node_modules/" > "$OUTPUT/.opencode/.gitignore"
 fi
 
-# Governance guard: ship the PreToolUse hook + its secret patterns + the hook
-# registration so Claude Code's native guard (secrets / tier leaks / frontmatter)
-# fires in this workspace, not just in the toolkit repo. The hook reads stdin
-# JSON and blocks with exit 2.
-mkdir -p "$OUTPUT/hooks" "$OUTPUT/validation"
-cp "$REPO_ROOT/hooks/team-ops-guard.sh" "$OUTPUT/hooks/team-ops-guard.sh"
-chmod +x "$OUTPUT/hooks/team-ops-guard.sh"
-cp "$REPO_ROOT/validation/secret-patterns.txt" "$OUTPUT/validation/secret-patterns.txt"
+# Governance surface: the PreToolUse guard hook, its secret patterns, and the validators this
+# workspace's own .claude/ docs cite (AIO-965). All of it lives in scaffold-validators.sh — one
+# cohesive concern, and this file is at its grandfathered size cap. The shipped list is kept in
+# lockstep with MANAGED_PATHS in scripts/toolkit-manifest.mjs, which is how EXISTING workspaces
+# get the same set via `aios update`; OGR16 fails the build if the two diverge.
+bash "$SCRIPT_DIR/scaffold-validators.sh" "$REPO_ROOT" "$OUTPUT"
 
 # Operator-loop capture hooks (AIO-167/AIO-170/AIO-293): dependency-free hooks shipped
 # standalone so IC workspaces auto-capture asks + steering decisions without the toolkit.
