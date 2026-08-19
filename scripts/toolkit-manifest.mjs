@@ -136,6 +136,12 @@ export const MANAGED_PATHS = [
   },
   { dest: "hooks/session-pulse.mjs", src: "hooks/session-pulse.mjs", kind: "file", exec: true },
   {
+    dest: "hooks/claim-check-guard.mjs",
+    src: "hooks/claim-check-guard.mjs",
+    kind: "file",
+    exec: true,
+  },
+  {
     dest: "hooks/aios-sync-nudge.sh",
     src: "hooks/aios-sync-nudge.sh",
     kind: "file",

@@ -663,7 +663,9 @@ bash "$SCRIPT_DIR/scaffold-validators.sh" "$REPO_ROOT" "$OUTPUT"
 # file-governance-guard.mjs (AIO-352) is the anti-sprawl write-time ratchet — layer 1.
 # worktree-self-heal.mjs (AIO-482) is the SessionStart adapter that re-hydrates a worktree
 # created by a tool that never called `aios worktree add` (Conductor et al).
-for hook in asks-capture.mjs asks-claim-recovery.cjs decision-capture.mjs session-pulse.mjs aios-sync-nudge.sh file-governance-guard.mjs worktree-self-heal.mjs statusline-command.mjs; do
+# claim-check-guard.mjs warns when an agent asserts something works with no measurement in the
+# message — the proxy-vs-property failure behind most falsely-reported fixes.
+for hook in asks-capture.mjs asks-claim-recovery.cjs decision-capture.mjs session-pulse.mjs aios-sync-nudge.sh file-governance-guard.mjs worktree-self-heal.mjs statusline-command.mjs claim-check-guard.mjs; do
   cp "$REPO_ROOT/hooks/$hook" "$OUTPUT/hooks/$hook"
   chmod +x "$OUTPUT/hooks/$hook"
 done
