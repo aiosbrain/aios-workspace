@@ -49,6 +49,31 @@ needs vendoring). No shared build step — each script is a standalone entry poi
   the module bodies there, keep importing the `scripts/` paths from toolkit code. The
   standalone GUI repo consumes the published package, never these shims
   (`docs/gui-toolkit-contract.md`).
+- **A shim may carry toolkit-only code — and that is the ONLY thing it may carry.** The
+  default is unchanged: shared behaviour goes in `packages/foundation/src/`, and a shim stays
+  a one-line re-export. But `packages/foundation` has a **frozen exported surface**
+  (`test/foundation-package.test.mjs` pins it by name and calls a change to that table a semver
+  event), and the bump is not free: `@aiosbrain/aios-devtools` pins
+  `@aiosbrain/foundation@^0.1.0`, so a minor drops devtools onto a second, registry-fetched copy
+  of foundation until that **separate repo** is bumped and republished too. So the test is not
+  "is this file a shim" but **who can call it**:
+  - Something a consumer of the PUBLISHED package could need — the GUI server, any downstream
+    install — goes in `packages/foundation/src/`, and you pay for the minor + the devtools bump.
+  - Something only the `aios` CLI in this repo renders or reads may live **below the
+    `export *` line in the shim**, under a comment saying why it is not shared. It is then
+    unreachable from the published package by construction, which is the point.
+
+  Two obligations come with the second case, and skipping either is how this decays into
+  "logic drifted into the shim":
+  1. **Say so in the file.** A block comment under the `export *` naming the reason, so the
+     next reader does not have to reconstruct it.
+  2. **Do not overclaim in docblocks.** "every caller that resolves a brain config" is FALSE
+     for anything in a shim — the GUI repo consumes `@aiosbrain/foundation` and never sees it.
+     Scope the sentence to the toolkit's own callers.
+
+  Live instance: the brain-URL mismatch helpers in `brain-config.mjs`
+  (`normalizeBrainUrl` / `detectBrainUrlMismatch` / `brainUrlMismatchWarning` /
+  `warnBrainUrlMismatch`). If the GUI ever needs them, that is the moment to move them.
 
 ## File-size discipline
 

@@ -312,6 +312,9 @@ async function apiOptional(cfg, route, fallback) {
 
 async function cmdStatus(repo, cfg, patterns, args = []) {
   const { plan } = buildPlan(repo, cfg, patterns);
+  // Ahead of the --json/--porcelain returns, and on stderr, so all three modes warn without a
+  // byte reaching the machine-readable stdout payload (docs/cli-output-contract.md §3).
+  warnBrainUrlMismatch(cfg, { colorize: c.yellow });
   if (args.includes("--json")) {
     console.log(JSON.stringify(statusJson(cfg, plan, loopCriticalBlocks(repo, plan, cfg))));
     return;
@@ -326,7 +329,6 @@ async function cmdStatus(repo, cfg, patterns, args = []) {
   }
   const mode = cfg.brain_url ? cfg.brain_url : c.dim("<offline/standalone>");
   console.log(c.blue(`aios status — project '${cfg.project}' → ${mode}`));
-  warnBrainUrlMismatch(cfg, { colorize: c.yellow });
   console.log("");
 
   printLoopCriticalWarnings(repo, plan, cfg);
