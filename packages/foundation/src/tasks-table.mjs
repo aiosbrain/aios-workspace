@@ -146,7 +146,20 @@ export function parseTaskRows(body) {
 // case/space/dash folding it applies. Returns null when the local text is NOT canonical (e.g.
 // `todo`, `waiting on legal`) — the brain stored that verbatim in `raw_status` and mapped the row
 // to `backlog`.
-export const CANONICAL_TASK_STATUSES = ["backlog", "ready", "in_progress", "blocked", "done"];
+//
+// KEEP IN STEP WITH `docs/brain-api.md` § task rows. This array is not decoration: it is half of
+// the echo guard below. If the contract gains a status and this copy does not, the brain returns
+// that status with `raw_status` NULL (it canonicalized our own push) while `canonicalTaskStatus`
+// of the local cell returns null — both halves of the guard miss at once and a pure echo is
+// merged as a real brain-side change, reverting a local reassignment (AIO-950, brain-api 1.21).
+export const CANONICAL_TASK_STATUSES = [
+  "backlog",
+  "ready",
+  "in_progress",
+  "in_review",
+  "blocked",
+  "done",
+];
 export function canonicalTaskStatus(raw) {
   const s = String(raw ?? "")
     .trim()

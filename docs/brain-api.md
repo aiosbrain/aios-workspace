@@ -228,8 +228,10 @@ writeback/registration pulls), so a newer client still works against an older br
     route. Member `aios_*` keys are byte-for-byte unchanged.
 - *2026-08-17 — **v1.21**: the canonical task status set gains **`in_review`**, between
   `in_progress` and `blocked` (AIO-950). The wire SHAPE is unchanged: `rows[].status` is still a
-  free `string(120)` that the server normalizes, so no client must change and none can send an
-  illegal value. Two observable effects. (1) A row a pre-1.21 client read as `in_progress` may now
+  free `string(120)` that the server normalizes, so no client must change its WIRE handling and
+  none can send an illegal value — but a client that MIRRORS the status set does have to change
+  (this toolkit's `CANONICAL_TASK_STATUSES` did; a stale mirror silently broke the sync-origin echo
+  guard). Two observable effects. (1) A row a pre-1.21 client read as `in_progress` may now
   read as `in_review` — a Linear workflow state named "In Review" is type `started`, so it
   previously fell through the name match to its type; that fidelity was being silently discarded,
   because the adapter canonicalized before ingest and `raw_status` was therefore written NULL.
