@@ -48,5 +48,5 @@ Requires `LINEAR_API_KEY` and the `aios-linear` skill's `linear.mjs` on the path
 ## Limitations (v1)
 
 - Does not call an LLM for code-area deconfliction — operator reviews overlap
-- AIO team only (not PIKL)
+- AIO team only (not client-engagement boards)
 - Does not auto-start agents
