@@ -15,7 +15,8 @@
 //                             write the exact UTF-8 issue description to a file
 //   verify-desc <IDENT> <file>
 //                             refetch description and compare CONTENT (not bytes) to a file
-//   set-desc <IDENT> <file>   replace description from a file (markdown ok; --force to bypass\n//                             the indented-table lint)
+//   set-desc <IDENT> <file>   replace description from a file (markdown ok; --force to bypass
+//                             the indented-table lint)
 //   patch-desc <IDENT> <patch.md>
 //                             SEARCH/REPLACE blocks on description only — partial update
 //   set-title <IDENT> <title> replace the issue title
@@ -76,7 +77,7 @@ import {
 
 const argv = process.argv.slice(2);
 /**
- * Warn about markdown Linear is known to corrupt on write (AIO-942). A table indented
+ * Guard against markdown Linear is known to corrupt on write (AIO-942). A table indented
  * under a list item comes back with leading characters stripped from every cell after the
  * first column — silent content loss, so it is worth refusing to be quiet about.
  */
@@ -117,7 +118,11 @@ async function confirmStored(issue, sent) {
   console.error(`  first divergence at normalised offset ${drift.at}`);
   console.error(`  sent  : ${JSON.stringify(drift.local)}`);
   console.error(`  stored: ${JSON.stringify(drift.remote)}`);
-  console.error("  This is content loss, not reformatting. Check for a table indented under a list.");
+  console.error(
+    "  This is content loss, not reformatting. Check for a table indented under a list."
+  );
+  console.error("  The write already completed; the issue may now contain damaged content.");
+  console.error("  Repair the description immediately, rerun the write, then run verify-desc.");
   return false;
 }
 
@@ -178,7 +183,9 @@ if (cmd === "get") {
     console.error(`first divergence at normalised offset ${drift.at}`);
     console.error(`  local : ${JSON.stringify(drift.local)}`);
     console.error(`  remote: ${JSON.stringify(drift.remote)}`);
-    console.error("This is content loss, not reformatting. Check for a table indented under a list.");
+    console.error(
+      "This is content loss, not reformatting. Check for a table indented under a list."
+    );
     process.exit(1);
   }
   console.log(
@@ -193,7 +200,7 @@ if (cmd === "get") {
   }
   const n = await findIssue(ident);
   const description = readFileSync(arg, "utf8");
-  lintDescription(description, { force: argv.includes("--force") });
+  lintDescription(description, { force: argv.slice(3).includes("--force") });
   await gql(
     `mutation($id:String!,$d:String!){ issueUpdate(id:$id, input:{ description:$d }){ success } }`,
     { id: n.id, d: description }
@@ -221,7 +228,7 @@ if (cmd === "get") {
     console.error(`patch failed: ${e.message}`);
     process.exit(1);
   }
-  lintDescription(updated, { force: argv.includes("--force") });
+  lintDescription(updated, { force: argv.slice(3).includes("--force") });
   await gql(
     `mutation($id:String!,$d:String!){ issueUpdate(id:$id, input:{ description:$d }){ success } }`,
     {
@@ -531,7 +538,8 @@ if (cmd === "get") {
 } else {
   console.log(
     "usage: linear.mjs get <IDENT> [--full] | export-desc <IDENT> <file> | verify-desc <IDENT> <file> | " +
-      "set-desc <IDENT> <file> | patch-desc <IDENT> <patch.md> | set-title <IDENT> <title> | " +
+      "set-desc <IDENT> <file> [--force] | patch-desc <IDENT> <patch.md> [--force] | " +
+      "set-title <IDENT> <title> | " +
       "set-state <IDENT> <name> | set-priority <IDENT> <priority> | comment <IDENT> <text> | " +
       "comments <IDENT> | list <TEAMKEY> | relations <IDENT> | blocks <BLOCKER> <BLOCKED> | " +
       "related <ISSUE_A> <ISSUE_B> | remove-relation <ISSUE_A> <ISSUE_B> <blocks|related> | " +

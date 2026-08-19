@@ -51,8 +51,8 @@ $LIN export-desc AIO-75 spec.md # exact UTF-8 description + SHA-256
 $LIN verify-desc AIO-75 spec.md # refetch + compare description (content, not bytes)
 $LIN template aios              # print issue scaffold
 $LIN create "My slice" --template aios --state Triage
-$LIN set-desc AIO-75 spec.md   # replace description from a file
-$LIN patch-desc AIO-75 patch.md  # SEARCH/REPLACE blocks — partial update
+$LIN set-desc AIO-75 spec.md [--force]  # replace description; force bypasses the table lint
+$LIN patch-desc AIO-75 patch.md [--force]  # SEARCH/REPLACE; force bypasses the table lint
 $LIN set-title AIO-75 "New title"
 $LIN set-state AIO-75 "In Progress"
 $LIN set-priority AIO-75 high  # priority: none, urgent, high, medium, low
@@ -88,8 +88,10 @@ silent.
 
 So:
 
-* `set-desc` and `patch-desc` **lint before sending** (warning on any indented table row, with
-  line numbers) and **re-read after writing**, exiting non-zero on real content drift.
+* `set-desc` and `patch-desc` **lint before sending** and block any indented table, with line
+  numbers. `--force` after the filename is the explicit escape hatch. They **re-read after
+  writing** and exit non-zero on real content drift; at that point the write already happened,
+  so repair the description immediately, rerun the write, and then run `verify-desc`.
 * `verify-desc` compares on a normalised form. A byte difference caused only by Linear's
   re-serialisation now **passes**; genuine content loss **fails**. Before this, it failed on
   essentially every write, which made it noise nobody could act on — and that is how the

@@ -69,19 +69,155 @@ function markFences(md) {
   const lines = md.split("\n");
   let fence = null;
   return lines.map((line) => {
-    const m = /^\s*(`{3,}|~{3,})/.exec(line);
-    if (m) {
-      if (fence == null) {
-        fence = m[1][0];
-        return { line, fenced: true };
-      }
-      if (m[1][0] === fence) {
+    if (fence != null) {
+      const quote = blockquoteLineInfo(line);
+      if (quote.depth < fence.quoteDepth) {
+        // A fenced block inside a quote ends when that quote container ends.
         fence = null;
+      } else {
+        // Strip only the quote container that owns the fence. Any deeper `>` is code.
+        const content = blockquoteLineInfo(line, fence.quoteDepth).content;
+        const closing = /^[ \t]*(`+|~+)[ \t]*$/.exec(content);
+        if (closing && closing[1][0] === fence.marker && closing[1].length >= fence.length) {
+          fence = null;
+        }
         return { line, fenced: true };
       }
     }
-    return { line, fenced: fence != null };
+    const { content, depth: quoteDepth } = blockquoteLineInfo(line);
+    const opening = /^[ \t]*(`{3,}|~{3,})(.*)$/.exec(content);
+    if (opening && !(opening[1][0] === "`" && opening[2].includes("`"))) {
+      fence = { marker: opening[1][0], length: opening[1].length, quoteDepth };
+      return { line, fenced: true };
+    }
+    return { line, fenced: false };
   });
+}
+
+/** Apply a prose-only transform without touching inline code spans. */
+function mapOutsideCodeSpans(line, transform) {
+  const spans = [];
+  let masked = "";
+  let chunkStart = 0;
+  let cursor = 0;
+  while (cursor < line.length) {
+    if (line[cursor] !== "`") {
+      cursor++;
+      continue;
+    }
+    let ticks = 1;
+    while (line[cursor + ticks] === "`") ticks++;
+    const marker = "`".repeat(ticks);
+    const close = line.indexOf(marker, cursor + ticks);
+    if (close === -1) break;
+    masked += line.slice(chunkStart, cursor);
+    const token = `\u0000CODE${spans.length}\u0000`;
+    spans.push(line.slice(cursor, close + ticks));
+    masked += token;
+    cursor = close + ticks;
+    chunkStart = cursor;
+  }
+  masked += line.slice(chunkStart);
+  return transform(masked).replace(
+    /\u0000CODE(\d+)\u0000/g,
+    (_match, index) => spans[Number(index)]
+  );
+}
+
+/** Remove paired asterisk emphasis delimiters while preserving literal stars and underscores. */
+function normalizeEmphasis(text) {
+  const boundaryBefore = String.raw`(^|[\s([{"'>.,;:!?-])`;
+  const boundaryAfter = String.raw`(?=$|[\s)\]}"'<>.,;:!?-])`;
+  const strong = new RegExp(
+    `${boundaryBefore}\\*\\*(?![*/.])(?=\\S)([^\\n]*?\\S)\\*\\*${boundaryAfter}`,
+    "g"
+  );
+  const emphasis = new RegExp(
+    `${boundaryBefore}\\*(?![*/.])(?=\\S)([^*\\n]*?\\S)\\*${boundaryAfter}`,
+    "g"
+  );
+  let previous;
+  do {
+    previous = text;
+    text = text.replace(strong, "$1$2").replace(emphasis, "$1$2");
+  } while (text !== previous);
+  return text;
+}
+
+/** Split a table row on pipes outside escaped text and inline code. */
+function splitTableCells(line) {
+  let content = line.trim();
+  if (content.startsWith("|")) content = content.slice(1);
+  if (content.endsWith("|")) content = content.slice(0, -1);
+  const cells = [];
+  let cell = "";
+  let codeTicks = 0;
+  for (let cursor = 0; cursor < content.length; cursor++) {
+    if (content[cursor] === "\\" && cursor + 1 < content.length) {
+      cell += content.slice(cursor, cursor + 2);
+      cursor++;
+      continue;
+    }
+    if (content[cursor] === "`") {
+      let ticks = 1;
+      while (content[cursor + ticks] === "`") ticks++;
+      if (codeTicks === 0) codeTicks = ticks;
+      else if (ticks === codeTicks) codeTicks = 0;
+      cell += "`".repeat(ticks);
+      cursor += ticks - 1;
+      continue;
+    }
+    if (content[cursor] === "|" && codeTicks === 0) {
+      cells.push(cell.trim());
+      cell = "";
+      continue;
+    }
+    cell += content[cursor];
+  }
+  cells.push(cell.trim());
+  return cells.length >= 2 ? cells : null;
+}
+
+/** Canonicalize delimiter styling while preserving column count and alignment. */
+function normalizeTableDelimiter(line) {
+  const cells = splitTableCells(line);
+  if (!cells || cells.some((cell) => !/^:?-+:?$/.test(cell))) return null;
+  const canonical = cells.map((cell) => {
+    const left = cell.startsWith(":") ? ":" : "";
+    const right = cell.endsWith(":") ? ":" : "";
+    return `${left}---${right}`;
+  });
+  return `|${canonical.join("|")}|`;
+}
+
+/** Read up to `maxDepth` Markdown blockquote markers and retain inner indentation. */
+function blockquoteLineInfo(line, maxDepth = Infinity) {
+  let content = line;
+  let depth = 0;
+  while (depth < maxDepth) {
+    const marker = /^[ \t]{0,3}>[ \t]?/.exec(content);
+    if (!marker) break;
+    content = content.slice(marker[0].length);
+    depth++;
+  }
+  return { content, depth };
+}
+
+/** Remove Markdown blockquote syntax while retaining indentation inside the quote. */
+function stripBlockquotePrefix(line) {
+  return blockquoteLineInfo(line).content;
+}
+
+function tableRowInfo(line, fenced) {
+  if (fenced) return null;
+  const content = stripBlockquotePrefix(line);
+  const trimmed = content.trim();
+  if (!splitTableCells(trimmed)) return null;
+  return {
+    indented: /^[ \t]+/.test(content),
+    delimiter: normalizeTableDelimiter(trimmed) != null,
+    text: trimmed,
+  };
 }
 
 /**
@@ -92,17 +228,34 @@ function markFences(md) {
 export function normalizeForCompare(md) {
   let out = String(md ?? "");
   // (1) YAML frontmatter ↔ ```yaml fence — reduce both to a bare fence marker.
-  out = out.replace(/^---\r?\n([\s\S]*?)\r?\n---(\r?\n|$)/, (_m, body) => "```yaml\n" + body + "\n```\n");
-  // (2) emphasis markers carry no content — strip them wholesale.
-  out = out.replace(/\*\*/g, "").replace(/(^|\W)[*_](\S)/g, "$1$2").replace(/(\S)[*_](\W|$)/g, "$1$2");
-  // table delimiter rows: `|---|---|` and `| -- | -- |` are the same row.
-  out = out
-    .split("\n")
-    .map((l) => (/^\s*\|[\s:|-]+\|\s*$/.test(l) ? "|---|" : l))
-    .join("\n");
-  // whitespace: Linear re-indents and re-wraps freely.
-  out = out.replace(/[ \t]+/g, " ").replace(/ *\n */g, "\n").replace(/\n{2,}/g, "\n");
-  return out.trim();
+  out = out.replace(
+    /^---\r?\n([\s\S]*?)\r?\n---(\r?\n|$)/,
+    (_m, body) => "```yaml\n" + body + "\n```\n"
+  );
+  const marked = markFences(out);
+  const tableRows = marked.map(({ line, fenced }) => tableRowInfo(line, fenced));
+  const lines = [];
+  for (let index = 0; index < marked.length; index++) {
+    const { line, fenced } = marked[index];
+    if (fenced) {
+      lines.push(line);
+      continue;
+    }
+    // (2) strip paired asterisk emphasis in prose, never stars in code/globs or underscores.
+    let normalized = mapOutsideCodeSpans(line, normalizeEmphasis);
+    // Linear canonicalises unordered-list markers to `*`.
+    normalized = normalized.replace(/^(\s*(?:>\s*)*)[-*](?=[ \t]+)/, "$1*");
+    // Only canonicalize a delimiter with an actual table header immediately above it.
+    if (tableRows[index]?.delimiter && tableRows[index - 1]) {
+      const row = tableRows[index].text;
+      normalized = normalized.replace(row, normalizeTableDelimiter(row));
+    }
+    // Whitespace outside code is cosmetic; whitespace inside code is content.
+    normalized = mapOutsideCodeSpans(normalized, (prose) => prose.replace(/[ \t]+/g, " ")).trim();
+    if (normalized === "") continue;
+    lines.push(normalized);
+  }
+  return lines.join("\n").trim();
 }
 
 /**
@@ -111,13 +264,19 @@ export function normalizeForCompare(md) {
  * are ignored: a fenced example of the bug is not the bug.
  */
 export function findIndentedTables(md) {
-  const hits = [];
-  markFences(md).forEach(({ line, fenced }, i) => {
-    if (fenced) return;
-    // a table row that does not start at column 0
-    if (/^[ \t]+\|.*\|[ \t]*$/.test(line)) hits.push({ line: i + 1, text: line.trim() });
-  });
-  return hits;
+  const rows = markFences(md).map(({ line, fenced }) => tableRowInfo(line, fenced));
+  const hitLines = new Set();
+  for (let delimiter = 1; delimiter < rows.length; delimiter++) {
+    if (!rows[delimiter]?.delimiter || !rows[delimiter - 1]) continue;
+    let end = delimiter + 1;
+    while (end < rows.length && rows[end]) end++;
+    for (let row = delimiter - 1; row < end; row++) {
+      if (rows[row].indented) hitLines.add(row);
+    }
+  }
+  return [...hitLines]
+    .sort((a, b) => a - b)
+    .map((line) => ({ line: line + 1, text: rows[line].text }));
 }
 
 /**
