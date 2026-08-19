@@ -36,7 +36,8 @@ export function brainUrlMismatchWarning(mismatch) {
     `⚠  brain URL mismatch — aios.yaml says ${mismatch.declared}, but AIOS_BRAIN_URL in your ` +
     `environment says ${mismatch.effective}. The environment wins, so this command is talking to ` +
     `${mismatch.effective}. If that is not the brain you meant, unset AIOS_BRAIN_URL — it is often ` +
-    `left exported by another workspace's direnv.`
+    `left exported by another workspace's direnv. If it is not in your shell environment, remove ` +
+    `it from the workspace or toolkit .env instead.`
   );
 }
 
