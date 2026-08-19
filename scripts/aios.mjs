@@ -37,7 +37,8 @@ import {
 // `aios` command (status/push/pull/query/...) must stay fast and dependency-free at
 // import time; only the interactive onboarding wizard needs @clack/prompts.
 import { parseFlatYaml } from "./flat-yaml.mjs";
-import { loadDotEnv, envGet, resolveBrainConfig, dotenvxEncryptedHint } from "./brain-config.mjs";
+import { statusJson } from "./status-json.mjs";
+import { loadDotEnv, envGet, resolveBrainConfig, dotenvxEncryptedHint, detectBrainUrlMismatch, brainUrlMismatchWarning } from "./brain-config.mjs";
 import { pullSyncOriginTasks, resolveTasksPath, mergeWritebackFeed } from "./pull-tasks.mjs";
 import {
   parseFrontmatter,
@@ -176,9 +177,15 @@ function loadOfflineConfig(repo) {
  * brain the same way; the only CLI-specific bit is the cfg.brain_url fallback +
  * cfg.api_key_env override.
  */
+/** Loud: a 401 from the wrong brain names the wrong cause. */
+const warnBrainUrl = (cfg) => { const m = brainUrlMismatchWarning(cfg.brain_url_mismatch); if (m) console.error(c.yellow(m)); };
+
 function mergeBrainSecrets(cfg, repo) {
   const resolved = resolveBrainConfig(repo, { apiKeyEnv: cfg.api_key_env || "AIOS_API_KEY" });
-  cfg.brain_url = resolved.brain_url || (cfg.brain_url || "").trim();
+  const declared = (cfg.brain_url || "").trim();
+  cfg.brain_url = resolved.brain_url || declared;
+  // Recorded, not warned, so each caller decides how loud to be. Why it matters: brain-config.mjs.
+  cfg.brain_url_mismatch = detectBrainUrlMismatch(declared, resolved.brain_url);
   cfg.api_key = resolved.api_key;
   cfg.dotenvx_encrypted = resolved.dotenvx_encrypted;
   if (resolved.team_id) cfg.team_id = resolved.team_id;
@@ -299,28 +306,11 @@ async function apiOptional(cfg, route, fallback) {
 
 // ── commands ────────────────────────────────────────────────────────────────
 
+
 async function cmdStatus(repo, cfg, patterns, args = []) {
   const { plan } = buildPlan(repo, cfg, patterns);
   if (args.includes("--json")) {
-    const item = (i) => ({
-      rel: i.rel,
-      kind: i.kind || null,
-      tier: i.tier || null,
-      isNew: !!i.isNew,
-    });
-    console.log(
-      JSON.stringify({
-        project: cfg.project,
-        brain_url: cfg.brain_url || null,
-        items: {
-          new: plan.push.filter((i) => i.isNew).map(item),
-          modified: plan.push.filter((i) => !i.isNew).map(item),
-          blocked: plan.blocked.map((i) => ({ rel: i.rel, reason: i.reason })),
-          clean: plan.clean.map((i) => ({ rel: i.rel })),
-        },
-        loop_critical_blocked: loopCriticalBlocks(repo, plan, cfg),
-      })
-    );
+    console.log(JSON.stringify(statusJson(cfg, plan, loopCriticalBlocks(repo, plan, cfg))));
     return;
   }
   if (args.includes("--porcelain")) {
@@ -333,6 +323,7 @@ async function cmdStatus(repo, cfg, patterns, args = []) {
   }
   const mode = cfg.brain_url ? cfg.brain_url : c.dim("<offline/standalone>");
   console.log(c.blue(`aios status — project '${cfg.project}' → ${mode}`));
+  warnBrainUrl(cfg);
   console.log("");
 
   printLoopCriticalWarnings(repo, plan, cfg);
@@ -739,6 +730,8 @@ function emptyPushResult() {
 }
 
 async function cmdPush(repo, cfg, patterns, args) {
+  warnBrainUrl(cfg); // push is the only writer — a wrong URL here reaches another brain
+
   if (args[0] === "skill") return cmdPushSkill(repo, cfg, patterns, args.slice(1));
   if (args[0] === "blueprint") return cmdPushBlueprint(repo, cfg, args.slice(1));
   const dryRun = args.includes("--dry-run");
