@@ -106,6 +106,7 @@ case "$MODE" in
     run_check "OGR14 — File Governance (anti-sprawl ratchet)" "$SCRIPT_DIR/check-file-governance.mjs"
     run_check "OGR15 — Focused Delivery Skill Suite" "$SCRIPT_DIR/check-delivery-skill-suite.mjs"
     run_check "OGR16 — Validator Citations" "$SCRIPT_DIR/check-citations.mjs"
+    run_check "OGR17 — Shared Skill Sync" "$SCRIPT_DIR/check-skill-sync.mjs"
     ;;
 esac
 
