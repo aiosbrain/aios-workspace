@@ -38,7 +38,14 @@ import {
 // import time; only the interactive onboarding wizard needs @clack/prompts.
 import { parseFlatYaml } from "./flat-yaml.mjs";
 import { statusJson } from "./status-json.mjs";
-import { loadDotEnv, envGet, resolveBrainConfig, dotenvxEncryptedHint, detectBrainUrlMismatch, brainUrlMismatchWarning } from "./brain-config.mjs";
+import {
+  loadDotEnv,
+  envGet,
+  resolveBrainConfig,
+  dotenvxEncryptedHint,
+  detectBrainUrlMismatch,
+  warnBrainUrlMismatch,
+} from "./brain-config.mjs";
 import { pullSyncOriginTasks, resolveTasksPath, mergeWritebackFeed } from "./pull-tasks.mjs";
 import {
   parseFrontmatter,
@@ -177,9 +184,6 @@ function loadOfflineConfig(repo) {
  * brain the same way; the only CLI-specific bit is the cfg.brain_url fallback +
  * cfg.api_key_env override.
  */
-/** Loud: a 401 from the wrong brain names the wrong cause. */
-const warnBrainUrl = (cfg) => { const m = brainUrlMismatchWarning(cfg.brain_url_mismatch); if (m) console.error(c.yellow(m)); };
-
 function mergeBrainSecrets(cfg, repo) {
   const resolved = resolveBrainConfig(repo, { apiKeyEnv: cfg.api_key_env || "AIOS_API_KEY" });
   const declared = (cfg.brain_url || "").trim();
@@ -306,7 +310,6 @@ async function apiOptional(cfg, route, fallback) {
 
 // ── commands ────────────────────────────────────────────────────────────────
 
-
 async function cmdStatus(repo, cfg, patterns, args = []) {
   const { plan } = buildPlan(repo, cfg, patterns);
   if (args.includes("--json")) {
@@ -323,7 +326,7 @@ async function cmdStatus(repo, cfg, patterns, args = []) {
   }
   const mode = cfg.brain_url ? cfg.brain_url : c.dim("<offline/standalone>");
   console.log(c.blue(`aios status — project '${cfg.project}' → ${mode}`));
-  warnBrainUrl(cfg);
+  warnBrainUrlMismatch(cfg, { colorize: c.yellow });
   console.log("");
 
   printLoopCriticalWarnings(repo, plan, cfg);
@@ -730,7 +733,7 @@ function emptyPushResult() {
 }
 
 async function cmdPush(repo, cfg, patterns, args) {
-  warnBrainUrl(cfg); // push is the only writer — a wrong URL here reaches another brain
+  warnBrainUrlMismatch(cfg, { colorize: c.yellow }); // push writes — a wrong URL reaches another brain
 
   if (args[0] === "skill") return cmdPushSkill(repo, cfg, patterns, args.slice(1));
   if (args[0] === "blueprint") return cmdPushBlueprint(repo, cfg, args.slice(1));

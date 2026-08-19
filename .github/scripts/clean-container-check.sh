@@ -55,10 +55,19 @@ for CTX in consultant employee business-owner; do
     --output "$WS" </dev/null >/dev/null
   pass "scaffolded $CTX"
 
-  # `aios validate` must work from INSIDE the workspace — the workspace has no
-  # validation/validate-all.sh of its own, which is the whole reason the command exists.
-  test ! -f "$WS/validation/validate-all.sh" ||
-    fail "$CTX: workspace unexpectedly ships validate-all.sh (assumption changed)"
+  # Since AIO-965 a workspace SHIPS its own validators, because its stamped `.claude/`
+  # rules cite them by path. A bare container is where that promise is actually testable:
+  # the shipped set must be node-builtin/bash only, so it has to run with no `npm install`
+  # and no jq. If this ever needs an installed dependency, ship the dependency — do not
+  # relax the check.
+  test -x "$WS/validation/validate-all.sh" ||
+    fail "$CTX: workspace does not ship an executable validation/validate-all.sh (AIO-965)"
+
+  if (cd "$WS" && bash validation/validate-all.sh .); then
+    pass "$CTX: shipped validate-all.sh exit 0 with no npm install"
+  else
+    fail "$CTX: shipped validate-all.sh exited $? (expected 0)"
+  fi
 
   if (cd "$WS" && aios validate); then
     pass "$CTX: aios validate exit 0"

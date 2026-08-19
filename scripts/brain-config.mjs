@@ -6,7 +6,9 @@ export * from "../packages/foundation/src/brain-config.mjs";
 
 /** Compare brain URLs without being fooled by a trailing slash. */
 function stripSlash(u) {
-  return String(u || "").trim().replace(/\/+$/, "");
+  return String(u || "")
+    .trim()
+    .replace(/\/+$/, "");
 }
 
 /**
@@ -36,4 +38,16 @@ export function brainUrlMismatchWarning(mismatch) {
     `${mismatch.effective}. If that is not the brain you meant, unset AIOS_BRAIN_URL — it is often ` +
     `left exported by another workspace's direnv.`
   );
+}
+
+/**
+ * Emit the mismatch warning for a resolved config, or say nothing when there is nothing to say.
+ *
+ * Lives here rather than in the CLI entrypoint so every caller that resolves a brain config warns
+ * with the same words; `colorize`/`log` are injected because this module stays dependency-free and
+ * must not reach back into the CLI's ANSI helpers.
+ */
+export function warnBrainUrlMismatch(cfg, { colorize = (s) => s, log = console.error } = {}) {
+  const message = brainUrlMismatchWarning(cfg && cfg.brain_url_mismatch);
+  if (message) log(colorize(message));
 }

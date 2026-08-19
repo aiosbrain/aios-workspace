@@ -8,7 +8,12 @@
  * the CLI entrypoint, and importing back into it would make this module and that one circular.
  */
 export function statusJson(cfg, plan, loopCriticalBlocked) {
-  const item = (i) => ({ rel: i.rel, kind: i.kind || null, tier: i.tier || null, isNew: !!i.isNew });
+  const item = (i) => ({
+    rel: i.rel,
+    kind: i.kind || null,
+    tier: i.tier || null,
+    isNew: !!i.isNew,
+  });
   return {
     project: cfg.project,
     brain_url: cfg.brain_url || null,
