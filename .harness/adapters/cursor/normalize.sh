@@ -13,10 +13,20 @@
 #   post_edit   <- afterFileEdit          {file_path, edits}
 #   stop        <- stop                   {status, loop_count}
 # afterFileEdit / stop carry no cwd, so ${CURSOR_PROJECT_DIR:-$PWD} is the fallback.
+# cursor/dispatch.sh re-exports CURSOR_PROJECT_DIR as the root the DISPATCH decision
+# resolved from the payload, so that fallback agrees with the repo actually in scope
+# rather than with whichever root the Cursor window happened to open on.
 set -u
 
 EVENT=${1:-}
-command -v jq >/dev/null 2>&1 || { echo "cursor adapter: jq not found" >&2; exit 3; }
+# Belt-and-braces: run-hook.sh and cursor/dispatch.sh already decide what a missing jq
+# means (adapters/jq-preflight.sh — an environment failure, allowed loudly, not a
+# session-wide deny). This branch is only reached when the normalizer is invoked
+# directly, so it says which tool is missing rather than just "not found".
+command -v jq >/dev/null 2>&1 || {
+  echo "cursor adapter: 'jq' is not on PATH — install it (brew install jq) and re-run" >&2
+  exit 3
+}
 
 INPUT=$(cat 2>/dev/null || true)
 printf '%s' "$INPUT" | jq -e 'type == "object"' >/dev/null 2>&1 || {

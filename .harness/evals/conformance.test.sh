@@ -142,11 +142,23 @@ pipe_status "formatter ignores malformed payload" 0 '{bad' "$ADAPTER" codex post
 mkdir -p "$TMP/no-jq"
 ln -s /usr/bin/dirname "$TMP/no-jq/dirname"
 ln -s /bin/cat "$TMP/no-jq/cat"
-printf '%s' "$CLAUDE_CLEAN" | PATH="$TMP/no-jq" "$ADAPTER" claude-code pre_edit guard-secrets.sh >/dev/null 2>&1
-if [ $? = 2 ]; then
-  PASS=$((PASS+1)); echo "PASS (2): missing jq blocks safety adapter"
+# A missing interpreter is an ENVIRONMENT failure, not a policy violation: it says
+# nothing about the action and is identical for every call. Blocking on it deadlocks
+# Cursor outright (failClosed denies every tool call, including the one that installs
+# jq), so the adapter degrades to a loud allow and names the missing tool. Fail-closed
+# is still available on demand via HARNESS_REQUIRE_JQ=1 — asserted below.
+NOJQ_ERR=$(printf '%s' "$CLAUDE_CLEAN" | PATH="$TMP/no-jq" "$ADAPTER" claude-code pre_edit guard-secrets.sh 2>&1 >/dev/null)
+NOJQ_STATUS=$?
+if [ "$NOJQ_STATUS" = 0 ] && printf '%s' "$NOJQ_ERR" | grep -q "jq"; then
+  PASS=$((PASS+1)); echo "PASS (0): missing jq degrades to a loud allow, naming jq"
 else
-  FAIL=$((FAIL+1)); echo "FAIL: missing jq did not block safety adapter"
+  FAIL=$((FAIL+1)); echo "FAIL: missing jq should allow loudly (got $NOJQ_STATUS): $NOJQ_ERR"
+fi
+printf '%s' "$CLAUDE_CLEAN" | HARNESS_REQUIRE_JQ=1 PATH="$TMP/no-jq" "$ADAPTER" claude-code pre_edit guard-secrets.sh >/dev/null 2>&1
+if [ $? = 2 ]; then
+  PASS=$((PASS+1)); echo "PASS (2): HARNESS_REQUIRE_JQ=1 restores fail-closed on missing jq"
+else
+  FAIL=$((FAIL+1)); echo "FAIL: HARNESS_REQUIRE_JQ=1 should block on missing jq"
 fi
 mkdir -p "$TMP/bin"
 printf '#!/bin/sh\nprintf "%%s\\n" "$2" >> "$FORMAT_LOG"\n' > "$TMP/bin/prettier"

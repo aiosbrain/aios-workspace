@@ -1371,9 +1371,9 @@ test("all four checked-in runtime adapters point to the shared gate", () => {
   );
   assert.match(JSON.stringify(claude.hooks.Stop), /run-local-bugbot-gate\.sh\\" claude/);
   assert.match(JSON.stringify(codex.hooks.Stop), /run-local-bugbot-gate\.sh\\" codex/);
-  assert.match(JSON.stringify(cursor.hooks.stop), /run-local-bugbot-gate\.sh\\" cursor/);
   assert.match(JSON.stringify(claude.hooks.Stop), /\\"\$\{CLAUDE_PROJECT_DIR\}/);
-  assert.match(JSON.stringify(cursor.hooks.stop), /\$\{CURSOR_PROJECT_DIR\}/);
+  // Cursor uses payload-cwd dispatch, so it reaches the same gate via cursor/dispatch.sh
+  assert.match(JSON.stringify(cursor.hooks.stop), /cursor\/dispatch\.sh bugbot/);
   assert.match(JSON.stringify(codex.hooks.Stop), /\/usr\/bin\/env -i/);
   assert.match(JSON.stringify(codex.hooks.Stop), /\/usr\/bin\/git/);
   assert.match(JSON.stringify(codex.hooks.Stop), /\/opt\/homebrew\/bin\/git/);
