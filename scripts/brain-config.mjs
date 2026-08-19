@@ -39,10 +39,21 @@ export function normalizeBrainUrl(value) {
   try {
     parsed = new URL(raw);
   } catch {
-    return raw.replace(/\/+$/, "");
+    return trimTrailingSlashes(raw);
   }
-  const pathname = parsed.pathname.replace(/\/{2,}/g, "/").replace(/\/+$/, "");
+  const pathname = trimTrailingSlashes(parsed.pathname.replace(/\/{2,}/g, "/"));
   return `${parsed.protocol}//${parsed.host}${pathname}${parsed.search}`;
+}
+
+/**
+ * Drop trailing "/" characters. A scan rather than `/\/+$/`, which backtracks super-linearly on a
+ * long run of slashes that turns out not to reach the end (SonarCloud flags it, and the input here
+ * is config- and environment-supplied, so "nobody would type that" is not a guarantee).
+ */
+function trimTrailingSlashes(s) {
+  let end = s.length;
+  while (end > 0 && s[end - 1] === "/") end--;
+  return s.slice(0, end);
 }
 
 /**
