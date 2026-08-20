@@ -7,10 +7,11 @@
 # reason scaffold-repo-meta.sh exists.
 #
 # `pm_tool` (aios.yaml) is the seam that keeps Linear-specific governance out of a workspace
-# whose team does not use Linear (AIO-844). It gates three assets, and only these three:
+# whose team does not use Linear (AIO-844). It gates four assets, and only these four:
 #   .claude/rules/linear-factory.md
 #   .claude/skills/aios-linear/
 #   docs/agentic-ergonomics/aios-issue-template.md
+#   docs/agentic-ergonomics/aios-finding-template.md
 # The spec-readiness rubric is deliberately NOT gated — grading a spec is PM-tool-agnostic,
 # and every workspace needs it for `aios spec eval`.
 #
@@ -49,6 +50,9 @@ if [ "$PM_TOOL" = "linear" ]; then
   mkdir -p "$OUTPUT/docs/agentic-ergonomics"
   cp "$REPO_ROOT/docs/agentic-ergonomics/aios-issue-template.md" \
     "$OUTPUT/docs/agentic-ergonomics/aios-issue-template.md"
+  # The finding-shaped sibling (AIO-999): `linear.mjs create --template finding`.
+  cp "$REPO_ROOT/docs/agentic-ergonomics/aios-finding-template.md" \
+    "$OUTPUT/docs/agentic-ergonomics/aios-finding-template.md"
 else
   # Copy-then-prune: the wholesale rules/skills copies above already ran. Pruning two paths
   # beats converting those copies into curated file lists that would need every one of the

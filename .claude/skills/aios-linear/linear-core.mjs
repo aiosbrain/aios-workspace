@@ -107,7 +107,7 @@ export async function listTeamIssues(teamKey) {
     const data = await gql(
       `query($k:String!,$after:String){
         issues(first:250, after:$after, filter:{ team:{ key:{ eq:$k } } }){
-          nodes{ identifier title state{ name type } labels{ nodes{ name } } }
+          nodes{ identifier title state{ name type } labels(first:250){ nodes{ name } } }
           pageInfo{ hasNextPage endCursor }
         }
       }`,
@@ -139,15 +139,26 @@ export function parseListArgs(args) {
       filters.open = true;
     } else if (option === "--label" || option === "--missing-label") {
       const value = args[++index];
-      if (!value) fail(`${option} requires a value`);
+      // A following flag means the value was forgotten — consuming it would silently
+      // drop both the filter and the next flag and return zero-surprise rows.
+      if (!value || value.startsWith("--")) fail(`${option} requires a value`);
       if (option === "--label") {
         // Repeated --label flags AND; commas inside one flag OR.
-        filters.labels.push(
-          value
-            .split(",")
-            .map((name) => name.trim())
-            .filter(Boolean)
-        );
+        const group = value
+          .split(",")
+          .map((name) => name.trim())
+          .filter(Boolean);
+        if (!group.length) fail(`--label "${value}" contains no label names`);
+        // --label matches exact names; --missing-label matches prefixes. A prefix-shaped
+        // value here would match nothing and silently return zero rows.
+        const prefixShaped = group.find((name) => name.endsWith(":"));
+        if (prefixShaped) {
+          fail(
+            `--label matches exact label names and "${prefixShaped}" looks like a prefix — ` +
+              `did you mean --missing-label ${prefixShaped}?`
+          );
+        }
+        filters.labels.push(group);
       } else {
         filters.missingLabels.push(value);
       }
@@ -223,7 +234,9 @@ export function parseCreateArgs(args) {
   if (template) {
     const body = resolveLinearTemplate(template);
     if (!body) fail(`unknown template "${template}"`);
-    description = body.replace(/^# TITLE — .*$/m, `# ${title}`);
+    // Function replacement: a literal-string second argument would expand `$&`/`$$`
+    // sequences in the title and corrupt the stamped heading.
+    description = body.replace(/^# TITLE — .*$/m, () => `# ${title}`);
     if (descFile) console.error("warning: --desc ignored when --template is set");
   }
   const originLabel = process.env.AIOS_LINEAR_ORIGIN_LABEL;

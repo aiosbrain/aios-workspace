@@ -82,8 +82,9 @@ $LIN list AIO                  # all AIO-team issues, id-sorted
 $LIN list AIO --open --label finding --label repo:workspace,repo:devtools \
   --missing-label sev:         # filtered: --open drops Done/Canceled; repeated --label
                                # ANDs, comma inside one flag ORs; --missing-label keeps
-                               # issues lacking a label with that prefix. Adds a {labels}
-                               # column and a trailing `count: N` line.
+                               # issues lacking a label with that prefix. Rows keep the
+                               # ident/state/title columns and append a TRAILING {labels}
+                               # column; `count: N` goes to stderr (stdout stays parseable).
 ```
 
 For a long description, write it to a temp file first, then `set-desc <IDENT> <file>` — avoids quoting hell and keeps it out of the transcript.

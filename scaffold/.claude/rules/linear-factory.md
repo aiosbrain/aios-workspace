@@ -22,6 +22,11 @@ failing one either.
 - Capture raw work (screenshot, one-liner) into **Triage** — do not interrupt active agent batches.
 - `linear.mjs create "<title>" --template aios --state Triage`
 - Intake: fill all template sections → `aios spec eval` → `set-state Backlog` when `SPEC_READY`.
+- **Post-merge findings** (consolidate-findings output, `code-review-<slug>.md` artifacts) use
+  the finding shape instead: `create "<title>" --template finding` with the classification
+  labels applied at file time — `--label finding` plus one each of `repo:` / `defect:` /
+  `sev:` / `det:` / `fence:` (vocabulary + queries: aios monorepo `docs/finding-taxonomy.md`).
+  A finding filed without its dimensions surfaces in the needs-triage view, not plain Backlog.
 
 ## Pick-up-able spec shape
 

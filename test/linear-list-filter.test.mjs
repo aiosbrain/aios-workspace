@@ -1,6 +1,8 @@
 // test/linear-list-filter.test.mjs — list-side label/state filtering (AIO-999)
 
 import { test } from "node:test";
+import { spawnSync } from "node:child_process";
+import path from "node:path";
 import assert from "node:assert/strict";
 import {
   filterIssues,
@@ -8,6 +10,7 @@ import {
   parseCreateArgs,
   parseListArgs,
 } from "../scaffold/.claude/skills/aios-linear/linear-core.mjs";
+import { formatListRow } from "../scaffold/.claude/skills/aios-linear/linear-list.mjs";
 
 const issue = (identifier, stateType, labels) => ({
   identifier,
@@ -114,4 +117,59 @@ test("parseCreateArgs still stamps the aios template heading", () => {
   const { description } = parseCreateArgs(["My slice", "--template", "aios"]);
   assert.match(description, /^# My slice$/m);
   assert.doesNotMatch(description, /^# TITLE — /m);
+});
+
+// ── review hardening (PR #635): parse traps must fail loudly, not return zero rows ──
+
+const CLI = path.resolve(import.meta.dirname, "../scaffold/.claude/skills/aios-linear/linear.mjs");
+
+function runList(args) {
+  return spawnSync(process.execPath, [CLI, "list", "AIO", ...args], {
+    encoding: "utf8",
+    env: { ...process.env, LINEAR_API_KEY: "test-key-never-used" },
+  });
+}
+
+test("list --label followed by another flag fails instead of eating it", () => {
+  const result = runList(["--label", "--open"]);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /--label requires a value/);
+});
+
+test("list --missing-label followed by another flag fails", () => {
+  const result = runList(["--missing-label", "--open"]);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /--missing-label requires a value/);
+});
+
+test("list --label with an all-comma group fails instead of matching nothing", () => {
+  const result = runList(["--label", ","]);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /contains no label names/);
+});
+
+test("list --label with a prefix-shaped value points at --missing-label", () => {
+  const result = runList(["--label", "sev:"]);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /did you mean --missing-label sev:/);
+});
+
+test("formatListRow keeps ident/state/title stable and appends labels as a trailing column", () => {
+  const row = {
+    identifier: "AIO-7",
+    title: "A title",
+    state: { name: "Backlog", type: "backlog" },
+    labels: { nodes: [{ name: "finding" }, { name: "sev:high" }] },
+  };
+  assert.equal(formatListRow(row, false), "AIO-7\t[Backlog]\tA title");
+  assert.equal(formatListRow(row, true), "AIO-7\t[Backlog]\tA title\t{finding,sev:high}");
+  assert.equal(
+    formatListRow({ identifier: "AIO-8", title: "t", state: { name: "Todo" } }, true),
+    "AIO-8\t[Todo]\tt\t{}"
+  );
+});
+
+test("parseCreateArgs does not expand replacement patterns in the title", () => {
+  const { description } = parseCreateArgs(["Costs $$ and $& breaks", "--template", "finding"]);
+  assert.match(description, /^# Costs \$\$ and \$& breaks$/m);
 });

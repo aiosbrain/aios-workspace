@@ -29,7 +29,7 @@
 //                             all issues for a team (e.g. AIO), id-sorted. --open drops
 //                             Done/Canceled; repeated --label ANDs (comma inside one flag ORs);
 //                             --missing-label keeps issues lacking any matching label prefix.
-//                             With any filter the output adds a {labels} column + count line.
+//                             With any filter: trailing {labels} column, `count: N` on stderr.
 //                             Taxonomy queries: aios monorepo docs/finding-taxonomy.md
 //   relations <IDENT>         show blocks / blocked-by / related relationships
 //   blocks <BLOCKER> <BLOCKED>
@@ -62,25 +62,22 @@ import {
   findExactRelation,
   findIssue,
   findLabel,
-  filterIssues,
   findTeamId,
   findTeamState,
   findUser,
   formatIssue,
   getRelations,
   gql,
-  hasListFilters,
   hasRelatedRelation,
-  listTeamIssues,
   listTeamMembers,
   parseCreateArgs,
-  parseListArgs,
   parsePriority,
   printFullIssue,
   relatedIssues,
   resolveProject,
 } from "./linear-core.mjs";
 import { cmdCreateProject, cmdProjects } from "./linear-projects.mjs";
+import { cmdList } from "./linear-list.mjs";
 
 const argv = process.argv.slice(2);
 const cmd = argv[0];
@@ -269,20 +266,7 @@ if (cmd === "get") {
     );
   }
 } else if (cmd === "list") {
-  const { teamKey, filters } = parseListArgs(argv.slice(1));
-  const filtered = filterIssues(await listTeamIssues(teamKey), filters);
-  const showLabels = hasListFilters(filters);
-  for (const n of filtered.sort((a, b) =>
-    a.identifier.localeCompare(b.identifier, undefined, { numeric: true })
-  )) {
-    const labels = (n.labels?.nodes ?? []).map((label) => label.name).join(",");
-    console.log(
-      showLabels
-        ? `${n.identifier}\t[${n.state?.name}]\t{${labels}}\t${n.title}`
-        : `${n.identifier}\t[${n.state?.name}]\t${n.title}`
-    );
-  }
-  if (showLabels) console.log(`count: ${filtered.length}`);
+  await cmdList(argv);
 } else if (cmd === "relations") {
   const ident = argv[1];
   const n = await findIssue(ident);

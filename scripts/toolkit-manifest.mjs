@@ -101,6 +101,13 @@ export const MANAGED_PATHS = [
     kind: "file",
     pmTool: "linear",
   },
+  // The finding-shaped sibling (AIO-999) — `create --template finding` resolves this path.
+  {
+    dest: "docs/agentic-ergonomics/aios-finding-template.md",
+    src: "docs/agentic-ergonomics/aios-finding-template.md",
+    kind: "file",
+    pmTool: "linear",
+  },
   { dest: ".claude/commands", src: "scaffold/.claude/commands", kind: "dir" },
   { dest: ".claude/personalities", src: "scaffold/.claude/personalities", kind: "dir" },
   { dest: ".claude/agents", src: "scaffold/.claude/agents", kind: "dir" },
