@@ -39,10 +39,13 @@ test("self-test passes against the real guard", () => {
 
 test("self-test exits non-zero when the guard fails to block the known-secret case", () => {
   // Neuter a COPY of the guard: same script, but its shared patterns file is replaced
-  // with one whose single pattern can never match, so a secret payload sails through
-  // at exit 0 — behaviorally the fail-open defect. (The patterns file must exist:
-  // when it is absent the guard falls back to a built-in pattern list and would
-  // still block.)
+  // with one whose single pattern can never match, so the secret scan is dead. The
+  // self-test's secret payload carries valid frontmatter precisely so that no OTHER
+  // check (the 2-work/*.md frontmatter gate) can block in the scan's place — with the
+  // scan dead the payload genuinely exits 0, which is behaviorally the AIO-945
+  // fail-open defect, and the self-test must go red on it. (The patterns file must
+  // exist: when it is absent the guard falls back to a built-in pattern list and
+  // would still block.)
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "aios-guard-neutered-"));
   try {
     fs.mkdirSync(path.join(tmp, "hooks"));
@@ -60,7 +63,10 @@ test("self-test exits non-zero when the guard fails to block the known-secret ca
       0,
       `self-test went green over a guard that does not block secrets; stdout:\n${r.stdout}`
     );
+    // The failure must be diagnosed as the fail-open path (exit 0), not as some
+    // other check blocking in the scan's place.
     assert.match(r.stdout, /DID NOT BLOCK A KNOWN SECRET/);
+    assert.match(r.stdout, /exit code: 0 \(expected 2\)/);
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }

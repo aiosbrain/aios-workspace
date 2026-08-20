@@ -31,6 +31,7 @@
     "docs/devtools-*.md",
     "docs/ENGINEERING-CONSTITUTION.md",
     "docs/GETTING-STARTED.md",
+    "docs/guard-verification.md",
     "CHANGELOG.md"
   ],
   "workspaces": [

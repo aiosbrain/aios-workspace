@@ -34,8 +34,14 @@ const FAKE_AWS_KEY = ["AKIA", "IOSFODNN7", "EXAMPLE"].join("");
 function parseArgs(argv) {
   const args = { guard: path.join(ROOT, "hooks", "team-ops-guard.sh") };
   for (let i = 2; i < argv.length; i++) {
-    if (argv[i] === "--guard") args.guard = path.resolve(argv[++i]);
-    else {
+    if (argv[i] === "--guard") {
+      const value = argv[++i];
+      if (value === undefined) {
+        console.error("--guard requires a path argument");
+        process.exit(1);
+      }
+      args.guard = path.resolve(value);
+    } else {
       console.error(`unknown argument: ${argv[i]}`);
       process.exit(1);
     }
@@ -56,6 +62,20 @@ function runGuard(interpreter, guardPath, stdinText) {
     encoding: "utf8",
     env,
   });
+  if (r.error || r.status === null) {
+    // The interpreter itself could not run (missing binary, signal death). That is an
+    // environmental failure of THIS harness, not a guard verdict — reporting it as
+    // "exit 0, fail-open" would be exactly the false diagnosis this tool exists to
+    // prevent, so stop the whole self-test here.
+    console.error(
+      `could not execute '${interpreter}' to run the guard: ` +
+        `${r.error ? r.error.message : `terminated without an exit code (signal: ${r.signal})`}`
+    );
+    console.error(
+      "no verdict was reached — this is a harness/environment failure, not a guard result."
+    );
+    process.exit(1);
+  }
   return { code: r.status, stderr: r.stderr ?? "", stdout: r.stdout ?? "" };
 }
 
@@ -89,19 +109,40 @@ function report(name, ok, lines) {
 }
 
 // ── Case 1 (CRITICAL): correct secret payload must BLOCK at exit 2, naming the pattern.
+// The payload carries valid frontmatter on purpose: 2-work/*.md is also subject to the
+// guard's frontmatter check, and a frontmatter-less payload would be blocked at exit 2
+// by THAT check even if the secret scan were dead — a false pass for this case. With
+// frontmatter present, only the secret scan can block, so exit 2 + "Pattern matched"
+// is attributable to the scan and nothing else.
 function caseBlocksSecret(guard, ws) {
-  const payload = payloadFor(path.join(ws, "2-work", "notes.md"), `aws_key = ${FAKE_AWS_KEY}`);
+  const payload = payloadFor(
+    path.join(ws, "2-work", "notes.md"),
+    `---\naccess: team\n---\n\naws_key = ${FAKE_AWS_KEY}\n`
+  );
   const r = runGuard("bash", guard, payload);
   const pattern = matchedPattern(r.stderr);
   const ok = r.code === 2 && pattern !== null;
+  let diagnosis;
+  if (ok) {
+    diagnosis =
+      "the guard is enforcing: a well-formed write carrying an AWS key is refused by name.";
+  } else if (r.code === 2) {
+    diagnosis =
+      "blocked at exit 2 but WITHOUT a 'Pattern matched' line — a different check " +
+      "(not the secret scan) fired. The secret scan is unproven and may be dead; " +
+      `stderr: ${r.stderr.trim().split("\n")[0] || "(empty)"}`;
+  } else if (r.code === 0) {
+    diagnosis =
+      "THE GUARD DID NOT BLOCK A KNOWN SECRET. This is the fail-open defect " +
+      "(AIO-945) — do not ship, do not trust this guard until this passes.";
+  } else {
+    diagnosis = `unexpected exit code; stderr: ${r.stderr.trim().split("\n")[0] || "(empty)"}`;
+  }
   report("blocks a correct secret payload", ok, [
     `payload: ${payload}`,
     `exit code: ${r.code} (expected 2)`,
     `matched pattern: ${pattern ?? "(none)"}`,
-    ok
-      ? "the guard is enforcing: a well-formed write carrying an AWS key is refused by name."
-      : "THE GUARD DID NOT BLOCK A KNOWN SECRET. This is the fail-open defect " +
-        "(AIO-945) — do not ship, do not trust this guard until this passes.",
+    diagnosis,
   ]);
 }
 
@@ -130,7 +171,9 @@ function caseTrapWrongShell(guard, ws) {
   const shell = spawnSync("dash", ["-c", "true"]).status === 0 ? "dash" : "sh";
   const payload = payloadFor(path.join(ws, "2-work", "notes.md"), `aws_key = ${FAKE_AWS_KEY}`);
   const r = runGuard(shell, guard, payload);
-  const syntaxDeath = /Illegal option|pipefail|Syntax error/i.test(r.stderr);
+  // "Bad substitution": a POSIX sh that happens to accept `set -o pipefail` still
+  // dies later on ${BASH_SOURCE[0]} — same trap, different first error.
+  const syntaxDeath = /Illegal option|pipefail|Syntax error|Bad substitution/i.test(r.stderr);
   const actuallyBlocked = matchedPattern(r.stderr) !== null;
   const ok = syntaxDeath || actuallyBlocked; // classified either way
   const lines = [
