@@ -153,6 +153,14 @@ export const MANAGED_PATHS = [
     kind: "file",
     exec: true,
   },
+  // Keeps AIOS connector work on the AIOS CLIs. MANAGED so existing workspaces pick it up on
+  // `aios update` — the agents most likely to misroute are the least likely to install a guard.
+  {
+    dest: "hooks/connector-routing-guard.mjs",
+    src: "hooks/connector-routing-guard.mjs",
+    kind: "file",
+    exec: true,
+  },
   // AIO-482: SessionStart adapter that re-hydrates a worktree created by a tool
   // that never called `aios worktree add` (Conductor et al). MANAGED so existing
   // workspaces pick it up on `aios update` and self-heal without re-scaffolding.

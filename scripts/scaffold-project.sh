@@ -665,7 +665,7 @@ bash "$SCRIPT_DIR/scaffold-validators.sh" "$REPO_ROOT" "$OUTPUT"
 # created by a tool that never called `aios worktree add` (Conductor et al).
 # claim-check-guard.mjs warns when an agent asserts something works with no measurement in the
 # message — the proxy-vs-property failure behind most falsely-reported fixes.
-for hook in asks-capture.mjs asks-claim-recovery.cjs decision-capture.mjs session-pulse.mjs aios-sync-nudge.sh file-governance-guard.mjs worktree-self-heal.mjs statusline-command.mjs claim-check-guard.mjs; do
+for hook in asks-capture.mjs asks-claim-recovery.cjs decision-capture.mjs session-pulse.mjs aios-sync-nudge.sh file-governance-guard.mjs connector-routing-guard.mjs worktree-self-heal.mjs statusline-command.mjs claim-check-guard.mjs; do
   cp "$REPO_ROOT/hooks/$hook" "$OUTPUT/hooks/$hook"
   chmod +x "$OUTPUT/hooks/$hook"
 done
