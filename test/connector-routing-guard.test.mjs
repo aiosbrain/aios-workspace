@@ -341,3 +341,47 @@ test("oversized input blocks only when it is identifiably a Linear MCP call", as
   });
   assert.equal((await runHook(bigMcp)).status, 2, "a truncated Linear MCP call must fail closed");
 });
+
+// ── spelling must not be a bypass (round 4) ─────────────────────────────────────────────────
+
+test("AIOS detection does not depend on the caller's spelling", async () => {
+  // `AIOS_MARKER` was case-sensitive, so `aio-976` was allowed. And TEAM_FIELDS mixed spellings
+  // (`teamkey` alongside `team_id`) while the normaliser kept underscores, so `team_key` matched
+  // nothing and snake_case payloads went unclassified. Both fail OPEN on an ordinary typo.
+  const spellings = [
+    { id: "aio-976" },
+    { id: "Aio-976" },
+    { team_key: "AIO" },
+    { team_name: "AIO" },
+    { teamKey: "aio" },
+  ];
+  for (const input of spellings) {
+    const r = await runHook(mcp("mcp__plugin_linear_linear__create_issue", input));
+    assert.equal(r.status, 2, `must block ${JSON.stringify(input)}: ${r.stderr}`);
+  }
+  // ...and the false-positive boundary still holds for a customer team.
+  const customer = await runHook(
+    mcp("mcp__plugin_linear_linear__create_issue", { team_key: "KAIO" })
+  );
+  assert.equal(customer.status, 0, customer.stderr);
+});
+
+test("a truncated Bash payload that merely MENTIONS an MCP tool name is not blocked", async () => {
+  // The oversized fallback scanned raw JSON for the tool pattern anywhere in the first 2KB, so a
+  // huge Bash command quoting `mcp__plugin_linear_linear__get_issue` was misclassified — the same
+  // "a mention is not a target" error the team markers already made once. It now matches the
+  // serialized tool_name PROPERTY.
+  const bashMentioning = JSON.stringify({
+    tool_name: "Bash",
+    tool_input: {
+      command: `# see mcp__plugin_linear_linear__get_issue\n${"x".repeat(1_500_000)}`,
+    },
+  });
+  assert.equal((await runHook(bashMentioning)).status, 0, "a mention must not block");
+
+  const realMcp = JSON.stringify({
+    tool_name: "mcp__plugin_linear_linear__update_issue",
+    tool_input: { id: "AIO-976", pad: "x".repeat(1_500_000) },
+  });
+  assert.equal((await runHook(realMcp)).status, 2, "a real truncated MCP call must fail closed");
+});

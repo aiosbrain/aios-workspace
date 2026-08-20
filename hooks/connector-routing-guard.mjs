@@ -41,7 +41,9 @@ const CONFIG_REL = ".aios/connector-routing.json";
 const DEFAULT_MODE = "block"; // "block" | "warn" | "off"
 
 /** An AIOS-owned work item. The team's issue prefix is the one unambiguous signal available. */
-const AIOS_MARKER = /\bAIO-\d+\b/;
+// Case-INSENSITIVE: `aio-976` identifies the same issue as `AIO-976`, and a guard that depends
+// on the caller's capitalisation fails open on a typo.
+const AIOS_MARKER = /\bAIO-\d+\b/i;
 
 /**
  * The AIOS team key, applied by DEFAULT. Without it the marker feature did nothing on a fresh
@@ -51,8 +53,25 @@ const AIOS_MARKER = /\bAIO-\d+\b/;
  */
 const DEFAULT_TEAM_MARKERS = ["aio"];
 
-/** Fields that actually identify a team. Deliberately not title/description/body. */
-const TEAM_FIELDS = ["teamid", "team", "teamkey", "teamname", "team_id", "teamidentifier"];
+/**
+ * Fields that actually identify a team. Deliberately NOT title/description/body.
+ *
+ * Compared after normalising away non-letters, so `team_key`, `teamKey` and `team-key` all reduce
+ * to `teamkey`. The previous list mixed both spellings (`teamkey` AND `team_id`) while the
+ * normaliser kept underscores, so `team_key` matched nothing and snake_case payloads slipped
+ * through unclassified.
+ */
+const TEAM_FIELDS = new Set([
+  "team",
+  "teamid",
+  "teamkey",
+  "teamname",
+  "teamidentifier",
+  "teamuuid",
+  "teamslug",
+]);
+
+const normalizeFieldName = (k) => k.toLowerCase().replace(/[^a-z]/g, "");
 
 /** Lower-cased VALUES of team-identifying fields only, walked recursively. */
 export function teamIdentifyingValues(input, depth = 0) {
@@ -61,7 +80,7 @@ export function teamIdentifyingValues(input, depth = 0) {
   for (const [k, v] of Object.entries(input)) {
     if (v && typeof v === "object") {
       out.push(...teamIdentifyingValues(v, depth + 1));
-    } else if (TEAM_FIELDS.includes(k.toLowerCase().replace(/[^a-z_]/g, ""))) {
+    } else if (TEAM_FIELDS.has(normalizeFieldName(k))) {
       out.push(String(v).toLowerCase());
     }
   }
@@ -79,7 +98,12 @@ export function teamIdentifyingValues(input, depth = 0) {
 export function matchesTeamMarker(values, marker) {
   const m = String(marker).toLowerCase();
   return values.some(
-    (v) => v === m || v.split(/[^a-z0-9]+/).filter(Boolean).includes(m)
+    (v) =>
+      v === m ||
+      v
+        .split(/[^a-z0-9]+/)
+        .filter(Boolean)
+        .includes(m)
   );
 }
 
@@ -248,7 +272,11 @@ async function main() {
     // the head of that payload, so a truncated MCP call is still caught.
     // A separate, UNANCHORED pattern: LINEAR_MCP_TOOL is ^-anchored for matching a tool NAME, and
     // here we are scanning raw JSON where the name is a quoted value, not the start of the string.
-    if (truncated && /mcp__[^"]*linear[^"]*__/i.test(text.slice(0, 2000))) {
+    // Match the tool_name PROPERTY, not any occurrence in the payload: a >1MB Bash command that
+    // merely MENTIONS `mcp__plugin_linear_linear__get_issue` would otherwise be misclassified and
+    // blocked — the same "a mention is not a target" mistake the team markers already made once.
+    const TRUNCATED_MCP = /"tool_name"\s*:\s*"mcp__[^"]*linear[^"]*__/i;
+    if (truncated && TRUNCATED_MCP.test(text.slice(0, 2000))) {
       process.stderr.write(
         "[connector-routing-guard] BLOCKED: a Linear MCP payload exceeded " +
           `${STDIN_MAX} bytes and could not be classified. A call this guard cannot read is not ` +
