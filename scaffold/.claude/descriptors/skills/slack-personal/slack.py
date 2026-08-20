@@ -407,50 +407,100 @@ def _retry_delay(err, attempt):
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 
 
-def _assert_contained(path, allow_outside=False):
-    """Refuse a file that RESOLVES outside the working directory, unless explicitly allowed.
+# O_NONBLOCK matters as much as O_NOFOLLOW: opening a FIFO read-only WITHOUT it blocks until a
+# writer appears, so the process hangs before any check can run. (Verified: a mkfifo target hung
+# the CLI indefinitely.)
+LEAF_FLAGS = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+DIR_FLAGS = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
 
-    This is what actually stops the intermediate-symlink attack. O_NOFOLLOW only guards the
-    final component, so `reports/ -> ~/.ssh` with an upload of `reports/id_rsa` passes it. What
-    does not pass is "after every symlink is resolved, does this file still live in the
-    directory I am working in?" — because the entire point of the attack is that it does not.
 
-    WHY NOT A COMPONENT-WISE openat WALK. That is the textbook answer, and it was implemented,
-    tested and reverted here: on macOS `/var`, `/tmp` and `/etc` are THEMSELVES symlinks, so a
-    walk refusing every symlinked component refuses every path under a temp directory — exactly
-    where agents write the files they upload. It passed on `/Users/...` paths and failed on
-    `/var/...` ones, which is the kind of fix somebody switches off within a week.
+def _die_open(err, shown):
+    if err.errno in (errno.ELOOP, errno.EMLINK):
+        die(f"refusing to upload through a symlink: {shown} (copy the file instead)", 2)
+    if err.errno == errno.ENOENT:
+        die(f"no such file: {shown}", 2)
+    if err.errno in (errno.ENOTDIR, errno.ENXIO):
+        die(f"not a regular file: {shown}", 2)
+    die(f"cannot open {shown}: {err.strerror}", 2)
 
-    WHY NOT OWNERSHIP-BASED TRUST ("allow root-owned symlinks"). It misses the actual threat —
-    a symlink planted by content the agent itself wrote is owned by the operator, not root —
-    and it breaks ordinary setups, since a symlinked project root (`~/Tessera -> ~/Projects`)
-    is operator-owned and entirely legitimate.
 
-    Containment sidesteps both. It does not care which component redirected, or who owns it,
-    only where the bytes actually live.
+def _open_contained(path, allow_outside=False):
+    """Open `path` for reading, guaranteeing it lives inside the working directory.
 
-    `--allow-outside-workspace` is the deliberate escape hatch, because uploading a generated
-    file from a temp directory is a real workflow. It has to be typed, which makes the
-    redirection a decision somebody made rather than one an attacker made for them.
+    CHECKING AND OPENING ARE ONE OPERATION HERE, deliberately. An earlier version resolved the
+    path with realpath, compared it against the workspace, then opened the ORIGINAL path — two
+    lookups, so an attacker able to write an intermediate directory swaps it for a symlink in
+    between and the descriptor lands outside the workspace regardless. Verifying a path and
+    opening a path are not the same act unless a descriptor carries the guarantee forward.
 
-    Resolution is by realpath, so this is advisory against an attacker who can swap a directory
-    between this check and the open. The leaf is still opened O_NOFOLLOW and validated by fstat
-    on the descriptor, so the residual race is narrow and no wider than the one already there.
+    So the workspace root is opened ONCE and every component below it is opened relative to the
+    previous descriptor with O_NOFOLLOW. Nothing can be swapped out from under a descriptor
+    already held, and a symlinked component fails at the step that opens it instead of being
+    quietly resolved.
+
+    WHY THE ROOT IS PINNED BY realpath AND THE COMPONENTS ARE NOT. A bare walk from `/` breaks on
+    macOS, where `/var`, `/tmp` and `/etc` are themselves symlinks: it refuses every path under a
+    temp directory, which is exactly where agents write the files they upload. Resolving the root
+    once absorbs those system symlinks; refusing them BELOW the root is what stops
+    `reports/ -> ~/.ssh`. That distinction is the difference between a control that holds and one
+    somebody switches off in a week.
+
+    `..` is refused rather than normalised. Collapsing `a/../b` lexically is wrong precisely when
+    `a` is a symlink, and no upload needs it.
     """
-    real = os.path.realpath(path)
-    if allow_outside:
-        return real
-    root = os.path.realpath(os.getcwd())
-    if real == root or real.startswith(root + os.sep):
-        return real
-    die(
-        "refusing to upload a file that resolves outside this workspace:\n"
-        f"  named:     {path}\n"
-        f"  resolves:  {real}\n"
-        f"  workspace: {root}\n"
-        "Pass --allow-outside-workspace if that is deliberate.",
-        2,
-    )
+    if allow_outside or os.open not in getattr(os, "supports_dir_fd", set()):
+        # Explicitly opted out, or a platform without openat. Leaf-only protection.
+        try:
+            return os.open(path, LEAF_FLAGS)
+        except OSError as e:
+            _die_open(e, path)
+
+    # TWO DIFFERENT JOBS, done by two different mechanisms.
+    #
+    # realpath decides ADMISSION — "does this file, fully resolved, live under the workspace?".
+    # It has to be realpath and not a lexical comparison, because getcwd() is canonical
+    # (/private/var/...) while a caller may legitimately spell the same path the other way
+    # (/var/...). Comparing those lexically makes an in-workspace file look like an escape,
+    # which is a refusal a real user hits immediately and a mistake this had until it was tested.
+    #
+    # The descriptor walk below provides RACE-SAFETY — realpath's answer was true when it was
+    # computed and nothing more. Walking the resolved components with O_NOFOLLOW means a
+    # component swapped for a symlink after admission fails at the step that opens it, so the
+    # worst case is a refusal rather than an escape.
+    root = os.getcwd()  # already canonical: getcwd() resolves symlinks
+    resolved = os.path.realpath(os.path.abspath(path))
+    rel = os.path.relpath(resolved, root)
+    parts = [c for c in rel.split(os.sep) if c not in ("", ".")]
+    if any(c == ".." for c in parts):
+        # Print where it ACTUALLY resolved. With a planted symlink the named path looks
+        # innocuous and the resolved one is the whole story; a refusal that hides it just
+        # looks like a broken tool.
+        die(
+            "refusing to upload a file that resolves outside this workspace:\n"
+            f"  named:     {path}\n"
+            f"  resolves:  {resolved}\n"
+            f"  workspace: {root}\n"
+            "Pass --allow-outside-workspace if that is deliberate.",
+            2,
+        )
+    if not parts:
+        die(f"not a regular file: {path}", 2)
+
+    dir_fd = os.open(root, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+    try:
+        for comp in parts[:-1]:
+            try:
+                nxt = os.open(comp, DIR_FLAGS, dir_fd=dir_fd)
+            except OSError as e:
+                _die_open(e, path)
+            os.close(dir_fd)
+            dir_fd = nxt
+        try:
+            return os.open(parts[-1], LEAF_FLAGS, dir_fd=dir_fd)
+        except OSError as e:
+            _die_open(e, path)
+    finally:
+        os.close(dir_fd)
 
 
 def _read_upload_candidate(path, allow_outside=False):
@@ -468,25 +518,10 @@ def _read_upload_candidate(path, allow_outside=False):
 
     O_NOFOLLOW guards only the FINAL component, which is not the interesting attack:
     `reports/ -> ~/.ssh` plus an upload of `reports/id_rsa` sails straight past it. Containment
-    is what closes that — see `_assert_contained()`, called first so a redirected file is
-    refused before it is ever opened.
+    closes that, and `_open_contained()` does the containment and the open as ONE descriptor
+    walk so there is no window between deciding a path is safe and opening it.
     """
-    _assert_contained(path, allow_outside=allow_outside)
-
-    # O_NONBLOCK matters as much as O_NOFOLLOW here: opening a FIFO read-only WITHOUT it blocks
-    # until a writer appears, so the process hangs before any check can run. With it, the open
-    # returns and fstat gets to reject it. (Verified: a mkfifo target hung the CLI indefinitely.)
-    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
-    try:
-        fd = os.open(path, flags)
-    except OSError as e:
-        if e.errno in (errno.ELOOP, errno.EMLINK):
-            die(f"refusing to upload through a symlink: {path} (copy the file instead)", 2)
-        if e.errno == errno.ENOENT:
-            die(f"no such file: {path}", 2)
-        if e.errno == errno.ENXIO:
-            die(f"not a regular file: {path}", 2)
-        die(f"cannot open {path}: {e.strerror}", 2)
+    fd = _open_contained(path, allow_outside=allow_outside)
 
     # Type-check the RAW descriptor before handing it to fdopen: fdopen on a directory raises
     # IsADirectoryError, which would surface as an unhandled internal error instead of a usage
