@@ -46,3 +46,16 @@ test("applyDescriptionPatch errors when SEARCH missing", () => {
     /not found/
   );
 });
+
+test("resolveLinearTemplate loads the finding template (AIO-999)", () => {
+  const body = resolveLinearTemplate("finding");
+  assert.ok(body);
+  assert.match(body, /## Classification/);
+  assert.match(body, /## Evidence/);
+  assert.match(body, /## Provenance/);
+  assert.match(body, /--label finding/);
+});
+
+test("resolveLinearTemplate still rejects unknown names", () => {
+  assert.equal(resolveLinearTemplate("nope"), null);
+});

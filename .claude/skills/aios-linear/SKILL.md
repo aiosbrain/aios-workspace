@@ -55,6 +55,7 @@ $LIN get AIO-75 --full         # + url + full metadata + description + comments
 $LIN export-desc AIO-75 spec.md # exact UTF-8 description + SHA-256
 $LIN verify-desc AIO-75 spec.md # refetch + compare description (content, not bytes)
 $LIN template aios              # print issue scaffold
+$LIN template finding           # print the post-merge finding scaffold (AIO-999)
 $LIN create "My slice" --template aios --state Triage
 $LIN create "My slice" --project Ultraharden --priority high  # set both at creation, no follow-up calls
 $LIN set-desc AIO-75 spec.md [--force]  # replace description; force bypasses the table lint
@@ -78,6 +79,11 @@ $LIN comment AIO-75 "done"     # add a comment
 $LIN users AIO                 # list assignable users
 $LIN assign AIO-75 "alex@example.com" # assign by one exact name/display-name/email match
 $LIN list AIO                  # all AIO-team issues, id-sorted
+$LIN list AIO --open --label finding --label repo:workspace,repo:devtools \
+  --missing-label sev:         # filtered: --open drops Done/Canceled; repeated --label
+                               # ANDs, comma inside one flag ORs; --missing-label keeps
+                               # issues lacking a label with that prefix. Adds a {labels}
+                               # column and a trailing `count: N` line.
 ```
 
 For a long description, write it to a temp file first, then `set-desc <IDENT> <file>` — avoids quoting hell and keeps it out of the transcript.
@@ -121,6 +127,23 @@ Author specs with the canonical template in `docs/agentic-ergonomics/aios-issue-
 1. `aios spec init draft.md --title "…"` or `$LIN template aios > draft.md`
 2. Fill sections → `aios spec eval draft.md` until `SPEC_READY`
 3. `$LIN set-desc AIO-n draft.md` or `$LIN create "title" --template aios`
+
+### Post-merge finding template (AIO-999)
+
+Post-merge findings (consolidate-findings output, `code-review-<slug>.md` artifacts) are
+filed with the finding-shaped template and **classified at file time** via labels — one per
+dimension (`repo:` / `defect:` / `sev:` / `det:` / `fence:`) plus the `finding` marker:
+
+```bash
+$LIN create "<one-line finding>" --template finding \
+  --label finding --label repo:workspace --label defect:logic \
+  --label sev:high --label det:deterministic --label fence:none
+```
+
+Canonical label vocabulary, severity mapping (anchored to aios-devtools
+`scripts/severity.mjs`), and the needs-triage / drain-queue queries live in the aios
+monorepo's `docs/finding-taxonomy.md` — do not restate them here. `add-label` and
+`create --label` cannot *create* labels; the taxonomy set already exists on team AIO.
 
 Use `patch-desc` when an agent must update part of a description without wiping verification checklists:
 

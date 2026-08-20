@@ -4,10 +4,18 @@ import { fileURLToPath } from "node:url";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
-/** Resolve aios-issue-template from toolkit docs or workspace copy. */
+const TEMPLATE_FILES = {
+  aios: "aios-issue-template.md",
+  "pick-up-able": "aios-issue-template.md",
+  // Finding-shaped variant (AIO-999): post-merge findings classified at file time.
+  finding: "aios-finding-template.md",
+};
+
+/** Resolve an issue template from toolkit docs or workspace copy. */
 export function resolveLinearTemplate(name = "aios") {
-  if (name !== "aios" && name !== "pick-up-able") return null;
-  const rel = path.join("docs", "agentic-ergonomics", "aios-issue-template.md");
+  const file = TEMPLATE_FILES[name];
+  if (!file) return null;
+  const rel = path.join("docs", "agentic-ergonomics", file);
   const candidates = [
     path.join(HERE, "..", "..", "..", rel),
     path.join(HERE, "..", "..", "..", "..", rel),

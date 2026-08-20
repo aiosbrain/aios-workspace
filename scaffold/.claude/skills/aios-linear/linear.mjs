@@ -25,7 +25,12 @@
 //                             set priority: none, urgent, high, medium, low
 //   comment <IDENT> <text>    add a comment
 //   comments <IDENT>          read existing comments
-//   list <TEAMKEY>            all issues for a team (e.g. AIO), id-sorted
+//   list <TEAMKEY> [--open] [--label <name[,name]>]... [--missing-label <name-or-prefix>]...
+//                             all issues for a team (e.g. AIO), id-sorted. --open drops
+//                             Done/Canceled; repeated --label ANDs (comma inside one flag ORs);
+//                             --missing-label keeps issues lacking any matching label prefix.
+//                             With any filter the output adds a {labels} column + count line.
+//                             Taxonomy queries: aios monorepo docs/finding-taxonomy.md
 //   relations <IDENT>         show blocks / blocked-by / related relationships
 //   blocks <BLOCKER> <BLOCKED>
 //                             mark one issue as blocking another
@@ -39,7 +44,8 @@
 //                             move issue under another parent issue
 //   add-label <IDENT> <LABEL>
 //                             add a team label without removing existing labels
-//   template [aios]           print the pick-up-able issue scaffold
+//   template [aios|finding]   print an issue scaffold (aios slice spec, or the
+//                             post-merge finding shape — see docs/finding-taxonomy.md)
 //   create "<title>" [--desc <file>] [--template aios] [--label <name>]... [--state <name>]
 //          [--parent <IDENT>] [--assignee <name-or-email>]
 //                             --label is repeatable; prints the Linear-generated git branch name;
@@ -56,16 +62,19 @@ import {
   findExactRelation,
   findIssue,
   findLabel,
+  filterIssues,
   findTeamId,
   findTeamState,
   findUser,
   formatIssue,
   getRelations,
   gql,
+  hasListFilters,
   hasRelatedRelation,
   listTeamIssues,
   listTeamMembers,
   parseCreateArgs,
+  parseListArgs,
   parsePriority,
   printFullIssue,
   relatedIssues,
@@ -260,13 +269,20 @@ if (cmd === "get") {
     );
   }
 } else if (cmd === "list") {
-  const ident = argv[1];
-  const issues = await listTeamIssues(ident);
-  for (const n of issues.sort((a, b) =>
+  const { teamKey, filters } = parseListArgs(argv.slice(1));
+  const filtered = filterIssues(await listTeamIssues(teamKey), filters);
+  const showLabels = hasListFilters(filters);
+  for (const n of filtered.sort((a, b) =>
     a.identifier.localeCompare(b.identifier, undefined, { numeric: true })
   )) {
-    console.log(`${n.identifier}\t[${n.state?.name}]\t${n.title}`);
+    const labels = (n.labels?.nodes ?? []).map((label) => label.name).join(",");
+    console.log(
+      showLabels
+        ? `${n.identifier}\t[${n.state?.name}]\t{${labels}}\t${n.title}`
+        : `${n.identifier}\t[${n.state?.name}]\t${n.title}`
+    );
   }
+  if (showLabels) console.log(`count: ${filtered.length}`);
 } else if (cmd === "relations") {
   const ident = argv[1];
   const n = await findIssue(ident);
@@ -482,13 +498,15 @@ if (cmd === "get") {
       "set-desc <IDENT> <file> [--force] | patch-desc <IDENT> <patch.md> [--force] | " +
       "set-title <IDENT> <title> | " +
       "set-state <IDENT> <name> | set-priority <IDENT> <priority> | comment <IDENT> <text> | " +
-      "comments <IDENT> | list <TEAMKEY> | relations <IDENT> | blocks <BLOCKER> <BLOCKED> | " +
+      "comments <IDENT> | " +
+      "list <TEAMKEY> [--open] [--label <name[,name]>]... [--missing-label <prefix>]... | " +
+      "relations <IDENT> | blocks <BLOCKER> <BLOCKED> | " +
       "related <ISSUE_A> <ISSUE_B> | remove-relation <ISSUE_A> <ISSUE_B> <blocks|related> | " +
       "set-project <IDENT> <project> | projects [NAME] | " +
       'create-project "<name>" [--desc <file>] [--team KEY] | ' +
       "set-parent <IDENT> <PARENT_IDENT> | " +
-      "add-label <IDENT> <LABEL> | template [aios] | " +
-      'create "<title>" [--desc <file>] [--template aios] [--label <name>]... [--state Backlog] ' +
+      "add-label <IDENT> <LABEL> | template [aios|finding] | " +
+      'create "<title>" [--desc <file>] [--template aios|finding] [--label <name>]... [--state Backlog] ' +
       "[--parent <IDENT>] [--assignee <name-or-email>] [--project <name>] [--priority <level>] | users <TEAMKEY> | assign <IDENT> <name-or-email>"
   );
 }
