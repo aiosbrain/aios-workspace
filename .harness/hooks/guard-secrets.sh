@@ -15,6 +15,11 @@ CONTENT=$(printf '%s' "$EVENT" | jq -r '.added_content[].content') || exit 3
 [ -n "$CONTENT" ] || exit 0
 FILE_PATHS=$(printf '%s' "$EVENT" | jq -r '[.added_content[].path] | unique | join(",")') || exit 3
 
+# AIO-952: lines carrying the literal "aios-secret-fixture:" marker are declared test fixtures
+# (same convention as validation/check-secrets.sh) — drop only those lines before matching.
+CONTENT=$(printf '%s\n' "$CONTENT" | grep -v 'aios-secret-fixture:' || true)
+[ -n "$CONTENT" ] || exit 0
+
 PATTERNS_FILE="$SCRIPT_DIR/secret-patterns.txt"
 if [ -f "$PATTERNS_FILE" ]; then
   while IFS= read -r pattern || [ -n "$pattern" ]; do

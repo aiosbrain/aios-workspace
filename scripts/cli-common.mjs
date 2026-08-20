@@ -248,9 +248,11 @@ export function gitConfig(repo, key) {
 export const FALLBACK_SECRET_PATTERNS = [
   "AKIA[0-9A-Z]{16}",
   "-----BEGIN (RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----",
-  "gh[ps]_[A-Za-z0-9_]{36,}",
+  "gh[pousr]_[A-Za-z0-9_]{36,}",
   "xox[bporas]-[A-Za-z0-9-]+",
   "sk-[A-Za-z0-9_-]{40,}",
+  "(^|[^A-Za-z0-9_-])pk_[0-9]+_[A-Za-z0-9]{20,}",
+  "(^|[^A-Za-z0-9_-])lin_(api|oauth)_[A-Za-z0-9]{20,}",
 ];
 
 /** Load the shared secret-pattern list (validation/secret-patterns.txt), compiled to RegExps. */
@@ -266,8 +268,21 @@ export function loadSecretPatterns() {
   return lines.map((l) => new RegExp(l));
 }
 
-/** First matching pattern source in `content`, or null if clean. */
+/**
+ * First matching pattern source in `content`, or null if clean.
+ *
+ * AIO-952: lines carrying the literal "aios-secret-fixture:" marker are declared test
+ * fixtures (same convention as validation/check-secrets.sh) and are dropped before
+ * matching, so the blessed fixture workflow also clears `aios push`/review/promote.
+ * The exemption is line-scoped — every other line is still checked in full.
+ */
 export function findSecret(content, patterns) {
-  for (const re of patterns) if (re.test(content)) return re.source;
+  const scanned = content.includes("aios-secret-fixture:")
+    ? content
+        .split("\n")
+        .filter((line) => !line.includes("aios-secret-fixture:"))
+        .join("\n")
+    : content;
+  for (const re of patterns) if (re.test(scanned)) return re.source;
   return null;
 }

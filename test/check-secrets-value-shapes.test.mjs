@@ -16,11 +16,15 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { findSecret, loadSecretPatterns } from "../scripts/cli-common.mjs";
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const SCANNER = path.join(ROOT, "validation", "check-secrets.sh");
 
-const CLICKUP_VALUE = "pk_" + "9q7x" + "w3jm4vbt2rkd8ncz5qhy6fw2";
+// ClickUp's actual token shape: pk_<numeric user id>_<key>. The pattern requires the numeric
+// middle segment so it cannot match SQL primary-key constraint names, Stripe PUBLISHABLE
+// pk_live_/pk_test_ keys, or ALL-CAPS PK_* constants (see the negative tests below).
+const CLICKUP_VALUE = "pk_" + "4753994_" + "W3JM4VBT2RKD8NCZ5QHY6FW2";
 const LINEAR_VALUE = "lin_" + "api_" + "h4vt8r2jm9qw6zkd3ncy5bXe7g";
 const GITHUB_OAUTH_VALUE = "gho_" + "Zr8k" + "Tq2Wm9Xv4Jn7Hb3Pd6Fs1Lg5Yc0Aq8Uw2Ei";
 
@@ -91,8 +95,43 @@ test("OGR03: a fixture declaration silences only its own line", () => {
   assert.ok(!/line 1: \[REDACTED\]/.test(output), "declared line must not be reported");
 });
 
+test("OGR03 does not cry wolf on pk_-prefixed non-secrets", () => {
+  const result = scanLines("innocent.sql", [
+    // SQL primary-key constraint name: pk_ followed by a long identifier, no numeric segment.
+    "ALTER TABLE user_sessions ADD CONSTRAINT pk_user_sessions_created_at PRIMARY KEY (id);",
+    // Stripe PUBLISHABLE key — designed to be public, not a secret.
+    `const stripePublishable = "${"pk_live_" + "51Hqx" + "Vt8KDmR2wNbYcPeJaGuZfL"}";`,
+    // ALL-CAPS constant whose NAME starts with PK_ (the scan is case-insensitive).
+    "const PK_DEFAULT_RETRY_WINDOW_MS = 500;",
+  ]);
+  const output = `${result.stdout}${result.stderr}`;
+  assert.equal(result.status, 0, output);
+  assert.match(output, /OGR03 PASSED/);
+});
+
 test("OGR03 keeps flagging the classic gh[ps]_ token shapes", () => {
   const legacy = "ghp_" + "Ab1Cd2Ef3Gh4Ij5Kl6Mn7Op8Qr9St0Uv1Wx2Yz";
   const result = scanLines("legacy.mjs", [`const deployRef = "${legacy}";`]);
   assert.equal(result.status, 1, `${result.stdout}${result.stderr}`);
+});
+
+test("findSecret (aios push/review/promote) shares the value rules and the fixture escape", () => {
+  const patterns = loadSecretPatterns();
+  const plain = `const clickupProjectRef = "${CLICKUP_VALUE}";`;
+  assert.ok(findSecret(plain, patterns), "undeclared provider-shaped value must be flagged");
+  assert.equal(
+    findSecret(`${plain} // aios-secret-fixture: synthetic shape under test`, patterns),
+    null,
+    "a declared fixture line must clear the push/review leak check"
+  );
+  assert.ok(
+    findSecret(
+      [
+        `const declared = "${CLICKUP_VALUE}"; // aios-secret-fixture: synthetic shape`,
+        `const undeclared = "${LINEAR_VALUE}";`,
+      ].join("\n"),
+      patterns
+    ),
+    "the fixture escape must be line-scoped"
+  );
 });
