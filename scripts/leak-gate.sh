@@ -111,7 +111,10 @@ fi
 # skill-library/ — vendored, integrity-locked official upstream skills (OGR09).
 # skill-scan-fixtures/ — DELIBERATELY-malicious scanner test inputs; never shipped.
 # target/ — Rust/Tauri build output; gitignored. evidence/ — gitignored UX harness output.
-# .env* — local-only config (gitignored).
+# .env / .env.local* / .env.keys* — local-only config and dotenvx key material, including
+#   rotation and backup copies (`.env.keys.bak-<date>`). Exact-match patterns missed those,
+#   so the shapes are globbed. `.env.example` is deliberately NOT skipped: it is tracked,
+#   published, and must be scanned like any other shipped file.
 # (docs/strategy/ was deleted from the repo entirely (PR #336) — nothing strategy-related is
 #  excluded; the full docs tree is scanned like everything else.)
 FILE_LIST=$(mktemp "${TMPDIR:-/tmp}/aios-leak-gate.XXXXXX")
@@ -135,7 +138,7 @@ emit_if_scannable() {
   case "/$1" in
     */.git/* | */node_modules/* | */.venv/* | */__pycache__/* | */store/*) return 0 ;;
     */skill-library/* | */skill-scan-fixtures/* | */target/* | */evidence/*) return 0 ;;
-    */.git | */.env | */.env.local | */.env.keys) return 0 ;;
+    */.git | */.env | */.env.local* | */.env.keys*) return 0 ;;
     */leak-gate.sh | */leak-gate-terms.sh | */LICENSE) return 0 ;;
     *.png | *.jpg | *.pdf | *.lock) return 0 ;;
   esac

@@ -491,8 +491,8 @@ export function vaultGet(repo, env) {
     return "";
   }
 }
-
-export function ensureGitignore(repo, entries = [".env", ".env.keys"]) {
+// .env.keys* (not .env.*): a workspace tracks its own .env.example. Why: AIOS PR #628.
+export function ensureGitignore(repo, entries = [".env", ".env.keys*"]) {
   const gi = path.join(repo, ".gitignore");
   let txt = existsSync(gi) ? readFileSync(gi, "utf8") : "";
   const lines = new Set(txt.split("\n").map((l) => l.trim()));

@@ -5,9 +5,14 @@ __pycache__/
 .venv/
 .aios/
 .claude/worktrees/
+# Environment / secrets. The glob is deliberately wide: an exact `.env.keys` pattern
+# does NOT match a rotation/backup copy (`.env.keys.bak-<date>`, `.env.keys.old`), so a
+# live dotenvx private key could sit untracked-but-stageable in the tree. Only the
+# committed `.env.example` is exempt.
 .env
+.env.*
+!.env.example
 .envrc
-.env.local
 dist/
 coverage/
 .stryker-tmp/
@@ -17,7 +22,6 @@ evals/results/
 evals/scratch/
 .aios/
 
-.env.keys
 # Root-level scratch exports from aios tools (not source of truth; regenerated)
 /.aio-*.md
 # Root-level agent review and handoff artifacts (local, never source of truth)
