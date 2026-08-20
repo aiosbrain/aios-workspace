@@ -1,7 +1,13 @@
 // Project commands for the aios-linear CLI (AIO-942), extracted from linear.mjs to keep
 // that file under the file-size gate. Dispatch stays in linear.mjs; the behaviour lives here.
 import { readFileSync } from "node:fs";
-import { DEFAULT_TEAM_KEY, findProjects, findTeamId, gql } from "./linear-core.mjs";
+import {
+  canonicalizeProjectName,
+  DEFAULT_TEAM_KEY,
+  findProjects,
+  findTeamId,
+  gql,
+} from "./linear-core.mjs";
 
 export async function cmdProjects(argv) {
   const projects = await findProjects(argv[1] || null);
@@ -16,6 +22,11 @@ export async function cmdCreateProject(argv) {
   const name = argv[1];
   if (!name) {
     console.error('create-project requires "<name>" [--desc <file>] [--team KEY]');
+    process.exit(1);
+  }
+  const canonical = canonicalizeProjectName(name);
+  if (!canonical) {
+    console.error("create-project requires a name with at least one non-whitespace character");
     process.exit(1);
   }
   let descFile = null;
@@ -35,10 +46,17 @@ export async function cmdCreateProject(argv) {
       process.exit(1);
     }
   }
-  // Fail closed on an existing exact name — Linear happily creates duplicates, and a
-  // duplicate makes every later set-project call ambiguous.
-  const existing = (await findProjects(name)).filter(
-    (p) => p.name.toLowerCase() === name.toLowerCase()
+  // Fail closed on an existing name — Linear happily creates duplicates, and a duplicate
+  // makes every later set-project call ambiguous. The comparison is canonical (NFKC,
+  // collapsed Unicode whitespace, trimmed, case-folded) so a trailing space, an NBSP, an
+  // NFD decomposition, or a case-only difference cannot smuggle a second project past this
+  // guard. It is still an EQUALITY check, not a substring one: "Ultraharden v2" is a
+  // legitimately distinct name and must remain creatable.
+  //
+  // Queried UNFILTERED: server-side containsIgnoreCase cannot see through an NBSP or an NFD
+  // decomposition, so a canonical-equal project would be absent from a filtered result.
+  const existing = (await findProjects()).filter(
+    (p) => canonicalizeProjectName(p.name) === canonical
   );
   if (existing.length) {
     console.error(`project "${existing[0].name}" already exists: ${existing[0].url}`);

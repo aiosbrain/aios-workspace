@@ -341,13 +341,45 @@ export function formatIssue(issue) {
   return `${issue.identifier} [${issue.state?.name}] ${issue.title}`;
 }
 
+// Project names are compared after canonicalization so that two names a human reads as
+// identical cannot both exist. Server-side filtering cannot be trusted to see through an
+// NBSP or an NFD decomposition, so the full set is paginated and canonicalized locally.
+export function canonicalizeProjectName(name) {
+  return (
+    String(name)
+      .normalize("NFKC")
+      // every Unicode space separator (incl. NBSP) collapses to a single ASCII space
+      .replace(/[\s\u00a0\u1680\u2000-\u200a\u202f\u205f\u3000]+/gu, " ")
+      .trim()
+      .toLocaleLowerCase()
+  );
+}
+
+// Paginated: a project on page two must not be invisible to the duplicate guard or to
+// ambiguity detection. Mirrors the stalled-cursor guard in listTeamMembers.
 export async function findProjects(nameSubstring = null) {
   const filter = nameSubstring ? { name: { containsIgnoreCase: nameSubstring } } : {};
-  const d = await gql(
-    `query($f:ProjectFilter){ projects(first:100, filter:$f){ nodes{ id name state url } } }`,
-    { f: filter }
-  );
-  return d.projects.nodes;
+  const projects = [];
+  let after = null;
+  do {
+    const d = await gql(
+      `query($f:ProjectFilter,$after:String){
+        projects(first:100, filter:$f, after:$after){
+          nodes{ id name state url }
+          pageInfo{ hasNextPage endCursor }
+        }
+      }`,
+      { f: filter, after }
+    );
+    const page = d.projects;
+    projects.push(...page.nodes);
+    if (!page.pageInfo?.hasNextPage) break;
+    if (!page.pageInfo.endCursor || page.pageInfo.endCursor === after) {
+      fail("Linear project pagination stalled");
+    }
+    after = page.pageInfo.endCursor;
+  } while (true);
+  return projects;
 }
 
 // Resolve a project by case-insensitive name substring. Fails closed on zero or
