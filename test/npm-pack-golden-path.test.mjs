@@ -150,11 +150,16 @@ test(
           return `${e.stdout ?? ""}${e.stderr ?? ""}`;
         }
       })();
+      // Parse argparse's own `{a,b,c}` choices block rather than substring-matching the help
+      // text: `read` would match "already", `file` would match "filename". Membership in the
+      // declared choice set is the actual property, and it needs no constructed regex.
+      const slackVerbs = new Set(
+        (/\{([a-z,]+)\}/.exec(slackHelp)?.[1] ?? "").split(",").filter(Boolean)
+      );
       for (const verb of ["file", "resolve", "dm", "send", "read"]) {
-        assert.match(
-          slackHelp,
-          new RegExp(`\\b${verb}\\b`),
-          `installed slack must expose '${verb}'`
+        assert.ok(
+          slackVerbs.has(verb),
+          `installed slack must expose '${verb}' (got: ${[...slackVerbs].join(",") || "none"})`
         );
       }
 
