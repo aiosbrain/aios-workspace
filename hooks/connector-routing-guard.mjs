@@ -228,6 +228,11 @@ export function classifyMcp(toolName, toolInput, opts = {}) {
   };
 }
 
+/** The one place the mode string is validated, so every exit path agrees on it. */
+function resolveMode(cfg) {
+  return ["block", "warn", "off"].includes(cfg?.mode) ? cfg.mode : DEFAULT_MODE;
+}
+
 function loadConfig(cwd) {
   try {
     const p = path.join(cwd || process.cwd(), CONFIG_REL);
@@ -277,12 +282,21 @@ async function main() {
     // blocked — the same "a mention is not a target" mistake the team markers already made once.
     const TRUNCATED_MCP = /"tool_name"\s*:\s*"mcp__[^"]*linear[^"]*__/i;
     if (truncated && TRUNCATED_MCP.test(text.slice(0, 2000))) {
+      // The configured mode applies HERE TOO. Setting exit 2 before reading it meant a workspace
+      // with mode:"off" was still hard-blocked by an oversized payload — enforcement in a place
+      // the operator had explicitly turned enforcement off.
+      //
+      // The payload is truncated, so its `cwd` cannot be parsed out of it; the config is read
+      // from the process's own working directory, which is where a PreToolUse hook runs.
+      const mode = resolveMode(loadConfig(undefined));
+      if (mode === "off") return;
+      const blocking = mode === "block";
       process.stderr.write(
-        "[connector-routing-guard] BLOCKED: a Linear MCP payload exceeded " +
-          `${STDIN_MAX} bytes and could not be classified. A call this guard cannot read is not ` +
-          "a call it can clear.\n"
+        `[connector-routing-guard] ${blocking ? "BLOCKED" : "advisory"}: a Linear MCP payload ` +
+          `exceeded ${STDIN_MAX} bytes and could not be classified. A call this guard cannot ` +
+          "read is not a call it can clear.\n"
       );
-      process.exitCode = 2;
+      if (blocking) process.exitCode = 2;
     }
     return;
   }
@@ -292,7 +306,7 @@ async function main() {
   const toolName = String(payload.tool_name ?? "");
   const input = payload.tool_input || {};
   const cfg = loadConfig(payload.cwd);
-  const mode = ["block", "warn", "off"].includes(cfg.mode) ? cfg.mode : DEFAULT_MODE;
+  const mode = resolveMode(cfg);
   if (mode === "off") return;
 
   let verdict = { decision: "allow" };

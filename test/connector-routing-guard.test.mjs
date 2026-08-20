@@ -28,12 +28,12 @@ const DIR = path.dirname(fileURLToPath(import.meta.url));
 const HOOK = path.join(DIR, "..", "hooks", "connector-routing-guard.mjs");
 
 /** Run the real hook over a real PreToolUse payload. Never `spawnSync` — see the Slack suite. */
-function runHook(payload, { env = {} } = {}) {
+function runHook(payload, { env = {}, cwd } = {}) {
   return new Promise((resolve) => {
     const child = execFile(
       process.execPath,
       [HOOK],
-      { encoding: "utf8", env: { ...process.env, ...env } },
+      { encoding: "utf8", cwd, env: { ...process.env, ...env } },
       (err, stdout, stderr) => resolve({ status: err ? (err.code ?? 1) : 0, stdout, stderr })
     );
     // A guard that fails closed EXITS before reading the whole payload, so writing a large
@@ -384,4 +384,28 @@ test("a truncated Bash payload that merely MENTIONS an MCP tool name is not bloc
     tool_input: { id: "AIO-976", pad: "x".repeat(1_500_000) },
   });
   assert.equal((await runHook(realMcp)).status, 2, "a real truncated MCP call must fail closed");
+});
+
+// ── the escape hatch must reach every exit path (round 5) ───────────────────────────────────
+
+test("an oversized payload honours mode, including off", async () => {
+  // The truncation path set exit 2 BEFORE loading config, so a workspace that had explicitly
+  // turned enforcement off was still hard-blocked by a large payload. An escape hatch that some
+  // code paths ignore is not an escape hatch.
+  const oversized = JSON.stringify({
+    tool_name: "mcp__plugin_linear_linear__update_issue",
+    tool_input: { id: "AIO-976", pad: "x".repeat(1_500_000) },
+  });
+  for (const [mode, want] of [
+    ["block", 2],
+    ["warn", 0],
+    ["off", 0],
+  ]) {
+    const cwd = mkdtempSync(path.join(tmpdir(), `routing-big-${mode}-`));
+    mkdirSync(path.join(cwd, ".aios"), { recursive: true });
+    writeFileSync(path.join(cwd, ".aios/connector-routing.json"), JSON.stringify({ mode }));
+    const r = await runHook(oversized, { cwd });
+    assert.equal(r.status, want, `mode=${mode} must exit ${want}: ${r.stderr}`);
+    if (mode === "off") assert.equal(r.stderr.trim(), "", "mode=off must be silent");
+  }
 });
