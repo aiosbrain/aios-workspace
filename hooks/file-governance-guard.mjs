@@ -25,7 +25,7 @@
 // file-governance.mjs, OGR14) and unit tests can reuse the exact same rules — the hook
 // and the validator must never drift on what counts as "sanctioned".
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -281,8 +281,19 @@ async function main() {
   if (mode === "block") process.exitCode = 2;
 }
 
-const isMainModule =
-  process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+// Realpath BOTH sides: `import.meta.url` is symlink-resolved, `path.resolve(argv[1])` is not, so
+// under a symlinked path (macOS $TMPDIR is /var -> /private/var; a symlinked project root is
+// ordinary) this comparison was false and the guard silently did nothing at all.
+const isMainModule = (() => {
+  const entry = process.argv[1];
+  if (!entry) return false;
+  const self = fileURLToPath(import.meta.url);
+  try {
+    return realpathSync(entry) === realpathSync(self);
+  } catch {
+    return path.resolve(entry) === self;
+  }
+})();
 if (isMainModule) {
   main()
     .catch(() => {})
