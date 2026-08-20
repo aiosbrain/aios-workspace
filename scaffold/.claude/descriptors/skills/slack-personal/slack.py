@@ -424,6 +424,24 @@ def _die_open(err, shown):
     die(f"cannot open {shown}: {err.strerror}", 2)
 
 
+def _realpath_or_none(p):
+    """realpath(p), or None when it cannot be resolved. A failure means "this prefix is not the
+    workspace root", which is exactly what None says — no silent skip needed."""
+    try:
+        return os.path.realpath(p)
+    except OSError:
+        return None
+
+
+def _is_symlink_at(name, dir_fd):
+    """True when `name` under `dir_fd` is a symlink. Used ONLY to word an error message, so a
+    failure to tell resolves to False: the refusal has already happened either way."""
+    try:
+        return stat.S_ISLNK(os.lstat(name, dir_fd=dir_fd).st_mode)
+    except OSError:
+        return False
+
+
 def _components_under_root(path, root):
     """Split `path` into the literal components that sit BELOW `root`, or None if it escapes.
 
@@ -445,11 +463,8 @@ def _components_under_root(path, root):
     parts = os.path.abspath(path).split(os.sep)
     for i in range(len(parts), 0, -1):
         prefix = os.sep.join(parts[:i]) or os.sep
-        try:
-            if os.path.realpath(prefix) == root:
-                return [c for c in parts[i:] if c not in ("", ".")]
-        except OSError:
-            continue
+        if _realpath_or_none(prefix) == root:
+            return [c for c in parts[i:] if c not in ("", ".")]
     return None
 
 
@@ -518,16 +533,12 @@ def _open_contained(path, allow_outside=False):
                 # the generic mapping would say "not a regular file" for a symlinked directory —
                 # true, useless, and actively misleading on a security refusal. lstat is used for
                 # the MESSAGE only; the refusal already happened.
-                if e.errno == errno.ENOTDIR:
-                    try:
-                        if stat.S_ISLNK(os.lstat(comp, dir_fd=dir_fd).st_mode):
-                            die(
-                                f"refusing to upload through a symlinked directory: {path} "
-                                f"(component '{comp}' is a symlink)",
-                                2,
-                            )
-                    except OSError:
-                        pass
+                if e.errno == errno.ENOTDIR and _is_symlink_at(comp, dir_fd):
+                    die(
+                        f"refusing to upload through a symlinked directory: {path} "
+                        f"(component '{comp}' is a symlink)",
+                        2,
+                    )
                 _die_open(e, path)
             os.close(dir_fd)
             dir_fd = nxt
