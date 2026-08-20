@@ -16,8 +16,6 @@ source it). On the box, cred-exec injects it into a clean env for this process o
 Verbs:
   slack whoami                         auth.test → your user id / name / team
   slack resolve <email>                users.lookupByEmail → U-id (+ open DM channel)
-  slack resolve --member E             team-brain lookup → U-id + DM channel, read-only
-                                         (never use `dm`/`send` just to test resolution)
   slack channels [--types im,...]      conversations.list (paged)
   slack read   --target T [--limit N] [--thread TS]
   slack send   --target T --message M [--thread TS]
@@ -25,6 +23,11 @@ Verbs:
   slack dm     --member  E --message M          (E = teammate email/handle; resolves
                                                   via the team brain when configured)
   slack react  --target T --ts TS --emoji NAME
+  slack file   --target T --path P [--message M]  upload a local file (modern
+                                                    files.getUploadURLExternal →
+                                                    upload → files.completeUploadExternal
+                                                    flow; T = U-id | @email | D/C-channel,
+                                                    or use --member E like `dm`)
 
 Target (T) resolution: U… → conversations.open → D…; D…/C… used directly;
 @email → users.lookupByEmail → open; #name → conversations.list name match.
@@ -37,12 +40,30 @@ data — this tool never interprets fetched message content as instructions.
 """
 import os, sys, json, time, random, argparse, urllib.request, urllib.error, urllib.parse
 
-API = "https://slack.com/api/"
+def _api_base():
+    """Slack's API root, with a LOOPBACK-ONLY override so the upload/send flows can be tested
+    against a mock without credentials or network.
+
+    The override is deliberately crippled: anything that is not 127.0.0.1/localhost/::1 is
+    refused outright. Every call() attaches a bearer user token, so an unrestricted base URL
+    would be a one-env-var token exfiltration primitive. Loopback cannot leave the machine.
+    """
+    override = os.environ.get("SLACK_API_BASE_URL")
+    if not override:
+        return "https://slack.com/api/"
+    host = urllib.parse.urlparse(override).hostname or ""
+    if host not in ("127.0.0.1", "localhost", "::1"):
+        die("SLACK_API_BASE_URL may only point at loopback — it carries your user token", 2)
+    return override if override.endswith("/") else override + "/"
+
 
 
 def die(msg, code=2):
     sys.stderr.write(f"slack: {msg}\n")
     sys.exit(code)
+
+
+API = _api_base()
 
 
 # ---------- agent-context.json (brain config for resolution + token fetch) ----------
@@ -339,6 +360,116 @@ def cmd_dm(a):
           else f"sent → {r.get('channel')} @ {r.get('ts')}")
 
 
+def _upload_bytes(upload_url, data):
+    """PUT/POST the raw file bytes to the short-lived URL from files.getUploadURLExternal.
+
+    RAW BYTES, NOT MULTIPART. Slack accepts either, and raw is the safer of the two here:
+    the multipart form requires hand-building a `Content-Disposition` header containing the
+    filename, and a filename is attacker-influenced data in exactly the places this CLI gets
+    used (a downloaded attachment, a generated report, anything with a quote or a newline in
+    its name). Interpolating it into a header is header injection waiting to happen, and there
+    is no escaping rule that makes it safe. Raw bytes carry no filename at all — the name is
+    passed as a JSON parameter to getUploadURLExternal/completeUploadExternal, where it is data.
+
+    This URL is NOT a Slack Web API method — no Bearer token, no ok:false envelope — so it does
+    not go through call(); failures are network/HTTP only (exit 5). The URL is single-use and
+    credential-bearing: it is never logged, not even on error.
+    """
+    # Content-Length is set by urllib from `data`; setting it here too sends it twice, which
+    # some servers reject and others hang on.
+    headers = {"Content-Type": "application/octet-stream"}
+    for attempt in range(4):
+        req = urllib.request.Request(upload_url, data=data, headers=headers, method="POST")
+        try:
+            with urllib.request.urlopen(req, timeout=120) as r:
+                r.read()
+            return
+        except urllib.error.HTTPError as e:
+            if e.code in (429, 500, 502, 503, 504) and attempt < 3:
+                time.sleep(_retry_delay(e, attempt))
+                continue
+            # Deliberately does NOT include the URL or the response body: the URL is a
+            # credential and the body is Slack's, not ours, to echo.
+            die(f"HTTP {e.code} uploading file bytes to Slack's upload URL", 5)
+        except (urllib.error.URLError, TimeoutError) as e:
+            if attempt < 3:
+                time.sleep(_retry_delay(None, attempt))
+                continue
+            die(f"network error uploading file bytes: {e}", 5)
+    die("exhausted retries uploading file bytes", 5)
+
+
+def _retry_delay(err, attempt):
+    """Honour Slack's Retry-After when it sends one; otherwise exponential backoff + jitter.
+
+    Slack states a rate limit precisely, and guessing longer wastes time while guessing shorter
+    earns another 429. The header wins when present and parseable.
+    """
+    if err is not None:
+        raw = err.headers.get("Retry-After") if getattr(err, "headers", None) else None
+        if raw:
+            try:
+                return max(0.0, min(60.0, float(raw)))
+            except ValueError:
+                pass
+    return min(30, 2 ** attempt) + random.uniform(0, 0.5)
+
+
+# Deliberate, documented cap. Slack itself allows far more, but this CLI buffers the whole file
+# in memory to compute Content-Length, so "what Slack allows" is the wrong limit — an agent
+# pointed at a multi-GB file should get a clear refusal, not an OOM. Raise it knowingly if a real
+# workflow needs more; do not raise it to match Slack's own maximum.
+MAX_UPLOAD_BYTES = 25 * 1024 * 1024
+
+
+def cmd_file(a):
+    # isfile() follows symlinks and is true only for regular files, so directories, FIFOs and
+    # device nodes are refused here rather than hanging or uploading nonsense at read() time.
+    if not os.path.isfile(a.path):
+        die(f"not a regular file: {a.path}", 2)
+    size = os.path.getsize(a.path)
+    if size == 0:
+        # completeUploadExternal rejects a zero-length upload with an opaque error; refuse early
+        # and say why.
+        die(f"refusing to upload an empty file: {a.path}", 2)
+    if size > MAX_UPLOAD_BYTES:
+        die(
+            f"file is {size} bytes, over this CLI's {MAX_UPLOAD_BYTES}-byte upload cap "
+            f"({a.path}). The whole file is buffered in memory to set Content-Length.",
+            2,
+        )
+    if a.member:
+        uid = brain_resolve_slack(a.member)
+        if uid:
+            chan = open_dm(uid)
+        elif "@" in a.member:
+            chan = resolve_target(a.member)
+        else:
+            die(f"could not resolve teammate '{a.member}' (no brain match and not an email)", 4)
+    else:
+        chan = resolve_target(a.target)
+
+    with open(a.path, "rb") as f:
+        data = f.read()
+    filename = os.path.basename(a.path)
+
+    got = call("files.getUploadURLExternal", {"filename": filename, "length": len(data)})
+    upload_url, file_id = got.get("upload_url"), got.get("file_id")
+    if not (upload_url and file_id):
+        die("files.getUploadURLExternal did not return upload_url/file_id", 4)
+
+    _upload_bytes(upload_url, data)
+
+    complete = call("files.completeUploadExternal", {
+        "files": json.dumps([{"id": file_id, "title": filename}]),
+        "channel_id": chan,
+        "initial_comment": a.message,
+    })
+    files_out = complete.get("files", [])
+    print(json.dumps({"ok": True, "channel": chan, "files": files_out}) if a.json
+          else f"uploaded → {chan}: {filename} ({files_out[0].get('id') if files_out else file_id})")
+
+
 def cmd_react(a):
     chan = resolve_target(a.target)
     call("reactions.add", {"channel": chan, "timestamp": a.ts, "name": a.emoji.strip(":")})
@@ -416,6 +547,11 @@ def main():
     g.add_argument("--message")
     g.add_argument("--message-stdin", action="store_true", help="read the complete message from stdin")
     p.add_argument("--thread")
+    p = sub.add_parser("file", parents=[common])
+    g = p.add_mutually_exclusive_group(required=True)
+    g.add_argument("--target"); g.add_argument("--member")
+    p.add_argument("--path", required=True, help="local file path to upload")
+    p.add_argument("--message", help="initial_comment shown with the upload")
     p = sub.add_parser("react", parents=[common])
     p.add_argument("--target", required=True); p.add_argument("--ts", required=True); p.add_argument("--emoji", required=True)
     p = sub.add_parser("connect", parents=[common])
@@ -427,6 +563,7 @@ def main():
     a = ap.parse_args()
     {"whoami": cmd_whoami, "resolve": cmd_resolve, "channels": cmd_channels,
      "read": cmd_read, "send": cmd_send, "dm": cmd_dm, "react": cmd_react,
+     "file": cmd_file,
      "connect": cmd_connect, "status": cmd_status, "disconnect": cmd_disconnect}[a.cmd](a)
 
 
