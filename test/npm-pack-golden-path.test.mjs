@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -96,6 +96,24 @@ test(
         assert.equal(hit, undefined, `tarball must not ship ${forbidden} (found ${hit})`);
       }
 
+      // 2b. EVERY declared bin must be executable IN THE TARBALL. This is asserted against the
+      //     archive's own recorded modes, not against node_modules/.bin, because npm may chmod
+      //     while linking and would then paper over a non-executable file inside the artifact.
+      //     `slack` and `linear` shipped mode 0644 in 0.11.1 — the bare commands died with
+      //     "permission denied" for every install — and no repo-only test could see it, because
+      //     in a checkout nobody runs them by bare name.
+      const longListing = run("tar", ["-tvzf", tarball]).split("\n");
+      const declaredBins = JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf8")).bin;
+      for (const [binName, relPath] of Object.entries(declaredBins)) {
+        const row = longListing.find((l) => l.endsWith(`package/${relPath}`));
+        assert.ok(row, `tarball must ship the '${binName}' bin target ${relPath}`);
+        assert.match(
+          row,
+          /^-rwxr-xr-x/,
+          `bin '${binName}' (${relPath}) must be 0755 in the tarball, got: ${row.split(/\s+/)[0]}`
+        );
+      }
+
       // 3. Install into a clean prefix. --omit=optional skips the Claude native GUI
       //    binaries the CLI does not need; postinstall must survive that (warn-only).
       const prefix = path.join(base, "npm-cli-golden");
@@ -115,6 +133,73 @@ test(
       const help = run(bin, ["--help"], { cwd: prefix });
       assert.match(help, /aios/i);
       assert.match(help, /status/);
+
+      // 4b. The OTHER two bins must also be present and RUNNABLE by bare name — that is the
+      //     entrypoint the docs advertise, and the one that was broken.
+      for (const binName of Object.keys(declaredBins)) {
+        const p = path.join(prefix, "node_modules", ".bin", binName);
+        assert.ok(existsSync(p), `npm exposed the ${binName} bin`);
+      }
+      // `slack --help` exits non-zero on argparse usage, so capture rather than assert exit 0.
+      const slackHelp = (() => {
+        try {
+          return run(path.join(prefix, "node_modules", ".bin", "slack"), ["--help"], {
+            cwd: prefix,
+          });
+        } catch (e) {
+          return `${e.stdout ?? ""}${e.stderr ?? ""}`;
+        }
+      })();
+      // Parse argparse's own `{a,b,c}` choices block rather than substring-matching the help
+      // text: `read` would match "already", `file` would match "filename". Membership in the
+      // declared choice set is the actual property, and it needs no constructed regex.
+      const slackVerbs = new Set(
+        (/\{([a-z,]+)\}/.exec(slackHelp)?.[1] ?? "").split(",").filter(Boolean)
+      );
+      for (const verb of ["file", "resolve", "dm", "send", "read"]) {
+        assert.ok(
+          slackVerbs.has(verb),
+          `installed slack must expose '${verb}' (got: ${[...slackVerbs].join(",") || "none"})`
+        );
+      }
+
+      // 4c. The devtools pin must be EXACT and satisfied. `aios spec eval` reaches into the
+      //     sibling package, so a stale pin silently reintroduces AIO-686 for every installer
+      //     even though core's own code is fixed.
+      const devtoolsPkg = path.join(
+        prefix,
+        "node_modules",
+        "@aiosbrain",
+        "aios-devtools",
+        "package.json"
+      );
+      assert.ok(existsSync(devtoolsPkg), "the devtools dependency must be installed");
+      assert.equal(
+        JSON.parse(readFileSync(devtoolsPkg, "utf8")).version,
+        JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf8")).dependencies[
+          "@aiosbrain/aios-devtools"
+        ],
+        "installed devtools must match core's exact pin"
+      );
+
+      // 4d. The property AIO-686 is about: a repo with NO .claude/rubrics/ must still grade,
+      //     from a published install, instead of dying with "rubric not found" (exit 4). The
+      //     verdict itself is not asserted — a bare repo legitimately fails other criteria.
+      const bareRepo = path.join(base, "rubricless");
+      mkdirSync(bareRepo, { recursive: true });
+      writeFileSync(path.join(bareRepo, "issue.md"), "# Spec\n\nA short spec body.\n");
+      let specOut = "";
+      let specStatus = 0;
+      try {
+        specOut = run(bin, ["spec", "eval", path.join(bareRepo, "issue.md"), "--no-llm"], {
+          cwd: bareRepo,
+        });
+      } catch (e) {
+        specStatus = e.status ?? 1;
+        specOut = `${e.stdout ?? ""}${e.stderr ?? ""}`;
+      }
+      assert.notEqual(specStatus, 4, `spec eval must not die on rubric loading: ${specOut}`);
+      assert.doesNotMatch(specOut, /rubric not found/, specOut);
 
       // 5. Scaffold a consultant workspace from the INSTALLED package (synthetic data).
       const ws = path.join(base, "golden-ws");
