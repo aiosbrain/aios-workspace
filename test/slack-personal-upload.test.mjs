@@ -465,3 +465,45 @@ test("an upload URL that is not https (or loopback http) is refused", async () =
     });
   }
 });
+
+// ── `..` must be rejected BEFORE normalisation (found by codex:gpt-5.6-sol) ─────────────────
+
+test("a `..` segment is refused before normalisation can hide a symlink", async () => {
+  // os.path.abspath() calls normpath(), which collapses `..` LEXICALLY. Checking for `..`
+  // afterwards checks a string that can no longer contain one: `reports/link/../../.env`
+  // became `<cwd>/.env`, so BOTH the `..` and the symlinked `link` vanished before the
+  // descriptor walk, and the workspace .env was uploaded. Verified exploitable.
+  const root = mkdtempSync(path.join(tmpdir(), "slack-dotdot-"));
+  mkdirSync(path.join(root, "secrets"), { recursive: true });
+  mkdirSync(path.join(root, "work", "reports"), { recursive: true });
+  writeFileSync(path.join(root, "secrets", "id_rsa"), "PRIVATE KEY MATERIAL");
+  writeFileSync(path.join(root, "work", ".env"), "SLACK_SECRET=leaked");
+  writeFileSync(path.join(root, "work", "reports", "ok.pdf"), "legit");
+  symlinkSync(path.join(root, "secrets"), path.join(root, "work", "reports", "link"));
+  const cwd = path.join(root, "work");
+
+  const escapes = [
+    "reports/link/../../.env", // the reported exploit: hides a symlink AND escapes
+    "../secrets/id_rsa", // plain escape
+    "reports/../.env", // stays inside, still refused: `..` is not resolvable safely
+  ];
+  for (const spelled of escapes) {
+    await withMock({}, async ({ base, seen }) => {
+      const r = await runFileRaw({ base, cwd, args: ["--target", CHANNEL, "--path", spelled] });
+      assert.equal(r.status, 2, `${spelled} must be refused: ${r.stderr}`);
+      assert.match(r.stderr, /'\.\.'/);
+      assert.equal(seen.api.length, 0, "a refusal must not have called Slack at all");
+    });
+  }
+
+  // And a nested legitimate path is unaffected.
+  await withMock({}, async ({ base, seen }) => {
+    const ok = await runFileRaw({
+      base,
+      cwd,
+      args: ["--target", CHANNEL, "--path", "reports/ok.pdf", "--json"],
+    });
+    assert.equal(ok.status, 0, ok.stderr);
+    assert.equal(seen.uploadBody.toString(), "legit");
+  });
+});

@@ -454,6 +454,10 @@ def _die_open(err, shown):
     die(f"cannot open {shown}: {err.strerror}", 2)
 
 
+# Sentinel: the caller spelled a `..`, which is refused outright rather than resolved.
+DOTDOT = object()
+
+
 def _realpath_or_none(p):
     """realpath(p), or None when it cannot be resolved. A failure means "this prefix is not the
     workspace root", which is exactly what None says — no silent skip needed."""
@@ -490,11 +494,30 @@ def _components_under_root(path, root):
     So: find the deepest prefix of the caller's path whose realpath IS the root, and return the
     remaining components exactly as the caller spelled them.
     """
-    parts = os.path.abspath(path).split(os.sep)
+    raw = os.fspath(path)
+    parts = [c for c in raw.split(os.sep) if c not in ("", ".")]
+
+    # REJECT `..` ON THE CALLER-SPELLED STRING, BEFORE ANY NORMALISATION.
+    #
+    # os.path.abspath() calls normpath(), which collapses `..` LEXICALLY — so checking for `..`
+    # after abspath checks a string that can no longer contain one. `reports/link/../../.env`
+    # normalises to `<cwd>/.env`: the `..` disappears AND so does the symlinked `link`, so the
+    # descriptor walk never sees either and happily uploads `.env`. Verified exploitable against
+    # the previous build. Lexical `..` collapsing is wrong whenever a component is a symlink,
+    # which is precisely the case this whole function exists for.
+    if ".." in parts:
+        return DOTDOT
+
+    if not os.path.isabs(raw):
+        # Relative paths are already relative to the workspace root; the walk enforces the rest.
+        return parts
+
+    # Absolute: find the deepest prefix whose realpath IS the root, joining the caller's own
+    # components rather than a normalised form.
     for i in range(len(parts), 0, -1):
-        prefix = os.sep.join(parts[:i]) or os.sep
+        prefix = os.sep + os.sep.join(parts[:i])
         if _realpath_or_none(prefix) == root:
-            return [c for c in parts[i:] if c not in ("", ".")]
+            return parts[i:]
     return None
 
 
@@ -541,7 +564,14 @@ def _open_contained(path, allow_outside=False):
 
     root = os.getcwd()  # already canonical: getcwd() resolves symlinks
     parts = _components_under_root(path, root)
-    if parts is None or any(c == ".." for c in parts):
+    if parts is DOTDOT:
+        die(
+            f"refusing a path containing '..': {path}\n"
+            "Pass the direct path to the file (`..` cannot be checked without resolving it, "
+            "and resolving it is what lets a symlink hide).",
+            2,
+        )
+    if parts is None:
         die(
             "refusing to upload a file that resolves outside this workspace:\n"
             f"  named:     {path}\n"
