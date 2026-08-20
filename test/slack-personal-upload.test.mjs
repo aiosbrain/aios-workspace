@@ -83,7 +83,7 @@ async function withMock(plan, fn) {
       if (method === "files.getUploadURLExternal") {
         return send(200, {
           ok: true,
-          upload_url: `http://127.0.0.1:${port}/upload`,
+          upload_url: plan.uploadUrl ?? `http://127.0.0.1:${port}/upload`,
           file_id: "F0MOCK",
         });
       }
@@ -445,4 +445,23 @@ test("a symlinked DIRECTORY component is refused, and says so", async () => {
     assert.match(r.stderr, /symlink/, "the refusal must name the actual reason");
     assert.equal(seen.api.length, 0);
   });
+});
+
+// ── the upload URL is not ours (Bandit B310) ────────────────────────────────────────────────
+
+test("an upload URL that is not https (or loopback http) is refused", async () => {
+  // This POST carries the FILE CONTENTS, and the URL arrives in a Slack API RESPONSE — it is
+  // not something we chose. urlopen honours file:, ftp: and anything else urllib has a handler
+  // for, so a tampered response turns "upload to Slack" into "write this somewhere else", with
+  // no prompt and no log line (the URL is deliberately never printed).
+  for (const evil of ["file:///etc/passwd", "http://evil.example.com/collect", "ftp://x/y"]) {
+    await withMock({ uploadUrl: evil }, async ({ base, seen }) => {
+      const f = tmpFile("a.txt", "x");
+      const r = await runFile({ base, args: ["--target", CHANNEL, "--path", f] });
+      assert.equal(r.status, 5, `${evil} must be refused: ${r.stderr}`);
+      assert.match(r.stderr, /non-https URL/);
+      assert.doesNotMatch(r.stderr, /evil\.example\.com|etc\/passwd/, "never echo the URL");
+      assert.equal(seen.attempts, 0, "nothing may be sent to it");
+    });
+  }
 });

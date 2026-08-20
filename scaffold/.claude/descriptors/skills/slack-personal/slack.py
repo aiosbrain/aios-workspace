@@ -340,6 +340,30 @@ def cmd_dm(a):
           else f"sent → {r.get('channel')} @ {r.get('ts')}")
 
 
+def _assert_uploadable_url(url):
+    """Refuse an upload URL that is not https (or http on loopback, for tests).
+
+    This POST carries the FILE CONTENTS, so wherever this URL points is where the file goes.
+    urlopen honours file:, ftp: and anything else urllib has a handler for, and the URL is not
+    ours — it arrives in a Slack API response. A tampered or spoofed response naming
+    `file:///…` or an attacker's host turns "upload this to Slack" into "write/send this
+    somewhere else", with no prompt and no log line, since the URL is deliberately never
+    printed.
+
+    https is the only thing Slack actually returns. http is permitted solely for loopback, so
+    the credential-free mock suite can exercise the real code path — a mock cannot leave the
+    machine.
+    """
+    parsed = urllib.parse.urlparse(url or "")
+    host = parsed.hostname or ""
+    if parsed.scheme == "https":
+        return
+    if parsed.scheme == "http" and host in ("127.0.0.1", "localhost", "::1"):
+        return
+    # Names the SCHEME, never the URL: the URL is single-use and credential-bearing.
+    die(f"refusing to upload to a non-https URL (scheme '{parsed.scheme or "none"}')", 5)
+
+
 def _upload_bytes(upload_url, data):
     """PUT/POST the raw file bytes to the short-lived URL from files.getUploadURLExternal.
 
@@ -355,6 +379,7 @@ def _upload_bytes(upload_url, data):
     not go through call(); failures are network/HTTP only (exit 5). The URL is single-use and
     credential-bearing: it is never logged, not even on error.
     """
+    _assert_uploadable_url(upload_url)
     # Content-Length is set by urllib from `data`; setting it here too sends it twice, which
     # some servers reject and others hang on.
     headers = {"Content-Type": "application/octet-stream"}
