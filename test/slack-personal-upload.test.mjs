@@ -353,8 +353,11 @@ test("a symlinked INTERMEDIATE directory cannot smuggle a file out of the worksp
       args: ["--target", CHANNEL, "--path", "reports/link/id_rsa"],
     });
     assert.equal(attack.status, 2, attack.stderr);
-    assert.match(attack.stderr, /resolves outside this workspace/);
-    assert.match(attack.stderr, /id_rsa/, "the refusal must show where it actually resolved");
+    // The refusal now names the SYMLINK rather than the containment verdict: the walk fails at
+    // the component that is a symlink, which is both earlier and more useful than "resolves
+    // outside the workspace" — it says which component to look at.
+    assert.match(attack.stderr, /symlink/);
+    assert.match(attack.stderr, /id_rsa|link/, "the refusal must identify what it refused");
     assert.equal(seen.api.length, 0, "a refusal must not have called Slack at all");
 
     // The same workspace, a real file: unaffected.
@@ -389,5 +392,57 @@ test("a file outside the workspace needs the explicit flag, and works with it", 
     });
     assert.equal(allowed.status, 0, allowed.stderr);
     assert.equal(seen.uploadBody.toString(), "report");
+  });
+});
+
+// ── the bypass a masked test hid (found by codex:gpt-5.6-sol) ───────────────────────────────
+
+test("an IN-WORKSPACE symlink is refused in DEFAULT mode, not silently followed", async () => {
+  // The earlier symlink test passed --allow-outside-workspace, which took the leaf-only path
+  // and never exercised containment. Meanwhile containment resolved the WHOLE path before
+  // walking it, so `report.txt -> .env` was replaced by `.env` before O_NOFOLLOW could object
+  // and the secret uploaded. Both the code and the test were wrong; this pins the default path.
+  const root = mkdtempSync(path.join(tmpdir(), "slack-inws-"));
+  writeFileSync(path.join(root, ".env"), "SLACK_SECRET=leaked");
+  symlinkSync(".env", path.join(root, "report.txt"));
+  writeFileSync(path.join(root, "real.txt"), "fine");
+
+  await withMock({}, async ({ base, seen }) => {
+    const linked = await runFileRaw({
+      base,
+      cwd: root,
+      args: ["--target", CHANNEL, "--path", "report.txt"],
+    });
+    assert.equal(linked.status, 2, linked.stderr);
+    assert.match(linked.stderr, /symlink/);
+    assert.equal(seen.api.length, 0, "a refusal must not have called Slack at all");
+
+    // Same directory, a real file: unaffected.
+    const ok = await runFileRaw({
+      base,
+      cwd: root,
+      args: ["--target", CHANNEL, "--path", "real.txt", "--json"],
+    });
+    assert.equal(ok.status, 0, ok.stderr);
+    assert.equal(seen.uploadBody.toString(), "fine");
+  });
+});
+
+test("a symlinked DIRECTORY component is refused, and says so", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "slack-lnkdir-"));
+  mkdirSync(path.join(root, "secrets"), { recursive: true });
+  mkdirSync(path.join(root, "work", "reports"), { recursive: true });
+  writeFileSync(path.join(root, "secrets", "id_rsa"), "PRIVATE KEY MATERIAL");
+  symlinkSync(path.join(root, "secrets"), path.join(root, "work", "reports", "link"));
+
+  await withMock({}, async ({ base, seen }) => {
+    const r = await runFileRaw({
+      base,
+      cwd: path.join(root, "work"),
+      args: ["--target", CHANNEL, "--path", "reports/link/id_rsa"],
+    });
+    assert.equal(r.status, 2, r.stderr);
+    assert.match(r.stderr, /symlink/, "the refusal must name the actual reason");
+    assert.equal(seen.api.length, 0);
   });
 });

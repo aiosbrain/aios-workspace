@@ -424,61 +424,83 @@ def _die_open(err, shown):
     die(f"cannot open {shown}: {err.strerror}", 2)
 
 
+def _components_under_root(path, root):
+    """Split `path` into the literal components that sit BELOW `root`, or None if it escapes.
+
+    ONLY THE ANCHOR IS RESOLVED, NEVER THE TAIL, and that asymmetry is the entire point.
+
+    Resolving the anchor is required because `getcwd()` is canonical (`/private/var/...`) while
+    a caller may legitimately spell the same directory `/var/...`. A lexical comparison rejects
+    an in-workspace file given its absolute path — a bug this had, caught by testing three
+    spellings of one file.
+
+    Keeping the TAIL literal is equally required. An earlier version resolved the whole path and
+    walked the RESULT, which meant O_NOFOLLOW never saw a symlink that resolved inside the
+    workspace: a planted `report.txt -> .env` was silently replaced by `.env` before the walk
+    began, and uploaded. Resolving the tail destroys the very evidence the walk exists to check.
+
+    So: find the deepest prefix of the caller's path whose realpath IS the root, and return the
+    remaining components exactly as the caller spelled them.
+    """
+    parts = os.path.abspath(path).split(os.sep)
+    for i in range(len(parts), 0, -1):
+        prefix = os.sep.join(parts[:i]) or os.sep
+        try:
+            if os.path.realpath(prefix) == root:
+                return [c for c in parts[i:] if c not in ("", ".")]
+        except OSError:
+            continue
+    return None
+
+
 def _open_contained(path, allow_outside=False):
     """Open `path` for reading, guaranteeing it lives inside the working directory.
 
     CHECKING AND OPENING ARE ONE OPERATION HERE, deliberately. An earlier version resolved the
-    path with realpath, compared it against the workspace, then opened the ORIGINAL path — two
-    lookups, so an attacker able to write an intermediate directory swaps it for a symlink in
-    between and the descriptor lands outside the workspace regardless. Verifying a path and
-    opening a path are not the same act unless a descriptor carries the guarantee forward.
+    path, compared it to the workspace, then opened the ORIGINAL path — two lookups, so an
+    attacker able to write an intermediate directory swaps it for a symlink in between and the
+    descriptor lands outside the workspace regardless of what the check concluded. Verifying a
+    path and opening a path are not the same act unless a descriptor carries the guarantee
+    forward.
 
-    So the workspace root is opened ONCE and every component below it is opened relative to the
-    previous descriptor with O_NOFOLLOW. Nothing can be swapped out from under a descriptor
-    already held, and a symlinked component fails at the step that opens it instead of being
-    quietly resolved.
+    The workspace root is opened ONCE, and every caller-spelled component below it is opened
+    relative to the previous descriptor with O_NOFOLLOW. Nothing can be swapped out from under a
+    descriptor already held, and a symlink anywhere below the root — whether it points inside
+    the workspace or outside it — fails at the step that opens it.
 
-    WHY THE ROOT IS PINNED BY realpath AND THE COMPONENTS ARE NOT. A bare walk from `/` breaks on
-    macOS, where `/var`, `/tmp` and `/etc` are themselves symlinks: it refuses every path under a
-    temp directory, which is exactly where agents write the files they upload. Resolving the root
-    once absorbs those system symlinks; refusing them BELOW the root is what stops
-    `reports/ -> ~/.ssh`. That distinction is the difference between a control that holds and one
-    somebody switches off in a week.
+    Pinning the root by realpath is what makes the walk viable at all: a bare walk from `/`
+    refuses every path under a temp directory on macOS, where /var, /tmp and /etc are themselves
+    symlinks.
 
-    `..` is refused rather than normalised. Collapsing `a/../b` lexically is wrong precisely when
-    `a` is a symlink, and no upload needs it.
+    `..` is refused rather than normalised: collapsing `a/../b` lexically is wrong precisely when
+    `a` is a symlink.
+
+    FAILS CLOSED. If the platform cannot do openat or O_NOFOLLOW, containment cannot be enforced,
+    so the upload is refused rather than quietly downgraded — a silent downgrade is how a control
+    becomes decorative. `--allow-outside-workspace` remains the one way to opt out, and it has to
+    be typed.
     """
-    if allow_outside or os.open not in getattr(os, "supports_dir_fd", set()):
-        # Explicitly opted out, or a platform without openat. Leaf-only protection.
+    if allow_outside:
         try:
             return os.open(path, LEAF_FLAGS)
         except OSError as e:
             _die_open(e, path)
 
-    # TWO DIFFERENT JOBS, done by two different mechanisms.
-    #
-    # realpath decides ADMISSION — "does this file, fully resolved, live under the workspace?".
-    # It has to be realpath and not a lexical comparison, because getcwd() is canonical
-    # (/private/var/...) while a caller may legitimately spell the same path the other way
-    # (/var/...). Comparing those lexically makes an in-workspace file look like an escape,
-    # which is a refusal a real user hits immediately and a mistake this had until it was tested.
-    #
-    # The descriptor walk below provides RACE-SAFETY — realpath's answer was true when it was
-    # computed and nothing more. Walking the resolved components with O_NOFOLLOW means a
-    # component swapped for a symlink after admission fails at the step that opens it, so the
-    # worst case is a refusal rather than an escape.
+    if os.open not in getattr(os, "supports_dir_fd", set()) or not getattr(os, "O_NOFOLLOW", 0):
+        die(
+            "cannot enforce workspace containment on this platform (no openat/O_NOFOLLOW), so "
+            "this upload is refused rather than silently unprotected. Pass "
+            "--allow-outside-workspace to upload anyway, knowingly.",
+            2,
+        )
+
     root = os.getcwd()  # already canonical: getcwd() resolves symlinks
-    resolved = os.path.realpath(os.path.abspath(path))
-    rel = os.path.relpath(resolved, root)
-    parts = [c for c in rel.split(os.sep) if c not in ("", ".")]
-    if any(c == ".." for c in parts):
-        # Print where it ACTUALLY resolved. With a planted symlink the named path looks
-        # innocuous and the resolved one is the whole story; a refusal that hides it just
-        # looks like a broken tool.
+    parts = _components_under_root(path, root)
+    if parts is None or any(c == ".." for c in parts):
         die(
             "refusing to upload a file that resolves outside this workspace:\n"
             f"  named:     {path}\n"
-            f"  resolves:  {resolved}\n"
+            f"  resolves:  {os.path.realpath(os.path.abspath(path))}\n"
             f"  workspace: {root}\n"
             "Pass --allow-outside-workspace if that is deliberate.",
             2,
@@ -492,6 +514,20 @@ def _open_contained(path, allow_outside=False):
             try:
                 nxt = os.open(comp, DIR_FLAGS, dir_fd=dir_fd)
             except OSError as e:
+                # macOS reports ENOTDIR (not ELOOP) for O_NOFOLLOW|O_DIRECTORY on a symlink, so
+                # the generic mapping would say "not a regular file" for a symlinked directory —
+                # true, useless, and actively misleading on a security refusal. lstat is used for
+                # the MESSAGE only; the refusal already happened.
+                if e.errno == errno.ENOTDIR:
+                    try:
+                        if stat.S_ISLNK(os.lstat(comp, dir_fd=dir_fd).st_mode):
+                            die(
+                                f"refusing to upload through a symlinked directory: {path} "
+                                f"(component '{comp}' is a symlink)",
+                                2,
+                            )
+                    except OSError:
+                        pass
                 _die_open(e, path)
             os.close(dir_fd)
             dir_fd = nxt
