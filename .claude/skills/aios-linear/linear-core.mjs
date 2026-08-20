@@ -356,10 +356,12 @@ export function canonicalizeProjectName(name) {
 }
 
 // Paginated: a project on page two must not be invisible to the duplicate guard or to
-// ambiguity detection. Mirrors the stalled-cursor guard in listTeamMembers.
+// ambiguity detection. Mirrors the seen-cursor guard in listTeamIssues — remembering only
+// the previous cursor would loop forever on an A→B→A cycle.
 export async function findProjects(nameSubstring = null) {
   const filter = nameSubstring ? { name: { containsIgnoreCase: nameSubstring } } : {};
   const projects = [];
+  const seenCursors = new Set();
   let after = null;
   do {
     const d = await gql(
@@ -374,23 +376,35 @@ export async function findProjects(nameSubstring = null) {
     const page = d.projects;
     projects.push(...page.nodes);
     if (!page.pageInfo?.hasNextPage) break;
-    if (!page.pageInfo.endCursor || page.pageInfo.endCursor === after) {
+    if (!page.pageInfo.endCursor || seenCursors.has(page.pageInfo.endCursor)) {
       fail("Linear project pagination stalled");
     }
+    seenCursors.add(page.pageInfo.endCursor);
     after = page.pageInfo.endCursor;
   } while (true);
   return projects;
 }
 
-// Resolve a project by case-insensitive name substring. Fails closed on zero or
-// ambiguous matches so a typo can never silently file into the wrong project.
+// Resolve a project by name. The comparison is CANONICAL over the full unfiltered set:
+// server-side containsIgnoreCase cannot see through an NBSP or an NFD decomposition, so a
+// raw server filter would both miss an NBSP-typed exact name and let two canonical-equal
+// projects slip past the ambiguity guard one at a time. Exact canonical equality wins;
+// otherwise a canonical substring match. Fails closed on zero or ambiguous matches so a
+// typo can never silently file into the wrong project.
 export async function resolveProject(nameSubstring) {
-  const projects = await findProjects(nameSubstring);
-  if (projects.length === 0) fail(`no project matching "${nameSubstring}"`);
-  if (projects.length > 1) {
-    fail(`ambiguous project match "${nameSubstring}": ${projects.map((p) => p.name).join(", ")}`);
+  const want = canonicalizeProjectName(nameSubstring);
+  // A whitespace-only query would substring-match every project; fail closed instead.
+  if (!want) fail(`no project matching "${nameSubstring}"`);
+  const all = await findProjects();
+  const exact = all.filter((p) => canonicalizeProjectName(p.name) === want);
+  const matches = exact.length
+    ? exact
+    : all.filter((p) => canonicalizeProjectName(p.name).includes(want));
+  if (matches.length === 0) fail(`no project matching "${nameSubstring}"`);
+  if (matches.length > 1) {
+    fail(`ambiguous project match "${nameSubstring}": ${matches.map((p) => p.name).join(", ")}`);
   }
-  return projects[0];
+  return matches[0];
 }
 
 export function parsePriority(value) {

@@ -6,7 +6,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -88,10 +88,20 @@ test("scoped Linear wrapper decrypts LINEAR_API_KEY without WRONG_PRIVATE_KEY no
 });
 
 test("aios-linear skill copies stay byte-identical and do not recommend dotenvx run for Linear", () => {
-  const files = ["SKILL.md", "linear.mjs", "linear-core.mjs"];
+  // Every file in either copy, discovered rather than hard-coded: a file added to one copy
+  // but not listed here (the AIO-907/914 drift) must fail this test, not slip past it.
+  const managedDir = path.join(ROOT, ".claude/skills/aios-linear");
+  const scaffoldDir = path.join(ROOT, "scaffold/.claude/skills/aios-linear");
+  const files = [...new Set([...readdirSync(managedDir), ...readdirSync(scaffoldDir)])].sort();
+  assert.ok(files.includes("linear-core.mjs"), "sanity: skill directory listing looks wrong");
   for (const name of files) {
-    const managed = readFileSync(path.join(ROOT, ".claude/skills/aios-linear", name));
-    const scaffold = readFileSync(path.join(ROOT, "scaffold/.claude/skills/aios-linear", name));
+    let managed, scaffold;
+    try {
+      managed = readFileSync(path.join(managedDir, name));
+      scaffold = readFileSync(path.join(scaffoldDir, name));
+    } catch {
+      assert.fail(`${name} exists in only one skill copy`);
+    }
     assert.equal(managed.equals(scaffold), true, `${name} copies diverged`);
   }
   const skill = readFileSync(path.join(ROOT, ".claude/skills/aios-linear/SKILL.md"), "utf8");

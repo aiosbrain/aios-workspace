@@ -11,7 +11,9 @@ import test from "node:test";
 import { pathToFileURL } from "node:url";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
-const CLI = path.join(ROOT, "scaffold/.claude/skills/aios-linear/linear.mjs");
+// The primary copy is exercised directly; the scaffold copy is proven byte-identical to it
+// by the parity test in linear-dotenvx-scope.test.mjs, so it is covered transitively.
+const CLI = path.join(ROOT, ".claude/skills/aios-linear/linear.mjs");
 
 // `existing` is the project list the mocked Linear returns for any ProjectFilter query.
 //
@@ -68,8 +70,10 @@ globalThis.fetch = async (_url, init) => {
     const index = variables.after ? Number(variables.after.replace("cursor-", "")) : 0;
     const needle = (variables.f?.name?.containsIgnoreCase ?? "").toLowerCase();
     const nodes = (all[index] ?? []).filter((p) => p.name.toLowerCase().includes(needle));
-    const hasNextPage = index + 1 < all.length;
-    data = { projects: { nodes, pageInfo: { hasNextPage, endCursor: hasNextPage ? "cursor-" + (index + 1) : null } } };
+    const cycle = process.env.MOCK_CYCLE === "1";
+    const hasNextPage = index + 1 < all.length || cycle;
+    const endCursor = !hasNextPage ? null : index + 1 < all.length ? "cursor-" + (index + 1) : "cursor-0";
+    data = { projects: { nodes, pageInfo: { hasNextPage, endCursor } } };
   } else if (query.includes("team(id:$key){ id }")) {
     data = { team: { id: "team-1" } };
   } else if (query.includes("states")) {
@@ -91,6 +95,9 @@ globalThis.fetch = async (_url, init) => {
     cwd: ROOT,
     encoding: "utf8",
     env: { ...process.env, LINEAR_API_KEY: "test-key", AIOS_LINEAR_TEAM_KEY: "AIO", ...extraEnv },
+    // Bounds a pagination regression (e.g. an uncaught cursor cycle) to a test failure
+    // instead of a hung suite.
+    timeout: 15_000,
   });
   let mutations = [];
   try {
@@ -216,6 +223,44 @@ test("create --project detects ambiguity split across pages", () => {
   assert.equal(r.status, 1, "a second match on page two must make this ambiguous");
   assert.match(r.stderr, /ambiguous/);
   assert.equal(r.mutations.length, 0);
+});
+
+// Resolution is canonical, not a raw server-side containsIgnoreCase: two canonical-equal
+// projects (NBSP vs space) must trip the ambiguity guard rather than each hiding the other
+// from the server filter and filing silently into whichever one the server happens to match.
+test("create --project fails closed on two canonical-equal projects", () => {
+  const r = runCli(
+    ["create", "t", "--project", "Ultra harden"],
+    [[P("Ultra harden"), P("Ultra\u00a0harden")]]
+  );
+  assert.equal(r.status, 1, "canonical-equal duplicates must be ambiguous, not a silent pick");
+  assert.match(r.stderr, /ambiguous/);
+  assert.equal(r.mutations.length, 0);
+});
+
+test("create --project resolves an NBSP-typed name to the space-typed project", () => {
+  const r = runCli(["create", "t", "--project", "Ultra\u00a0harden"], [[P("Ultra harden")]]);
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.mutations[0].input.projectId, "p-Ultra harden");
+});
+
+// An exact canonical match must win over substring expansion: "Ultraharden" beside
+// "Ultraharden v2" is a precise reference, not an ambiguous one.
+test("create --project prefers an exact canonical match over substring matches", () => {
+  const r = runCli(
+    ["create", "t", "--project", "Ultraharden"],
+    [[P("Ultraharden"), P("Ultraharden v2")]]
+  );
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.mutations[0].input.projectId, "p-Ultraharden");
+});
+
+// A→B→A cursor cycle: a guard that only remembers the previous cursor loops forever here;
+// the seen-cursor set must fail closed instead (bounded by runCli's spawnSync timeout).
+test("projects fails closed on a cursor cycle instead of looping", () => {
+  const r = runCli(["projects"], [[P("One")], [P("Two")]], { MOCK_CYCLE: "1" });
+  assert.equal(r.status, 1, "a cursor cycle must abort, not loop or succeed");
+  assert.match(r.stderr, /pagination stalled/);
 });
 
 test("create --project fails closed when nothing matches", () => {
