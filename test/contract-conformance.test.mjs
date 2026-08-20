@@ -29,8 +29,15 @@ const canonical = (v) =>
 
 test("fixture contentHash is intact (no out-of-band edit)", () => {
   // v1.7 added provisioningTools (the member-invite tool vocabulary) to the pinned content.
-  const { version, tierAliases, sse, provisioningTools, gatewayContract, itemPayloadContract } =
-    fixture;
+  const {
+    version,
+    tierAliases,
+    sse,
+    provisioningTools,
+    gatewayContract,
+    itemPayloadContract,
+    codebasePayloadContract,
+  } = fixture;
   const recomputed = createHash("sha256")
     .update(
       JSON.stringify(
@@ -41,6 +48,7 @@ test("fixture contentHash is intact (no out-of-band edit)", () => {
           provisioningTools,
           gatewayContract,
           itemPayloadContract,
+          codebasePayloadContract,
         })
       )
     )
@@ -128,4 +136,36 @@ test("client SSE parser round-trips every contract frame (incl. the forward-comp
     assert.equal(parsed.event, frame.event, `${frame.name}: event`);
     assert.deepEqual(parsed.data, frame.data, `${frame.name}: data`);
   }
+});
+
+// The codebase-payload contract (brain-api 1.24 / AIO-1011). Unlike the item-payload reference
+// it carries a VALUE the brain reads at runtime — `minScannerVersion`, the threshold a scan's
+// `metrics.scanner_version` is compared against — so this block is enforcement input, not a
+// pointer, and it is inside the hashed set for that reason.
+test("codebase payload contract is content-addressed and declares a scanner minimum", () => {
+  const c = fixture.codebasePayloadContract;
+  assert.ok(c, "brain-contract.json must carry a codebasePayloadContract block");
+  assert.equal(c.version, fixture.version, "codebase payload tracks the document revision");
+  for (const key of ["schema", "fixtures"]) {
+    const ref = c[key];
+    const bytes = readFileSync(path.join(ROOT, "docs/contract", ref.path));
+    assert.equal(createHash("sha256").update(bytes).digest("hex"), ref.sha256, key);
+  }
+  // A parseable, ordered version — not a SHA, not a commit count. The choice is normative
+  // (see docs/brain-api.md v1.24): commit distance is meaningless across branches, unavailable
+  // to the brain at runtime, and gone the moment the scanner ships as a package.
+  assert.match(c.minScannerVersion, /^\d+\.\d+\.\d+$/, "minScannerVersion must be a semver");
+});
+
+test("codebase payload schema, fixtures and doc revision state ONE version", () => {
+  // The gap AIO-995 shipped through: brain-contract.json was bumped while the executable schema
+  // stayed at 1.15, so the canonical contract licensed payloads the brain then rejected. Three
+  // files, one number, asserted here rather than trusted.
+  const c = fixture.codebasePayloadContract;
+  const schema = JSON.parse(readFileSync(path.join(ROOT, "docs/contract", c.schema.path), "utf8"));
+  const fx = JSON.parse(readFileSync(path.join(ROOT, "docs/contract", c.fixtures.path), "utf8"));
+  assert.ok(schema.$id.includes(`/${c.version}/`), `schema $id must pin ${c.version}`);
+  assert.equal(fx.version, c.version);
+  assert.ok(c.schema.path.includes(c.version), "schema filename must carry its revision");
+  assert.ok(c.fixtures.path.includes(c.version), "fixtures filename must carry its revision");
 });
