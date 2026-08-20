@@ -22,7 +22,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { classifyBash, classifyMcp, stripInertText } from "../hooks/connector-routing-guard.mjs";
+import { classifyBash, classifyMcp } from "../hooks/connector-routing-guard.mjs";
 
 const DIR = path.dirname(fileURLToPath(import.meta.url));
 const HOOK = path.join(DIR, "..", "hooks", "connector-routing-guard.mjs");
@@ -58,19 +58,11 @@ test("a generic Linear MCP call naming an AIO issue is blocked with the right co
   assert.match(r.stderr, /aios-linear/, "a refusal must name the tool to use instead");
 });
 
-test("hand-rolled Linear GraphQL against an AIOS issue is blocked", async () => {
-  const r = await runHook(
-    bash(
-      `curl -s https://api.linear.app/graphql -d '{"query":"{ issue(id:\\"AIO-686\\") { id } }"}'`
-    )
-  );
-  assert.equal(r.status, 2, r.stderr);
-  assert.match(r.stderr, /BLOCKED/);
-});
-
-test("a stale connector copy is blocked even without an AIOS marker", async () => {
+test("a stale connector copy is flagged, advisory like every other Bash verdict", async () => {
+  // This used to hard-block. Bash classification is advisory now — see the retreat below — so it
+  // warns instead. The message still names the stale copy, which is the useful part.
   const r = await runHook(bash("python3 ~/.claude/skills/slack-cli/slack.py whoami"));
-  assert.equal(r.status, 2, r.stderr);
+  assert.equal(r.status, 0, r.stderr);
   assert.match(r.stderr, /stale connector copy/);
 });
 
@@ -161,15 +153,10 @@ test("mode=warn downgrades a block to advisory; mode=off silences it", async () 
 
 // ── unit-level: the pure classifiers ────────────────────────────────────────────────────────
 
-test("stripInertText removes comments and echo bodies but keeps real commands", () => {
-  assert.doesNotMatch(stripInertText("# curl api.linear.app"), /linear/);
-  assert.doesNotMatch(stripInertText("echo 'api.linear.app'"), /linear/);
-  assert.match(stripInertText("curl https://api.linear.app/graphql"), /linear/);
-});
-
-test("classifyBash and classifyMcp agree with the end-to-end behaviour", () => {
-  assert.equal(classifyBash("curl https://api.linear.app/graphql -d 'AIO-1'").decision, "block");
-  assert.equal(classifyBash("curl https://api.linear.app/graphql -d 'ACME-1'").decision, "warn");
+test("classifyBash never blocks; classifyMcp still does", () => {
+  // The asymmetry IS the design: a shell string cannot be classified soundly, a structured MCP
+  // payload can.
+  assert.equal(classifyBash("curl https://api.linear.app/graphql -d 'AIO-1'").decision, "warn");
   assert.equal(classifyBash("linear get AIO-1").decision, "allow");
   assert.equal(classifyMcp("mcp__plugin_linear_linear__x", { id: "AIO-1" }).decision, "block");
   assert.equal(classifyMcp("mcp__plugin_linear_linear__x", { id: "ACME-1" }).decision, "warn");
@@ -214,34 +201,6 @@ test("it still fires when invoked through a SYMLINKED path", async () => {
 
 // ── four bypasses found by codex:gpt-5.6-sol ────────────────────────────────────────────────
 
-test("a command substitution inside echo is NOT inert", async () => {
-  // stripInertText() existed to stop prose triggering a block. Stripping whole echo/printf
-  // bodies turned that into an evasion: `echo "$(curl … AIO-1)"` RUNS the curl, and removing the
-  // body made it classify as empty. Verified working before the fix.
-  for (const cmd of [
-    'echo "$(curl https://api.linear.app/graphql -d AIO-1)"',
-    "echo `curl https://api.linear.app/graphql -d AIO-1`",
-    'printf "%s" "$(wget -qO- https://api.linear.app/graphql -d AIO-9)"',
-  ]) {
-    const r = await runHook(bash(cmd));
-    assert.equal(r.status, 2, `must not be strippable: ${cmd} — ${r.stderr}`);
-  }
-});
-
-test("merely MENTIONING a Linear URL is not an HTTP client", async () => {
-  // HTTP_CLIENT included `http|https`, which match the scheme of any URL being quoted. That
-  // blocked `git commit -m 'see https://api.linear.app …'` — the exact false positive this guard
-  // promises not to produce. The original test missed it by using a bare host with no scheme.
-  for (const cmd of [
-    "git commit -m 'document https://api.linear.app for AIO-1'",
-    'echo "see https://api.linear.app/graphql AIO-976"',
-    "grep -r 'https://api.linear.app' docs/",
-  ]) {
-    const r = await runHook(bash(cmd));
-    assert.equal(r.status, 0, `must not block a mention: ${cmd} — ${r.stderr}`);
-  }
-});
-
 test("a configured team marker blocks an AIOS create that has no AIO-<n> yet", async () => {
   // A create_issue is making the thing, so it cannot carry an identifier — the case the guard
   // most needs to catch was the one it only warned about. The comments claimed configured team
@@ -264,37 +223,7 @@ test("a configured team marker blocks an AIOS create that has no AIO-<n> yet", a
   assert.equal(customer.status, 0, "a customer team must still pass");
 });
 
-test("input too large to classify fails CLOSED, not open", async () => {
-  // readStdin() stopped at STDIN_MAX and returned a partial document; JSON.parse threw, and the
-  // catch treated that like a payload that was never ours — allow. So padding a generic Linear
-  // call past the cap disabled the guard while still carrying a real AIOS operation.
-  const padded = JSON.stringify({
-    tool_name: "mcp__plugin_linear_linear__update_issue",
-    tool_input: { id: "AIO-976", pad: "x".repeat(2_000_000) },
-  });
-  const r = await runHook(padded);
-  assert.equal(r.status, 2, `oversized input must block: ${r.stderr}`);
-  assert.match(r.stderr, /could not be classified|exceeded/);
-});
-
 // ── four more, from the second codex:gpt-5.6-sol round ──────────────────────────────────────
-
-test("a comment containing quotes is still a comment", async () => {
-  // The first false-positive fix used /(^|\s)#[^"\']*$/, which only matches comments with NO
-  // quotes — so `# curl "https://…" -d AIO-1` survived and was blocked. A false positive
-  // introduced by the fix for a false positive. Comment stripping is now quote-aware.
-  for (const cmd of [
-    '# curl "https://api.linear.app/graphql" -d AIO-1',
-    "# curl 'https://api.linear.app/graphql' -d AIO-1",
-    "# plain comment about AIO-1 and curl api.linear.app",
-  ]) {
-    const r = await runHook(bash(cmd));
-    assert.equal(r.status, 0, `inert comment must not block: ${cmd} — ${r.stderr}`);
-  }
-  // ...and a `#` INSIDE quotes is not a comment, so the command is still classified.
-  const live = await runHook(bash('curl https://api.linear.app/graphql -d "issue#AIO-1"'));
-  assert.equal(live.status, 2, live.stderr);
-});
 
 test("team markers match team-identifying fields, not arbitrary payload text", async () => {
   // Searching the whole serialized payload meant a CUSTOMER issue whose title merely mentioned
@@ -345,4 +274,70 @@ test("a malformed config cannot disable enforcement", async () => {
   );
   const r = await runHook(mcp("mcp__plugin_linear_linear__get_issue", { id: "AIO-976" }, cwd));
   assert.equal(r.status, 2, `bad config must not fail open: ${r.stderr}`);
+});
+
+// ── the retreat: Bash is ADVISORY, and that is the finding, not a gap ────────────────────────
+
+test("no shell spelling of a Linear request is BLOCKED — every one is advisory", async () => {
+  // Three rounds of adversarial review produced these bypasses. They are listed as tests rather
+  // than fixed because the last one is unfixable in this shape: blocking required an allowlist of
+  // HTTP client names, and every language here has an HTTP library.
+  const spellings = [
+    "curl https://api.linear.app/graphql -d AIO-1",
+    'echo "$(curl https://api.linear.app/graphql -d AIO-1)"',
+    "echo 'curl https://api.linear.app/graphql -d AIO-1' | bash",
+    "echo <(curl https://api.linear.app/graphql -d AIO-1)",
+    `python3 -c "import urllib.request; urllib.request.urlopen('https://api.linear.app/graphql')" # AIO-1`,
+  ];
+  for (const cmd of spellings) {
+    const r = await runHook(bash(cmd));
+    assert.equal(r.status, 0, `Bash must never hard-block: ${cmd} — ${r.stderr}`);
+  }
+});
+
+test("inert prose is never blocked, in any spelling", async () => {
+  // The other half of the retreat. Each fix for a bypass cost a false positive: quoted prose,
+  // comments containing quotes, a mentioned URL. None of them can block now.
+  for (const cmd of [
+    "git commit -m 'document https://api.linear.app for AIO-1'",
+    '# curl "https://api.linear.app/graphql" -d AIO-1',
+    "grep -r 'api.linear.app' docs/",
+    "echo 'see AIO-976'",
+    "ls -la",
+  ]) {
+    const r = await runHook(bash(cmd));
+    assert.equal(r.status, 0, `inert text must not block: ${cmd} — ${r.stderr}`);
+  }
+});
+
+test("a default marker matches a team TOKEN, not a substring", async () => {
+  // `aio` as a substring blocked customer teams called `KAIO` and `Maio` — a false positive on
+  // somebody else's board, produced by the default marker itself.
+  const cwd = mkdtempSync(path.join(tmpdir(), "routing-token-"));
+  for (const teamKey of ["KAIO", "Maio", "AIOSX"]) {
+    const r = await runHook(
+      mcp("mcp__plugin_linear_linear__create_issue", { title: "x", teamKey }, cwd)
+    );
+    assert.equal(r.status, 0, `customer team ${teamKey} must not match 'aio': ${r.stderr}`);
+  }
+  const aios = await runHook(
+    mcp("mcp__plugin_linear_linear__create_issue", { title: "x", teamKey: "AIO" }, cwd)
+  );
+  assert.equal(aios.status, 2, aios.stderr);
+});
+
+test("oversized input blocks only when it is identifiably a Linear MCP call", async () => {
+  // Blocking every truncated payload stopped unrelated Bash calls carrying a large heredoc.
+  // The MCP path is the only one that blocks, and its tool name is at the head of the payload.
+  const bigBash = JSON.stringify({
+    tool_name: "Bash",
+    tool_input: { command: `cat <<'EOF'\n${"x".repeat(1_500_000)}\nEOF` },
+  });
+  assert.equal((await runHook(bigBash)).status, 0, "an unrelated big command must pass");
+
+  const bigMcp = JSON.stringify({
+    tool_name: "mcp__plugin_linear_linear__update_issue",
+    tool_input: { id: "AIO-976", pad: "x".repeat(1_500_000) },
+  });
+  assert.equal((await runHook(bigMcp)).status, 2, "a truncated Linear MCP call must fail closed");
 });

@@ -54,18 +54,33 @@ const DEFAULT_TEAM_MARKERS = ["aio"];
 /** Fields that actually identify a team. Deliberately not title/description/body. */
 const TEAM_FIELDS = ["teamid", "team", "teamkey", "teamname", "team_id", "teamidentifier"];
 
-/** Lower-cased text of team-identifying fields only, walked recursively. */
-export function teamIdentifyingText(input, depth = 0) {
-  if (!input || typeof input !== "object" || depth > 4) return "";
-  const parts = [];
+/** Lower-cased VALUES of team-identifying fields only, walked recursively. */
+export function teamIdentifyingValues(input, depth = 0) {
+  if (!input || typeof input !== "object" || depth > 4) return [];
+  const out = [];
   for (const [k, v] of Object.entries(input)) {
     if (v && typeof v === "object") {
-      parts.push(teamIdentifyingText(v, depth + 1));
+      out.push(...teamIdentifyingValues(v, depth + 1));
     } else if (TEAM_FIELDS.includes(k.toLowerCase().replace(/[^a-z_]/g, ""))) {
-      parts.push(String(v));
+      out.push(String(v).toLowerCase());
     }
   }
-  return parts.join(" ").toLowerCase();
+  return out;
+}
+
+/**
+ * Does a marker identify this team?
+ *
+ * VALUES, not a joined blob, and EXACT value or whole token — never a substring. Substring
+ * matching on the default marker `aio` blocked customer teams named `KAIO` and `Maio`. Comparing
+ * the whole value keeps hyphenated identifiers working (`7c9e6679-aios`), and the token check
+ * keeps multi-word names working (`AIO Platform`).
+ */
+export function matchesTeamMarker(values, marker) {
+  const m = String(marker).toLowerCase();
+  return values.some(
+    (v) => v === m || v.split(/[^a-z0-9]+/).filter(Boolean).includes(m)
+  );
 }
 
 /** A config list, or the fallback. A non-array must never reach `.find()`. */
@@ -78,14 +93,6 @@ const LINEAR_MCP_TOOL = /^mcp__.*linear.*__/i;
 
 /** A real HTTP call to Linear's API — not the word "linear" appearing in prose. */
 const LINEAR_GRAPHQL_HOST = /\bapi\.linear\.app\b/i;
-/**
- * A program that performs a request. `http`/`https` are deliberately NOT here: they match the
- * scheme of any URL merely being MENTIONED, so `git commit -m 'see https://api.linear.app …'`
- * was blocked — the exact false positive this guard promises not to produce. (The earlier test
- * missed it because its fixture wrote a bare host with no scheme.) `httpie` is the real client
- * named `http`, matched explicitly.
- */
-const HTTP_CLIENT = /\b(curl|wget|httpie|fetch|nc|xh)\b/i;
 
 /**
  * Connector copies that are known-dead and must never be reached for.
@@ -95,96 +102,50 @@ const HTTP_CLIENT = /\b(curl|wget|httpie|fetch|nc|xh)\b/i;
  */
 const DEFAULT_STALE = ["/.claude/skills/slack-cli/"];
 
-/** Text that can execute: a command substitution or a backtick. */
-const EXECUTABLE_SUBSTITUTION = /\$\(|`/;
-
 /**
- * Strip shell comments and echo/printf bodies so quoted prose cannot trigger a block.
+ * Classify a Bash command. ADVISORY ONLY — this never blocks, and that is a deliberate retreat.
  *
- * REFUSES TO STRIP ANYTHING CONTAINING A COMMAND SUBSTITUTION. `echo "$(curl … AIO-1)"` RUNS the
- * curl; treating it as inert turned a false-positive guard into an evasion technique — wrap the
- * call in echo and the block disappears. Verified before this was written. When a substitution is
- * present the text is returned unchanged, so classification sees the real command.
+ * It used to block a hand-rolled Linear GraphQL call. Making that sound requires deciding, from a
+ * shell string, whether a network request will happen. Adversarial review produced a queue of
+ * bypasses that showed the shape of the problem rather than gaps in the fixes:
  *
- * `#` is only treated as a comment when it starts a word outside quotes. A bare `.replace(/#.*$/)`
- * also erased `#` inside quoted arguments, which could delete the AIO-<n> marker and turn a block
- * into an allow.
- */
-export function stripInertText(command) {
-  const raw = String(command);
-  if (EXECUTABLE_SUBSTITUTION.test(raw)) return raw;
-  return raw
-    .split("\n")
-    .map(stripComment)
-    .join("\n")
-    .replace(/\b(echo|printf)\b[^\n;&|]*/gi, " ");
-}
-
-/**
- * Drop a shell comment: an unquoted `#` that starts a word, through end of line.
+ *   echo "$(curl … AIO-1)"                        command substitution inside stripped text
+ *   echo 'curl … AIO-1' | bash                    inert text piped into a shell
+ *   echo <(curl … AIO-1)                          process substitution
+ *   python3 -c "urllib.request.urlopen('…')"      an interpreter, not a listed client
  *
- * Regexes cannot do this. `/(^|\s)#[^"']*$/` only matched comments containing NO quotes, so
- * `# curl "https://api.linear.app/graphql" -d AIO-1` survived and was BLOCKED despite being
- * entirely inert — a false positive introduced by the fix for a previous false positive. And a
- * naive `/#.*$/` erases `#` inside quoted arguments, which can delete the AIO-<n> marker and turn
- * a block into an allow. Both directions are wrong, so this tracks quote state one character at a
- * time instead.
- */
-function stripComment(line) {
-  let quote = null;
-  for (let i = 0; i < line.length; i++) {
-    const c = line[i];
-    if (quote) {
-      if (c === "\\" && quote === '"') i++;
-      else if (c === quote) quote = null;
-      continue;
-    }
-    if (c === "'" || c === '"') {
-      quote = c;
-      continue;
-    }
-    if (c === "\\") {
-      i++;
-      continue;
-    }
-    if (c === "#" && (i === 0 || /\s/.test(line[i - 1]))) return line.slice(0, i);
-  }
-  return line;
-}
-
-/**
- * Classify a Bash command.
- * @returns {{decision: "allow"|"warn"|"block", reason?: string, fix?: string}}
+ * The last one ends the argument. Blocking depended on an allowlist of client names, and every
+ * language on this machine has an HTTP library, so the list can never be complete. Each fix also
+ * cost a false positive in the other direction — quoted prose, and comments containing quotes,
+ * were blocked while entirely inert.
+ *
+ * A guard that `python3 -c` walks through while blocking `git commit -m '…'` is worse than no
+ * guard: it teaches people the block is noise. So Bash keeps the part that IS decidable — a
+ * literal path to a known-dead connector copy — and everything else is advice.
+ *
+ * The MCP path below still BLOCKS, because a structured JSON payload with named fields is
+ * decidable in a way a shell string is not.
  */
 export function classifyBash(command, opts = {}) {
   const stale = opts.stalePaths ?? DEFAULT_STALE;
   const raw = String(command ?? "");
   if (!raw.trim()) return { decision: "allow" };
 
-  // Stale copies are checked against the RAW command: a path is a path even inside a quoted
-  // string, and there is no legitimate reason to name one.
   for (const needle of stale) {
     if (raw.includes(needle)) {
       return {
-        decision: "block",
+        decision: "warn",
         reason: `names a stale connector copy (${needle})`,
         fix: "Use the workspace's own .claude/skills/ copy, or the `slack`/`linear` commands the toolkit installs.",
       };
     }
   }
 
-  const active = stripInertText(raw);
-  if (LINEAR_GRAPHQL_HOST.test(active) && HTTP_CLIENT.test(active)) {
-    if (AIOS_MARKER.test(active)) {
-      return {
-        decision: "block",
-        reason: "hand-rolled Linear GraphQL against an AIOS issue",
-        fix: "Use the aios-linear CLI: `linear get AIO-<n>` / `linear comment AIO-<n> …`. It carries the description guards that raw GraphQL silently loses.",
-      };
-    }
+  if (LINEAR_GRAPHQL_HOST.test(raw) && AIOS_MARKER.test(raw)) {
     return {
       decision: "warn",
-      reason: "hand-rolled Linear GraphQL (no AIOS issue named, so treated as non-AIOS work)",
+      reason: "mentions Linear's API alongside an AIOS issue",
+      fix: "If this is a request against the AIOS board, use the aios-linear CLI — it carries the description guards raw GraphQL loses.",
     };
   }
 
@@ -220,8 +181,8 @@ export function classifyMcp(toolName, toolInput, opts = {}) {
   // Search ONLY team-identifying fields, never the whole payload. Matching arbitrary text meant a
   // customer issue whose title merely mentioned "aiosbrain" was blocked as AIOS-targeted — the
   // false-positive class this guard exists to avoid, reintroduced by the marker feature itself.
-  const teamText = teamIdentifyingText(toolInput);
-  const marker = markers.find((m) => m && teamText.includes(String(m).toLowerCase()));
+  const teamValues = teamIdentifyingValues(toolInput);
+  const marker = markers.find((m) => m && matchesTeamMarker(teamValues, m));
   if (marker) {
     return {
       decision: "block",
@@ -277,21 +238,27 @@ async function main() {
   // never ours — it allowed the call. So padding a generic Linear request past the cap disabled
   // the guard entirely while carrying a real AIOS operation. A payload too large to classify is a
   // payload we cannot clear, so it fails closed with a message saying why.
-  if (truncated) {
-    process.stderr.write(
-      `[connector-routing-guard] BLOCKED: tool input exceeded ${STDIN_MAX} bytes, so it could not ` +
-        "be classified. A call this guard cannot read is not a call it can clear.\n"
-    );
-    process.exitCode = 2;
-    return;
-  }
-
   let payload;
   try {
     payload = JSON.parse(text);
   } catch {
-    return; // genuinely not ours; never break a session over input we were not given
+    // Truncated input is unparseable and we cannot tell WHICH tool it belonged to — so blocking
+    // here would stop an unrelated Bash call carrying a large heredoc, a false positive on a
+    // command this guard has no opinion about. Only the MCP path blocks, and the tool name is at
+    // the head of that payload, so a truncated MCP call is still caught.
+    // A separate, UNANCHORED pattern: LINEAR_MCP_TOOL is ^-anchored for matching a tool NAME, and
+    // here we are scanning raw JSON where the name is a quoted value, not the start of the string.
+    if (truncated && /mcp__[^"]*linear[^"]*__/i.test(text.slice(0, 2000))) {
+      process.stderr.write(
+        "[connector-routing-guard] BLOCKED: a Linear MCP payload exceeded " +
+          `${STDIN_MAX} bytes and could not be classified. A call this guard cannot read is not ` +
+          "a call it can clear.\n"
+      );
+      process.exitCode = 2;
+    }
+    return;
   }
+
   if (!payload || typeof payload !== "object") return;
 
   const toolName = String(payload.tool_name ?? "");
