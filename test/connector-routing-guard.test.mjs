@@ -276,3 +276,73 @@ test("input too large to classify fails CLOSED, not open", async () => {
   assert.equal(r.status, 2, `oversized input must block: ${r.stderr}`);
   assert.match(r.stderr, /could not be classified|exceeded/);
 });
+
+// ── four more, from the second codex:gpt-5.6-sol round ──────────────────────────────────────
+
+test("a comment containing quotes is still a comment", async () => {
+  // The first false-positive fix used /(^|\s)#[^"\']*$/, which only matches comments with NO
+  // quotes — so `# curl "https://…" -d AIO-1` survived and was blocked. A false positive
+  // introduced by the fix for a false positive. Comment stripping is now quote-aware.
+  for (const cmd of [
+    '# curl "https://api.linear.app/graphql" -d AIO-1',
+    "# curl 'https://api.linear.app/graphql' -d AIO-1",
+    "# plain comment about AIO-1 and curl api.linear.app",
+  ]) {
+    const r = await runHook(bash(cmd));
+    assert.equal(r.status, 0, `inert comment must not block: ${cmd} — ${r.stderr}`);
+  }
+  // ...and a `#` INSIDE quotes is not a comment, so the command is still classified.
+  const live = await runHook(bash('curl https://api.linear.app/graphql -d "issue#AIO-1"'));
+  assert.equal(live.status, 2, live.stderr);
+});
+
+test("team markers match team-identifying fields, not arbitrary payload text", async () => {
+  // Searching the whole serialized payload meant a CUSTOMER issue whose title merely mentioned
+  // "aiosbrain" was blocked as AIOS-targeted.
+  const cwd = mkdtempSync(path.join(tmpdir(), "routing-fields-"));
+  mkdirSync(path.join(cwd, ".aios"), { recursive: true });
+  writeFileSync(
+    path.join(cwd, ".aios/connector-routing.json"),
+    JSON.stringify({ teamMarkers: ["aiosbrain"] })
+  );
+  const mention = await runHook(
+    mcp(
+      "mcp__plugin_linear_linear__create_issue",
+      {
+        title: "integrate with aiosbrain",
+        teamId: "acme-corp",
+      },
+      cwd
+    )
+  );
+  assert.equal(mention.status, 0, `a mention is not a target: ${mention.stderr}`);
+
+  const targeted = await runHook(
+    mcp("mcp__plugin_linear_linear__create_issue", { title: "x", teamId: "aiosbrain" }, cwd)
+  );
+  assert.equal(targeted.status, 2, targeted.stderr);
+});
+
+test("an AIOS create is blocked on a DEFAULT install, with no config file", async () => {
+  // teamMarkers only worked when configured, and nothing scaffolds the config — so out of the
+  // box a create_issue into the AIOS team was merely warned about. A create carries no AIO-<n>
+  // because it is creating the issue, which makes this the case most worth catching.
+  const cwd = mkdtempSync(path.join(tmpdir(), "routing-default-"));
+  const r = await runHook(
+    mcp("mcp__plugin_linear_linear__create_issue", { title: "x", teamKey: "AIO" }, cwd)
+  );
+  assert.equal(r.status, 2, `default install must block: ${r.stderr}`);
+});
+
+test("a malformed config cannot disable enforcement", async () => {
+  // `"teamMarkers": "aiosbrain"` (a string, not a list) reached .find() and threw; the top-level
+  // catch then exited 0. A typo in a config file silently turned the guard off for every call.
+  const cwd = mkdtempSync(path.join(tmpdir(), "routing-badcfg-"));
+  mkdirSync(path.join(cwd, ".aios"), { recursive: true });
+  writeFileSync(
+    path.join(cwd, ".aios/connector-routing.json"),
+    JSON.stringify({ teamMarkers: "aiosbrain", stalePaths: "/x" })
+  );
+  const r = await runHook(mcp("mcp__plugin_linear_linear__get_issue", { id: "AIO-976" }, cwd));
+  assert.equal(r.status, 2, `bad config must not fail open: ${r.stderr}`);
+});

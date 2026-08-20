@@ -43,6 +43,36 @@ const DEFAULT_MODE = "block"; // "block" | "warn" | "off"
 /** An AIOS-owned work item. The team's issue prefix is the one unambiguous signal available. */
 const AIOS_MARKER = /\bAIO-\d+\b/;
 
+/**
+ * The AIOS team key, applied by DEFAULT. Without it the marker feature did nothing on a fresh
+ * install: a `create_issue` carries no AIO-<n> yet (it is creating the issue), and nothing
+ * scaffolds `.aios/connector-routing.json`, so the single routing path most worth catching was
+ * merely warned about out of the box. Extend via `teamMarkers`, which is additive.
+ */
+const DEFAULT_TEAM_MARKERS = ["aio"];
+
+/** Fields that actually identify a team. Deliberately not title/description/body. */
+const TEAM_FIELDS = ["teamid", "team", "teamkey", "teamname", "team_id", "teamidentifier"];
+
+/** Lower-cased text of team-identifying fields only, walked recursively. */
+export function teamIdentifyingText(input, depth = 0) {
+  if (!input || typeof input !== "object" || depth > 4) return "";
+  const parts = [];
+  for (const [k, v] of Object.entries(input)) {
+    if (v && typeof v === "object") {
+      parts.push(teamIdentifyingText(v, depth + 1));
+    } else if (TEAM_FIELDS.includes(k.toLowerCase().replace(/[^a-z_]/g, ""))) {
+      parts.push(String(v));
+    }
+  }
+  return parts.join(" ").toLowerCase();
+}
+
+/** A config list, or the fallback. A non-array must never reach `.find()`. */
+function listOrDefault(value, fallback) {
+  return Array.isArray(value) ? value.filter((x) => typeof x === "string" && x) : fallback;
+}
+
 /** Generic Linear tool surfaces that are NOT the AIOS CLI. */
 const LINEAR_MCP_TOOL = /^mcp__.*linear.*__/i;
 
@@ -85,9 +115,41 @@ export function stripInertText(command) {
   if (EXECUTABLE_SUBSTITUTION.test(raw)) return raw;
   return raw
     .split("\n")
-    .map((line) => line.replace(/(^|\s)#[^"']*$/, "$1"))
+    .map(stripComment)
     .join("\n")
     .replace(/\b(echo|printf)\b[^\n;&|]*/gi, " ");
+}
+
+/**
+ * Drop a shell comment: an unquoted `#` that starts a word, through end of line.
+ *
+ * Regexes cannot do this. `/(^|\s)#[^"']*$/` only matched comments containing NO quotes, so
+ * `# curl "https://api.linear.app/graphql" -d AIO-1` survived and was BLOCKED despite being
+ * entirely inert — a false positive introduced by the fix for a previous false positive. And a
+ * naive `/#.*$/` erases `#` inside quoted arguments, which can delete the AIO-<n> marker and turn
+ * a block into an allow. Both directions are wrong, so this tracks quote state one character at a
+ * time instead.
+ */
+function stripComment(line) {
+  let quote = null;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (quote) {
+      if (c === "\\" && quote === '"') i++;
+      else if (c === quote) quote = null;
+      continue;
+    }
+    if (c === "'" || c === '"') {
+      quote = c;
+      continue;
+    }
+    if (c === "\\") {
+      i++;
+      continue;
+    }
+    if (c === "#" && (i === 0 || /\s/.test(line[i - 1]))) return line.slice(0, i);
+  }
+  return line;
 }
 
 /**
@@ -155,7 +217,11 @@ export function classifyMcp(toolName, toolInput, opts = {}) {
   // warned about, which left the routing path this guard exists for unenforced. Configured team
   // markers (team key, name or UUID, from .aios/connector-routing.json) cover that case. The
   // comments promised this; the code did not implement it until now.
-  const marker = markers.find((m) => m && blob.toLowerCase().includes(String(m).toLowerCase()));
+  // Search ONLY team-identifying fields, never the whole payload. Matching arbitrary text meant a
+  // customer issue whose title merely mentioned "aiosbrain" was blocked as AIOS-targeted — the
+  // false-positive class this guard exists to avoid, reintroduced by the marker feature itself.
+  const teamText = teamIdentifyingText(toolInput);
+  const marker = markers.find((m) => m && teamText.includes(String(m).toLowerCase()));
   if (marker) {
     return {
       decision: "block",
@@ -236,9 +302,16 @@ async function main() {
 
   let verdict = { decision: "allow" };
   if (toolName === "Bash") {
-    verdict = classifyBash(input.command, { stalePaths: cfg.stalePaths ?? DEFAULT_STALE });
+    // listOrDefault, not `??`: a config with `"stalePaths": "…"` (a string, not a list) previously
+    // reached .find()/.includes() and threw, and the top-level catch then exited 0 — a typo in a
+    // config file silently disabled enforcement for every call.
+    verdict = classifyBash(input.command, {
+      stalePaths: listOrDefault(cfg.stalePaths, DEFAULT_STALE),
+    });
   } else if (LINEAR_MCP_TOOL.test(toolName)) {
-    verdict = classifyMcp(toolName, input, { teamMarkers: cfg.teamMarkers ?? [] });
+    verdict = classifyMcp(toolName, input, {
+      teamMarkers: [...DEFAULT_TEAM_MARKERS, ...listOrDefault(cfg.teamMarkers, [])],
+    });
   }
 
   if (verdict.decision === "allow") return;
