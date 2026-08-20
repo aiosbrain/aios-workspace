@@ -507,3 +507,43 @@ test("a `..` segment is refused before normalisation can hide a symlink", async 
     assert.equal(seen.uploadBody.toString(), "legit");
   });
 });
+
+// ── the anchor must not absorb a symlink (found by codex:gpt-5.6-sol) ───────────────────────
+
+test("a self-referential symlink cannot be absorbed into the resolved anchor", async () => {
+  // `_components_under_root()` resolves an ANCHOR and descriptor-walks everything below it, so
+  // whatever the anchor swallows is never checked. Picking the DEEPEST prefix whose realpath is
+  // the root maximised that: with `selflink -> .`, `<ws>/selflink/.env` matched at
+  // `<ws>/selflink`, returned just [".env"], and O_NOFOLLOW never saw `selflink`. The workspace
+  // .env uploaded. Shallowest keeps every caller-spelled component in the walk.
+  const root = mkdtempSync(path.join(tmpdir(), "slack-anchor-"));
+  writeFileSync(path.join(root, ".env"), "SLACK_SECRET=leaked");
+  writeFileSync(path.join(root, "real.txt"), "fine");
+  symlinkSync(".", path.join(root, "selflink"));
+
+  // Both spellings matter: the absolute one is what made the anchor search reach past the link.
+  for (const spelled of [path.join(root, "selflink", ".env"), "selflink/.env"]) {
+    await withMock({}, async ({ base, seen }) => {
+      const r = await runFileRaw({
+        base,
+        cwd: root,
+        args: ["--target", CHANNEL, "--path", spelled],
+      });
+      assert.equal(r.status, 2, `${spelled} must be refused: ${r.stderr}`);
+      assert.match(r.stderr, /symlink/);
+      assert.equal(seen.api.length, 0, "a refusal must not have called Slack at all");
+    });
+  }
+
+  // An absolute path to a real file in the same workspace still works — the anchor search has
+  // to keep resolving the /var-vs-/private/var spelling, which is why it exists at all.
+  await withMock({}, async ({ base, seen }) => {
+    const ok = await runFileRaw({
+      base,
+      cwd: root,
+      args: ["--target", CHANNEL, "--path", path.join(root, "real.txt"), "--json"],
+    });
+    assert.equal(ok.status, 0, ok.stderr);
+    assert.equal(seen.uploadBody.toString(), "fine");
+  });
+});

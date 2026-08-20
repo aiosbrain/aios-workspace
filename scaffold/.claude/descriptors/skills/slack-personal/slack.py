@@ -512,9 +512,17 @@ def _components_under_root(path, root):
         # Relative paths are already relative to the workspace root; the walk enforces the rest.
         return parts
 
-    # Absolute: find the deepest prefix whose realpath IS the root, joining the caller's own
+    # Absolute: find the SHALLOWEST prefix whose realpath IS the root, joining the caller's own
     # components rather than a normalised form.
-    for i in range(len(parts), 0, -1):
+    #
+    # SHALLOWEST, NOT DEEPEST, and the difference is a secret disclosure. The anchor is the part
+    # we resolve and therefore stop checking; everything below it gets descriptor-walked. Taking
+    # the deepest match maximises what is silently absorbed into the anchor — so with
+    # `reports -> .` (a symlink to the workspace itself), `/ws/reports/.env` matched at
+    # `/ws/reports`, returned just [".env"], and O_NOFOLLOW never saw `reports` at all.
+    # Verified: the workspace .env uploaded. Shallowest keeps every caller-spelled component in
+    # the walk, which is the only place symlinks are actually caught.
+    for i in range(1, len(parts) + 1):
         prefix = os.sep + os.sep.join(parts[:i])
         if _realpath_or_none(prefix) == root:
             return parts[i:]
