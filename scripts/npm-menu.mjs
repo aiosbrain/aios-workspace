@@ -48,6 +48,7 @@ export const CATEGORIES = {
       "check:codebase-health", // AIO-605 advisory delta vs the committed baseline
       "check:inbox-audit",
       "check:review-evidence-parity", // AIO-777 drift detector for the vendored review validator
+      "check:linear-skill-parity", // AIO-927 byte-parity gate for the two aios-linear skill copies
       "integration:contracts:validate", // AIO-835 Phase 0 exit gate for the v1 integration contract
       "eval:transcripts",
       "pr:backlog",

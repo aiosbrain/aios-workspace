@@ -102,6 +102,9 @@ jobs:
       - run: npm run check:size
       - run: npm run check:boundaries
       - run: npm run check:inbox-audit
+      # AIO-927: the two canonical aios-linear skill copies (.claude/skills/aios-linear/
+      # and scaffold/.claude/skills/aios-linear/) must stay byte-identical.
+      - run: npm run check:linear-skill-parity
       # ADVISORY codebase-health delta vs the committed baseline (AIO-605). Always exits 0 in
       # v0.9.0 — prints score/band deltas, cannot fail the release; advisory→ratchet is a
       # separate later decision. npm ci is needed so the lint/type axis can actually score.
