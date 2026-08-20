@@ -28,8 +28,12 @@ Plane MCP:
 
 ```bash
 AIOS_WS=../aios-workspace   # adjust to this repo's actual relative/absolute path to aios-workspace
-LIN="dotenvx run --quiet -f $AIOS_WS/.env -- node $AIOS_WS/.claude/skills/aios-linear/linear.mjs"
+node "$AIOS_WS/scripts/linear.mjs" <command>
 ```
+
+Do not `dotenvx run -f $AIOS_WS/.env` to call Linear. That decrypts every secret in the file
+and prints `[WRONG_PRIVATE_KEY]` / `[DECRYPTION_FAILED]` for unrelated keys the current
+keypair cannot read (AIO-790). `scripts/linear.mjs` decrypts only `LINEAR_API_KEY`.
 
 **Never hand-maintain a second divergent copy of `linear.mjs`.** If a fix or a new command
 belongs here, make it in the aios-workspace canonical copy and let it propagate (via `aios
@@ -40,10 +44,11 @@ project-committed copy, and the canonical scaffold copy — all with different c
 
 ## Use the script, not ad-hoc GraphQL
 
-The CLI ships with this skill at `.claude/skills/aios-linear/linear.mjs`. Run it from the workspace root with `LINEAR_API_KEY` in `.env` (dotenvx-encrypted):
+The CLI ships with this skill at `.claude/skills/aios-linear/linear.mjs`. From this repo, call
+the scoped wrapper so only `LINEAR_API_KEY` is decrypted from `.env`:
 
 ```bash
-LIN="dotenvx run --quiet -f .env -- node .claude/skills/aios-linear/linear.mjs"
+LIN="node scripts/linear.mjs"
 
 $LIN get AIO-75                 # one line: identifier, title, state, id
 $LIN get AIO-75 --full         # + url + full metadata + description + comments
@@ -170,7 +175,9 @@ reference only the one it should close.
 
 ## AIOS ops cheatsheet
 
-- **dotenvx noise:** always `dotenvx run --quiet` — without it, its banner pollutes stdout and can break JSON capture.
+- **dotenvx noise (AIO-790):** do not `dotenvx run -f .env` to call Linear. That decrypts every
+  secret and emits key-mismatch warnings for unrelated keys. Use `node scripts/linear.mjs`.
+  `--quiet` only hides the dotenvx banner, not those warnings.
 - **Plane MCP** returns huge, mostly-irrelevant blobs for AIOS-internal work — use this script instead. Plane remains a supported _customer_ integration; that's a different boundary.
 
 ## When this skill is wrong or incomplete

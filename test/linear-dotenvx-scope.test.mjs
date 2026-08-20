@@ -1,0 +1,107 @@
+// AIO-790 — Linear must not decrypt the whole toolkit .env.
+// Mixed ciphertext (LINEAR readable, OPENAI not) makes `dotenvx run -f .env` emit
+// WRONG_PRIVATE_KEY. scripts/linear.mjs decrypts only LINEAR_API_KEY and stays quiet.
+// Fixtures are synthetic dotenvx ciphertext; they are not production secrets.
+
+import test from "node:test";
+import assert from "node:assert/strict";
+import { execFileSync, spawnSync } from "node:child_process";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { decryptDotenvKey } from "../scripts/brain-config.mjs";
+
+const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
+const DOTENVX_BIN = path.join(ROOT, "node_modules", ".bin", "dotenvx");
+const WRAPPER = path.join(ROOT, "scripts/linear.mjs");
+const LIN_SECRET = "lin-test-not-a-real-secret";
+const OAI_SECRET = "oai-test-not-a-real-secret";
+
+function strippedEnv() {
+  const env = { ...process.env };
+  delete env.DOTENV_PUBLIC_KEY;
+  delete env.DOTENV_PRIVATE_KEY;
+  delete env.LINEAR_API_KEY;
+  return env;
+}
+
+function dotenvxSet(repo, key, value) {
+  execFileSync(DOTENVX_BIN, ["set", key, value, "-f", path.join(repo, ".env")], {
+    cwd: repo,
+    env: strippedEnv(),
+    stdio: ["ignore", "ignore", "pipe"],
+  });
+}
+
+function makeMixedRepo() {
+  const repo = mkdtempSync(path.join(tmpdir(), "aio790-lin-"));
+  writeFileSync(path.join(repo, ".env"), "");
+  dotenvxSet(repo, "LINEAR_API_KEY", LIN_SECRET);
+  // Sibling ciphertext the current keypair cannot read. Same shape as aios-workspace/.env
+  // (LINEAR decrypts; OPENAI does not). Do not use a second real keypair — that breaks
+  // `dotenvx get LINEAR_API_KEY` on dotenvx 2.x.
+  writeFileSync(
+    path.join(repo, ".env"),
+    `${readFileSync(path.join(repo, ".env"), "utf8").trimEnd()}\nOPENAI_API_KEY=encrypted:BNotARealCiphertextForAIO790==\n`
+  );
+  return repo;
+}
+
+test("dotenvx run on a mixed-key .env warns about the unrelated secret", () => {
+  const repo = makeMixedRepo();
+  try {
+    const result = spawnSync(
+      DOTENVX_BIN,
+      ["run", "--quiet", "-f", ".env", "--", process.execPath, "-e", "process.exit(0)"],
+      { cwd: repo, env: strippedEnv(), encoding: "utf8" }
+    );
+    const combined = `${result.stdout}\n${result.stderr}`;
+    assert.match(result.stderr, /WRONG_PRIVATE_KEY|DECRYPTION_FAILED/);
+    assert.match(result.stderr, /OPENAI_API_KEY/);
+    assert.doesNotMatch(combined, new RegExp(LIN_SECRET));
+    assert.doesNotMatch(combined, new RegExp(OAI_SECRET));
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("scoped Linear wrapper decrypts LINEAR_API_KEY without WRONG_PRIVATE_KEY noise", () => {
+  const repo = makeMixedRepo();
+  try {
+    assert.equal(decryptDotenvKey(repo, "LINEAR_API_KEY"), LIN_SECRET);
+
+    const result = spawnSync(process.execPath, [WRAPPER, "template", "aios"], {
+      cwd: repo,
+      env: strippedEnv(),
+      encoding: "utf8",
+    });
+    const combined = `${result.stdout}\n${result.stderr}`;
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /What \/ why/);
+    assert.equal(result.stderr, "");
+    assert.doesNotMatch(combined, new RegExp(LIN_SECRET));
+    assert.doesNotMatch(combined, new RegExp(OAI_SECRET));
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("aios-linear skill copies stay byte-identical and do not recommend dotenvx run for Linear", () => {
+  const files = ["SKILL.md", "linear.mjs", "linear-core.mjs"];
+  for (const name of files) {
+    const managed = readFileSync(path.join(ROOT, ".claude/skills/aios-linear", name));
+    const scaffold = readFileSync(path.join(ROOT, "scaffold/.claude/skills/aios-linear", name));
+    assert.equal(managed.equals(scaffold), true, `${name} copies diverged`);
+  }
+  const skill = readFileSync(path.join(ROOT, ".claude/skills/aios-linear/SKILL.md"), "utf8");
+  assert.match(skill, /scripts\/linear\.mjs/);
+  assert.doesNotMatch(
+    skill,
+    /dotenvx run --quiet -f \$AIOS_WS\/\.env -- node \$AIOS_WS\/\.claude\/skills\/aios-linear\/linear\.mjs/
+  );
+  assert.doesNotMatch(
+    skill,
+    /LIN="dotenvx run --quiet -f \.env -- node \.claude\/skills\/aios-linear\/linear\.mjs"/
+  );
+});

@@ -2,11 +2,11 @@
 // AIOS team's canonical Linear board CLI (Plane retired 2026-06-22). Terse output by design.
 // Canonical source: aios-workspace `.claude/skills/aios-linear/` (also vendored into every
 // scaffolded AIOS workspace at `.claude/skills/aios-linear/` via `aios update`).
-// Run so LINEAR_API_KEY is in env — dotenvx-encrypted, canonically aios-workspace's own .env:
-//   dotenvx run --quiet -f .env -- node .claude/skills/aios-linear/linear.mjs <cmd> ...
-// From a sibling repo that doesn't carry the key itself, point -f at the aios-workspace
-// checkout's .env instead, e.g.:
-//   dotenvx run --quiet -f ../aios-workspace/.env -- node ../aios-workspace/.claude/skills/aios-linear/linear.mjs <cmd> ...
+// Run via the scoped wrapper so only LINEAR_API_KEY is decrypted (AIO-790):
+//   node scripts/linear.mjs <cmd> ...
+// From a sibling repo:
+//   node ../aios-workspace/scripts/linear.mjs <cmd> ...
+// Do not `dotenvx run -f .env` the whole toolkit file — that decrypts unrelated secrets.
 //
 // Commands:
 //   get <IDENT> [--full]      one issue (add --full for description + comments; url/priority/
