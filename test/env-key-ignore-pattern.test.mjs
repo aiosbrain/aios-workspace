@@ -133,3 +133,25 @@ for (const context of ["consultant", "employee", "business-owner"]) {
     }
   });
 }
+
+// `ensureGitignore` is the only mechanism that reaches a workspace scaffolded BEFORE this
+// fix: `.gitignore` is SCAFFOLD_UNMANAGED, so `aios update` never rewrites it, but `aios
+// onboard` / `aios connect` call this on every run — and this same module is what makes
+// dotenvx generate `.env.keys` in the first place.
+test("ensureGitignore widens an existing workspace to the .env.keys glob", async () => {
+  const { ensureGitignore } = await import("../scripts/connector.mjs");
+  const repo = mkdtempSync(path.join(tmpdir(), "ensure-gitignore-"));
+  try {
+    execFileSync("git", ["init", "-q"], { cwd: repo });
+    // The pre-fix stamped workspace, verbatim.
+    writeFileSync(path.join(repo, ".gitignore"), ".env\n.env.local\n.aios/\n");
+    writeFileSync(path.join(repo, ".env.example"), "AIOS_API_KEY=\n");
+    ensureGitignore(repo);
+    for (const rel of [".env.keys", ".env.keys.bak-2026-08-20", ".env.keys.old"]) {
+      assert.equal(isIgnored(repo, rel), true, `${rel} must be ignored after ensureGitignore`);
+    }
+    assert.equal(isIgnored(repo, ".env.example"), false, ".env.example must stay tracked");
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
