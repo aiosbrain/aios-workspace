@@ -1,16 +1,21 @@
-// AIO-927 — byte-parity gate for the two canonical aios-linear skill copies
-// (scripts/check-linear-skill-parity.mjs). Runs the real gate against a synthetic
-// tree in a temp cwd (mirrors test/check-boundaries.test.mjs), proving it
-// (a) passes when the copies are byte-identical, (b) fails naming the path when
-// file CONTENT differs, (c) fails naming the path when a file is PRESENT in one
-// copy and MISSING from the other (both directions, including a newly added
-// file — the mode the old hardcoded 3-file check could not see), and
-// (d) passes on THIS repo's actual tree, where parity is a live invariant.
+// AIO-927 — thin parity gate for the two canonical aios-linear skill copies
+// (scripts/check-linear-skill-parity.mjs). The file-for-file comparison itself is
+// OGR17 (validation/check-skill-sync.mjs), whose behavior is already pinned by
+// test/skill-sync-guard.test.mjs — those cases are deliberately NOT re-tested here.
+// This test pins what the thin gate ADDS:
+//   (a) whole-dir deletion of either copy fails naming the path — the one case
+//       OGR17's intersection-only design is blind to;
+//   (b) drift found by OGR17 actually propagates through the gate (delegation is
+//       wired, exit code surfaces);
+//   (c) a clean synthetic tree passes; and
+//   (d) THIS repo's actual tree passes, where parity is a live invariant.
+// Runs the real script against synthetic trees via its argv[2] root override
+// (mirrors test/check-boundaries.test.mjs).
 
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, unlinkSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -18,8 +23,8 @@ import { fileURLToPath } from "node:url";
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const SCRIPT = path.join(ROOT, "scripts", "check-linear-skill-parity.mjs");
 
-const COPY_A = path.join(".claude", "skills", "aios-linear");
-const COPY_B = path.join("scaffold", ".claude", "skills", "aios-linear");
+const COPY_SCAFFOLD = path.join("scaffold", ".claude", "skills", "aios-linear");
+const COPY_DEV = path.join(".claude", "skills", "aios-linear");
 
 function makeTree(files) {
   const root = mkdtempSync(path.join(tmpdir(), "linear-skill-parity-"));
@@ -31,83 +36,66 @@ function makeTree(files) {
   return root;
 }
 
-// run(cwd) → { status, stdout, stderr } from the real script.
-function run(cwd) {
+// run(repoRoot) → { status, output } from the real script (argv[2] = root override).
+function run(repoRoot) {
   try {
-    const stdout = execFileSync(process.execPath, [SCRIPT], { cwd, encoding: "utf8" });
-    return { status: 0, stdout, stderr: "" };
+    const output = execFileSync(process.execPath, [SCRIPT, repoRoot], { encoding: "utf8" });
+    return { status: 0, output };
   } catch (err) {
-    return { status: err.status, stdout: err.stdout ?? "", stderr: err.stderr ?? "" };
+    return { status: err.status, output: `${err.stdout ?? ""}${err.stderr ?? ""}` };
   }
 }
 
 const IDENTICAL = {
-  [path.join(COPY_A, "SKILL.md")]: "# skill\n",
-  [path.join(COPY_A, "linear.mjs")]: "console.log('cli');\n",
-  [path.join(COPY_B, "SKILL.md")]: "# skill\n",
-  [path.join(COPY_B, "linear.mjs")]: "console.log('cli');\n",
+  [path.join(COPY_SCAFFOLD, "SKILL.md")]: "# skill\n",
+  [path.join(COPY_SCAFFOLD, "linear.mjs")]: "console.log('cli');\n",
+  [path.join(COPY_DEV, "SKILL.md")]: "# skill\n",
+  [path.join(COPY_DEV, "linear.mjs")]: "console.log('cli');\n",
 };
 
-test("passes when the two copies are byte-identical", () => {
+test("passes on a clean synthetic tree with both copies identical", () => {
   const root = makeTree(IDENTICAL);
   try {
-    const { status, stdout } = run(root);
-    assert.equal(status, 0);
-    assert.match(stdout, /byte-identical \(2 files\)/);
+    const { status, output } = run(root);
+    assert.equal(status, 0, output);
+    assert.match(output, /byte-identical/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
 });
 
-test("fails naming the path when file content differs", () => {
+for (const gone of [COPY_SCAFFOLD, COPY_DEV]) {
+  test(`fails naming the path when ${gone} is deleted entirely (OGR17's intersection blind spot)`, () => {
+    const root = makeTree(IDENTICAL);
+    try {
+      rmSync(path.join(root, gone), { recursive: true, force: true });
+      const { status, output } = run(root);
+      assert.equal(status, 1);
+      assert.ok(output.includes(`${gone}/ is missing entirely`), `names the path, got:\n${output}`);
+      assert.match(output, /must stay byte-identical/);
+      assert.match(output, /trust the scaffold\/ side/);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+}
+
+test("drift detected by OGR17 propagates through the gate (delegation wired)", () => {
   const root = makeTree({
     ...IDENTICAL,
-    [path.join(COPY_B, "linear.mjs")]: "console.log('cli'); // drifted\n",
+    [path.join(COPY_DEV, "linear.mjs")]: "console.log('cli'); // drifted\n",
   });
   try {
-    const { status, stderr } = run(root);
+    const { status, output } = run(root);
     assert.equal(status, 1);
-    assert.match(stderr, /content differs: .*linear\.mjs/);
-    assert.ok(stderr.includes(path.join(COPY_B, "linear.mjs")), "names the offending path");
-    assert.match(stderr, /must stay byte-identical/);
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test("fails naming the path when a file is missing from one copy", () => {
-  const root = makeTree(IDENTICAL);
-  try {
-    unlinkSync(path.join(root, COPY_A, "linear.mjs"));
-    const { status, stderr } = run(root);
-    assert.equal(status, 1);
-    assert.ok(
-      stderr.includes(`${path.join(COPY_A, "linear.mjs")} is missing`),
-      `names the missing path, got:\n${stderr}`
-    );
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test("fails when a file is added to only one copy (new-file drift)", () => {
-  const root = makeTree({
-    ...IDENTICAL,
-    [path.join(COPY_B, "linear-new-helper.mjs")]: "export {};\n",
-  });
-  try {
-    const { status, stderr } = run(root);
-    assert.equal(status, 1);
-    assert.ok(
-      stderr.includes(`${path.join(COPY_A, "linear-new-helper.mjs")} is missing`),
-      `names the missing counterpart, got:\n${stderr}`
-    );
+    assert.match(output, /aios-linear\/linear\.mjs/); // OGR17 names the file
+    assert.match(output, /OGR17 reported drift/); // the gate surfaced it, not swallowed it
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
 });
 
 test("passes on this repo's actual tree", () => {
-  const { status, stdout } = run(ROOT);
-  assert.equal(status, 0, `parity gate should be green on the real repo:\n${stdout}`);
+  const { status, output } = run(ROOT);
+  assert.equal(status, 0, `parity gate should be green on the real repo:\n${output}`);
 });
