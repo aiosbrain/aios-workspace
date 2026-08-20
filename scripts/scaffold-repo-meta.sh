@@ -31,8 +31,13 @@ if [ "$CI_WORKFLOW" = true ]; then
 fi
 
 cat > "$OUTPUT/.gitignore" << EOF
+# Environment / secrets. The glob is wide on purpose: an exact .env.keys pattern does
+# NOT match a rotation or backup copy (.env.keys.bak-2026-01-01, .env.keys.old), which
+# would leave a live dotenvx private key untracked-but-stageable by "git add -A".
+# Only the committed .env.example is exempt.
 .env
-.env.local
+.env.*
+!.env.example
 .aios/
 *.pyc
 __pycache__/
