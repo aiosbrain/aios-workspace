@@ -66,11 +66,18 @@ if [[ ! -e "$here/opencode.json" ]]; then
   fi
 fi
 
-# .claude/settings.json — hooks + rails allowlist. Copy from primary (overwrites
-# any git-tracked version — primary is source of truth), but only when the content
-# actually differs: this script now also runs as a per-session self-heal
-# (hooks/worktree-self-heal.mjs), and a no-op re-copy every session would churn
-# the file's mtime for nothing.
+# .claude/settings.json — hooks + rails allowlist. When the file is TRACKED in
+# the worktree's branch, the branch's committed copy is authoritative and
+# hydration must NOT touch it (AIO-920): it is test-asserted
+# (test/adapter-worktree-guard.test.mjs reads it from the repo root), so copying
+# the primary's copy over it made guard-test results depend on how current the
+# primary checkout happened to be — a stale primary produced a false RED, and a
+# primary ahead of the branch could green a genuinely broken change. Hydration
+# exists to supply UNTRACKED local config (.envrc, .mcp.json, node_modules), so
+# it only seeds this file when the branch predates it: from the primary, else
+# the scaffold. The cmp -s skip stays for the seeding path — this script also
+# runs as a per-session self-heal (hooks/worktree-self-heal.mjs), and a no-op
+# re-copy every session would churn the file's mtime for nothing.
 copy_settings_from() {
   local src="$1" label="$2"
   if cmp -s "$src" "$here/.claude/settings.json"; then
@@ -81,7 +88,9 @@ copy_settings_from() {
   cp "$src" "$here/.claude/settings.json"
   echo "copied .claude/settings.json${label}"
 }
-if [[ -f "$main_worktree/.claude/settings.json" ]]; then
+if git -C "$here" ls-files --error-unmatch -- .claude/settings.json >/dev/null 2>&1; then
+  echo "skip .claude/settings.json — tracked in this branch (committed copy wins)"
+elif [[ -f "$main_worktree/.claude/settings.json" ]]; then
   copy_settings_from "$main_worktree/.claude/settings.json" ""
 elif [[ -f "$scaffold/.claude/settings.json" ]]; then
   copy_settings_from "$scaffold/.claude/settings.json" " (from scaffold)"
