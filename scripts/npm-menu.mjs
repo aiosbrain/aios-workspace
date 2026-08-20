@@ -18,7 +18,7 @@ const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 export const CATEGORIES = {
   Core: {
     description: "day-to-day use, once your workspace is set up",
-    scripts: ["help", "aios", "setup"],
+    scripts: ["help", "aios", "setup", "guard:selftest"], // AIO-953 one-command guard verification
   },
   Dev: {
     description: "contributing to this toolkit",

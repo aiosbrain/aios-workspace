@@ -53,6 +53,7 @@
     "integration:contracts:validate": "node scripts/integration-contracts.mjs",
     "check:review-evidence-parity": "node scripts/check-review-evidence-parity.mjs",
     "check:linear-skill-parity": "node scripts/check-linear-skill-parity.mjs",
+    "guard:selftest": "node scripts/guard-selftest.mjs",
     "eval:transcripts": "node evals/transcript-extraction/extraction-eval.mjs",
     "pr:backlog": "node scripts/pr-backlog-report.mjs",
     "lint": "eslint scripts validation src test packages",
