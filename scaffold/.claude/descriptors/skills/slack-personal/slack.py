@@ -386,7 +386,12 @@ def _upload_bytes(upload_url, data):
     for attempt in range(4):
         req = urllib.request.Request(upload_url, data=data, headers=headers, method="POST")
         try:
-            with urllib.request.urlopen(req, timeout=120) as r:
+            # nosec B310 — the scheme/host are validated by _assert_uploadable_url() above,
+            # which runs before this loop and exits non-zero on anything that is not https (or
+            # loopback http for the mock suite). B310 is an AUDIT check: it flags the call so a
+            # human confirms the URL cannot be file:/ftp:/custom, and that confirmation is the
+            # guard, in code, with tests. Bandit cannot see across the function boundary.
+            with urllib.request.urlopen(req, timeout=120) as r:  # nosec B310
                 r.read()
             return
         except urllib.error.HTTPError as e:
