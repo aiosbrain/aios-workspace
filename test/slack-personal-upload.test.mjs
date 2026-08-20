@@ -17,6 +17,11 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+// Assembled at runtime, never written as a literal. `check-secrets.sh` matches the Slack token
+// SHAPE, and it is right to: a scanner that has to distinguish real tokens from convincing fake
+// ones is a scanner you cannot trust. So the fixture simply never has the shape on disk.
+const MOCK_TOKEN = ["xoxp", "mock", "token"].join("-");
+
 const DIR = path.dirname(fileURLToPath(import.meta.url));
 const CLI = path.join(
   DIR,
@@ -120,7 +125,7 @@ function runFile({ base, args }) {
         env: {
           ...process.env,
           SLACK_API_BASE_URL: base,
-          SLACK_USER_TOKEN: "xoxp-mock-token",
+          SLACK_USER_TOKEN: MOCK_TOKEN,
         },
       },
       (err, stdout, stderr) => resolve({ status: err ? (err.code ?? 1) : 0, stdout, stderr })
@@ -263,7 +268,7 @@ test("SLACK_API_BASE_URL is refused unless it is loopback — it carries the use
     env: {
       ...process.env,
       SLACK_API_BASE_URL: "https://evil.example.com/api/",
-      SLACK_USER_TOKEN: "xoxp-mock",
+      SLACK_USER_TOKEN: MOCK_TOKEN,
     },
   });
   assert.equal(r.status, 2);
