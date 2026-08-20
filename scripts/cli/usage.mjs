@@ -205,7 +205,8 @@ export const USAGE_LINES = {
   worktree: [
     "  aios worktree add <feat/branch>    create a git worktree + hydrate all config from primary",
     "    [--base <ref>]                     --base defaults to origin/main; links node_modules,",
-    "                                       copies opencode.json/.claude/settings, wires hooks",
+    "                                       seeds opencode.json, wires hooks; a committed",
+    "                                       .claude/settings.json stays the branch's own",
     "  aios worktree init                  hydrate the current worktree dir (idempotent)",
     "  aios worktree list                  list all worktrees for this repo",
     "  aios worktree doctor                report auto-hydration readiness (Conductor et al)",
