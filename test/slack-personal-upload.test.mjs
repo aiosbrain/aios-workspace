@@ -137,13 +137,22 @@ function cliPointedAt(base) {
   return copy;
 }
 
-function runFile({ base, args }) {
+// Every fixture here lives in a temp dir, which is OUTSIDE the cwd — so these runs pass the
+// escape hatch explicitly. That is the flag doing its job, not a workaround: containment is
+// tested on its own below, with and without it.
+function runFile({ base, args, contained = false }) {
+  const flags = contained ? [] : ["--allow-outside-workspace"];
+  return runFileRaw({ base, args: [...args, ...flags] });
+}
+
+function runFileRaw({ base, args, cwd }) {
   return new Promise((resolve) => {
     execFile(
       "python3",
       [cliPointedAt(base), "file", ...args],
       {
         encoding: "utf8",
+        cwd,
         maxBuffer: 64 * 1024 * 1024,
         env: { ...process.env, SLACK_USER_TOKEN: MOCK_TOKEN },
       },
@@ -320,5 +329,65 @@ test("a FIFO is refused rather than hanging the CLI forever", async () => {
     assert.equal(r.status, 2, r.stderr);
     assert.match(r.stderr, /not a regular file/);
     assert.equal(seen.api.length, 0);
+  });
+});
+
+// ── containment: the intermediate-symlink attack (AIO-1010) ─────────────────────────────────
+
+test("a symlinked INTERMEDIATE directory cannot smuggle a file out of the workspace", async () => {
+  // O_NOFOLLOW guards only the final component, so this is the case it does NOT catch:
+  // `reports/link -> ../secrets`, then an upload of `reports/link/id_rsa`. Verified exploitable
+  // before the fix; the refusal is by containment, not by symlink detection.
+  const root = mkdtempSync(path.join(tmpdir(), "slack-contain-"));
+  mkdirSync(path.join(root, "secrets"), { recursive: true });
+  mkdirSync(path.join(root, "work", "reports"), { recursive: true });
+  writeFileSync(path.join(root, "secrets", "id_rsa"), "PRIVATE KEY MATERIAL");
+  writeFileSync(path.join(root, "work", "reports", "ok.pdf"), "legit");
+  symlinkSync(path.join(root, "secrets"), path.join(root, "work", "reports", "link"));
+  const cwd = path.join(root, "work");
+
+  await withMock({}, async ({ base, seen }) => {
+    const attack = await runFileRaw({
+      base,
+      cwd,
+      args: ["--target", CHANNEL, "--path", "reports/link/id_rsa"],
+    });
+    assert.equal(attack.status, 2, attack.stderr);
+    assert.match(attack.stderr, /resolves outside this workspace/);
+    assert.match(attack.stderr, /id_rsa/, "the refusal must show where it actually resolved");
+    assert.equal(seen.api.length, 0, "a refusal must not have called Slack at all");
+
+    // The same workspace, a real file: unaffected.
+    const ok = await runFileRaw({
+      base,
+      cwd,
+      args: ["--target", CHANNEL, "--path", "reports/ok.pdf", "--json"],
+    });
+    assert.equal(ok.status, 0, ok.stderr);
+    assert.equal(seen.uploadBody.toString(), "legit");
+  });
+});
+
+test("a file outside the workspace needs the explicit flag, and works with it", async () => {
+  // The /var-temp case that made a component-wise openat walk unusable: agents generate files
+  // in temp dirs and upload them. Refused by default, allowed when somebody says so.
+  const outside = mkdtempSync(path.join(tmpdir(), "slack-outside-"));
+  writeFileSync(path.join(outside, "generated.pdf"), "report");
+  const cwd = mkdtempSync(path.join(tmpdir(), "slack-cwd-"));
+  const target = path.join(outside, "generated.pdf");
+
+  await withMock({}, async ({ base, seen }) => {
+    const refused = await runFileRaw({ base, cwd, args: ["--target", CHANNEL, "--path", target] });
+    assert.equal(refused.status, 2, refused.stderr);
+    assert.match(refused.stderr, /resolves outside this workspace/);
+    assert.equal(seen.api.length, 0);
+
+    const allowed = await runFileRaw({
+      base,
+      cwd,
+      args: ["--target", CHANNEL, "--path", target, "--allow-outside-workspace", "--json"],
+    });
+    assert.equal(allowed.status, 0, allowed.stderr);
+    assert.equal(seen.uploadBody.toString(), "report");
   });
 });

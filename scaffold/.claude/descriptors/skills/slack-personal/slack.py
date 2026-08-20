@@ -407,7 +407,53 @@ def _retry_delay(err, attempt):
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 
 
-def _read_upload_candidate(path):
+def _assert_contained(path, allow_outside=False):
+    """Refuse a file that RESOLVES outside the working directory, unless explicitly allowed.
+
+    This is what actually stops the intermediate-symlink attack. O_NOFOLLOW only guards the
+    final component, so `reports/ -> ~/.ssh` with an upload of `reports/id_rsa` passes it. What
+    does not pass is "after every symlink is resolved, does this file still live in the
+    directory I am working in?" — because the entire point of the attack is that it does not.
+
+    WHY NOT A COMPONENT-WISE openat WALK. That is the textbook answer, and it was implemented,
+    tested and reverted here: on macOS `/var`, `/tmp` and `/etc` are THEMSELVES symlinks, so a
+    walk refusing every symlinked component refuses every path under a temp directory — exactly
+    where agents write the files they upload. It passed on `/Users/...` paths and failed on
+    `/var/...` ones, which is the kind of fix somebody switches off within a week.
+
+    WHY NOT OWNERSHIP-BASED TRUST ("allow root-owned symlinks"). It misses the actual threat —
+    a symlink planted by content the agent itself wrote is owned by the operator, not root —
+    and it breaks ordinary setups, since a symlinked project root (`~/Tessera -> ~/Projects`)
+    is operator-owned and entirely legitimate.
+
+    Containment sidesteps both. It does not care which component redirected, or who owns it,
+    only where the bytes actually live.
+
+    `--allow-outside-workspace` is the deliberate escape hatch, because uploading a generated
+    file from a temp directory is a real workflow. It has to be typed, which makes the
+    redirection a decision somebody made rather than one an attacker made for them.
+
+    Resolution is by realpath, so this is advisory against an attacker who can swap a directory
+    between this check and the open. The leaf is still opened O_NOFOLLOW and validated by fstat
+    on the descriptor, so the residual race is narrow and no wider than the one already there.
+    """
+    real = os.path.realpath(path)
+    if allow_outside:
+        return real
+    root = os.path.realpath(os.getcwd())
+    if real == root or real.startswith(root + os.sep):
+        return real
+    die(
+        "refusing to upload a file that resolves outside this workspace:\n"
+        f"  named:     {path}\n"
+        f"  resolves:  {real}\n"
+        f"  workspace: {root}\n"
+        "Pass --allow-outside-workspace if that is deliberate.",
+        2,
+    )
+
+
+def _read_upload_candidate(path, allow_outside=False):
     """Open, validate and read a file on ONE descriptor. Returns (bytes, filename).
 
     Every check here is against the OPENED FILE, never the path, because this CLI's whole job
@@ -420,18 +466,13 @@ def _read_upload_candidate(path):
     and check the target" on purpose — a resolved target is still only true until read() — and
     it costs a real user one `cp` while removing "upload this innocuous-looking link" entirely.
 
-    KNOWN, DELIBERATE LIMITATION: O_NOFOLLOW guards only the FINAL component. An attacker who
-    can plant a symlinked INTERMEDIATE directory inside a tree an agent will traverse
-    (`reports/ -> ~/.ssh`, then an upload of `reports/id_rsa`) still gets through. The correct
-    fix is a component-wise openat walk with O_NOFOLLOW at every step, or Linux openat2 with
-    RESOLVE_NO_SYMLINKS.
-
-    That was implemented and then REVERTED, on evidence: on macOS `/var`, `/tmp` and `/etc` are
-    themselves symlinks, so a portable walk refuses every path under a temp directory — which
-    is precisely where agents write the generated files they then upload. It traded a narrow
-    attack for a broad breakage. Tracked as follow-up rather than shipped half-working; the
-    residual risk is recorded here so it is a decision and not an oversight.
+    O_NOFOLLOW guards only the FINAL component, which is not the interesting attack:
+    `reports/ -> ~/.ssh` plus an upload of `reports/id_rsa` sails straight past it. Containment
+    is what closes that — see `_assert_contained()`, called first so a redirected file is
+    refused before it is ever opened.
     """
+    _assert_contained(path, allow_outside=allow_outside)
+
     # O_NONBLOCK matters as much as O_NOFOLLOW here: opening a FIFO read-only WITHOUT it blocks
     # until a writer appears, so the process hangs before any check can run. With it, the open
     # returns and fstat gets to reject it. (Verified: a mkfifo target hung the CLI indefinitely.)
@@ -480,7 +521,7 @@ def cmd_file(a):
     # Read and validate FIRST: a refusal must not have spoken to Slack at all, and resolving a
     # channel for a file we are about to reject is a wasted API call with a side effect (open_dm
     # creates the DM conversation).
-    data, filename = _read_upload_candidate(a.path)
+    data, filename = _read_upload_candidate(a.path, allow_outside=a.allow_outside_workspace)
 
     if a.member:
         uid = brain_resolve_slack(a.member)
@@ -591,6 +632,11 @@ def main():
     g = p.add_mutually_exclusive_group(required=True)
     g.add_argument("--target"); g.add_argument("--member")
     p.add_argument("--path", required=True, help="local file path to upload")
+    p.add_argument(
+        "--allow-outside-workspace",
+        action="store_true",
+        help="permit a file that resolves outside the cwd (e.g. a generated file in a temp dir)",
+    )
     p.add_argument("--message", help="initial_comment shown with the upload")
     p = sub.add_parser("react", parents=[common])
     p.add_argument("--target", required=True); p.add_argument("--ts", required=True); p.add_argument("--emoji", required=True)

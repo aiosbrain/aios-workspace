@@ -76,8 +76,8 @@ slack dm     --member <email|handle>  --message "…"   # resolves the teammate 
 # For multiline messages, pipe exact text through stdin:
 printf '%s\n' 'line one' '' 'line three' | slack dm --member <email|handle> --message-stdin
 slack react  --target <D|C> --ts <ts> --emoji white_check_mark
-slack file   --target <U|D|C|@email> --path <local-file> [--message "…"]
-slack file   --member <email|handle>  --path <local-file> [--message "…"]
+slack file   --target <U|D|C|@email> --path <local-file> [--message "…"] [--allow-outside-workspace]
+slack file   --member <email|handle>  --path <local-file> [--message "…"] [--allow-outside-workspace]
 ```
 
 `slack file` uploads a local file through Slack's current external-upload flow
@@ -91,6 +91,17 @@ Bytes go up as `application/octet-stream`, not multipart. The filename travels a
 cannot inject headers or corrupt the body. The whole file is buffered to set `Content-Length`, so
 uploads are capped at **25 MiB** — well under Slack's own limit, deliberately: the cap exists to
 turn "agent points at a 3 GB file" into a clear refusal instead of an OOM.
+
+**The file must resolve inside your working directory.** This is what stops a planted symlink
+turning an innocuous-looking upload into a secret disclosure: `reports/ -> ~/.ssh` followed by
+`slack file --path reports/id_rsa` posts your private key into a channel. Refusing a symlinked
+final component is not enough — the redirect is usually a *directory* — so the check is on where
+the bytes actually live after resolution, and the refusal prints the resolved path so you can see
+what happened.
+
+Uploading a generated file from a temp directory is a normal workflow, so
+`--allow-outside-workspace` exists for it. It has to be typed, which is the point: the redirect
+becomes a decision you made rather than one somebody made for you.
 
 When invoking from a shell, do not pass JSON-escaped multiline text as `--message`:
 `\\n` is posted literally. Use `--message-stdin` so newlines reach Slack unchanged.
