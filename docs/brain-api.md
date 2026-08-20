@@ -1,6 +1,6 @@
 # AIOS Team Brain — API Contract
 
-**Version: 1.21** is the shipped member-facing Brain API (`/api/v1`). **Document revision: 1.21**
+**Version: 1.22** is the shipped member-facing Brain API (`/api/v1`). **Document revision: 1.22**
 also carries the separately negotiated internal Executor gateway contract **1.10**; it does not
 claim unimplemented member-facing v1.10 routes. This document is the single pinned contract between the
 contributor repo (this toolkit's `aios` CLI) and the `aios-team-brain` service. Both
@@ -194,9 +194,9 @@ writeback/registration pulls), so a newer client still works against an older br
   2026-06-19 rule); a health-only push would zero existing analytics and is rejected `422` like
   any other sparse push. Scalars only — no file paths, no source text, no contributor identity
   ever cross the boundary. The machine-readable payload contract is
-  [`contract/codebase-payload-1.15.schema.json`](./contract/codebase-payload-1.15.schema.json),
+  [`contract/codebase-payload-1.22.schema.json`](./contract/codebase-payload-1.22.schema.json),
   with canonical parity fixtures in
-  [`contract/codebase-payload-1.15-fixtures.json`](./contract/codebase-payload-1.15-fixtures.json).
+  [`contract/codebase-payload-1.22-fixtures.json`](./contract/codebase-payload-1.22-fixtures.json).
   This revision is doc + schema only — it enables no push lane; the canonical pusher remains the
   ingestion sidecar.*
 - *2026-08-03 — **v1.16**: documented two authenticated reads that were already shipped:
@@ -278,6 +278,38 @@ writeback/registration pulls), so a newer client still works against an older br
   The row ceiling applies to the **wire only**: the brain re-parses in-process connector payloads
   with an uncapped schema, because its own Linear/GitHub/Plane mirrors have no transport step and
   legitimately build single items of up to 20,000 rows.*
+- *2026-08-20 — **v1.22**: `POST /api/v1/codebases` gains six OPTIONAL, nullable raw-measure
+  fields on `metrics`, so a coverage percentage arrives with the denominator it was measured over
+  and a degraded test run announces itself (AIO-995).
+  **Coverage denominator:** `test_coverage_lines_total` (integer ≥ 0 — instrumented lines the
+  coverage report measured) and `test_coverage_lines_covered` (integer ≥ 0 — of those, how many
+  were hit). **Run integrity:** `tests_total`, `tests_passed`, `tests_skipped`, `tests_failed`
+  (integers ≥ 0 — the counts from a test-result report present in the working tree at scan time).
+  Purely additive: every field defaults to `null`, an omitting scanner is byte-for-byte
+  unaffected, and an older brain ignores the unknown keys. **`null` means UNKNOWN, never zero** —
+  a payload without `test_coverage_lines_total` must not be read as "nothing instrumented", and one
+  without `tests_skipped` must not be read as "nothing skipped". The brain derives one persisted
+  value from these, `coverage_breadth_pct` = `100 × min(1, test_coverage_lines_total / loc)`,
+  which is `null` whenever either input is unknown **or `loc` is `0`**; it is DISPLAYED and NOT
+  yet folded into `agentic_score`/`health_score` (see `lib/codebases/score.ts` for why).
+  Cross-field invariants are enforced at the boundary (`422`): `test_coverage_lines_covered ≤
+  test_coverage_lines_total`; each of `tests_passed`/`tests_skipped`/`tests_failed` ≤
+  `tests_total`; those three summing to no more than `tests_total` when all are known; and
+  `test_coverage_pct` agreeing with the counts to within a percentage point. Each fires only
+  when both sides are present — unknown contradicts nothing.
+  The executable contract moves with this revision:
+  [`contract/codebase-payload-1.22.schema.json`](./contract/codebase-payload-1.22.schema.json)
+  (fixtures: [`contract/codebase-payload-1.22-fixtures.json`](./contract/codebase-payload-1.22-fixtures.json)),
+  superseding the 1.15 pair. It pins each of the six as an integer `≥ 0` or null. It cannot pin
+  the CROSS-FIELD rules — JSON Schema 2020-12 has no way to compare two sibling properties — so
+  those stay normative prose here and enforced in the brain, and the schema's own `description`
+  says so rather than letting a green Ajv run read as complete coverage.
+  **Semantic compatibility is narrower than wire compatibility, and the difference matters.** A
+  *new* scanner pushing to a *pre-1.22* brain is accepted, but the old brain strips the six
+  unknown keys and goes on weighting the bare percentage at full strength with its scope
+  discarded — no error, no signal, the exact defect this revision exists to remove. Wire
+  acceptance is not graceful degradation. Upgrade the brain before, or with, the scanners.
+  Sources and the normative attribute→field mapping are in the endpoint section below.*
 
 ---
 
@@ -1753,6 +1785,12 @@ isolation is enforced in app code, with no DB backstop). Rate limit: 60/min per 
     "skills_count": 7,
     "commands_count": 3,
     "test_coverage_pct": null,
+    "test_coverage_lines_total": null,
+    "test_coverage_lines_covered": null,
+    "tests_total": null,
+    "tests_passed": null,
+    "tests_skipped": null,
+    "tests_failed": null,
     "readiness_level": "L3",
     "readiness_pct": 61.11,
     "readiness_pillars": { "testing": { "passed": 2, "total": 2 }, "docs": { "passed": 2, "total": 3 } },
@@ -1774,6 +1812,72 @@ isolation is enforced in app code, with no DB backstop). Rate limit: 60/min per 
 - The core raw-scan fields above (commits / loc / files / `recent_commits` / scaffolding) are
   **required**; a sparse/partial push is rejected `422` (see the 2026-06-19 revision). `window_days`,
   `test_coverage_pct`, and the cadence inputs may be omitted.
+- **Coverage denominator and run integrity** (document revision 1.22, **all optional and
+  nullable**, AIO-995). `test_coverage_pct` on its own is a bare percentage with no denominator:
+  a report measuring 436 lines and one measuring 10,647 send an identical-looking number. These
+  six fields carry the scope the percentage was measured over, and whether the run that produced
+  it was complete.
+  - `test_coverage_lines_total` (integer ≥ 0) — **instrumented lines**: how many lines the
+    coverage report actually measured. `test_coverage_lines_covered` (integer ≥ 0) — of those,
+    how many were hit. Sourced from Istanbul `coverage/coverage-summary.json`
+    (`total.lines.total` / `total.lines.covered`) or `coverage/lcov.info` (the `LF:` / `LH:`
+    sums) — both formats carry them natively, so no new tooling is required.
+  - `tests_total`, `tests_passed`, `tests_skipped`, `tests_failed` (integers ≥ 0) — the counts
+    from a test-result report **present in the working tree when the scan runs**. A suite that
+    skipped half its cases still emits a plausible coverage percentage; these make that visible
+    instead of silent.
+
+    **Working tree, not HEAD — and that has a consequence worth stating.** Coverage and
+    test-result reports are build artefacts: `coverage/` is gitignored in most repos here, so
+    requiring a *committed* report would mean the fields could essentially never be populated.
+    The scanner therefore reads whatever is on disk. It follows that **two scans of the same
+    commit can legitimately disagree** — a CI runner that has just executed the suite reports
+    counts, a clean developer clone at the same SHA reports none — and because a metrics point
+    is keyed `(codebase_id, head_sha)`, the later push replaces the earlier one. This is not
+    new in 1.22: `test_coverage_pct` has always behaved this way. 1.22 makes it *visible*,
+    because the denominator and the run counts move with it. **Push scans for a commit from one
+    place** — the CI job that ran the suite — if you want a repo's coverage history to be
+    comparable with itself.
+
+    **The attribute→field mapping is normative**, because JUnit has no `passed` attribute and no
+    single obvious reading of `errors`, and two pushers that guessed differently would report
+    different numbers for the same commit:
+
+    | Field | JUnit XML | Vitest / Jest JSON |
+    |---|---|---|
+    | `tests_skipped` | `@skipped` | `numPendingTests` + `numTodoTests` |
+    | `tests_failed` | `@failures` + **`@errors`** | `numFailedTests` |
+    | `tests_total` | `max(@tests, tests_skipped + tests_failed)` | `numTotalTests` |
+    | `tests_passed` | `tests_total − tests_skipped − tests_failed` | `numPassedTests` |
+
+    Three rules the table encodes. **Errors count as failures** — a fixture or collection error
+    is a case that did not pass, and dropping it reports a clean run for a broken one. **`@tests`
+    is a floor, not the truth**: several runners count an error without incrementing it (pytest
+    emits `<testsuite tests="0" errors="1"/>` for a collection error), which would otherwise
+    yield `tests_failed > tests_total` and fail the invariant above. **Sum over leaf
+    `<testsuite>` elements**, not every descendant — aggregated files nest suites inside a parent
+    carrying rolled-up counts, and summing both double-counts every case.
+
+    A sender that cannot produce a coherent set MUST send `null` for the whole group rather than
+    a set that violates the invariants: the `422` rejects the ENTIRE payload, so one malformed
+    report would otherwise take a repo's whole analytics offline.
+  - **`null` means UNKNOWN and MUST NOT be read as zero.** An omitted `test_coverage_lines_total`
+    does not mean "nothing was instrumented", and an omitted `tests_skipped` does not mean
+    "nothing was skipped". The same reading applies to `test_coverage_pct` itself, which this
+    revision states normatively for the first time: **a null or omitted `test_coverage_pct`
+    means no coverage report was found, NOT a measured 0%** — the brain has always behaved this
+    way (it excludes the signal from its composites rather than scoring it zero), but the
+    contract only said the field "may be omitted". This is what makes the new fields safe to add
+    to a table full of pre-1.22 rows: they arrive null and stay null.
+  - **Derived, not sent:** the brain computes and persists `coverage_breadth_pct` =
+    `100 × min(1, test_coverage_lines_total / loc)` — coverage's scope as a share of the
+    repository's counted lines. It is `null` when `test_coverage_lines_total` is unknown **and
+    when `loc` is `0`** (which the schema permits, e.g. a docs-only repo): there is no
+    denominator to divide by, and a 0-line repo reporting any breadth at all would be a fresh
+    instance of the very bug this revision fixes. The `min(1, …)` clamp is deliberate — `loc`
+    and a coverage runner's instrumentation are different censuses, so a ratio above 1 means
+    they disagree, not that the repo is over-covered. A sender MUST NOT push this field; it is a
+    brain-side derivation of two raw measures, like every other score in `code_metrics`.
 - The scan is keyed by `(team_id, slug)` for the codebase and `(codebase_id, head_sha)` for the
   metrics point (idempotent: re-pushing the same commit updates in place, no duplicate point).
 - **AEM agent-readiness** fields (`readiness_*`) are **optional and scored scanner-side** against
@@ -1788,8 +1892,8 @@ isolation is enforced in app code, with no DB backstop). Rate limit: 60/min per 
   (`"pass" | "warn" | "fail"`), `dimensions` (a map of short dimension id →
   `{ "passed": int, "total": int }` counts), `failed_invariant_ids` (array of short invariant
   ids), and `measured_at` (ISO-8601 UTC timestamp). The machine-readable contract is
-  [`contract/codebase-payload-1.15.schema.json`](./contract/codebase-payload-1.15.schema.json)
-  (fixtures: [`contract/codebase-payload-1.15-fixtures.json`](./contract/codebase-payload-1.15-fixtures.json)).
+  [`contract/codebase-payload-1.22.schema.json`](./contract/codebase-payload-1.22.schema.json)
+  (fixtures: [`contract/codebase-payload-1.22-fixtures.json`](./contract/codebase-payload-1.22-fixtures.json)).
   Three normative rules:
   - **Additive:** a payload without `codebase_health` remains valid exactly as before 1.15
     (older scanners are unaffected; an older brain ignores the unknown key).
