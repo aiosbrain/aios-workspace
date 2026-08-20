@@ -23,7 +23,7 @@
  * cost is the WHOLE kill command, so nightly feasibility depends on both fields.
  */
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -234,6 +234,14 @@ export function splitCampaigns(group, mutate) {
   }));
   if (rest.length) campaigns.push({ mutate: rest, label: group.name });
   if (campaigns.length === 1) campaigns[0].label = group.name;
+  // Labels name config + report files; two calibrated targets sharing a
+  // basename would silently clobber each other's — fail loudly instead.
+  if (new Set(campaigns.map((campaign) => campaign.label)).size !== campaigns.length) {
+    throw new Error(
+      `${group.name}: duplicate campaign labels from same-basename calibrated targets — ` +
+        `disambiguate breakThresholdByTarget or the label scheme in splitCampaigns()`
+    );
+  }
   return campaigns;
 }
 
@@ -360,7 +368,21 @@ function main(argv) {
     return;
   }
   mkdirSync(path.join(ROOT, ".stryker-tmp"), { recursive: true });
-  mkdirSync(path.join(ROOT, "reports", "mutation"), { recursive: true });
+  const reportsDir = path.join(ROOT, "reports", "mutation");
+  mkdirSync(reportsDir, { recursive: true });
+
+  // Split-campaign reports are labelled `<group>--<basename>.json`. A stale
+  // one left by an earlier diff (whose selection produced a split this run
+  // does not) would double-count the group in codebase-health's
+  // checkMutationScore, which reads every reports/mutation/*.json. Clear the
+  // selected groups' split reports up front; live ones are rewritten below.
+  for (const name of new Set(selected.map(({ group }) => group.name))) {
+    for (const file of readdirSync(reportsDir)) {
+      if (file.startsWith(`${name}--`) && file.endsWith(".json")) {
+        unlinkSync(path.join(reportsDir, file));
+      }
+    }
+  }
 
   if (!options.list && selected.some(({ group }) => group.mutateDist)) {
     console.log("mutation: building unmutated dist once for compiled-output groups");

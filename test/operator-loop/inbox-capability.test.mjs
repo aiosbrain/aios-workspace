@@ -20,7 +20,7 @@ import {
   notifyDeepLink,
 } from "../../dist/operator-loop/inbox/capability.js";
 
-const NOW = 1755640000000; // fixed clock: 2026-08-19T21:46:40.000Z
+const NOW = 1755640000000; // fixed clock: 2025-08-19T21:46:40.000Z
 const AT = new Date(NOW).toISOString();
 
 const projection = Object.freeze({

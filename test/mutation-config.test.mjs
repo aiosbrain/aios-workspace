@@ -305,21 +305,34 @@ test("the calibrated inbox capability target enforces its mutation floor in eith
   }
 });
 
-test("the nightly oracle imports the exact compiled mutate target it scores (AIO-994)", () => {
+test("every calibrated target is imported by a nightly oracle file via a real import (AIO-994)", () => {
   // The 0.00 defect: the campaign mutated dist/operator-loop/inbox/capability.js while its kill
   // command ran a suite that never imported the module, so every mutant survived by
-  // construction. Pin the coupling: each nightly oracle file for the calibrated target must
-  // value-import that target, so a future cut or refactor that severs the import fails HERE
-  // instead of surfacing as a silent all-survivors nightly.
-  const group = MUTATION_GROUPS.find((entry) => entry.name === "inbox-authorization");
-  const target = "dist/operator-loop/inbox/capability.js";
-  assert.ok(group.nightlyTests?.length, "inbox-authorization must declare its nightly oracle");
-  for (const entry of group.nightlyTests) {
-    const source = readFileSync(path.join(ROOT, entry), "utf8");
+  // construction. Pin the coupling for EVERY calibrated floor: some nightly oracle file must
+  // genuinely import each calibrated target, so a future cut or refactor that severs the
+  // import fails HERE instead of surfacing as a silent all-survivors nightly. Match the actual
+  // import statement (quoted specifier after `from`/`import(`/`require(`) — a plain
+  // substring check is satisfiable by a comment that merely mentions the path.
+  for (const group of MUTATION_GROUPS) {
+    const targets = Object.entries(group.breakThresholdByTarget ?? {})
+      .filter(([, threshold]) => threshold > 0)
+      .map(([target]) => target);
+    if (!targets.length) continue;
     assert.ok(
-      source.includes(target),
-      `${entry} must import ${target} — an oracle that does not load the mutate target cannot kill any mutant (the AIO-994 defect)`
+      group.nightlyTests?.length,
+      `${group.name}: a calibrated floor needs a declared nightly oracle (nightlyTests)`
     );
+    const sources = group.nightlyTests.map((entry) => readFileSync(path.join(ROOT, entry), "utf8"));
+    for (const target of targets) {
+      const escaped = target.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const importStatement = new RegExp(
+        String.raw`(?:from\s+|import\s*\(\s*|require\s*\(\s*)["'][^"']*${escaped}["']`
+      );
+      assert.ok(
+        sources.some((source) => importStatement.test(source)),
+        `${group.name}: no nightlyTests file contains a real import of ${target} — an oracle that does not load the mutate target cannot kill any mutant (the AIO-994 defect)`
+      );
+    }
   }
 });
 
@@ -348,6 +361,22 @@ test("a calibrated target always gets its own sole-denominator campaign (shotgun
   assert.equal(
     configFor(group, calibrated.mutate, false, calibrated.label).jsonReporter.fileName,
     `reports/mutation/${calibrated.label}.json`
+  );
+});
+
+test("splitCampaigns fails loudly on duplicate labels from same-basename calibrated targets", () => {
+  // Labels name .stryker-tmp/<label>.conf.json and reports/mutation/<label>.json;
+  // a silent collision would clobber one campaign's config and report with the other's.
+  const group = {
+    name: "example",
+    breakThresholdByTarget: {
+      "dist/a/capability.js": 90,
+      "dist/b/capability.js": 85,
+    },
+  };
+  assert.throws(
+    () => splitCampaigns(group, ["dist/a/capability.js", "dist/b/capability.js"]),
+    /duplicate campaign labels/
   );
 });
 

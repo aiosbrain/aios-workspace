@@ -29,8 +29,12 @@ never refreshes `dist/` and masks itself).
   mandatory flip stays blocked on two preconditions, and both must hold (AIO-534): (1) the
   **soak streak** — ten consecutive complete scheduled nightlies of `mutation.yml` within the
   workflow budget, spanning at least seven days — machine-checked by
-  `node scripts/mutation-soak-streak.mjs` (exit 0 when met, `--json` for automation; only
-  `schedule`-event runs count); and (2) the per-target floor enforcement (the sole-denominator
+  `node scripts/mutation-soak-streak.mjs` (exit 0 when met, `--json` for automation). The check
+  counts per-JOB conclusions, not run conclusions: `mutation.yml` documents `bugbot-security`
+  as a deliberately red leg until AIO-554, so the run-level conclusion is failure every night
+  by construction; a night is complete when every governed matrix leg succeeds. Only
+  `schedule`-event runs count, and a gap of more than 48h between adjacent nights breaks the
+  streak (a disabled or auto-suspended schedule is not soak evidence); and (2) the per-target floor enforcement (the sole-denominator
   campaign split, see the mutation policy below) holding over that same streak. Streak anchor:
   the clock restarts at **2026-08-20**, when the AIO-994 oracle restoration returned the
   nightly to a killing state after a week red at 0.00; reassess or file a follow-up if the

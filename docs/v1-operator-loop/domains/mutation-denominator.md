@@ -305,8 +305,15 @@ asserted.
 - `node scripts/run-mutation.mjs --nightly --group inbox-authorization --list` shows exactly
   `dist/operator-loop/inbox/capability.js`, and the generated
   `.stryker-tmp/inbox-authorization.conf.json` shows `thresholds.break: 90` and a kill command
-  containing only `gui/server/runtime-adapters/inbox-capability.test.mjs` — the calibrated floor now
-  enforcing against the unit's own oracle (after the re-measurement check above).
+  containing only the unit's own oracle. (Revised for AIO-612/AIO-994/AIO-534: the gui-owned
+  oracle this bullet originally named left the repo with the GUI cut; the oracle is now the
+  in-repo `test/operator-loop/inbox-capability.test.mjs`, which imports the compiled mutate
+  target directly. And since the AIO-534 sole-denominator split, a calibrated target selected
+  ALONGSIDE siblings in a changed-code run gets its own campaign labelled
+  `inbox-authorization--capability` — in that mixed case, `break: 90` lives in
+  `.stryker-tmp/inbox-authorization--capability.conf.json` while the plain group-named config is
+  the advisory sibling campaign. In the nightly sole-target case the label stays the plain group
+  name, as this bullet describes.)
 - One nightly run produces a `mutation-report-<group>` artifact for **every leg that completes** —
   post-AIO-540 (rev 2.1): five (`access-governance`, `inbox-authorization`, `update-safety`,
   `runtime-capabilities`, `client-auth-permissions`). A timed-out leg writes no JSON report (the
