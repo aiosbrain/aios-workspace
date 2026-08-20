@@ -39,7 +39,7 @@ PATTERNS=(
   "Generic Secret|['\"]?secret['\"]?\s*[:=]\s*['\"][A-Za-z0-9_\-]{20,}['\"]"
   "Generic Token|['\"]?token['\"]?\s*[:=]\s*['\"][A-Za-z0-9_\-]{20,}['\"]"
   "Private Key Header|-----BEGIN (RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----"
-  "GitHub Token|gh[ps]_[A-Za-z0-9_]{36,}"
+  "GitHub Token|gh[pousr]_[A-Za-z0-9_]{36,}"
   "Slack Token|xox[bporas]-[A-Za-z0-9-]+"
   "Toggl API Token|[0-9a-f]{32}"
   # Userinfo tokens are anchored: `user`/`pass` contain no `/`, `@`, whitespace, or quote, so the
@@ -262,6 +262,19 @@ for entry in "${PATTERNS[@]}"; do
       numbered_line="${hit#*:}"
       line_number="${numbered_line%%:*}"
       matched_line="${numbered_line#*:}"
+      # AIO-952: explicit fixture declaration. A line carrying the literal marker
+      # "aios-secret-fixture:" declares its secret-shaped content a deliberate test
+      # fixture — the reviewable alternative to renaming a binding (the PR #575
+      # bypass) when the value has to stay realistic and marker-free. The marker
+      # lives OUTSIDE the value (a trailing comment), so it composes with the
+      # AIO-965 token sanitizer instead of colliding with it: values containing
+      # SENTINEL/EXAMPLE/FAKE are already stripped; realistic values get this line
+      # marker instead. Line-scoped by construction — it silences only the line it
+      # is written on, and adding it to a line holding a REAL credential is the
+      # same explicit, diff-visible act as editing .aios-secretignore.
+      case "$matched_line" in
+        *aios-secret-fixture:*) continue ;;
+      esac
       sanitized_line=$(strip_known_non_secrets "$label" "$matched_line" "$match_file")
       if ! printf '%s\n' "$sanitized_line" | grep -qiE -e "$effective_pattern"; then
         continue
