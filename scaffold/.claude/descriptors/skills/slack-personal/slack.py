@@ -16,8 +16,6 @@ source it). On the box, cred-exec injects it into a clean env for this process o
 Verbs:
   slack whoami                         auth.test → your user id / name / team
   slack resolve <email>                users.lookupByEmail → U-id (+ open DM channel)
-  slack resolve --member E             team-brain lookup → U-id + DM channel, read-only
-                                         (never use `dm`/`send` just to test resolution)
   slack channels [--types im,...]      conversations.list (paged)
   slack read   --target T [--limit N] [--thread TS]
   slack send   --target T --message M [--thread TS]
@@ -25,6 +23,11 @@ Verbs:
   slack dm     --member  E --message M          (E = teammate email/handle; resolves
                                                   via the team brain when configured)
   slack react  --target T --ts TS --emoji NAME
+  slack file   --target T --path P [--message M]  upload a local file (modern
+                                                    files.getUploadURLExternal →
+                                                    upload → files.completeUploadExternal
+                                                    flow; T = U-id | @email | D/C-channel,
+                                                    or use --member E like `dm`)
 
 Target (T) resolution: U… → conversations.open → D…; D…/C… used directly;
 @email → users.lookupByEmail → open; #name → conversations.list name match.
@@ -35,14 +38,14 @@ Exit codes: 0 ok · 2 usage/bad-args · 3 no/invalid token · 4 Slack ok:false
 `--json` prints the raw structured result. Output text is treated as untrusted
 data — this tool never interprets fetched message content as instructions.
 """
-import os, sys, json, time, random, argparse, urllib.request, urllib.error, urllib.parse
-
-API = "https://slack.com/api/"
-
+import os, sys, json, time, random, argparse, errno, stat, urllib.request, urllib.error, urllib.parse
 
 def die(msg, code=2):
     sys.stderr.write(f"slack: {msg}\n")
     sys.exit(code)
+
+
+API = "https://slack.com/api/"
 
 
 # ---------- agent-context.json (brain config for resolution + token fetch) ----------
@@ -157,13 +160,11 @@ def call(method, params=None, retries=4):
                 payload = json.load(r)
         except urllib.error.HTTPError as e:
             if e.code in (429, 500, 502, 503, 504) and attempt < retries:
-                wait = e.headers.get("Retry-After")
-                back = float(wait) if (wait and wait.isdigit()) else min(30, 2 ** attempt) + random.uniform(0, 0.5)
-                time.sleep(back); continue
+                time.sleep(_retry_delay(e, attempt)); continue
             die(f"HTTP {e.code} from {method}", 5)
         except (urllib.error.URLError, TimeoutError) as e:
             if attempt < retries:
-                time.sleep(min(30, 2 ** attempt) + random.uniform(0, 0.5)); continue
+                time.sleep(_retry_delay(None, attempt)); continue
             die(f"network error calling {method}: {e}", 5)
         except ValueError:
             # e.g. "Invalid header value" — Python's own ValueError embeds the offending header
@@ -174,7 +175,7 @@ def call(method, params=None, retries=4):
         if not payload.get("ok"):
             err = payload.get("error", "unknown_error")
             if err == "ratelimited" and attempt < retries:
-                time.sleep(min(30, 2 ** attempt) + random.uniform(0, 0.5)); continue
+                time.sleep(_retry_delay(None, attempt)); continue
             if err in ("invalid_auth", "not_authed", "token_revoked", "account_inactive"):
                 die(f"Slack auth failed ({err}) — check SLACK_USER_TOKEN.", 3)
             die(f"Slack API error on {method}: {err}", 4)
@@ -339,6 +340,390 @@ def cmd_dm(a):
           else f"sent → {r.get('channel')} @ {r.get('ts')}")
 
 
+def _assert_uploadable_url(url):
+    """Refuse an upload URL that is not https (or http on loopback, for tests).
+
+    This POST carries the FILE CONTENTS, so wherever this URL points is where the file goes.
+    urlopen honours file:, ftp: and anything else urllib has a handler for, and the URL is not
+    ours — it arrives in a Slack API response. A tampered or spoofed response naming
+    `file:///…` or an attacker's host turns "upload this to Slack" into "write/send this
+    somewhere else", with no prompt and no log line, since the URL is deliberately never
+    printed.
+
+    https is the only thing Slack actually returns. http is permitted solely for loopback, so
+    the credential-free mock suite can exercise the real code path — a mock cannot leave the
+    machine.
+    """
+    parsed = urllib.parse.urlparse(url or "")
+    host = parsed.hostname or ""
+    if parsed.scheme == "https":
+        return
+    if parsed.scheme == "http" and host in ("127.0.0.1", "localhost", "::1"):
+        return
+    # Names the SCHEME, never the URL: the URL is single-use and credential-bearing.
+    # Single quotes INSIDE the f-string: nesting the same quote type is PEP 701 (Python 3.12+)
+    # and is a SyntaxError on 3.9/3.11 — which is what `/usr/bin/python3` is on macOS. The CLI
+    # promises plain `python3`, so it has to parse there.
+    scheme = parsed.scheme or "none"
+    die(f"refusing to upload to a non-https URL (scheme '{scheme}')", 5)
+
+
+def _upload_bytes(upload_url, data):
+    """PUT/POST the raw file bytes to the short-lived URL from files.getUploadURLExternal.
+
+    RAW BYTES, NOT MULTIPART. Slack accepts either, and raw is the safer of the two here:
+    the multipart form requires hand-building a `Content-Disposition` header containing the
+    filename, and a filename is attacker-influenced data in exactly the places this CLI gets
+    used (a downloaded attachment, a generated report, anything with a quote or a newline in
+    its name). Interpolating it into a header is header injection waiting to happen, and there
+    is no escaping rule that makes it safe. Raw bytes carry no filename at all — the name is
+    passed as a JSON parameter to getUploadURLExternal/completeUploadExternal, where it is data.
+
+    This URL is NOT a Slack Web API method — no Bearer token, no ok:false envelope — so it does
+    not go through call(); failures are network/HTTP only (exit 5). The URL is single-use and
+    credential-bearing: it is never logged, not even on error.
+    """
+    _assert_uploadable_url(upload_url)
+    # Content-Length is set by urllib from `data`; setting it here too sends it twice, which
+    # some servers reject and others hang on.
+    headers = {"Content-Type": "application/octet-stream"}
+    # Request() and urlopen() raise ValueError/InvalidURL for control characters, a bad port or
+    # a malformed path — and the exception text can quote the offending URL, which is signed and
+    # single-use. An uncaught one would print it. Construct once, inside a handler that never
+    # interpolates the exception or the URL.
+    try:
+        req = urllib.request.Request(upload_url, data=data, headers=headers, method="POST")
+    except ValueError:
+        die("malformed upload URL from Slack (value intentionally not shown)", 5)
+
+    for attempt in range(4):
+        try:
+            # nosec B310 — the scheme/host are validated by _assert_uploadable_url() above,
+            # which runs before this loop and exits non-zero on anything that is not https (or
+            # loopback http for the mock suite). B310 is an AUDIT check: it flags the call so a
+            # human confirms the URL cannot be file:/ftp:/custom, and that confirmation is the
+            # guard, in code, with tests. Bandit cannot see across the function boundary.
+            with urllib.request.urlopen(req, timeout=120) as r:  # nosec B310
+                r.read()
+            return
+        except urllib.error.HTTPError as e:
+            if e.code in (429, 500, 502, 503, 504) and attempt < 3:
+                time.sleep(_retry_delay(e, attempt))
+                continue
+            # Deliberately does NOT include the URL or the response body: the URL is a
+            # credential and the body is Slack's, not ours, to echo.
+            die(f"HTTP {e.code} uploading file bytes to Slack's upload URL", 5)
+        except (urllib.error.URLError, TimeoutError) as e:
+            if attempt < 3:
+                time.sleep(_retry_delay(None, attempt))
+                continue
+            die(f"network error uploading file bytes: {e}", 5)
+        except ValueError:
+            # Same reasoning as the Request() guard: never let urllib's own message, which can
+            # embed the signed URL, reach stderr.
+            die("upload rejected as a malformed URL (value intentionally not shown)", 5)
+    die("exhausted retries uploading file bytes", 5)
+
+
+def _retry_delay(err, attempt):
+    """Honour Slack's Retry-After when it sends one; otherwise exponential backoff + jitter.
+
+    Slack states a rate limit precisely, and guessing longer wastes time while guessing shorter
+    earns another 429 — so a well-formed header always wins. `isdigit()` rather than
+    try/float/except: Retry-After is defined as whole seconds, and a malformed value should fall
+    through to backoff rather than be silently swallowed by a bare `pass`.
+
+    Every retry path in this file routes through here — the Web API and the upload URL cannot
+    drift apart on backoff behaviour, and there is exactly one randomness call site to reason
+    about. That site uses SystemRandom: jitter does not need cryptographic randomness, but the
+    default Mersenne Twister earns a static-analysis finding on every use, and one seeded-RNG
+    exemption to argue about is one too many for a decorrelation nudge.
+    """
+    headers = getattr(err, "headers", None) if err is not None else None
+    raw = headers.get("Retry-After") if headers else None
+    if raw and str(raw).strip().isdigit():
+        return max(0.0, min(60.0, float(str(raw).strip())))
+    return min(30, 2 ** attempt) + random.SystemRandom().uniform(0, 0.5)
+
+
+# Deliberate, documented cap. Slack itself allows far more, but this CLI buffers the whole file
+# in memory to compute Content-Length, so "what Slack allows" is the wrong limit — an agent
+# pointed at a multi-GB file should get a clear refusal, not an OOM. Raise it knowingly if a real
+# workflow needs more; do not raise it to match Slack's own maximum.
+MAX_UPLOAD_BYTES = 25 * 1024 * 1024
+
+
+# O_NONBLOCK matters as much as O_NOFOLLOW: opening a FIFO read-only WITHOUT it blocks until a
+# writer appears, so the process hangs before any check can run. (Verified: a mkfifo target hung
+# the CLI indefinitely.)
+LEAF_FLAGS = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+DIR_FLAGS = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+
+
+def _die_open(err, shown):
+    if err.errno in (errno.ELOOP, errno.EMLINK):
+        die(f"refusing to upload through a symlink: {shown} (copy the file instead)", 2)
+    if err.errno == errno.ENOENT:
+        die(f"no such file: {shown}", 2)
+    if err.errno in (errno.ENOTDIR, errno.ENXIO):
+        die(f"not a regular file: {shown}", 2)
+    die(f"cannot open {shown}: {err.strerror}", 2)
+
+
+# Sentinel: the caller spelled a `..`, which is refused outright rather than resolved.
+DOTDOT = object()
+
+
+def _realpath_or_none(p):
+    """realpath(p), or None when it cannot be resolved. A failure means "this prefix is not the
+    workspace root", which is exactly what None says — no silent skip needed."""
+    try:
+        return os.path.realpath(p)
+    except OSError:
+        return None
+
+
+def _is_symlink_at(name, dir_fd):
+    """True when `name` under `dir_fd` is a symlink. Used ONLY to word an error message, so a
+    failure to tell resolves to False: the refusal has already happened either way."""
+    try:
+        return stat.S_ISLNK(os.lstat(name, dir_fd=dir_fd).st_mode)
+    except OSError:
+        return False
+
+
+def _components_under_root(path, root):
+    """Split `path` into the literal components that sit BELOW `root`, or None if it escapes.
+
+    ONLY THE ANCHOR IS RESOLVED, NEVER THE TAIL, and that asymmetry is the entire point.
+
+    Resolving the anchor is required because `getcwd()` is canonical (`/private/var/...`) while
+    a caller may legitimately spell the same directory `/var/...`. A lexical comparison rejects
+    an in-workspace file given its absolute path — a bug this had, caught by testing three
+    spellings of one file.
+
+    Keeping the TAIL literal is equally required. An earlier version resolved the whole path and
+    walked the RESULT, which meant O_NOFOLLOW never saw a symlink that resolved inside the
+    workspace: a planted `report.txt -> .env` was silently replaced by `.env` before the walk
+    began, and uploaded. Resolving the tail destroys the very evidence the walk exists to check.
+
+    So: find the deepest prefix of the caller's path whose realpath IS the root, and return the
+    remaining components exactly as the caller spelled them.
+    """
+    raw = os.fspath(path)
+    parts = [c for c in raw.split(os.sep) if c not in ("", ".")]
+
+    # REJECT `..` ON THE CALLER-SPELLED STRING, BEFORE ANY NORMALISATION.
+    #
+    # os.path.abspath() calls normpath(), which collapses `..` LEXICALLY — so checking for `..`
+    # after abspath checks a string that can no longer contain one. `reports/link/../../.env`
+    # normalises to `<cwd>/.env`: the `..` disappears AND so does the symlinked `link`, so the
+    # descriptor walk never sees either and happily uploads `.env`. Verified exploitable against
+    # the previous build. Lexical `..` collapsing is wrong whenever a component is a symlink,
+    # which is precisely the case this whole function exists for.
+    if ".." in parts:
+        return DOTDOT
+
+    if not os.path.isabs(raw):
+        # Relative paths are already relative to the workspace root; the walk enforces the rest.
+        return parts
+
+    # Absolute: find the SHALLOWEST prefix whose realpath IS the root, joining the caller's own
+    # components rather than a normalised form.
+    #
+    # SHALLOWEST, NOT DEEPEST, and the difference is a secret disclosure. The anchor is the part
+    # we resolve and therefore stop checking; everything below it gets descriptor-walked. Taking
+    # the deepest match maximises what is silently absorbed into the anchor — so with
+    # `reports -> .` (a symlink to the workspace itself), `/ws/reports/.env` matched at
+    # `/ws/reports`, returned just [".env"], and O_NOFOLLOW never saw `reports` at all.
+    # Verified: the workspace .env uploaded. Shallowest keeps every caller-spelled component in
+    # the walk, which is the only place symlinks are actually caught.
+    for i in range(1, len(parts) + 1):
+        prefix = os.sep + os.sep.join(parts[:i])
+        if _realpath_or_none(prefix) == root:
+            return parts[i:]
+    return None
+
+
+def _open_contained(path, allow_outside=False):
+    """Open `path` for reading, guaranteeing it lives inside the working directory.
+
+    CHECKING AND OPENING ARE ONE OPERATION HERE, deliberately. An earlier version resolved the
+    path, compared it to the workspace, then opened the ORIGINAL path — two lookups, so an
+    attacker able to write an intermediate directory swaps it for a symlink in between and the
+    descriptor lands outside the workspace regardless of what the check concluded. Verifying a
+    path and opening a path are not the same act unless a descriptor carries the guarantee
+    forward.
+
+    The workspace root is opened ONCE, and every caller-spelled component below it is opened
+    relative to the previous descriptor with O_NOFOLLOW. Nothing can be swapped out from under a
+    descriptor already held, and a symlink anywhere below the root — whether it points inside
+    the workspace or outside it — fails at the step that opens it.
+
+    Pinning the root by realpath is what makes the walk viable at all: a bare walk from `/`
+    refuses every path under a temp directory on macOS, where /var, /tmp and /etc are themselves
+    symlinks.
+
+    `..` is refused rather than normalised: collapsing `a/../b` lexically is wrong precisely when
+    `a` is a symlink.
+
+    FAILS CLOSED. If the platform cannot do openat or O_NOFOLLOW, containment cannot be enforced,
+    so the upload is refused rather than quietly downgraded — a silent downgrade is how a control
+    becomes decorative. `--allow-outside-workspace` remains the one way to opt out, and it has to
+    be typed.
+    """
+    if allow_outside:
+        try:
+            return os.open(path, LEAF_FLAGS)
+        except OSError as e:
+            _die_open(e, path)
+
+    if os.open not in getattr(os, "supports_dir_fd", set()) or not getattr(os, "O_NOFOLLOW", 0):
+        die(
+            "cannot enforce workspace containment on this platform (no openat/O_NOFOLLOW), so "
+            "this upload is refused rather than silently unprotected. Pass "
+            "--allow-outside-workspace to upload anyway, knowingly.",
+            2,
+        )
+
+    root = os.getcwd()  # already canonical: getcwd() resolves symlinks
+    parts = _components_under_root(path, root)
+    if parts is DOTDOT:
+        die(
+            f"refusing a path containing '..': {path}\n"
+            "Pass the direct path to the file (`..` cannot be checked without resolving it, "
+            "and resolving it is what lets a symlink hide).",
+            2,
+        )
+    if parts is None:
+        die(
+            "refusing to upload a file that resolves outside this workspace:\n"
+            f"  named:     {path}\n"
+            f"  resolves:  {os.path.realpath(os.path.abspath(path))}\n"
+            f"  workspace: {root}\n"
+            "Pass --allow-outside-workspace if that is deliberate.",
+            2,
+        )
+    if not parts:
+        die(f"not a regular file: {path}", 2)
+
+    # `.` NOT `root`. os.getcwd() returns a PATHNAME, and re-opening a pathname resolves it
+    # again — if the workspace directory is renamed or replaced in that window, the descriptor
+    # lands somewhere else entirely and the whole walk proceeds from the wrong place. `.` is a
+    # reference to the directory this process is already in; nothing can substitute it.
+    #
+    # `root` stays as the string used for ADMISSION (which prefix is the workspace); the
+    # descriptor is what provides SAFETY. Same split as everywhere else in this function.
+    dir_fd = os.open(".", os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+    try:
+        for comp in parts[:-1]:
+            try:
+                nxt = os.open(comp, DIR_FLAGS, dir_fd=dir_fd)
+            except OSError as e:
+                # macOS reports ENOTDIR (not ELOOP) for O_NOFOLLOW|O_DIRECTORY on a symlink, so
+                # the generic mapping would say "not a regular file" for a symlinked directory —
+                # true, useless, and actively misleading on a security refusal. lstat is used for
+                # the MESSAGE only; the refusal already happened.
+                if e.errno == errno.ENOTDIR and _is_symlink_at(comp, dir_fd):
+                    die(
+                        f"refusing to upload through a symlinked directory: {path} "
+                        f"(component '{comp}' is a symlink)",
+                        2,
+                    )
+                _die_open(e, path)
+            os.close(dir_fd)
+            dir_fd = nxt
+        try:
+            return os.open(parts[-1], LEAF_FLAGS, dir_fd=dir_fd)
+        except OSError as e:
+            _die_open(e, path)
+    finally:
+        os.close(dir_fd)
+
+
+def _read_upload_candidate(path, allow_outside=False):
+    """Open, validate and read a file on ONE descriptor. Returns (bytes, filename).
+
+    Every check here is against the OPENED FILE, never the path, because this CLI's whole job
+    is to put bytes into a channel other people can read. Checking a path and then opening it
+    is two different files whenever anything can write the directory between the two calls:
+    stat a harmless 1KB note, upload whatever replaced it. Same reason the size cap is enforced
+    on the bytes actually read rather than on a previously-stat'd size.
+
+    O_NOFOLLOW refuses a symlinked final component outright. That is stricter than "resolve it
+    and check the target" on purpose — a resolved target is still only true until read() — and
+    it costs a real user one `cp` while removing "upload this innocuous-looking link" entirely.
+
+    O_NOFOLLOW guards only the FINAL component, which is not the interesting attack:
+    `reports/ -> ~/.ssh` plus an upload of `reports/id_rsa` sails straight past it. Containment
+    closes that, and `_open_contained()` does the containment and the open as ONE descriptor
+    walk so there is no window between deciding a path is safe and opening it.
+    """
+    fd = _open_contained(path, allow_outside=allow_outside)
+
+    # Type-check the RAW descriptor before handing it to fdopen: fdopen on a directory raises
+    # IsADirectoryError, which would surface as an unhandled internal error instead of a usage
+    # message. fstat cannot be fooled by the path changing underneath us.
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            os.close(fd)
+            die(f"not a regular file: {path}", 2)
+    except OSError as e:
+        os.close(fd)
+        die(f"cannot stat {path}: {e.strerror}", 2)
+
+    with os.fdopen(fd, "rb") as f:
+        # Read one byte past the cap so an oversized file is detected from the bytes themselves,
+        # not from a size that was true a moment ago.
+        data = f.read(MAX_UPLOAD_BYTES + 1)
+
+    if not data:
+        # completeUploadExternal rejects a zero-length upload with an opaque error.
+        die(f"refusing to upload an empty file: {path}", 2)
+    if len(data) > MAX_UPLOAD_BYTES:
+        die(
+            f"file exceeds this CLI's {MAX_UPLOAD_BYTES}-byte upload cap ({path}). "
+            f"The whole file is buffered in memory to set Content-Length.",
+            2,
+        )
+    return data, os.path.basename(path)
+
+
+def cmd_file(a):
+    # Read and validate FIRST: a refusal must not have spoken to Slack at all, and resolving a
+    # channel for a file we are about to reject is a wasted API call with a side effect (open_dm
+    # creates the DM conversation).
+    data, filename = _read_upload_candidate(a.path, allow_outside=a.allow_outside_workspace)
+
+    if a.member:
+        uid = brain_resolve_slack(a.member)
+        if uid:
+            chan = open_dm(uid)
+        elif "@" in a.member:
+            chan = resolve_target(a.member)
+        else:
+            die(f"could not resolve teammate '{a.member}' (no brain match and not an email)", 4)
+    else:
+        chan = resolve_target(a.target)
+
+    got = call("files.getUploadURLExternal", {"filename": filename, "length": len(data)})
+    upload_url, file_id = got.get("upload_url"), got.get("file_id")
+    if not (upload_url and file_id):
+        die("files.getUploadURLExternal did not return upload_url/file_id", 4)
+
+    _upload_bytes(upload_url, data)
+
+    complete = call("files.completeUploadExternal", {
+        "files": json.dumps([{"id": file_id, "title": filename}]),
+        "channel_id": chan,
+        "initial_comment": a.message,
+    })
+    files_out = complete.get("files", [])
+    print(json.dumps({"ok": True, "channel": chan, "files": files_out}) if a.json
+          else f"uploaded → {chan}: {filename} ({files_out[0].get('id') if files_out else file_id})")
+
+
 def cmd_react(a):
     chan = resolve_target(a.target)
     call("reactions.add", {"channel": chan, "timestamp": a.ts, "name": a.emoji.strip(":")})
@@ -416,6 +801,16 @@ def main():
     g.add_argument("--message")
     g.add_argument("--message-stdin", action="store_true", help="read the complete message from stdin")
     p.add_argument("--thread")
+    p = sub.add_parser("file", parents=[common])
+    g = p.add_mutually_exclusive_group(required=True)
+    g.add_argument("--target"); g.add_argument("--member")
+    p.add_argument("--path", required=True, help="local file path to upload")
+    p.add_argument(
+        "--allow-outside-workspace",
+        action="store_true",
+        help="permit a file that resolves outside the cwd (e.g. a generated file in a temp dir)",
+    )
+    p.add_argument("--message", help="initial_comment shown with the upload")
     p = sub.add_parser("react", parents=[common])
     p.add_argument("--target", required=True); p.add_argument("--ts", required=True); p.add_argument("--emoji", required=True)
     p = sub.add_parser("connect", parents=[common])
@@ -427,6 +822,7 @@ def main():
     a = ap.parse_args()
     {"whoami": cmd_whoami, "resolve": cmd_resolve, "channels": cmd_channels,
      "read": cmd_read, "send": cmd_send, "dm": cmd_dm, "react": cmd_react,
+     "file": cmd_file,
      "connect": cmd_connect, "status": cmd_status, "disconnect": cmd_disconnect}[a.cmd](a)
 
 

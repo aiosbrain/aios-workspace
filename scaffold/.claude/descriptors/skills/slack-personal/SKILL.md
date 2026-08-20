@@ -47,7 +47,7 @@ slack status                     # check connection   ·   slack disconnect   to
 Get a user token: api.slack.com/apps → create an app → OAuth & Permissions → add User
 Token Scopes (`chat:write`, `im:write`, `im:read`, `im:history`, `channels:read`,
 `channels:history`, `groups:read`, `groups:history`, `mpim:read`, `mpim:history`,
-`users:read`, `users:read.email`, `reactions:write`) → Install → copy the **User** OAuth
+`users:read`, `users:read.email`, `reactions:write`, `files:write`) → Install → copy the **User** OAuth
 Token. The `*:history`/`*:read` scopes are required for `slack read` — without them every
 read call fails with `missing_scope` even though the token otherwise authenticates fine.
 (A one-click `aios connect slack` OAuth flow is coming — it removes the manual app step.)
@@ -55,8 +55,25 @@ read call fails with `missing_scope` even though the token otherwise authenticat
 ## Invocation
 
 On a member workstation the CLI is at `.claude/skills/slack-personal/slack.py` — run it
-with `python3` (or symlink it onto your PATH as `slack`). On the Hermes box it's `slack`
-on PATH. Same tool either way.
+with `python3` (or use `slack` on PATH, which the toolkit installs). On the Hermes box it's
+`slack` on PATH.
+
+**They are the same tool only once a deployment has synced.** A deployment that has not pulled
+since the descriptor changed is running the older command surface — which is exactly how the
+copies drifted apart before. Check `slack --help` against the verb list below rather than
+assuming; `slack.py.sha256` is the authority for whether a copy is current.
+
+> **One source, many deployments.** The canonical copy is the toolkit descriptor
+> (`scaffold/.claude/descriptors/skills/slack-personal/slack.py`), pinned by `slack.py.sha256`.
+> A workspace's `.claude/skills/slack-personal/` copy and `hermes-aluna/bin/slack.py` are
+> **deployments** of it. Change it upstream, re-pin, then propagate — never the reverse.
+> The copies once drifted in *opposite* directions (one gained `file`, the other
+> `resolve --member`), so no single copy was correct and agents fell back to whatever answered.
+>
+> **`hermes-aluna/bin/slack.py` currently lags this descriptor** and does not yet have `file`.
+> It syncs through `hermes-aluna/scripts/sync-skills.sh` and needs a Fly deploy, which is a
+> separate, deliberate act — see AIO-1019. Do not assume Hermes has a verb just because this
+> document lists it.
 
 ```bash
 slack whoami                                   # confirm your token + identity
@@ -69,7 +86,32 @@ slack dm     --member <email|handle>  --message "…"   # resolves the teammate 
 # For multiline messages, pipe exact text through stdin:
 printf '%s\n' 'line one' '' 'line three' | slack dm --member <email|handle> --message-stdin
 slack react  --target <D|C> --ts <ts> --emoji white_check_mark
+slack file   --target <U|D|C|@email> --path <local-file> [--message "…"] [--allow-outside-workspace]
+slack file   --member <email|handle>  --path <local-file> [--message "…"] [--allow-outside-workspace]
 ```
+
+`slack file` uploads a local file through Slack's current external-upload flow
+(`files.getUploadURLExternal` → POST the raw bytes → `files.completeUploadExternal`, with
+`--message` as the `initial_comment`). It does **not** use the sunset `files.upload`. Requires the
+**`files:write`** scope — adding a scope does not retroactively widen an already-issued token, so a
+token predating it must be reinstalled and reconnected.
+
+Bytes go up as `application/octet-stream`, not multipart. The filename travels as a JSON
+*parameter*, never inside a `Content-Disposition` header, so a filename containing quotes or CRLF
+cannot inject headers or corrupt the body. The whole file is buffered to set `Content-Length`, so
+uploads are capped at **25 MiB** — well under Slack's own limit, deliberately: the cap exists to
+turn "agent points at a 3 GB file" into a clear refusal instead of an OOM.
+
+**The file must resolve inside your working directory.** This is what stops a planted symlink
+turning an innocuous-looking upload into a secret disclosure: `reports/ -> ~/.ssh` followed by
+`slack file --path reports/id_rsa` posts your private key into a channel. Refusing a symlinked
+final component is not enough — the redirect is usually a *directory* — so the check is on where
+the bytes actually live after resolution, and the refusal prints the resolved path so you can see
+what happened.
+
+Uploading a generated file from a temp directory is a normal workflow, so
+`--allow-outside-workspace` exists for it. It has to be typed, which is the point: the redirect
+becomes a decision you made rather than one somebody made for you.
 
 When invoking from a shell, do not pass JSON-escaped multiline text as `--message`:
 `\\n` is posted literally. Use `--message-stdin` so newlines reach Slack unchanged.
