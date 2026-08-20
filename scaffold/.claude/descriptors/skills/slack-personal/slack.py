@@ -361,7 +361,11 @@ def _assert_uploadable_url(url):
     if parsed.scheme == "http" and host in ("127.0.0.1", "localhost", "::1"):
         return
     # Names the SCHEME, never the URL: the URL is single-use and credential-bearing.
-    die(f"refusing to upload to a non-https URL (scheme '{parsed.scheme or "none"}')", 5)
+    # Single quotes INSIDE the f-string: nesting the same quote type is PEP 701 (Python 3.12+)
+    # and is a SyntaxError on 3.9/3.11 — which is what `/usr/bin/python3` is on macOS. The CLI
+    # promises plain `python3`, so it has to parse there.
+    scheme = parsed.scheme or "none"
+    die(f"refusing to upload to a non-https URL (scheme '{scheme}')", 5)
 
 
 def _upload_bytes(upload_url, data):
@@ -383,8 +387,16 @@ def _upload_bytes(upload_url, data):
     # Content-Length is set by urllib from `data`; setting it here too sends it twice, which
     # some servers reject and others hang on.
     headers = {"Content-Type": "application/octet-stream"}
-    for attempt in range(4):
+    # Request() and urlopen() raise ValueError/InvalidURL for control characters, a bad port or
+    # a malformed path — and the exception text can quote the offending URL, which is signed and
+    # single-use. An uncaught one would print it. Construct once, inside a handler that never
+    # interpolates the exception or the URL.
+    try:
         req = urllib.request.Request(upload_url, data=data, headers=headers, method="POST")
+    except ValueError:
+        die("malformed upload URL from Slack (value intentionally not shown)", 5)
+
+    for attempt in range(4):
         try:
             # nosec B310 — the scheme/host are validated by _assert_uploadable_url() above,
             # which runs before this loop and exits non-zero on anything that is not https (or
@@ -406,6 +418,10 @@ def _upload_bytes(upload_url, data):
                 time.sleep(_retry_delay(None, attempt))
                 continue
             die(f"network error uploading file bytes: {e}", 5)
+        except ValueError:
+            # Same reasoning as the Request() guard: never let urllib's own message, which can
+            # embed the signed URL, reach stderr.
+            die("upload rejected as a malformed URL (value intentionally not shown)", 5)
     die("exhausted retries uploading file bytes", 5)
 
 

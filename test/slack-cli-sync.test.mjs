@@ -58,3 +58,33 @@ for (const verb of ["file", "resolve", "dm", "send", "read", "react", "channels"
 }
 
 console.log("slack-cli-sync: verb surface ok");
+
+// The CLI promises plain `python3`, and `/usr/bin/python3` is 3.9 on macOS. A 3.12-only
+// construct (PEP 701 lets an f-string reuse its own quote type) is a SyntaxError there — the
+// whole CLI fails to parse, every verb, before anything runs. It shipped past 18 green tests
+// because they all ran on the newest interpreter on the box, which is the only one that
+// accepted it. So compile it under the OLDEST python3 we can find, not the default one.
+const olderPythons = ["/usr/bin/python3", "python3.9", "python3.10", "python3.11"];
+let checkedOlder = null;
+for (const py of olderPythons) {
+  const probe = spawnSync(py, ["-c", "import sys; print(sys.version_info[:2])"], {
+    encoding: "utf8",
+  });
+  if (probe.status !== 0) continue;
+  const compiled = spawnSync(py, ["-m", "py_compile", slackPy], { encoding: "utf8" });
+  if (compiled.status !== 0) {
+    console.error(`slack-cli-sync: slack.py does not compile under ${py} ${probe.stdout.trim()}`);
+    console.error(`  ${(compiled.stderr || "").trim().split("\n").slice(-3).join("\n  ")}`);
+    console.error(
+      "  The CLI is invoked as plain `python3`; it must parse on the oldest one present."
+    );
+    process.exit(1);
+  }
+  checkedOlder = `${py} ${probe.stdout.trim()}`;
+  break;
+}
+console.log(
+  checkedOlder
+    ? `slack-cli-sync: parses under ${checkedOlder}`
+    : "slack-cli-sync: no older python3 found to cross-check (skipped)"
+);
