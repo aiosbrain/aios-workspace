@@ -79,7 +79,7 @@ test("scoped Linear wrapper decrypts LINEAR_API_KEY without WRONG_PRIVATE_KEY no
     const combined = `${result.stdout}\n${result.stderr}`;
     assert.equal(result.status, 0, result.stderr);
     assert.match(result.stdout, /What \/ why/);
-    assert.doesNotMatch(result.stderr, /WRONG_PRIVATE_KEY/);
+    assert.equal(result.stderr, "");
     assert.doesNotMatch(combined, new RegExp(LIN_SECRET));
     assert.doesNotMatch(combined, new RegExp(OAI_SECRET));
   } finally {
