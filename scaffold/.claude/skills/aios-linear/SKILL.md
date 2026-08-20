@@ -56,6 +56,7 @@ $LIN export-desc AIO-75 spec.md # exact UTF-8 description + SHA-256
 $LIN verify-desc AIO-75 spec.md # refetch + compare description (content, not bytes)
 $LIN template aios              # print issue scaffold
 $LIN create "My slice" --template aios --state Triage
+$LIN create "My slice" --project Ultraharden --priority high  # set both at creation, no follow-up calls
 $LIN set-desc AIO-75 spec.md [--force]  # replace description; force bypasses the table lint
 $LIN patch-desc AIO-75 patch.md [--force]  # SEARCH/REPLACE; force bypasses the table lint
 $LIN set-title AIO-75 "New title"
@@ -66,6 +67,9 @@ $LIN blocks AIO-73 AIO-75      # mark AIO-73 as blocking AIO-75
 $LIN related AIO-73 AIO-75     # mark AIO-73/AIO-75 as related (non-blocking cross-ref)
 $LIN remove-relation TEAM-123 TEAM-456 blocks  # remove only the directional TEAM-123 → TEAM-456 blocker
 $LIN remove-relation TEAM-123 TEAM-456 related # remove the pair's related relation (either direction)
+$LIN projects                  # list every project (name, state, url) — set-project is no longer a guess
+$LIN projects ultra            # filter that list by case-insensitive substring
+$LIN create-project "Ultraharden" [--desc file.md] [--team AIO]  # refuses an existing exact name
 $LIN set-project AIO-75 "V1.0 — Verified Operator Loop"  # move issue to a project (substring match)
 $LIN set-parent AIO-647 AIO-776 # re-parent an issue under another
 $LIN add-label AIO-75 unified-inbox   # add a team label without removing existing ones

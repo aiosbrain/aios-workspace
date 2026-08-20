@@ -69,7 +69,9 @@ import {
   parsePriority,
   printFullIssue,
   relatedIssues,
+  resolveProject,
 } from "./linear-core.mjs";
+import { cmdCreateProject, cmdProjects } from "./linear-projects.mjs";
 
 const argv = process.argv.slice(2);
 const cmd = argv[0];
@@ -358,26 +360,16 @@ if (cmd === "get") {
     process.exit(1);
   }
   const n = await findIssue(ident);
-  const pd = await gql(
-    `query($f:ProjectFilter){ projects(first:50, filter:$f){ nodes{ id name } } }`,
-    { f: { name: { containsIgnoreCase: projectName } } }
-  );
-  const projects = pd.projects.nodes;
-  if (projects.length === 0) {
-    console.error(`no project matching "${projectName}"`);
-    process.exit(1);
-  }
-  if (projects.length > 1) {
-    console.error(
-      `ambiguous project match "${projectName}": ${projects.map((p) => p.name).join(", ")}`
-    );
-    process.exit(1);
-  }
+  const project = await resolveProject(projectName);
   await gql(
     `mutation($id:String!,$pid:String!){ issueUpdate(id:$id, input:{ projectId:$pid }){ success } }`,
-    { id: n.id, pid: projects[0].id }
+    { id: n.id, pid: project.id }
   );
-  console.log(`${n.identifier} → project "${projects[0].name}"`);
+  console.log(`${n.identifier} → project "${project.name}"`);
+} else if (cmd === "projects") {
+  await cmdProjects(argv);
+} else if (cmd === "create-project") {
+  await cmdCreateProject(argv);
 } else if (cmd === "set-parent") {
   const ident = argv[1];
   const parentIdent = argv[2];
@@ -449,7 +441,8 @@ if (cmd === "get") {
   );
   console.log(`assigned ${n.identifier} → ${u.name}`);
 } else if (cmd === "create") {
-  const { title, description, labels, state, parent, assignee } = parseCreateArgs(argv.slice(1));
+  const { title, description, labels, state, parent, assignee, project, priority } =
+    parseCreateArgs(argv.slice(1));
   const teamId = await findTeamId(DEFAULT_TEAM_KEY);
   const st = await findTeamState(teamId, state);
   if (!st) {
@@ -475,6 +468,8 @@ if (cmd === "get") {
     const u = await findUser(DEFAULT_TEAM_KEY, assignee);
     input.assigneeId = u.id;
   }
+  if (project) input.projectId = (await resolveProject(project)).id;
+  if (priority !== null) input.priority = priority;
   const d = await gql(
     `mutation($input:IssueCreateInput!){ issueCreate(input:$input){ success issue{ identifier title url branchName } } }`,
     { input }
@@ -489,9 +484,11 @@ if (cmd === "get") {
       "set-state <IDENT> <name> | set-priority <IDENT> <priority> | comment <IDENT> <text> | " +
       "comments <IDENT> | list <TEAMKEY> | relations <IDENT> | blocks <BLOCKER> <BLOCKED> | " +
       "related <ISSUE_A> <ISSUE_B> | remove-relation <ISSUE_A> <ISSUE_B> <blocks|related> | " +
-      "set-project <IDENT> <project> | set-parent <IDENT> <PARENT_IDENT> | " +
+      "set-project <IDENT> <project> | projects [NAME] | " +
+      'create-project "<name>" [--desc <file>] [--team KEY] | ' +
+      "set-parent <IDENT> <PARENT_IDENT> | " +
       "add-label <IDENT> <LABEL> | template [aios] | " +
       'create "<title>" [--desc <file>] [--template aios] [--label <name>]... [--state Backlog] ' +
-      "[--parent <IDENT>] [--assignee <name-or-email>] | users <TEAMKEY> | assign <IDENT> <name-or-email>"
+      "[--parent <IDENT>] [--assignee <name-or-email>] [--project <name>] [--priority <level>] | users <TEAMKEY> | assign <IDENT> <name-or-email>"
   );
 }
