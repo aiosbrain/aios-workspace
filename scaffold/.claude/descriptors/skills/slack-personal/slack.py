@@ -419,6 +419,18 @@ def _read_upload_candidate(path):
     O_NOFOLLOW refuses a symlinked final component outright. That is stricter than "resolve it
     and check the target" on purpose — a resolved target is still only true until read() — and
     it costs a real user one `cp` while removing "upload this innocuous-looking link" entirely.
+
+    KNOWN, DELIBERATE LIMITATION: O_NOFOLLOW guards only the FINAL component. An attacker who
+    can plant a symlinked INTERMEDIATE directory inside a tree an agent will traverse
+    (`reports/ -> ~/.ssh`, then an upload of `reports/id_rsa`) still gets through. The correct
+    fix is a component-wise openat walk with O_NOFOLLOW at every step, or Linux openat2 with
+    RESOLVE_NO_SYMLINKS.
+
+    That was implemented and then REVERTED, on evidence: on macOS `/var`, `/tmp` and `/etc` are
+    themselves symlinks, so a portable walk refuses every path under a temp directory — which
+    is precisely where agents write the generated files they then upload. It traded a narrow
+    attack for a broad breakage. Tracked as follow-up rather than shipped half-working; the
+    residual risk is recorded here so it is a decision and not an oversight.
     """
     # O_NONBLOCK matters as much as O_NOFOLLOW here: opening a FIFO read-only WITHOUT it blocks
     # until a writer appears, so the process hangs before any check can run. With it, the open
