@@ -607,7 +607,14 @@ def _open_contained(path, allow_outside=False):
     if not parts:
         die(f"not a regular file: {path}", 2)
 
-    dir_fd = os.open(root, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+    # `.` NOT `root`. os.getcwd() returns a PATHNAME, and re-opening a pathname resolves it
+    # again — if the workspace directory is renamed or replaced in that window, the descriptor
+    # lands somewhere else entirely and the whole walk proceeds from the wrong place. `.` is a
+    # reference to the directory this process is already in; nothing can substitute it.
+    #
+    # `root` stays as the string used for ADMISSION (which prefix is the workspace); the
+    # descriptor is what provides SAFETY. Same split as everywhere else in this function.
+    dir_fd = os.open(".", os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
     try:
         for comp in parts[:-1]:
             try:
