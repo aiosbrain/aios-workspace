@@ -8,7 +8,7 @@
  */
 
 import { existsSync, readFileSync } from "node:fs";
-import { execFileSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseFlatYaml, stripQuotes } from "./internal/flat-yaml.mjs";
@@ -77,18 +77,22 @@ function resolveDotenvxBin() {
 
 /** Decrypt one key out of a dotenvx-encrypted .env using the repo's .env.keys. Returns "" (never
  * throws) when .env.keys is missing, the dotenvx binary can't run, or the key isn't set — callers
- * fall through to the "encrypted, can't decrypt" actionable error rather than a stack trace. */
+ * fall through to the "encrypted, can't decrypt" actionable error rather than a stack trace.
+ * dotenvx 2.x exits 1 when any *sibling* key in the file fails (AIO-790) even if `get KEY`
+ * printed that key on stdout — treat a clean stdout value as success and never print it. */
 export function decryptDotenvKey(repo, key) {
   const envPath = path.join(repo, ".env");
   if (!existsSync(envPath) || !existsSync(path.join(repo, ".env.keys"))) return "";
   try {
-    return execFileSync(resolveDotenvxBin(), ["get", key, "-f", envPath], {
+    const result = spawnSync(resolveDotenvxBin(), ["get", key, "-f", envPath], {
       cwd: repo,
       env: dotenvxEnv(),
-      stdio: ["ignore", "pipe", "ignore"],
-    })
-      .toString()
-      .trim();
+      encoding: "utf8",
+    });
+    const value = (result.stdout || "").trim();
+    if (!value || value.startsWith("encrypted:")) return "";
+    if (/DECRYPTION_FAILED|WRONG_PRIVATE_KEY|could not decrypt/i.test(value)) return "";
+    return value;
   } catch {
     return "";
   }
