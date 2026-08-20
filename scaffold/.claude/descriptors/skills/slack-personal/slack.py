@@ -178,13 +178,11 @@ def call(method, params=None, retries=4):
                 payload = json.load(r)
         except urllib.error.HTTPError as e:
             if e.code in (429, 500, 502, 503, 504) and attempt < retries:
-                wait = e.headers.get("Retry-After")
-                back = float(wait) if (wait and wait.isdigit()) else min(30, 2 ** attempt) + random.uniform(0, 0.5)
-                time.sleep(back); continue
+                time.sleep(_retry_delay(e, attempt)); continue
             die(f"HTTP {e.code} from {method}", 5)
         except (urllib.error.URLError, TimeoutError) as e:
             if attempt < retries:
-                time.sleep(min(30, 2 ** attempt) + random.uniform(0, 0.5)); continue
+                time.sleep(_retry_delay(None, attempt)); continue
             die(f"network error calling {method}: {e}", 5)
         except ValueError:
             # e.g. "Invalid header value" — Python's own ValueError embeds the offending header
@@ -195,7 +193,7 @@ def call(method, params=None, retries=4):
         if not payload.get("ok"):
             err = payload.get("error", "unknown_error")
             if err == "ratelimited" and attempt < retries:
-                time.sleep(min(30, 2 ** attempt) + random.uniform(0, 0.5)); continue
+                time.sleep(_retry_delay(None, attempt)); continue
             if err in ("invalid_auth", "not_authed", "token_revoked", "account_inactive"):
                 die(f"Slack auth failed ({err}) — check SLACK_USER_TOKEN.", 3)
             die(f"Slack API error on {method}: {err}", 4)
@@ -403,16 +401,21 @@ def _retry_delay(err, attempt):
     """Honour Slack's Retry-After when it sends one; otherwise exponential backoff + jitter.
 
     Slack states a rate limit precisely, and guessing longer wastes time while guessing shorter
-    earns another 429. The header wins when present and parseable.
+    earns another 429 — so a well-formed header always wins. `isdigit()` rather than
+    try/float/except: Retry-After is defined as whole seconds, and a malformed value should fall
+    through to backoff rather than be silently swallowed by a bare `pass`.
+
+    Every retry path in this file routes through here — the Web API and the upload URL cannot
+    drift apart on backoff behaviour, and there is exactly one randomness call site to reason
+    about. That site uses SystemRandom: jitter does not need cryptographic randomness, but the
+    default Mersenne Twister earns a static-analysis finding on every use, and one seeded-RNG
+    exemption to argue about is one too many for a decorrelation nudge.
     """
-    if err is not None:
-        raw = err.headers.get("Retry-After") if getattr(err, "headers", None) else None
-        if raw:
-            try:
-                return max(0.0, min(60.0, float(raw)))
-            except ValueError:
-                pass
-    return min(30, 2 ** attempt) + random.uniform(0, 0.5)
+    headers = getattr(err, "headers", None) if err is not None else None
+    raw = headers.get("Retry-After") if headers else None
+    if raw and str(raw).strip().isdigit():
+        return max(0.0, min(60.0, float(str(raw).strip())))
+    return min(30, 2 ** attempt) + random.SystemRandom().uniform(0, 0.5)
 
 
 # Deliberate, documented cap. Slack itself allows far more, but this CLI buffers the whole file
