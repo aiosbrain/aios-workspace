@@ -221,7 +221,7 @@ test("every declared module resolves to a real package subpath export", async ()
   }
 });
 
-// ── the toolkit default core hands to out-of-tree devtools (AIO-686, copy-ledger row 13) ────────
+// ── the toolkit default core hands to out-of-tree devtools ─────────────────────────────────────
 // `toolkit-locate.mjs` falls back to "the repo containing this file", which is the TOOLKIT in-tree
 // and the DEVTOOLS root everywhere else — and the devtools root ships no scaffold/ or
 // scripts/aios.mjs, so it is not a toolkit and resolution hard-fails. Core is the only participant

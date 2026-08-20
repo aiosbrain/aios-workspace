@@ -71,8 +71,8 @@ export function loadRubric(rubricPath) {
  * (3) resolves through the toolkit contract (`scripts/toolkit-locate.mjs`), NOT a module-relative
  * path. The old `SCRIPT_DIR/../..` form was correct only while this file lived in aios-workspace,
  * where it named the repo root. From an installed `@aiosbrain/aios-devtools` it named the devtools
- * package root, which ships no rubric and MUST NOT vendor one — the rubric is core-owned
- * (copy-ledger row 13, AIO-686). Resolution is LAZY: `getToolkit()` throws when no toolkit can be
+ * package root, which ships no rubric and MUST NOT vendor one — the rubric is core-owned.
+ * Resolution is LAZY: `getToolkit()` throws when no toolkit can be
  * located, so calling it at import time would break every consumer of this module, including the
  * two paths (explicit + repo-local) that never need a toolkit at all.
  */

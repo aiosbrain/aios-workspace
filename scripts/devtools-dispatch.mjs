@@ -163,7 +163,7 @@ export function coreToolkitDir({ coreScripts = HERE } = {}) {
  * PRECEDENCE IS PRESERVED, NOT OVERRIDDEN: an explicit `--toolkit-dir` or a pre-set
  * `AIOS_TOOLKIT_DIR` always wins, and the in-tree case is left alone so its resolution source
  * stays `containing-repo` exactly as before. This only fills a gap that would otherwise be a
- * hard error (AIO-686, copy-ledger row 13).
+ * hard error.
  */
 export function applyToolkitDefault(resolved, opts = {}) {
   const { argv = process.argv.slice(2), env = process.env } = opts;

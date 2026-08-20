@@ -45,7 +45,7 @@ test("SR18 evaluates constraints nested beneath a scope heading", () => {
   assert.equal(sr18Blocks(spec), true);
 });
 
-// ── rubric resolution (AIO-686, copy-ledger row 13) ─────────────────────────────────────────────
+// ── rubric resolution ──────────────────────────────────────────────────────────────────────────
 // Fallback #3 resolves through the TOOLKIT contract, not a module-relative path. The old
 // `SCRIPT_DIR/../..` form named the repo root only while this file lived in aios-workspace; from an
 // installed @aiosbrain/aios-devtools it named the devtools root, which ships no rubric and must not
