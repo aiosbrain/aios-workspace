@@ -48,7 +48,14 @@ const LINEAR_MCP_TOOL = /^mcp__.*linear.*__/i;
 
 /** A real HTTP call to Linear's API — not the word "linear" appearing in prose. */
 const LINEAR_GRAPHQL_HOST = /\bapi\.linear\.app\b/i;
-const HTTP_CLIENT = /\b(curl|wget|http|https|fetch|nc)\b/i;
+/**
+ * A program that performs a request. `http`/`https` are deliberately NOT here: they match the
+ * scheme of any URL merely being MENTIONED, so `git commit -m 'see https://api.linear.app …'`
+ * was blocked — the exact false positive this guard promises not to produce. (The earlier test
+ * missed it because its fixture wrote a bare host with no scheme.) `httpie` is the real client
+ * named `http`, matched explicitly.
+ */
+const HTTP_CLIENT = /\b(curl|wget|httpie|fetch|nc|xh)\b/i;
 
 /**
  * Connector copies that are known-dead and must never be reached for.
@@ -58,11 +65,27 @@ const HTTP_CLIENT = /\b(curl|wget|http|https|fetch|nc)\b/i;
  */
 const DEFAULT_STALE = ["/.claude/skills/slack-cli/"];
 
-/** Strip shell comments and the bodies of echo/printf so quoted prose cannot trigger a block. */
+/** Text that can execute: a command substitution or a backtick. */
+const EXECUTABLE_SUBSTITUTION = /\$\(|`/;
+
+/**
+ * Strip shell comments and echo/printf bodies so quoted prose cannot trigger a block.
+ *
+ * REFUSES TO STRIP ANYTHING CONTAINING A COMMAND SUBSTITUTION. `echo "$(curl … AIO-1)"` RUNS the
+ * curl; treating it as inert turned a false-positive guard into an evasion technique — wrap the
+ * call in echo and the block disappears. Verified before this was written. When a substitution is
+ * present the text is returned unchanged, so classification sees the real command.
+ *
+ * `#` is only treated as a comment when it starts a word outside quotes. A bare `.replace(/#.*$/)`
+ * also erased `#` inside quoted arguments, which could delete the AIO-<n> marker and turn a block
+ * into an allow.
+ */
 export function stripInertText(command) {
-  return String(command)
+  const raw = String(command);
+  if (EXECUTABLE_SUBSTITUTION.test(raw)) return raw;
+  return raw
     .split("\n")
-    .map((line) => line.replace(/#.*$/, ""))
+    .map((line) => line.replace(/(^|\s)#[^"']*$/, "$1"))
     .join("\n")
     .replace(/\b(echo|printf)\b[^\n;&|]*/gi, " ");
 }
@@ -110,8 +133,9 @@ export function classifyBash(command, opts = {}) {
  * Classify a generic Linear MCP tool call.
  * @returns {{decision: "allow"|"warn"|"block", reason?: string, fix?: string}}
  */
-export function classifyMcp(toolName, toolInput) {
+export function classifyMcp(toolName, toolInput, opts = {}) {
   if (!LINEAR_MCP_TOOL.test(String(toolName ?? ""))) return { decision: "allow" };
+  const markers = opts.teamMarkers ?? [];
 
   let blob = "";
   try {
@@ -123,6 +147,20 @@ export function classifyMcp(toolName, toolInput) {
       decision: "block",
       reason: "generic Linear MCP call whose input could not be inspected",
       fix: "Re-issue through the aios-linear CLI, or narrow the call so it can be inspected.",
+    };
+  }
+
+  // An AIO-<n> is the unambiguous signal, and it is not the only one. A `create_issue` has no
+  // identifier yet — it is CREATING the thing — so an AIOS-targeted create was previously only
+  // warned about, which left the routing path this guard exists for unenforced. Configured team
+  // markers (team key, name or UUID, from .aios/connector-routing.json) cover that case. The
+  // comments promised this; the code did not implement it until now.
+  const marker = markers.find((m) => m && blob.toLowerCase().includes(String(m).toLowerCase()));
+  if (marker) {
+    return {
+      decision: "block",
+      reason: `generic Linear MCP call carrying a configured AIOS team marker ('${marker}')`,
+      fix: "AIOS's board goes through the aios-linear CLI. The MCP bypasses the description guards and the brain projection.",
     };
   }
 
@@ -153,20 +191,40 @@ function loadConfig(cwd) {
 async function readStdin() {
   const chunks = [];
   let size = 0;
+  let truncated = false;
   for await (const chunk of process.stdin) {
     size += chunk.length;
-    if (size > STDIN_MAX) break;
+    if (size > STDIN_MAX) {
+      truncated = true;
+      break;
+    }
     chunks.push(chunk);
   }
-  return Buffer.concat(chunks).toString("utf8");
+  return { text: Buffer.concat(chunks).toString("utf8"), truncated };
 }
 
 async function main() {
+  const { text, truncated } = await readStdin();
+
+  // TRUNCATION IS NOT "UNPARSEABLE INPUT". Stopping at STDIN_MAX produces a partial JSON
+  // document, JSON.parse throws, and the old handler treated that exactly like a payload that was
+  // never ours — it allowed the call. So padding a generic Linear request past the cap disabled
+  // the guard entirely while carrying a real AIOS operation. A payload too large to classify is a
+  // payload we cannot clear, so it fails closed with a message saying why.
+  if (truncated) {
+    process.stderr.write(
+      `[connector-routing-guard] BLOCKED: tool input exceeded ${STDIN_MAX} bytes, so it could not ` +
+        "be classified. A call this guard cannot read is not a call it can clear.\n"
+    );
+    process.exitCode = 2;
+    return;
+  }
+
   let payload;
   try {
-    payload = JSON.parse(await readStdin());
+    payload = JSON.parse(text);
   } catch {
-    return; // not our business; never break a session over unparseable input
+    return; // genuinely not ours; never break a session over input we were not given
   }
   if (!payload || typeof payload !== "object") return;
 
@@ -180,7 +238,7 @@ async function main() {
   if (toolName === "Bash") {
     verdict = classifyBash(input.command, { stalePaths: cfg.stalePaths ?? DEFAULT_STALE });
   } else if (LINEAR_MCP_TOOL.test(toolName)) {
-    verdict = classifyMcp(toolName, input);
+    verdict = classifyMcp(toolName, input, { teamMarkers: cfg.teamMarkers ?? [] });
   }
 
   if (verdict.decision === "allow") return;

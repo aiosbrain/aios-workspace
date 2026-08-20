@@ -36,6 +36,12 @@ function runHook(payload, { env = {} } = {}) {
       { encoding: "utf8", env: { ...process.env, ...env } },
       (err, stdout, stderr) => resolve({ status: err ? (err.code ?? 1) : 0, stdout, stderr })
     );
+    // A guard that fails closed EXITS before reading the whole payload, so writing a large
+    // input races its exit and the pipe closes under us. EPIPE here is the hook doing its job,
+    // not a harness failure — swallow it and let the exit code be the assertion.
+    child.stdin.on("error", (e) => {
+      if (e.code !== "EPIPE") throw e;
+    });
     child.stdin.end(typeof payload === "string" ? payload : JSON.stringify(payload));
   });
 }
@@ -204,4 +210,69 @@ test("it still fires when invoked through a SYMLINKED path", async () => {
   });
   assert.equal(r.status, 2, `must still block through a symlink, got ${r.status}: ${r.stderr}`);
   assert.match(r.stderr, /BLOCKED/);
+});
+
+// ── four bypasses found by codex:gpt-5.6-sol ────────────────────────────────────────────────
+
+test("a command substitution inside echo is NOT inert", async () => {
+  // stripInertText() existed to stop prose triggering a block. Stripping whole echo/printf
+  // bodies turned that into an evasion: `echo "$(curl … AIO-1)"` RUNS the curl, and removing the
+  // body made it classify as empty. Verified working before the fix.
+  for (const cmd of [
+    'echo "$(curl https://api.linear.app/graphql -d AIO-1)"',
+    "echo `curl https://api.linear.app/graphql -d AIO-1`",
+    'printf "%s" "$(wget -qO- https://api.linear.app/graphql -d AIO-9)"',
+  ]) {
+    const r = await runHook(bash(cmd));
+    assert.equal(r.status, 2, `must not be strippable: ${cmd} — ${r.stderr}`);
+  }
+});
+
+test("merely MENTIONING a Linear URL is not an HTTP client", async () => {
+  // HTTP_CLIENT included `http|https`, which match the scheme of any URL being quoted. That
+  // blocked `git commit -m 'see https://api.linear.app …'` — the exact false positive this guard
+  // promises not to produce. The original test missed it by using a bare host with no scheme.
+  for (const cmd of [
+    "git commit -m 'document https://api.linear.app for AIO-1'",
+    'echo "see https://api.linear.app/graphql AIO-976"',
+    "grep -r 'https://api.linear.app' docs/",
+  ]) {
+    const r = await runHook(bash(cmd));
+    assert.equal(r.status, 0, `must not block a mention: ${cmd} — ${r.stderr}`);
+  }
+});
+
+test("a configured team marker blocks an AIOS create that has no AIO-<n> yet", async () => {
+  // A create_issue is making the thing, so it cannot carry an identifier — the case the guard
+  // most needs to catch was the one it only warned about. The comments claimed configured team
+  // markers were honoured; loadConfig()/classifyMcp() did not implement them.
+  const cwd = mkdtempSync(path.join(tmpdir(), "routing-team-"));
+  mkdirSync(path.join(cwd, ".aios"), { recursive: true });
+  writeFileSync(
+    path.join(cwd, ".aios/connector-routing.json"),
+    JSON.stringify({ teamMarkers: ["aiosbrain", "7c9e6679-aios"] })
+  );
+  const aios = await runHook(
+    mcp("mcp__plugin_linear_linear__create_issue", { title: "x", teamId: "7c9e6679-aios" }, cwd)
+  );
+  assert.equal(aios.status, 2, aios.stderr);
+  assert.match(aios.stderr, /team marker/);
+
+  const customer = await runHook(
+    mcp("mcp__plugin_linear_linear__create_issue", { title: "x", teamId: "acme-corp" }, cwd)
+  );
+  assert.equal(customer.status, 0, "a customer team must still pass");
+});
+
+test("input too large to classify fails CLOSED, not open", async () => {
+  // readStdin() stopped at STDIN_MAX and returned a partial document; JSON.parse threw, and the
+  // catch treated that like a payload that was never ours — allow. So padding a generic Linear
+  // call past the cap disabled the guard while still carrying a real AIOS operation.
+  const padded = JSON.stringify({
+    tool_name: "mcp__plugin_linear_linear__update_issue",
+    tool_input: { id: "AIO-976", pad: "x".repeat(2_000_000) },
+  });
+  const r = await runHook(padded);
+  assert.equal(r.status, 2, `oversized input must block: ${r.stderr}`);
+  assert.match(r.stderr, /could not be classified|exceeded/);
 });
