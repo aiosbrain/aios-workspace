@@ -7,12 +7,10 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 
-const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
+import { getToolkit } from "../toolkit-locate.mjs";
+
 const DEFAULT_RUBRIC_REL = path.join(".claude", "rubrics", "spec-readiness.md");
-// The canonical rubric shipped inside this toolkit checkout (…/aios-workspace/.claude/rubrics/…).
-const TOOLKIT_RUBRIC_PATH = path.join(SCRIPT_DIR, "..", "..", DEFAULT_RUBRIC_REL);
 export const DEFAULT_FIX_BUDGET = 2;
 
 // ── rubric loading ──────────────────────────────────────────────────────────────────────────
@@ -66,13 +64,21 @@ export function loadRubric(rubricPath) {
  * Resolve which rubric file to grade against, in precedence order:
  *   1. an explicit `--rubric <path>` (caller override, honored verbatim),
  *   2. the target repo's own `.claude/rubrics/spec-readiness.md` (scaffolded workspaces vendor it),
- *   3. the canonical rubric shipped inside this toolkit checkout.
+ *   3. the canonical rubric shipped inside the RESOLVED TOOLKIT (`getToolkit()`).
  * The fallback (3) is what lets the spec gate run in a NON-workspace repo — the Team Brain, or any
  * bare repo — that doesn't vendor a rubric, instead of hard-failing with "rubric not found" (exit 4).
+ *
+ * (3) resolves through the toolkit contract (`scripts/toolkit-locate.mjs`), NOT a module-relative
+ * path. The old `SCRIPT_DIR/../..` form was correct only while this file lived in aios-workspace,
+ * where it named the repo root. From an installed `@aiosbrain/aios-devtools` it named the devtools
+ * package root, which ships no rubric and MUST NOT vendor one — the rubric is core-owned.
+ * Resolution is LAZY: `getToolkit()` throws when no toolkit can be
+ * located, so calling it at import time would break every consumer of this module, including the
+ * two paths (explicit + repo-local) that never need a toolkit at all.
  */
 export function resolveRubricPath(repo, explicit = null) {
   if (explicit) return explicit;
   const local = path.join(repo, DEFAULT_RUBRIC_REL);
   if (existsSync(local)) return local;
-  return TOOLKIT_RUBRIC_PATH;
+  return path.join(getToolkit().dir, DEFAULT_RUBRIC_REL);
 }
