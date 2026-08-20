@@ -10,6 +10,7 @@ import {
   MUTATION_GROUPS,
   parseArgs,
   runAllCampaigns,
+  splitCampaigns,
   toMutateTarget,
 } from "../scripts/run-mutation.mjs";
 
@@ -194,11 +195,12 @@ test("nightly kill commands use the unit's own tests; the changed-code lane keep
     .commandRunner.command;
   const changedCommand = configFor(inbox, ["dist/operator-loop/inbox/capability.js"], false)
     .commandRunner.command;
-  // The gui-owned capability suite that served as this group's fast nightly oracle travelled to
-  // aiosbrain/aios-workspace-gui with the AIO-612 cut, so there is no nightlyTests override left
-  // and both lanes now run the operator-loop umbrella. Neither command may reference a path in
-  // the other repo.
-  assert.match(nightlyCommand, /test\/operator-loop\/\*\.test\.mjs/);
+  // AIO-994: the nightly oracle is the in-repo capability suite (the gui-owned suite left with
+  // the AIO-612 cut, and its umbrella substitute never imported the module — 26/26 survivors,
+  // score 0.00). Nightly kills with the unit oracle alone; the changed-code lane keeps the
+  // umbrella. Neither command may reference a path in the other repo.
+  assert.match(nightlyCommand, /test\/operator-loop\/inbox-capability\.test\.mjs/);
+  assert.doesNotMatch(nightlyCommand, /test\/operator-loop\/\*\.test\.mjs/);
   assert.match(changedCommand, /test\/operator-loop\/\*\.test\.mjs/);
   assert.doesNotMatch(nightlyCommand, /gui\//);
   assert.doesNotMatch(changedCommand, /gui\//);
@@ -301,6 +303,69 @@ test("the calibrated inbox capability target enforces its mutation floor in eith
       break: 90,
     });
   }
+});
+
+test("the nightly oracle imports the exact compiled mutate target it scores (AIO-994)", () => {
+  // The 0.00 defect: the campaign mutated dist/operator-loop/inbox/capability.js while its kill
+  // command ran a suite that never imported the module, so every mutant survived by
+  // construction. Pin the coupling: each nightly oracle file for the calibrated target must
+  // value-import that target, so a future cut or refactor that severs the import fails HERE
+  // instead of surfacing as a silent all-survivors nightly.
+  const group = MUTATION_GROUPS.find((entry) => entry.name === "inbox-authorization");
+  const target = "dist/operator-loop/inbox/capability.js";
+  assert.ok(group.nightlyTests?.length, "inbox-authorization must declare its nightly oracle");
+  for (const entry of group.nightlyTests) {
+    const source = readFileSync(path.join(ROOT, entry), "utf8");
+    assert.ok(
+      source.includes(target),
+      `${entry} must import ${target} — an oracle that does not load the mutate target cannot kill any mutant (the AIO-994 defect)`
+    );
+  }
+});
+
+test("a calibrated target always gets its own sole-denominator campaign (shotgun bypass closed)", () => {
+  // RED (pre-AIO-534): main() built ONE campaign per group from every matched file, so a PR
+  // touching capability.ts plus any second inbox file produced a mixed denominator and the
+  // calibrated 90% floor collapsed to 0 — configFor still behaves that way for a mixed set:
+  const group = MUTATION_GROUPS.find((entry) => entry.name === "inbox-authorization");
+  const target = "dist/operator-loop/inbox/capability.js";
+  const sibling = "dist/operator-loop/inbox/outbox.js";
+  assert.equal(configFor(group, [target, sibling], false).thresholds.break, 0);
+  // GREEN: the selection layer never hands configFor that mixed set. splitCampaigns() carves
+  // the calibrated target into its own campaign with the floor armed, and the sibling into a
+  // separate advisory campaign.
+  const campaigns = splitCampaigns(group, [target, sibling]);
+  assert.deepEqual(
+    campaigns.map((campaign) => campaign.mutate),
+    [[target], [sibling]]
+  );
+  const [calibrated, rest] = campaigns;
+  assert.equal(configFor(group, calibrated.mutate, false, calibrated.label).thresholds.break, 90);
+  assert.equal(configFor(group, rest.mutate, false, rest.label).thresholds.break, 0);
+  // Distinct labels: the two campaigns must not clobber each other's config or report files.
+  assert.notEqual(calibrated.label, rest.label);
+  assert.equal(rest.label, "inbox-authorization");
+  assert.equal(
+    configFor(group, calibrated.mutate, false, calibrated.label).jsonReporter.fileName,
+    `reports/mutation/${calibrated.label}.json`
+  );
+});
+
+test("splitCampaigns keeps single-campaign selections under the plain group name", () => {
+  const group = MUTATION_GROUPS.find((entry) => entry.name === "inbox-authorization");
+  const target = "dist/operator-loop/inbox/capability.js";
+  // Sole calibrated target (the nightly case): one campaign, stable label, floor armed via
+  // configFor's sole-denominator rule — report/artifact paths do not change.
+  assert.deepEqual(splitCampaigns(group, [target]), [
+    { mutate: [target], label: "inbox-authorization" },
+  ]);
+  // A group with no calibrated targets is never split.
+  const updateSafety = MUTATION_GROUPS.find((entry) => entry.name === "update-safety");
+  assert.deepEqual(
+    splitCampaigns(updateSafety, ["scripts/toolkit-merge.mjs", "scripts/update.mjs"]),
+    [{ mutate: ["scripts/toolkit-merge.mjs", "scripts/update.mjs"], label: "update-safety" }]
+  );
+  assert.deepEqual(splitCampaigns(updateSafety, []), []);
 });
 
 test("uncalibrated inbox denominators remain advisory with valid reporting bands", () => {
