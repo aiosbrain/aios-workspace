@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
+import { pathToFileURL } from "node:url";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const CLI = path.join(ROOT, "scaffold/.claude/skills/aios-linear/linear.mjs");
@@ -234,6 +235,30 @@ test("create rejects an unknown priority", () => {
   const r = runCli(["create", "t", "--priority", "spicy"], [[]]);
   assert.equal(r.status, 1);
   assert.match(r.stderr, /priority must be one of/);
+});
+
+// Canonicalization must not depend on the host locale. toLocaleLowerCase() under a Turkish
+// locale maps "I" → "ı" (dotless), so the same duplicate guard would pass on one machine and
+// fail on another. Run the canonicalizer in a subprocess pinned to tr_TR and assert the exact
+// locale-independent output — this test fails if toLowerCase() ever regresses to
+// toLocaleLowerCase().
+test("canonicalization is locale-independent (Turkish dotless-I safe)", () => {
+  const core = pathToFileURL(path.join(CLI, "../linear-core.mjs")).href;
+  const script = [
+    `import { canonicalizeProjectName as canon } from ${JSON.stringify(core)};`,
+    `console.log(JSON.stringify([canon("AIOS Infra"), canon("aios infra"), canon("\\u0130stanbul")]));`,
+  ].join("\n");
+  const r = spawnSync(process.execPath, ["--input-type=module", "-e", script], {
+    encoding: "utf8",
+    env: { ...process.env, LC_ALL: "tr_TR.UTF-8", LANG: "tr_TR.UTF-8" },
+  });
+  assert.equal(r.status, 0, r.stderr);
+  const [upper, lower, dottedCapI] = JSON.parse(r.stdout.trim());
+  assert.equal(upper, "aios infra", 'under a Turkish locale, "I" must still lower to "i", not "ı"');
+  assert.equal(upper, lower, "case variants must canonicalize identically on every locale");
+  // U+0130 (İ) lowers to "i" + U+0307 combining dot above under the locale-independent
+  // Unicode default mapping; the Turkish-locale mapping would produce a bare "i".
+  assert.equal(dottedCapI, "i\u0307stanbul", "U+0130 must follow the default Unicode mapping");
 });
 
 // Guards the mock itself: Sol proved the old one fabricated success for a query requesting

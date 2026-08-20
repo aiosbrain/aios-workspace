@@ -351,7 +351,7 @@ export function canonicalizeProjectName(name) {
       // every Unicode space separator (incl. NBSP) collapses to a single ASCII space
       .replace(/[\s\u00a0\u1680\u2000-\u200a\u202f\u205f\u3000]+/gu, " ")
       .trim()
-      .toLocaleLowerCase()
+      .toLowerCase()
   );
 }
 
