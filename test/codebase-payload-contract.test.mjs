@@ -1,11 +1,12 @@
-// AIO-608 — contract guard for the Brain API 1.15 codebase-scan payload
+// AIO-608 / AIO-995 — contract guard for the Brain API 1.22 codebase-scan payload
 // (POST /api/v1/codebases, including the optional scalar-only `metrics.codebase_health`
-// object introduced at document revision 1.15).
+// object introduced at 1.15, and the six coverage-denominator / run-integrity measures
+// introduced at document revision 1.22).
 //
 // Pattern mirrors test/item-payload-contract.test.mjs + test/item-payload-schema-parity.test.mjs:
-//   1. docs/contract/codebase-payload-1.15.schema.json — the machine-readable contract
+//   1. docs/contract/codebase-payload-1.22.schema.json — the machine-readable contract
 //      (draft 2020-12, compiled here with ajv), referenced normatively from docs/brain-api.md.
-//   2. docs/contract/codebase-payload-1.15-fixtures.json — canonical fixtures, both buckets
+//   2. docs/contract/codebase-payload-1.22-fixtures.json — canonical fixtures, both buckets
 //      cross-checked against the compiled schema.
 //
 // Unlike the item-payload suite there is no second, hand-written client-side validator to
@@ -18,7 +19,7 @@
 // closed, wrong types, wrong enums) — so a hand-edit to schema or fixtures that flips a
 // documented invariant fails loudly.
 //
-// Load-bearing invariants probed below (see docs/brain-api.md, revision 1.15):
+// Load-bearing invariants probed below (see docs/brain-api.md, revision 1.22):
 //   - additive: a pre-1.15 payload without `codebase_health` stays valid;
 //   - never sparse: `codebase_health` cannot ride on a partial metrics block (the metrics
 //     upsert REPLACES the (codebase_id, head_sha) row, so a health-only push zeroes analytics);
@@ -33,10 +34,10 @@ import Ajv2020 from "ajv/dist/2020.js";
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const schema = JSON.parse(
-  readFileSync(path.join(ROOT, "docs/contract/codebase-payload-1.15.schema.json"), "utf8")
+  readFileSync(path.join(ROOT, "docs/contract/codebase-payload-1.22.schema.json"), "utf8")
 );
 const fixtures = JSON.parse(
-  readFileSync(path.join(ROOT, "docs/contract/codebase-payload-1.15-fixtures.json"), "utf8")
+  readFileSync(path.join(ROOT, "docs/contract/codebase-payload-1.22-fixtures.json"), "utf8")
 );
 
 // No `format` keywords appear anywhere in the schema (measured_at is pinned by `pattern`),
@@ -48,19 +49,19 @@ function verdict(payload) {
   return Boolean(validate(structuredClone(payload)));
 }
 
-test("fixtures file tracks the 1.15 contract revision", () => {
-  assert.equal(fixtures.version, "1.15");
+test("fixtures file tracks the 1.22 contract revision", () => {
+  assert.equal(fixtures.version, "1.22");
   assert.ok(fixtures.valid.length >= 3, "expected at least 3 valid fixtures");
   assert.ok(fixtures.invalid.length >= 3, "expected at least 3 invalid fixtures");
 });
 
-test("accepts every canonical Brain API 1.15 codebase-payload fixture", () => {
+test("accepts every canonical Brain API 1.22 codebase-payload fixture", () => {
   for (const fixture of fixtures.valid) {
     assert.equal(verdict(fixture.payload), true, fixture.name);
   }
 });
 
-test("rejects every canonical Brain API 1.15 invalid fixture", () => {
+test("rejects every canonical Brain API 1.22 invalid fixture", () => {
   for (const fixture of fixtures.invalid) {
     assert.equal(verdict(fixture.payload), false, fixture.name);
   }
@@ -166,8 +167,11 @@ test("schema stays in lockstep with docs/brain-api.md's documented header revisi
   const doc = readFileSync(path.join(ROOT, "docs/brain-api.md"), "utf8");
   const m = doc.match(/\*\*Version:\s*([0-9]+\.[0-9]+)\*\*/);
   assert.ok(m, "brain-api.md must state **Version: X.Y**");
-  // codebase_health entered at 1.15; the doc revision may move past it but never behind it.
+  // The coverage denominator entered at 1.22; the doc revision may move past it but never
+  // behind it. This is what makes a version bump that forgets THIS file fail loudly — the
+  // gap AIO-995 shipped through once already, when only the hash fixture was bumped and the
+  // executable contract stayed at 1.15, licensing payloads the brain then rejected.
   const [major, minor] = m[1].split(".").map(Number);
-  assert.ok(major > 1 || (major === 1 && minor >= 15), `doc version ${m[1]} predates 1.15`);
-  assert.match(schema.$id, /\/1\.15\//, "schema $id must be pinned at its own revision");
+  assert.ok(major > 1 || (major === 1 && minor >= 22), `doc version ${m[1]} predates 1.22`);
+  assert.match(schema.$id, /\/1\.22\//, "schema $id must be pinned at its own revision");
 });

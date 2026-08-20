@@ -194,9 +194,9 @@ writeback/registration pulls), so a newer client still works against an older br
   2026-06-19 rule); a health-only push would zero existing analytics and is rejected `422` like
   any other sparse push. Scalars only — no file paths, no source text, no contributor identity
   ever cross the boundary. The machine-readable payload contract is
-  [`contract/codebase-payload-1.15.schema.json`](./contract/codebase-payload-1.15.schema.json),
+  [`contract/codebase-payload-1.22.schema.json`](./contract/codebase-payload-1.22.schema.json),
   with canonical parity fixtures in
-  [`contract/codebase-payload-1.15-fixtures.json`](./contract/codebase-payload-1.15-fixtures.json).
+  [`contract/codebase-payload-1.22-fixtures.json`](./contract/codebase-payload-1.22-fixtures.json).
   This revision is doc + schema only — it enables no push lane; the canonical pusher remains the
   ingestion sidecar.*
 - *2026-08-03 — **v1.16**: documented two authenticated reads that were already shipped:
@@ -284,7 +284,7 @@ writeback/registration pulls), so a newer client still works against an older br
   **Coverage denominator:** `test_coverage_lines_total` (integer ≥ 0 — instrumented lines the
   coverage report measured) and `test_coverage_lines_covered` (integer ≥ 0 — of those, how many
   were hit). **Run integrity:** `tests_total`, `tests_passed`, `tests_skipped`, `tests_failed`
-  (integers ≥ 0 — the counts from a committed test-result report).
+  (integers ≥ 0 — the counts from a test-result report present in the working tree at scan time).
   Purely additive: every field defaults to `null`, an omitting scanner is byte-for-byte
   unaffected, and an older brain ignores the unknown keys. **`null` means UNKNOWN, never zero** —
   a payload without `test_coverage_lines_total` must not be read as "nothing instrumented", and one
@@ -293,9 +293,23 @@ writeback/registration pulls), so a newer client still works against an older br
   which is `null` whenever either input is unknown **or `loc` is `0`**; it is DISPLAYED and NOT
   yet folded into `agentic_score`/`health_score` (see `lib/codebases/score.ts` for why).
   Cross-field invariants are enforced at the boundary (`422`): `test_coverage_lines_covered ≤
-  test_coverage_lines_total`, and each of `tests_passed`/`tests_skipped`/`tests_failed` ≤
-  `tests_total`, each checked only when both sides are present. Sources and the normative
-  attribute→field mapping are in the endpoint section below.*
+  test_coverage_lines_total`; each of `tests_passed`/`tests_skipped`/`tests_failed` ≤
+  `tests_total`; those three summing to no more than `tests_total` when all are known; and
+  `test_coverage_pct` agreeing with the counts to within a percentage point. Each fires only
+  when both sides are present — unknown contradicts nothing.
+  The executable contract moves with this revision:
+  [`contract/codebase-payload-1.22.schema.json`](./contract/codebase-payload-1.22.schema.json)
+  (fixtures: [`contract/codebase-payload-1.22-fixtures.json`](./contract/codebase-payload-1.22-fixtures.json)),
+  superseding the 1.15 pair. It pins each of the six as an integer `≥ 0` or null. It cannot pin
+  the CROSS-FIELD rules — JSON Schema 2020-12 has no way to compare two sibling properties — so
+  those stay normative prose here and enforced in the brain, and the schema's own `description`
+  says so rather than letting a green Ajv run read as complete coverage.
+  **Semantic compatibility is narrower than wire compatibility, and the difference matters.** A
+  *new* scanner pushing to a *pre-1.22* brain is accepted, but the old brain strips the six
+  unknown keys and goes on weighting the bare percentage at full strength with its scope
+  discarded — no error, no signal, the exact defect this revision exists to remove. Wire
+  acceptance is not graceful degradation. Upgrade the brain before, or with, the scanners.
+  Sources and the normative attribute→field mapping are in the endpoint section below.*
 
 ---
 
@@ -1809,8 +1823,21 @@ isolation is enforced in app code, with no DB backstop). Rate limit: 60/min per 
     (`total.lines.total` / `total.lines.covered`) or `coverage/lcov.info` (the `LF:` / `LH:`
     sums) — both formats carry them natively, so no new tooling is required.
   - `tests_total`, `tests_passed`, `tests_skipped`, `tests_failed` (integers ≥ 0) — the counts
-    from a committed test-result report. A suite that skipped half its cases still emits a
-    plausible coverage percentage; these make that visible instead of silent.
+    from a test-result report **present in the working tree when the scan runs**. A suite that
+    skipped half its cases still emits a plausible coverage percentage; these make that visible
+    instead of silent.
+
+    **Working tree, not HEAD — and that has a consequence worth stating.** Coverage and
+    test-result reports are build artefacts: `coverage/` is gitignored in most repos here, so
+    requiring a *committed* report would mean the fields could essentially never be populated.
+    The scanner therefore reads whatever is on disk. It follows that **two scans of the same
+    commit can legitimately disagree** — a CI runner that has just executed the suite reports
+    counts, a clean developer clone at the same SHA reports none — and because a metrics point
+    is keyed `(codebase_id, head_sha)`, the later push replaces the earlier one. This is not
+    new in 1.22: `test_coverage_pct` has always behaved this way. 1.22 makes it *visible*,
+    because the denominator and the run counts move with it. **Push scans for a commit from one
+    place** — the CI job that ran the suite — if you want a repo's coverage history to be
+    comparable with itself.
 
     **The attribute→field mapping is normative**, because JUnit has no `passed` attribute and no
     single obvious reading of `errors`, and two pushers that guessed differently would report
@@ -1865,8 +1892,8 @@ isolation is enforced in app code, with no DB backstop). Rate limit: 60/min per 
   (`"pass" | "warn" | "fail"`), `dimensions` (a map of short dimension id →
   `{ "passed": int, "total": int }` counts), `failed_invariant_ids` (array of short invariant
   ids), and `measured_at` (ISO-8601 UTC timestamp). The machine-readable contract is
-  [`contract/codebase-payload-1.15.schema.json`](./contract/codebase-payload-1.15.schema.json)
-  (fixtures: [`contract/codebase-payload-1.15-fixtures.json`](./contract/codebase-payload-1.15-fixtures.json)).
+  [`contract/codebase-payload-1.22.schema.json`](./contract/codebase-payload-1.22.schema.json)
+  (fixtures: [`contract/codebase-payload-1.22-fixtures.json`](./contract/codebase-payload-1.22-fixtures.json)).
   Three normative rules:
   - **Additive:** a payload without `codebase_health` remains valid exactly as before 1.15
     (older scanners are unaffected; an older brain ignores the unknown key).

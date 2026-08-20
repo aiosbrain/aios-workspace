@@ -3,7 +3,7 @@
 // workflow uses on its opt-in path (AIOS_PUSH_CODEBASE_HEALTH=1).
 //
 // Sibling of test/codebase-payload-contract.test.mjs and reuses its oracle: the vendored
-// docs/contract/codebase-payload-1.15.schema.json compiled with ajv. Every mapped object
+// docs/contract/codebase-payload-1.22.schema.json compiled with ajv. Every mapped object
 // is validated BOTH standalone (against $defs.codebaseHealth) and embedded into a full
 // valid metrics payload (never-sparse: health only ever rides on the full block).
 //
@@ -30,10 +30,10 @@ import {
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const schema = JSON.parse(
-  readFileSync(path.join(ROOT, "docs/contract/codebase-payload-1.15.schema.json"), "utf8")
+  readFileSync(path.join(ROOT, "docs/contract/codebase-payload-1.22.schema.json"), "utf8")
 );
 const contractFixtures = JSON.parse(
-  readFileSync(path.join(ROOT, "docs/contract/codebase-payload-1.15-fixtures.json"), "utf8")
+  readFileSync(path.join(ROOT, "docs/contract/codebase-payload-1.22-fixtures.json"), "utf8")
 );
 const fullCliRun = JSON.parse(
   readFileSync(path.join(ROOT, "test/fixtures/codebase-health/cli-run.v1.json"), "utf8")
