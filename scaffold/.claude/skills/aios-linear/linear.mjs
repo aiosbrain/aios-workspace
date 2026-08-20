@@ -69,9 +69,9 @@ import {
   parsePriority,
   printFullIssue,
   relatedIssues,
-  findProjects,
   resolveProject,
 } from "./linear-core.mjs";
+import { cmdCreateProject, cmdProjects } from "./linear-projects.mjs";
 
 const argv = process.argv.slice(2);
 const cmd = argv[0];
@@ -367,57 +367,9 @@ if (cmd === "get") {
   );
   console.log(`${n.identifier} → project "${project.name}"`);
 } else if (cmd === "projects") {
-  const projects = await findProjects(argv[1] || null);
-  if (!projects.length) {
-    console.log("no projects");
-  } else {
-    for (const p of projects) console.log(`${p.name}\t[${p.state}]\t${p.url}`);
-  }
+  await cmdProjects(argv);
 } else if (cmd === "create-project") {
-  const name = argv[1];
-  if (!name) {
-    console.error('create-project requires "<name>" [--desc <file>] [--team KEY]');
-    process.exit(1);
-  }
-  let descFile = null;
-  let teamKey = DEFAULT_TEAM_KEY;
-  for (let i = 2; i < argv.length; i++) {
-    const option = argv[i];
-    if (option === "--desc" || option === "--team") {
-      const value = argv[++i];
-      if (!value) {
-        console.error(`${option} requires a value`);
-        process.exit(1);
-      }
-      if (option === "--desc") descFile = value;
-      else teamKey = value;
-    } else {
-      console.error(`unknown create-project option "${option}"`);
-      process.exit(1);
-    }
-  }
-  // Fail closed on an existing exact name — Linear happily creates duplicates, and a
-  // duplicate makes every later set-project call ambiguous.
-  const existing = (await findProjects(name)).filter(
-    (p) => p.name.toLowerCase() === name.toLowerCase()
-  );
-  if (existing.length) {
-    console.error(`project "${existing[0].name}" already exists: ${existing[0].url}`);
-    process.exit(1);
-  }
-  const teamId = await findTeamId(teamKey);
-  const input = { name, teamIds: [teamId] };
-  if (descFile) input.description = readFileSync(descFile, "utf8");
-  const d = await gql(
-    `mutation($input:ProjectCreateInput!){ projectCreate(input:$input){ success project{ id name url } } }`,
-    { input }
-  );
-  if (!d.projectCreate?.success) {
-    console.error("projectCreate returned success=false");
-    process.exit(1);
-  }
-  const pr = d.projectCreate.project;
-  console.log(`created project "${pr.name}"\n${pr.url}`);
+  await cmdCreateProject(argv);
 } else if (cmd === "set-parent") {
   const ident = argv[1];
   const parentIdent = argv[2];

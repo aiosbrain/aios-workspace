@@ -1,0 +1,60 @@
+// Project commands for the aios-linear CLI (AIO-942), extracted from linear.mjs to keep
+// that file under the file-size gate. Dispatch stays in linear.mjs; the behaviour lives here.
+import { readFileSync } from "node:fs";
+import { DEFAULT_TEAM_KEY, findProjects, findTeamId, gql } from "./linear-core.mjs";
+
+export async function cmdProjects(argv) {
+  const projects = await findProjects(argv[1] || null);
+  if (!projects.length) {
+    console.log("no projects");
+  } else {
+    for (const p of projects) console.log(`${p.name}\t[${p.state}]\t${p.url}`);
+  }
+}
+
+export async function cmdCreateProject(argv) {
+  const name = argv[1];
+  if (!name) {
+    console.error('create-project requires "<name>" [--desc <file>] [--team KEY]');
+    process.exit(1);
+  }
+  let descFile = null;
+  let teamKey = DEFAULT_TEAM_KEY;
+  for (let i = 2; i < argv.length; i++) {
+    const option = argv[i];
+    if (option === "--desc" || option === "--team") {
+      const value = argv[++i];
+      if (!value) {
+        console.error(`${option} requires a value`);
+        process.exit(1);
+      }
+      if (option === "--desc") descFile = value;
+      else teamKey = value;
+    } else {
+      console.error(`unknown create-project option "${option}"`);
+      process.exit(1);
+    }
+  }
+  // Fail closed on an existing exact name — Linear happily creates duplicates, and a
+  // duplicate makes every later set-project call ambiguous.
+  const existing = (await findProjects(name)).filter(
+    (p) => p.name.toLowerCase() === name.toLowerCase()
+  );
+  if (existing.length) {
+    console.error(`project "${existing[0].name}" already exists: ${existing[0].url}`);
+    process.exit(1);
+  }
+  const teamId = await findTeamId(teamKey);
+  const input = { name, teamIds: [teamId] };
+  if (descFile) input.description = readFileSync(descFile, "utf8");
+  const d = await gql(
+    `mutation($input:ProjectCreateInput!){ projectCreate(input:$input){ success project{ id name url } } }`,
+    { input }
+  );
+  if (!d.projectCreate?.success) {
+    console.error("projectCreate returned success=false");
+    process.exit(1);
+  }
+  const pr = d.projectCreate.project;
+  console.log(`created project "${pr.name}"\n${pr.url}`);
+}
