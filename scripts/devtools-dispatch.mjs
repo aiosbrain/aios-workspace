@@ -144,6 +144,37 @@ export function resolveDevtoolsModule(name, opts = {}) {
 }
 
 /**
+ * Core's own package root — the toolkit that owns `.claude/rubrics/`, the scaffold, and every
+ * other core-owned asset a devtools module may need to read.
+ */
+export function coreToolkitDir({ coreScripts = HERE } = {}) {
+  return path.resolve(coreScripts, "..");
+}
+
+/**
+ * Tell an OUT-OF-TREE devtools module which toolkit it is running against.
+ *
+ * `scripts/toolkit-locate.mjs` falls back to "the repo containing this file". That is correct
+ * in-tree, where the containing repo IS the toolkit — and wrong for every other layout, because
+ * from an installed (or checked-out) `@aiosbrain/aios-devtools` it names the devtools root, which
+ * ships no `scaffold/` and no `scripts/aios.mjs` and therefore is not a toolkit at all. Core is
+ * the only participant that knows where the toolkit is, so core supplies it.
+ *
+ * PRECEDENCE IS PRESERVED, NOT OVERRIDDEN: an explicit `--toolkit-dir` or a pre-set
+ * `AIOS_TOOLKIT_DIR` always wins, and the in-tree case is left alone so its resolution source
+ * stays `containing-repo` exactly as before. This only fills a gap that would otherwise be a
+ * hard error (AIO-686, copy-ledger row 13).
+ */
+export function applyToolkitDefault(resolved, opts = {}) {
+  const { argv = process.argv.slice(2), env = process.env } = opts;
+  if (resolved.source === "in-tree") return null;
+  if (env.AIOS_TOOLKIT_DIR || argv.includes("--toolkit-dir")) return null;
+  const dir = coreToolkitDir(opts);
+  env.AIOS_TOOLKIT_DIR = dir;
+  return dir;
+}
+
+/**
  * Load a devtools module at point of use.
  *
  * A missing package is turned into an actionable install instruction rather than a bare
@@ -153,6 +184,7 @@ export function resolveDevtoolsModule(name, opts = {}) {
  */
 export async function loadDevtoolsModule(name, opts = {}) {
   const resolved = resolveDevtoolsModule(name, opts);
+  applyToolkitDefault(resolved, opts);
   try {
     return await import(resolved.specifier);
   } catch (error) {

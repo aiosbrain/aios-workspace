@@ -9,12 +9,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
+  applyToolkitDefault,
   consumeDevtoolsDirArg,
+  coreToolkitDir,
   DEVTOOLS_MODULES,
   DEVTOOLS_PACKAGE,
   explicitDevtoolsDir,
@@ -217,4 +219,56 @@ test("every declared module resolves to a real package subpath export", async ()
       `${name} is dispatched by core but @aiosbrain/aios-devtools does not export ./${name}`
     );
   }
+});
+
+// ── the toolkit default core hands to out-of-tree devtools (AIO-686, copy-ledger row 13) ────────
+// `toolkit-locate.mjs` falls back to "the repo containing this file", which is the TOOLKIT in-tree
+// and the DEVTOOLS root everywhere else — and the devtools root ships no scaffold/ or
+// scripts/aios.mjs, so it is not a toolkit and resolution hard-fails. Core is the only participant
+// that knows where the toolkit is, so core supplies it — without ever outranking the operator.
+
+test("core's toolkit root is the package root, the dir that actually owns .claude/rubrics", () => {
+  const dir = coreToolkitDir();
+  assert.equal(dir, path.resolve(fileURLToPath(new URL("..", import.meta.url))));
+  for (const marker of ["scripts/aios.mjs", "scaffold", "package.json"]) {
+    assert.ok(existsSync(path.join(dir, marker)), `toolkit root must contain ${marker}`);
+  }
+  assert.ok(
+    existsSync(path.join(dir, ".claude", "rubrics", "spec-readiness.md")),
+    "the toolkit root is what ships the spec-readiness rubric"
+  );
+});
+
+test("in-tree resolution is left alone, so its source stays containing-repo", () => {
+  const env = {};
+  assert.equal(applyToolkitDefault({ source: "in-tree" }, { argv: [], env }), null);
+  assert.equal(env.AIOS_TOOLKIT_DIR, undefined);
+});
+
+test("an out-of-tree devtools module is told which toolkit it is running against", () => {
+  for (const source of [DEVTOOLS_PACKAGE, "--devtools-dir", "AIOS_DEVTOOLS_DIR"]) {
+    const env = {};
+    assert.equal(applyToolkitDefault({ source }, { argv: [], env }), coreToolkitDir());
+    assert.equal(env.AIOS_TOOLKIT_DIR, coreToolkitDir(), `${source} must get the toolkit default`);
+  }
+});
+
+test("an explicit toolkit selector always outranks the default — core never overrides it", () => {
+  const preset = { AIOS_TOOLKIT_DIR: "/operator/choice" };
+  assert.equal(applyToolkitDefault({ source: DEVTOOLS_PACKAGE }, { argv: [], env: preset }), null);
+  assert.equal(preset.AIOS_TOOLKIT_DIR, "/operator/choice", "a pre-set env var is never rewritten");
+
+  const flagged = {};
+  assert.equal(
+    applyToolkitDefault(
+      { source: DEVTOOLS_PACKAGE },
+      { argv: ["--toolkit-dir", "/x"], env: flagged }
+    ),
+    null
+  );
+  assert.equal(
+    flagged.AIOS_TOOLKIT_DIR,
+    undefined,
+    "--toolkit-dir is resolved by the locator, not here"
+  );
 });
