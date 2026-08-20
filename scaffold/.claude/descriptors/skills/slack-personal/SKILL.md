@@ -56,7 +56,12 @@ read call fails with `missing_scope` even though the token otherwise authenticat
 
 On a member workstation the CLI is at `.claude/skills/slack-personal/slack.py` — run it
 with `python3` (or use `slack` on PATH, which the toolkit installs). On the Hermes box it's
-`slack` on PATH. Same tool either way.
+`slack` on PATH.
+
+**They are the same tool only once a deployment has synced.** A deployment that has not pulled
+since the descriptor changed is running the older command surface — which is exactly how the
+copies drifted apart before. Check `slack --help` against the verb list below rather than
+assuming; `slack.py.sha256` is the authority for whether a copy is current.
 
 > **One source, many deployments.** The canonical copy is the toolkit descriptor
 > (`scaffold/.claude/descriptors/skills/slack-personal/slack.py`), pinned by `slack.py.sha256`.
@@ -64,6 +69,11 @@ with `python3` (or use `slack` on PATH, which the toolkit installs). On the Herm
 > **deployments** of it. Change it upstream, re-pin, then propagate — never the reverse.
 > The copies once drifted in *opposite* directions (one gained `file`, the other
 > `resolve --member`), so no single copy was correct and agents fell back to whatever answered.
+>
+> **`hermes-aluna/bin/slack.py` currently lags this descriptor** and does not yet have `file`.
+> It syncs through `hermes-aluna/scripts/sync-skills.sh` and needs a Fly deploy, which is a
+> separate, deliberate act — see AIO-1019. Do not assume Hermes has a verb just because this
+> document lists it.
 
 ```bash
 slack whoami                                   # confirm your token + identity
