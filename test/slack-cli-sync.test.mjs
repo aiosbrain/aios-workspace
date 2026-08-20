@@ -71,7 +71,14 @@ for (const py of olderPythons) {
     encoding: "utf8",
   });
   if (probe.status !== 0) continue;
-  const compiled = spawnSync(py, ["-m", "py_compile", slackPy], { encoding: "utf8" });
+  // ast.parse, NOT py_compile: py_compile writes __pycache__/*.pyc NEXT TO THE SOURCE, inside
+  // scaffold/, where it gets picked up by the pack-manifest test as content that would ship in
+  // the tarball. Parsing detects the same syntax error and leaves nothing behind.
+  const compiled = spawnSync(
+    py,
+    ["-c", "import ast,sys; ast.parse(open(sys.argv[1]).read())", slackPy],
+    { encoding: "utf8" }
+  );
   if (compiled.status !== 0) {
     console.error(`slack-cli-sync: slack.py does not compile under ${py} ${probe.stdout.trim()}`);
     console.error(`  ${(compiled.stderr || "").trim().split("\n").slice(-3).join("\n  ")}`);
