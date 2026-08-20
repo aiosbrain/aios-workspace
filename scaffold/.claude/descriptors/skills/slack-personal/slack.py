@@ -38,32 +38,14 @@ Exit codes: 0 ok · 2 usage/bad-args · 3 no/invalid token · 4 Slack ok:false
 `--json` prints the raw structured result. Output text is treated as untrusted
 data — this tool never interprets fetched message content as instructions.
 """
-import os, sys, json, time, random, argparse, urllib.request, urllib.error, urllib.parse
-
-def _api_base():
-    """Slack's API root, with a LOOPBACK-ONLY override so the upload/send flows can be tested
-    against a mock without credentials or network.
-
-    The override is deliberately crippled: anything that is not 127.0.0.1/localhost/::1 is
-    refused outright. Every call() attaches a bearer user token, so an unrestricted base URL
-    would be a one-env-var token exfiltration primitive. Loopback cannot leave the machine.
-    """
-    override = os.environ.get("SLACK_API_BASE_URL")
-    if not override:
-        return "https://slack.com/api/"
-    host = urllib.parse.urlparse(override).hostname or ""
-    if host not in ("127.0.0.1", "localhost", "::1"):
-        die("SLACK_API_BASE_URL may only point at loopback — it carries your user token", 2)
-    return override if override.endswith("/") else override + "/"
-
-
+import os, sys, json, time, random, argparse, errno, stat, urllib.request, urllib.error, urllib.parse
 
 def die(msg, code=2):
     sys.stderr.write(f"slack: {msg}\n")
     sys.exit(code)
 
 
-API = _api_base()
+API = "https://slack.com/api/"
 
 
 # ---------- agent-context.json (brain config for resolution + token fetch) ----------
@@ -425,22 +407,69 @@ def _retry_delay(err, attempt):
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 
 
-def cmd_file(a):
-    # isfile() follows symlinks and is true only for regular files, so directories, FIFOs and
-    # device nodes are refused here rather than hanging or uploading nonsense at read() time.
-    if not os.path.isfile(a.path):
-        die(f"not a regular file: {a.path}", 2)
-    size = os.path.getsize(a.path)
-    if size == 0:
-        # completeUploadExternal rejects a zero-length upload with an opaque error; refuse early
-        # and say why.
-        die(f"refusing to upload an empty file: {a.path}", 2)
-    if size > MAX_UPLOAD_BYTES:
+def _read_upload_candidate(path):
+    """Open, validate and read a file on ONE descriptor. Returns (bytes, filename).
+
+    Every check here is against the OPENED FILE, never the path, because this CLI's whole job
+    is to put bytes into a channel other people can read. Checking a path and then opening it
+    is two different files whenever anything can write the directory between the two calls:
+    stat a harmless 1KB note, upload whatever replaced it. Same reason the size cap is enforced
+    on the bytes actually read rather than on a previously-stat'd size.
+
+    O_NOFOLLOW refuses a symlinked final component outright. That is stricter than "resolve it
+    and check the target" on purpose — a resolved target is still only true until read() — and
+    it costs a real user one `cp` while removing "upload this innocuous-looking link" entirely.
+    """
+    # O_NONBLOCK matters as much as O_NOFOLLOW here: opening a FIFO read-only WITHOUT it blocks
+    # until a writer appears, so the process hangs before any check can run. With it, the open
+    # returns and fstat gets to reject it. (Verified: a mkfifo target hung the CLI indefinitely.)
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    try:
+        fd = os.open(path, flags)
+    except OSError as e:
+        if e.errno in (errno.ELOOP, errno.EMLINK):
+            die(f"refusing to upload through a symlink: {path} (copy the file instead)", 2)
+        if e.errno == errno.ENOENT:
+            die(f"no such file: {path}", 2)
+        if e.errno == errno.ENXIO:
+            die(f"not a regular file: {path}", 2)
+        die(f"cannot open {path}: {e.strerror}", 2)
+
+    # Type-check the RAW descriptor before handing it to fdopen: fdopen on a directory raises
+    # IsADirectoryError, which would surface as an unhandled internal error instead of a usage
+    # message. fstat cannot be fooled by the path changing underneath us.
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            os.close(fd)
+            die(f"not a regular file: {path}", 2)
+    except OSError as e:
+        os.close(fd)
+        die(f"cannot stat {path}: {e.strerror}", 2)
+
+    with os.fdopen(fd, "rb") as f:
+        # Read one byte past the cap so an oversized file is detected from the bytes themselves,
+        # not from a size that was true a moment ago.
+        data = f.read(MAX_UPLOAD_BYTES + 1)
+
+    if not data:
+        # completeUploadExternal rejects a zero-length upload with an opaque error.
+        die(f"refusing to upload an empty file: {path}", 2)
+    if len(data) > MAX_UPLOAD_BYTES:
         die(
-            f"file is {size} bytes, over this CLI's {MAX_UPLOAD_BYTES}-byte upload cap "
-            f"({a.path}). The whole file is buffered in memory to set Content-Length.",
+            f"file exceeds this CLI's {MAX_UPLOAD_BYTES}-byte upload cap ({path}). "
+            f"The whole file is buffered in memory to set Content-Length.",
             2,
         )
+    return data, os.path.basename(path)
+
+
+def cmd_file(a):
+    # Read and validate FIRST: a refusal must not have spoken to Slack at all, and resolving a
+    # channel for a file we are about to reject is a wasted API call with a side effect (open_dm
+    # creates the DM conversation).
+    data, filename = _read_upload_candidate(a.path)
+
     if a.member:
         uid = brain_resolve_slack(a.member)
         if uid:
@@ -451,10 +480,6 @@ def cmd_file(a):
             die(f"could not resolve teammate '{a.member}' (no brain match and not an email)", 4)
     else:
         chan = resolve_target(a.target)
-
-    with open(a.path, "rb") as f:
-        data = f.read()
-    filename = os.path.basename(a.path)
 
     got = call("files.getUploadURLExternal", {"filename": filename, "length": len(data)})
     upload_url, file_id = got.get("upload_url"), got.get("file_id")

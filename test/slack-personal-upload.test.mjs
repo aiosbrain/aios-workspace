@@ -5,14 +5,14 @@
  * exactly once and proves nothing about the cases that actually bite: a filename with a quote in
  * it, a zero-byte file, a 429 with a Retry-After, a terminal 500. Those are asserted here.
  *
- * The CLI is pointed at the mock through SLACK_API_BASE_URL, which the CLI itself refuses unless
- * it is loopback — see `_api_base()`. That refusal is tested too.
+ * The CLI is pointed at the mock by rewriting its `API` constant into a throwaway copy — the
+ * shipped file carries no API-base override, deliberately. See `cliPointedAt()` for why.
  */
 import test from "node:test";
 import assert from "node:assert/strict";
-import { execFile, spawnSync } from "node:child_process";
+import { execFile } from "node:child_process";
 import { createServer } from "node:http";
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -109,24 +109,43 @@ async function withMock(plan, fn) {
 }
 
 /**
- * MUST be async. The mock HTTP server lives in THIS process, so a synchronous spawn would block
+ * Point the CLI at the mock by REWRITING ITS `API` CONSTANT INTO A THROWAWAY COPY — not by an
+ * env-var override in the shipped code.
+ *
+ * An earlier version of this suite added a `SLACK_API_BASE_URL` override, restricted to
+ * loopback, and argued that loopback made it safe. It did not. Every call attaches a bearer
+ * user token, so a local process that cannot READ the token could start a listener, set the
+ * variable, invoke the CLI and capture the Authorization header — then forward it anywhere.
+ * Loopback bounds the destination, not the credential boundary. The override was a
+ * token-disclosure primitive shipped for the convenience of this file.
+ *
+ * A patched copy costs one string replacement and adds no production surface at all.
+ *
+ * MUST be async: the mock HTTP server lives in THIS process, so a synchronous spawn would block
  * the event loop and the server could never answer — the CLI would wait forever on a request
- * nobody is able to serve. That deadlock looks exactly like a hung CLI, which is why it is
- * called out here rather than left as a style preference.
+ * nobody is able to serve. That deadlock looks exactly like a hung CLI.
  */
+function cliPointedAt(base) {
+  const src = readFileSync(CLI, "utf8");
+  const needle = 'API = "https://slack.com/api/"';
+  if (!src.includes(needle)) {
+    throw new Error(`slack.py no longer declares ${needle} — update this test's patch point`);
+  }
+  const dir = mkdtempSync(path.join(tmpdir(), "slack-cli-copy-"));
+  const copy = path.join(dir, "slack.py");
+  writeFileSync(copy, src.replace(needle, `API = ${JSON.stringify(base)}`));
+  return copy;
+}
+
 function runFile({ base, args }) {
   return new Promise((resolve) => {
     execFile(
       "python3",
-      [CLI, "file", ...args],
+      [cliPointedAt(base), "file", ...args],
       {
         encoding: "utf8",
         maxBuffer: 64 * 1024 * 1024,
-        env: {
-          ...process.env,
-          SLACK_API_BASE_URL: base,
-          SLACK_USER_TOKEN: MOCK_TOKEN,
-        },
+        env: { ...process.env, SLACK_USER_TOKEN: MOCK_TOKEN },
       },
       (err, stdout, stderr) => resolve({ status: err ? (err.code ?? 1) : 0, stdout, stderr })
     );
@@ -246,7 +265,10 @@ test("missing, empty, oversized and non-regular files are refused before any API
   writeFileSync(huge, Buffer.alloc(26 * 1024 * 1024));
 
   const cases = [
-    [path.join(dir, "nope.txt"), /not a regular file/],
+    // A missing path now says so explicitly rather than being lumped in with FIFOs and
+    // directories — the caller almost always mistyped, and "not a regular file" sends them
+    // looking for the wrong problem.
+    [path.join(dir, "nope.txt"), /no such file/],
     [emptyFile, /empty file/],
     [aDirectory, /not a regular file/],
     [huge, /upload cap/],
@@ -261,16 +283,42 @@ test("missing, empty, oversized and non-regular files are refused before any API
   }
 });
 
-test("SLACK_API_BASE_URL is refused unless it is loopback — it carries the user token", () => {
-  const f = tmpFile("a.txt", "x");
-  const r = spawnSync("python3", [CLI, "file", "--target", CHANNEL, "--path", f], {
-    encoding: "utf8",
-    env: {
-      ...process.env,
-      SLACK_API_BASE_URL: "https://evil.example.com/api/",
-      SLACK_USER_TOKEN: MOCK_TOKEN,
-    },
+test("the shipped CLI carries no API-base override at all", () => {
+  const src = readFileSync(CLI, "utf8");
+  assert.doesNotMatch(
+    src,
+    /SLACK_API_BASE_URL/,
+    "an env-var API override hands the bearer token to whoever can set the variable"
+  );
+});
+
+test("a symlinked path is refused outright, before any API call", async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "slack-link-"));
+  const real = path.join(dir, "secret.txt");
+  writeFileSync(real, "sensitive");
+  const link = path.join(dir, "innocuous.txt");
+  symlinkSync(real, link);
+  await withMock({}, async ({ base, seen }) => {
+    const r = await runFile({ base, args: ["--target", CHANNEL, "--path", link] });
+    assert.equal(r.status, 2, r.stderr);
+    assert.match(r.stderr, /symlink/);
+    assert.equal(seen.api.length, 0, "a refusal must not have called Slack at all");
   });
-  assert.equal(r.status, 2);
-  assert.match(r.stderr, /may only point at loopback/);
+});
+
+test("a FIFO is refused rather than hanging the CLI forever", async () => {
+  // Without O_NONBLOCK, opening a FIFO read-only blocks until a writer appears — the process
+  // hangs before any validation runs. This asserts it returns, which is the whole point.
+  const dir = mkdtempSync(path.join(tmpdir(), "slack-fifo-"));
+  const fifo = path.join(dir, "pipe");
+  const mk = await new Promise((resolve) =>
+    execFile("python3", ["-c", "import os,sys;os.mkfifo(sys.argv[1])", fifo], (e) => resolve(!e))
+  );
+  if (!mk) return; // platform without mkfifo — nothing to assert
+  await withMock({}, async ({ base, seen }) => {
+    const r = await runFile({ base, args: ["--target", CHANNEL, "--path", fifo] });
+    assert.equal(r.status, 2, r.stderr);
+    assert.match(r.stderr, /not a regular file/);
+    assert.equal(seen.api.length, 0);
+  });
 });
