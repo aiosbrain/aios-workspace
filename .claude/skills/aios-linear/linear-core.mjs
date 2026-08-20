@@ -134,9 +134,22 @@ export function parseCreateArgs(args) {
   let state = "Backlog";
   let parent = null;
   let assignee = null;
+  let project = null;
+  let priority = null;
   for (let index = 1; index < args.length; index++) {
     const option = args[index];
-    if (["--desc", "--template", "--label", "--state", "--parent", "--assignee"].includes(option)) {
+    if (
+      [
+        "--desc",
+        "--template",
+        "--label",
+        "--state",
+        "--parent",
+        "--assignee",
+        "--project",
+        "--priority",
+      ].includes(option)
+    ) {
       const value = args[++index];
       if (!value) fail(`${option} requires a value`);
       if (option === "--desc") descFile = value;
@@ -144,6 +157,8 @@ export function parseCreateArgs(args) {
       else if (option === "--label") labels.push(value);
       else if (option === "--state") state = value;
       else if (option === "--parent") parent = value;
+      else if (option === "--project") project = value;
+      else if (option === "--priority") priority = parsePriority(value);
       else assignee = value;
     } else {
       fail(`unknown create option "${option}"`);
@@ -163,7 +178,7 @@ export function parseCreateArgs(args) {
       fail("AIOS_LINEAR_ORIGIN_TEXT must be set when the configured origin label is used");
     description = `**Origin:** ${origin}\n\n${description}`;
   }
-  return { title, description, labels, state, parent, assignee };
+  return { title, description, labels, state, parent, assignee, project, priority };
 }
 
 export async function findTeamId(teamKey = DEFAULT_TEAM_KEY) {
@@ -324,6 +339,26 @@ export function findExactRelation(relations, a, b, type) {
 
 export function formatIssue(issue) {
   return `${issue.identifier} [${issue.state?.name}] ${issue.title}`;
+}
+
+export async function findProjects(nameSubstring = null) {
+  const filter = nameSubstring ? { name: { containsIgnoreCase: nameSubstring } } : {};
+  const d = await gql(
+    `query($f:ProjectFilter){ projects(first:100, filter:$f){ nodes{ id name state url } } }`,
+    { f: filter }
+  );
+  return d.projects.nodes;
+}
+
+// Resolve a project by case-insensitive name substring. Fails closed on zero or
+// ambiguous matches so a typo can never silently file into the wrong project.
+export async function resolveProject(nameSubstring) {
+  const projects = await findProjects(nameSubstring);
+  if (projects.length === 0) fail(`no project matching "${nameSubstring}"`);
+  if (projects.length > 1) {
+    fail(`ambiguous project match "${nameSubstring}": ${projects.map((p) => p.name).join(", ")}`);
+  }
+  return projects[0];
 }
 
 export function parsePriority(value) {

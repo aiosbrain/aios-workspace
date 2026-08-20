@@ -69,6 +69,8 @@ import {
   parsePriority,
   printFullIssue,
   relatedIssues,
+  findProjects,
+  resolveProject,
 } from "./linear-core.mjs";
 
 const argv = process.argv.slice(2);
@@ -358,26 +360,64 @@ if (cmd === "get") {
     process.exit(1);
   }
   const n = await findIssue(ident);
-  const pd = await gql(
-    `query($f:ProjectFilter){ projects(first:50, filter:$f){ nodes{ id name } } }`,
-    { f: { name: { containsIgnoreCase: projectName } } }
-  );
-  const projects = pd.projects.nodes;
-  if (projects.length === 0) {
-    console.error(`no project matching "${projectName}"`);
-    process.exit(1);
-  }
-  if (projects.length > 1) {
-    console.error(
-      `ambiguous project match "${projectName}": ${projects.map((p) => p.name).join(", ")}`
-    );
-    process.exit(1);
-  }
+  const project = await resolveProject(projectName);
   await gql(
     `mutation($id:String!,$pid:String!){ issueUpdate(id:$id, input:{ projectId:$pid }){ success } }`,
-    { id: n.id, pid: projects[0].id }
+    { id: n.id, pid: project.id }
   );
-  console.log(`${n.identifier} → project "${projects[0].name}"`);
+  console.log(`${n.identifier} → project "${project.name}"`);
+} else if (cmd === "projects") {
+  const projects = await findProjects(argv[1] || null);
+  if (!projects.length) {
+    console.log("no projects");
+  } else {
+    for (const p of projects) console.log(`${p.name}\t[${p.state}]\t${p.url}`);
+  }
+} else if (cmd === "create-project") {
+  const name = argv[1];
+  if (!name) {
+    console.error('create-project requires "<name>" [--desc <file>] [--team KEY]');
+    process.exit(1);
+  }
+  let descFile = null;
+  let teamKey = DEFAULT_TEAM_KEY;
+  for (let i = 2; i < argv.length; i++) {
+    const option = argv[i];
+    if (option === "--desc" || option === "--team") {
+      const value = argv[++i];
+      if (!value) {
+        console.error(`${option} requires a value`);
+        process.exit(1);
+      }
+      if (option === "--desc") descFile = value;
+      else teamKey = value;
+    } else {
+      console.error(`unknown create-project option "${option}"`);
+      process.exit(1);
+    }
+  }
+  // Fail closed on an existing exact name — Linear happily creates duplicates, and a
+  // duplicate makes every later set-project call ambiguous.
+  const existing = (await findProjects(name)).filter(
+    (p) => p.name.toLowerCase() === name.toLowerCase()
+  );
+  if (existing.length) {
+    console.error(`project "${existing[0].name}" already exists: ${existing[0].url}`);
+    process.exit(1);
+  }
+  const teamId = await findTeamId(teamKey);
+  const input = { name, teamIds: [teamId] };
+  if (descFile) input.description = readFileSync(descFile, "utf8");
+  const d = await gql(
+    `mutation($input:ProjectCreateInput!){ projectCreate(input:$input){ success project{ id name url } } }`,
+    { input }
+  );
+  if (!d.projectCreate?.success) {
+    console.error("projectCreate returned success=false");
+    process.exit(1);
+  }
+  const pr = d.projectCreate.project;
+  console.log(`created project "${pr.name}"\n${pr.url}`);
 } else if (cmd === "set-parent") {
   const ident = argv[1];
   const parentIdent = argv[2];
@@ -449,7 +489,8 @@ if (cmd === "get") {
   );
   console.log(`assigned ${n.identifier} → ${u.name}`);
 } else if (cmd === "create") {
-  const { title, description, labels, state, parent, assignee } = parseCreateArgs(argv.slice(1));
+  const { title, description, labels, state, parent, assignee, project, priority } =
+    parseCreateArgs(argv.slice(1));
   const teamId = await findTeamId(DEFAULT_TEAM_KEY);
   const st = await findTeamState(teamId, state);
   if (!st) {
@@ -475,6 +516,8 @@ if (cmd === "get") {
     const u = await findUser(DEFAULT_TEAM_KEY, assignee);
     input.assigneeId = u.id;
   }
+  if (project) input.projectId = (await resolveProject(project)).id;
+  if (priority !== null) input.priority = priority;
   const d = await gql(
     `mutation($input:IssueCreateInput!){ issueCreate(input:$input){ success issue{ identifier title url branchName } } }`,
     { input }
@@ -489,9 +532,11 @@ if (cmd === "get") {
       "set-state <IDENT> <name> | set-priority <IDENT> <priority> | comment <IDENT> <text> | " +
       "comments <IDENT> | list <TEAMKEY> | relations <IDENT> | blocks <BLOCKER> <BLOCKED> | " +
       "related <ISSUE_A> <ISSUE_B> | remove-relation <ISSUE_A> <ISSUE_B> <blocks|related> | " +
-      "set-project <IDENT> <project> | set-parent <IDENT> <PARENT_IDENT> | " +
+      "set-project <IDENT> <project> | projects [NAME] | " +
+      'create-project "<name>" [--desc <file>] [--team KEY] | ' +
+      "set-parent <IDENT> <PARENT_IDENT> | " +
       "add-label <IDENT> <LABEL> | template [aios] | " +
       'create "<title>" [--desc <file>] [--template aios] [--label <name>]... [--state Backlog] ' +
-      "[--parent <IDENT>] [--assignee <name-or-email>] | users <TEAMKEY> | assign <IDENT> <name-or-email>"
+      "[--parent <IDENT>] [--assignee <name-or-email>] [--project <name>] [--priority <level>] | users <TEAMKEY> | assign <IDENT> <name-or-email>"
   );
 }
