@@ -3,11 +3,12 @@
 // Canonical source: aios-workspace `.claude/skills/aios-linear/` (also vendored into every
 // scaffolded AIOS workspace at `.claude/skills/aios-linear/` via `aios update`).
 // Run via the scoped wrapper so only LINEAR_API_KEY is decrypted (AIO-790):
-//   node .claude/skills/aios-linear/linear.mjs <cmd> ...
+//   linear <cmd> ...                      (the PATH bin — resolves LINEAR_API_KEY for you)
 // From a sibling repo:
-//   node ../aios-workspace/.claude/skills/aios-linear/linear.mjs <cmd> ...
-// (`scripts/linear.mjs` is a PATH shim present only in the aios-workspace checkout —
-//  it is not vendored into scaffolded workspaces. AIO-1027.)
+//   node ../aios-workspace/scripts/linear.mjs <cmd> ...
+// THIS FILE does no credential resolution — it reads process.env.LINEAR_API_KEY and exits if
+// unset. Invoking it directly only works where the key is already exported, which is why it
+// must not be the documented entry point (AIO-1027).
 // Do not `dotenvx run -f .env` the whole toolkit file — that decrypts unrelated secrets.
 //
 // Commands:
