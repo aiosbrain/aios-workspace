@@ -32,13 +32,17 @@ never refreshes `dist/` and masks itself).
   `node scripts/mutation-soak-streak.mjs` (exit 0 when met, `--json` for automation). The check
   counts per-JOB conclusions, not run conclusions: `mutation.yml` documents `bugbot-security`
   as a deliberately red leg until AIO-554, so the run-level conclusion is failure every night
-  by construction; a night is complete when every governed matrix leg succeeds. Only
+  by construction; a night is complete when every expected governed matrix leg (derived from
+  the workflow's matrix list) is present and succeeds — a night that dropped a leg is not
+  complete. Only
   `schedule`-event runs count, and a gap of more than 48h between adjacent nights breaks the
   streak (a disabled or auto-suspended schedule is not soak evidence); and (2) the per-target floor enforcement (the sole-denominator
   campaign split, see the mutation policy below) holding over that same streak. Streak anchor:
   the clock restarts at **2026-08-20**, when the AIO-994 oracle restoration returned the
-  nightly to a killing state after a week red at 0.00; reassess or file a follow-up if the
-  soak evidence is still unavailable by **2026-09-03**.
+  nightly to a killing state after a week red at 0.00. The anchor is enforced in code — the
+  `ANCHOR` constant in `scripts/mutation-soak-streak.mjs` discards earlier nights, so
+  pre-restoration green cannot satisfy the check; move the constant and this date together.
+  Reassess or file a follow-up if the soak evidence is still unavailable by **2026-09-03**.
 
 ## Coverage policy
 

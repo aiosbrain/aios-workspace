@@ -32,11 +32,24 @@
  * Exit codes: 0 = precondition met, 1 = not yet met, 2 = lookup failure.
  */
 import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+
 export const REQUIRED_STREAK = 10;
 export const REQUIRED_DAYS = 7;
+
+/**
+ * The soak-streak anchor from docs/testing.md: the clock restarted on
+ * 2026-08-20, when the AIO-994 oracle restoration returned the nightly to a
+ * killing state — nightlies before that date measured a broken oracle and
+ * are not soak evidence, however green their legs. Nights created before
+ * this instant are ignored entirely. Move this constant when the docs anchor
+ * moves (and vice versa — they must agree).
+ */
+export const ANCHOR = "2026-08-20T00:00:00Z";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -58,26 +71,54 @@ export const DELIBERATE_RED_LEGS = new Set(["bugbot-security"]);
 const JOB_NAME = /^Mutation campaign \((.+)\)$/;
 
 /**
- * Whether a night's jobs make it "complete": every governed matrix leg
- * (name-matched, minus DELIBERATE_RED_LEGS) exists and concluded success.
- * Jobs that are not matrix legs are ignored.
+ * The governed leg set comes from mutation.yml's matrix (same parse as the
+ * matrix-parity test in test/mutation-config.test.mjs) minus the
+ * deliberate-red legs. Deriving it from the workflow — rather than from
+ * whichever jobs a run happened to have — means a night that DROPPED a leg
+ * (cancelled matrix expansion, workflow regression, an older revision)
+ * cannot count as complete just because its surviving legs succeeded.
  */
-export function nightIsComplete(jobs) {
-  const governed = jobs.filter((job) => {
+export function expectedGovernedLegs(workflowSource) {
+  const matrixBlock = /matrix:\s*\n(?:\s*#[^\n]*\n)*\s*group:\s*\n((?:\s*-\s*\S+\n)+)/.exec(
+    workflowSource
+  );
+  if (!matrixBlock) throw new Error("mutation.yml: cannot parse the matrix group list");
+  const legs = matrixBlock[1]
+    .trim()
+    .split("\n")
+    .map((line) => line.replace(/^\s*-\s*/, "").trim())
+    .filter((leg) => !DELIBERATE_RED_LEGS.has(leg));
+  if (!legs.length) throw new Error("mutation.yml: matrix has no governed legs");
+  return legs;
+}
+
+/**
+ * Whether a night's jobs make it "complete": EVERY expected governed leg is
+ * present and concluded success. A missing expected leg is incomplete; jobs
+ * that are not matrix legs (or are deliberate-red) are ignored.
+ */
+export function nightIsComplete(jobs, expectedLegs) {
+  const conclusions = new Map();
+  for (const job of jobs) {
     const match = JOB_NAME.exec(job.name ?? "");
-    return match && !DELIBERATE_RED_LEGS.has(match[1]);
-  });
-  return governed.length > 0 && governed.every((job) => job.conclusion === "success");
+    if (match) conclusions.set(match[1], job.conclusion);
+  }
+  return expectedLegs.length > 0 && expectedLegs.every((leg) => conclusions.get(leg) === "success");
 }
 
 /**
  * Pure streak computation over nights `{ created_at, complete }`. Input
  * order does not matter — sorted newest-first here, never trusted from the
- * API. The streak counts backwards from the most recent night until the
- * first incomplete night or the first >MAX_NIGHT_GAP_MS gap.
+ * API. Nights before ANCHOR are discarded first: they measured the
+ * pre-restoration oracle and are not soak evidence. The streak counts
+ * backwards from the most recent night until the first incomplete night or
+ * the first >MAX_NIGHT_GAP_MS gap.
  */
 export function soakStreak(nights) {
-  const sorted = [...nights].sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
+  const anchorMs = Date.parse(ANCHOR);
+  const sorted = nights
+    .filter((night) => Date.parse(night.created_at) >= anchorMs)
+    .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
   const streak = [];
   for (const night of sorted) {
     if (!night.complete) break;
@@ -111,6 +152,9 @@ function ghJson(endpoint, jq) {
 
 /** 20 scheduled nights is ample evidence for a 10-night streak check. */
 function fetchNights() {
+  const expectedLegs = expectedGovernedLegs(
+    readFileSync(path.join(ROOT, ".github", "workflows", "mutation.yml"), "utf8")
+  );
   const runs = ghJson(
     "repos/{owner}/{repo}/actions/workflows/mutation.yml/runs?event=schedule&per_page=20",
     ".workflow_runs | map({id, event, status, created_at})"
@@ -122,7 +166,7 @@ function fetchNights() {
       `repos/{owner}/{repo}/actions/runs/${run.id}/jobs?per_page=100`,
       ".jobs | map({name, conclusion})"
     );
-    nights.push({ created_at: run.created_at, complete: nightIsComplete(jobs) });
+    nights.push({ created_at: run.created_at, complete: nightIsComplete(jobs, expectedLegs) });
   }
   return nights;
 }
