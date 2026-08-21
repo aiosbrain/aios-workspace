@@ -671,10 +671,11 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run test:mutation
-      # Always exercise the Stryker/Vitest integration even when this PR does
-      # not touch a file in a critical changed-code group or a campaign fails.
-      - run: npm run test:mutation:smoke
-        if: always()
+      # The `test:mutation:smoke` step that lived here exercised the
+      # Stryker/Vitest integration; both the script and the Vitest (gui/client)
+      # group left with the AIO-612 cut, so the step could only fail (masked by
+      # continue-on-error). Removed in AIO-534 instead of patching its
+      # `if: always()` — do not reinstate without a script that exists.
 
   test-gate:
     # Preserve the existing protected-branch context while strengthening it:

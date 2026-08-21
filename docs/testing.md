@@ -26,9 +26,23 @@ never refreshes `dist/` and masks itself).
 - The path-filtered npm package golden-path lane packs the tarball, installs it into a clean
   prefix, then scaffolds, validates, and runs offline status via `npm run test:pack-golden`.
 - The required test gate excludes mutation while the nightly campaign is not yet healthy. The
-  2026-07-25 calibration run timed out during `bugbot-security`; make the lane mandatory only
-  after ten consecutive complete nightlies within the workflow budget, spanning at least seven
-  days. Reassess or file a follow-up if that evidence is still unavailable after fourteen days.
+  mandatory flip stays blocked on two preconditions, and both must hold (AIO-534): (1) the
+  **soak streak** — ten consecutive complete scheduled nightlies of `mutation.yml` within the
+  workflow budget, spanning at least seven days — machine-checked by
+  `node scripts/mutation-soak-streak.mjs` (exit 0 when met, `--json` for automation). The check
+  counts per-JOB conclusions, not run conclusions: `mutation.yml` documents `bugbot-security`
+  as a deliberately red leg until AIO-554, so the run-level conclusion is failure every night
+  by construction; a night is complete when every expected governed matrix leg (derived from
+  the workflow's matrix list) is present and succeeds — a night that dropped a leg is not
+  complete. Only
+  `schedule`-event runs count, and a gap of more than 48h between adjacent nights breaks the
+  streak (a disabled or auto-suspended schedule is not soak evidence); and (2) the per-target floor enforcement (the sole-denominator
+  campaign split, see the mutation policy below) holding over that same streak. Streak anchor:
+  the clock restarts at **2026-08-20**, when the AIO-994 oracle restoration returned the
+  nightly to a killing state after a week red at 0.00. The anchor is enforced in code — the
+  `ANCHOR` constant in `scripts/mutation-soak-streak.mjs` discards earlier nights, so
+  pre-restoration green cannot satisfy the check; move the constant and this date together.
+  Reassess or file a follow-up if the soak evidence is still unavailable by **2026-09-03**.
 
 ## Coverage policy
 
@@ -67,14 +81,20 @@ regenerate the tracked baseline from a local run. Never lower a baseline merely 
 ## Mutation policy
 
 `npm run test:mutation` mutates changed files in critical safety groups and pairs native
-`node:test` modules with narrow impacted test commands. `npm run test:mutation:nightly` expands
-those groups and reuses incremental results. The exact compiled inbox capability target enforces
-a 90% break threshold when it is the campaign's sole target, with headroom below its demonstrated
-single-file 96.43% score from AIO-513. Mixed-file and whole-group denominators remain advisory at
-`thresholds.break = 0` until measured directly. A failed campaign is reported after the remaining
-groups run, so one score regression cannot starve later groups of reports or incremental-cache
-updates. The PR mutation job remains non-blocking until ten consecutive complete nightlies fit the
-workflow budget over at least seven days. Equivalent mutants require a reviewed justification.
+`node:test` modules with narrow impacted test commands. `npm run test:mutation:nightly` runs
+each group's declared safety unit (incremental mode is unconditionally off — the command runner
+reports no per-test information, so cached verdicts go stale). The exact compiled inbox
+capability target enforces a 90% break threshold with headroom below its demonstrated
+single-file 96.43% score from AIO-513; its oracle is `test/operator-loop/inbox-capability.test.mjs`,
+which imports the compiled target directly (AIO-994 — the previous oracle left with the AIO-612
+GUI cut and its substitute never loaded the module, so all 26 mutants survived at 0.00).
+Calibrated targets are always split into their own sole-denominator campaigns
+(`splitCampaigns` in `scripts/run-mutation.mjs`, AIO-534), so a diff touching a calibrated file
+plus its siblings can no longer demote the floor to advisory — the former "shotgun bypass".
+Mixed-file and whole-group denominators remain advisory at `thresholds.break = 0` until measured
+directly. A failed campaign is reported after the remaining groups run, so one score regression
+cannot starve later groups of reports. The PR mutation job remains non-blocking until the
+machine-checked soak streak above is met. Equivalent mutants require a reviewed justification.
 
 TypeScript groups mutate the compiled `dist/` output, not `src/`: Stryker's command runner
 scores purely on exit code, so mutating source TypeScript would let compile-breaking mutants be

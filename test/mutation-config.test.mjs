@@ -194,11 +194,12 @@ test("nightly kill commands use the unit's own tests; the changed-code lane keep
     .commandRunner.command;
   const changedCommand = configFor(inbox, ["dist/operator-loop/inbox/capability.js"], false)
     .commandRunner.command;
-  // The gui-owned capability suite that served as this group's fast nightly oracle travelled to
-  // aiosbrain/aios-workspace-gui with the AIO-612 cut, so there is no nightlyTests override left
-  // and both lanes now run the operator-loop umbrella. Neither command may reference a path in
-  // the other repo.
-  assert.match(nightlyCommand, /test\/operator-loop\/\*\.test\.mjs/);
+  // AIO-994: the nightly oracle is the in-repo capability suite (the gui-owned suite left with
+  // the AIO-612 cut, and its umbrella substitute never imported the module — 26/26 survivors,
+  // score 0.00). Nightly kills with the unit oracle alone; the changed-code lane keeps the
+  // umbrella. Neither command may reference a path in the other repo.
+  assert.match(nightlyCommand, /test\/operator-loop\/inbox-capability\.test\.mjs/);
+  assert.doesNotMatch(nightlyCommand, /test\/operator-loop\/\*\.test\.mjs/);
   assert.match(changedCommand, /test\/operator-loop\/\*\.test\.mjs/);
   assert.doesNotMatch(nightlyCommand, /gui\//);
   assert.doesNotMatch(changedCommand, /gui\//);

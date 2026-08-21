@@ -23,7 +23,7 @@
  * cost is the WHOLE kill command, so nightly feasibility depends on both fields.
  */
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -122,10 +122,16 @@ export const MUTATION_GROUPS = [
       "src/operator-loop/inbox/seeding.ts",
       "src/operator-loop/inbox/state-machines.ts",
     ],
-    // The capability suite that used to serve as this group's fast oracle travelled to
-    // aiosbrain/aios-workspace-gui with the AIO-612 cut, so there is no gui-owned test to point
-    // at any more. The operator-loop suite is the oracle again; if the nightly cost becomes a
-    // problem, re-measure a replacement floor rather than reinstating a cross-repo path.
+    // ORACLE (AIO-994): test/operator-loop/inbox-capability.test.mjs is THE mutation oracle
+    // for the calibrated capability floor — it imports dist/operator-loop/inbox/capability.js
+    // directly, so it can distinguish a mutated broker from an intact one. The previous oracle
+    // travelled to aiosbrain/aios-workspace-gui with the AIO-612 cut, and its substitute (the
+    // operator-loop umbrella) never imported the module: all 26 mutants survived by
+    // construction (score 0.00 vs the 90% floor, main red nightly 2026-08-13..20). If the
+    // oracle file is cut or renamed again, the tracked-file assertions in
+    // test/mutation-config.test.mjs fail loudly. Never point this group at a suite that does
+    // not import the mutate target, and never lower or remove the 90% floor to green the lane.
+    nightlyTests: ["test/operator-loop/inbox-capability.test.mjs"],
     tests: ["test/operator-loop/*.test.mjs"],
     // This floor is calibrated for the exact compiled target only. Do not
     // project a single-file score onto the much larger mutation group.
@@ -201,10 +207,68 @@ function nodeCommand(group, nightly) {
   return `${chmod}node --test --test-concurrency=2 ${tests.join(" ")}`;
 }
 
-export function configFor(group, mutate, nightly) {
+/**
+ * Split a group's selected mutate set into per-campaign sets so every
+ * calibrated target always runs as its own SOLE-denominator campaign.
+ *
+ * Stryker reports one aggregate score per campaign, so a floor calibrated on
+ * one file is enforceable only when that file is the whole denominator.
+ * Pre-AIO-534 the changed-code lane built a single campaign from every
+ * matched file, so a PR touching a calibrated target PLUS any sibling in the
+ * group collapsed the threshold to 0 — the "shotgun bypass": adding a second
+ * inbox file dodged the only enforced floor. Splitting here removes the
+ * bypass structurally: the calibrated target's floor is armed no matter what
+ * else changed, and the remaining files run as their own advisory campaign.
+ *
+ * Returns `[{ mutate, label }]`. Labels stay the plain group name when no
+ * split happens (stable report/artifact paths); a split calibrated campaign
+ * gets `<group>--<basename>` so the two campaigns cannot clobber each
+ * other's config or report files.
+ */
+export function splitCampaigns(group, mutate) {
+  const calibrated = mutate.filter((file) => (group.breakThresholdByTarget?.[file] ?? 0) > 0);
+  const rest = mutate.filter((file) => !calibrated.includes(file));
+  const campaigns = calibrated.map((file) => ({
+    mutate: [file],
+    label: `${group.name}--${path.basename(file).replace(/\.[cm]?js$/, "")}`,
+  }));
+  if (rest.length) campaigns.push({ mutate: rest, label: group.name });
+  if (campaigns.length === 1) campaigns[0].label = group.name;
+  // Labels name config + report files; two calibrated targets sharing a
+  // basename would silently clobber each other's — fail loudly instead.
+  if (new Set(campaigns.map((campaign) => campaign.label)).size !== campaigns.length) {
+    throw new Error(
+      `${group.name}: duplicate campaign labels from same-basename calibrated targets — ` +
+        `disambiguate breakThresholdByTarget or the label scheme in splitCampaigns()`
+    );
+  }
+  return campaigns;
+}
+
+/**
+ * Delete stale split-campaign reports (label `<group>--<basename>.json`) for
+ * the groups about to run. A stale one left by an earlier diff (whose
+ * selection produced a split this run does not) would double-count the group
+ * in codebase-health's checkMutationScore, which sums every
+ * reports/mutation/*.json. Live split reports are rewritten by the campaigns
+ * that follow.
+ */
+export function clearStaleSplitReports(groupNames, reportsDir) {
+  for (const name of new Set(groupNames)) {
+    for (const file of readdirSync(reportsDir)) {
+      if (file.startsWith(`${name}--`) && file.endsWith(".json")) {
+        unlinkSync(path.join(reportsDir, file));
+      }
+    }
+  }
+}
+
+export function configFor(group, mutate, nightly, label = group.name) {
   // A threshold calibrated on one file is valid only when that file is the
-  // complete campaign denominator. Mixed and whole-group campaigns remain
-  // advisory until their own scores have been observed.
+  // complete campaign denominator. splitCampaigns() upstream guarantees a
+  // calibrated target is always its own sole-denominator campaign; this
+  // guard stays as defense in depth (e.g. an explicit --mutate list). Mixed
+  // and whole-group campaigns remain advisory until measured directly.
   const breakThreshold = mutate.length === 1 ? (group.breakThresholdByTarget?.[mutate[0]] ?? 0) : 0;
   const common = {
     $schema: "./node_modules/@stryker-mutator/core/schema/stryker-schema.json",
@@ -212,7 +276,7 @@ export function configFor(group, mutate, nightly) {
     concurrency: 2,
     timeoutMS: 60_000,
     reporters: ["clear-text", "progress", "json"],
-    jsonReporter: { fileName: `reports/mutation/${group.name}.json` },
+    jsonReporter: { fileName: `reports/mutation/${label}.json` },
     thresholds: { high: 80, low: 60, break: breakThreshold },
     // Incremental is UNSOUND with the command runner: it reports no per-test information, so
     // Stryker cannot see test changes and reuses stale verdicts — measured on the AIO-539
@@ -221,7 +285,7 @@ export function configFor(group, mutate, nightly) {
     // that left with gui/client in the AIO-612 cut. Every remaining group uses the command
     // runner, so this is now unconditionally off.
     incremental: false,
-    incrementalFile: `.stryker-tmp/${group.name}.json`,
+    incrementalFile: `.stryker-tmp/${label}.json`,
   };
   return {
     ...common,
@@ -237,7 +301,7 @@ export function runAllCampaigns(selected, runCampaign) {
     try {
       runCampaign(entry);
     } catch (error) {
-      failures.push({ group: entry.group.name, error });
+      failures.push({ group: entry.label ?? entry.group.name, error });
     }
   }
   if (failures.length) {
@@ -303,15 +367,18 @@ function main(argv) {
   }
   const changed = options.nightly || options.mutate ? [] : changedFiles(options.base);
   const selected = MUTATION_GROUPS.filter((group) => !options.group || group.name === options.group)
-    .map((group) => ({
-      group,
-      mutate: (options.mutate
-        ? [options.mutate]
-        : options.nightly
-          ? group.nightly
-          : changed.filter((file) => group.match.test(file))
-      ).map((file) => toMutateTarget(group, file)),
-    }))
+    .flatMap((group) => {
+      const mutate = (
+        options.mutate
+          ? [options.mutate]
+          : options.nightly
+            ? group.nightly
+            : changed.filter((file) => group.match.test(file))
+      ).map((file) => toMutateTarget(group, file));
+      // Calibrated targets split into sole-denominator campaigns so their
+      // floors are enforced regardless of what else the diff touched (AIO-534).
+      return splitCampaigns(group, mutate).map((campaign) => ({ group, ...campaign }));
+    })
     .filter(({ mutate }) => mutate.length);
 
   if (!selected.length) {
@@ -319,7 +386,16 @@ function main(argv) {
     return;
   }
   mkdirSync(path.join(ROOT, ".stryker-tmp"), { recursive: true });
-  mkdirSync(path.join(ROOT, "reports", "mutation"), { recursive: true });
+  const reportsDir = path.join(ROOT, "reports", "mutation");
+  mkdirSync(reportsDir, { recursive: true });
+
+  // Not in --list mode: a dry run must not delete real reports.
+  if (!options.list) {
+    clearStaleSplitReports(
+      selected.map(({ group }) => group.name),
+      reportsDir
+    );
+  }
 
   if (!options.list && selected.some(({ group }) => group.mutateDist)) {
     console.log("mutation: building unmutated dist once for compiled-output groups");
@@ -332,11 +408,11 @@ function main(argv) {
     if (build.status !== 0) throw new Error("build:loop failed before the mutation campaign");
   }
 
-  runAllCampaigns(selected, ({ group, mutate }) => {
-    const config = configFor(group, mutate, options.nightly);
-    const configFile = path.join(ROOT, ".stryker-tmp", `${group.name}.conf.json`);
+  runAllCampaigns(selected, ({ group, mutate, label }) => {
+    const config = configFor(group, mutate, options.nightly, label);
+    const configFile = path.join(ROOT, ".stryker-tmp", `${label}.conf.json`);
     writeFileSync(configFile, `${JSON.stringify(config, null, 2)}\n`);
-    console.log(`mutation: ${group.name} (${mutate.join(", ")})`);
+    console.log(`mutation: ${label} (${mutate.join(", ")})`);
     if (options.list) return;
     const result = spawnSync(
       process.execPath,
