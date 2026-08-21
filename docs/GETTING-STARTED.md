@@ -136,6 +136,10 @@ a deliberate `aios push`.
   through — a guard that cannot parse its input must never report "allow". Before the
   node fallback landed it silently allowed instead, which meant secret scanning was off
   on any machine without `jq` and nothing said so.
+  To verify the guard is enforcing on your machine, run **`npm run guard:selftest`** —
+  do not hand-roll a payload (the guard is bash-only and its event shape is easy to
+  get subtly wrong; both mistakes produce convincing wrong answers). Payload shape and
+  the known hand-check traps: `docs/guard-verification.md`.
 - **`npm install` is required before running the validators from a git-clone checkout.**
   It is *not* needed for scaffolding or for `aios` sync. The npm install path
   (`npm i -g @aiosbrain/aios`) ships its dependencies resolved, so it needs no extra step.
