@@ -27,13 +27,25 @@ const WRAPPER = path.join(ROOT, "scripts/linear.mjs");
 test("the credential wrapper is scripts/linear.mjs, and it still resolves the key", () => {
   const wrapper = readFileSync(WRAPPER, "utf8");
   assert.match(wrapper, /resolveConnectorEnv\(/, "scripts/linear.mjs must resolve connector env");
-  assert.match(wrapper, /apiKeyEnv:\s*"LINEAR_API_KEY"/, "it must resolve LINEAR_API_KEY specifically");
+  assert.match(
+    wrapper,
+    /apiKeyEnv:\s*"LINEAR_API_KEY"/,
+    "it must resolve LINEAR_API_KEY specifically"
+  );
 });
 
 test("the skill CLI does NOT resolve credentials — so it must not be the documented entry point", () => {
   const core = readFileSync(CORE, "utf8");
-  assert.match(core, /process\.env\.LINEAR_API_KEY/, "linear-core reads the key from the environment");
-  assert.doesNotMatch(core, /resolveConnectorEnv/, "linear-core does not resolve it — if this changes, revisit the docs");
+  assert.match(
+    core,
+    /process\.env\.LINEAR_API_KEY/,
+    "linear-core reads the key from the environment"
+  );
+  assert.doesNotMatch(
+    core,
+    /resolveConnectorEnv/,
+    "linear-core does not resolve it — if this changes, revisit the docs"
+  );
 });
 
 test("SKILL.md's primary invocation is the PATH bin, not the credential-less skill file", () => {
@@ -45,7 +57,7 @@ test("SKILL.md's primary invocation is the PATH bin, not the credential-less ski
   assert.doesNotMatch(
     value,
     /skills\/aios-linear\/linear\.mjs/,
-    "the skill file resolves no credential and must not be the primary invocation (AIO-1027)",
+    "the skill file resolves no credential and must not be the primary invocation (AIO-1027)"
   );
 });
 
@@ -56,7 +68,7 @@ test("the missing-key error names a command that can actually succeed", () => {
   assert.doesNotMatch(
     msg,
     /run via:\s*node \.claude\/skills\/aios-linear\/linear\.mjs/,
-    "the error must not tell the reader to re-run the exact command that just failed",
+    "the error must not tell the reader to re-run the exact command that just failed"
   );
   assert.match(msg, /\blinear\b/, "it should point at the bin that resolves the key");
 });
