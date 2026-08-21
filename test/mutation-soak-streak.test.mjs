@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -11,6 +13,8 @@ import {
   REQUIRED_DAYS,
   REQUIRED_STREAK,
   expectedGovernedLegs,
+  fetchNights,
+  main,
   nightIsComplete,
   soakStreak,
 } from "../scripts/mutation-soak-streak.mjs";
@@ -218,4 +222,106 @@ test("ten consecutive completes squeezed into under seven days do not satisfy", 
 
 test("no nights at all reports a zero streak, unsatisfied", () => {
   assert.deepEqual(soakStreak([]), { count: 0, daysSpanned: 0, satisfied: false });
+});
+
+// ── Process-boundary paths (fetchNights / main / ghJson / entry guard) ──────────────────────────
+
+function completeJobs() {
+  return GOVERNED.map((group) => leg(group, "success"));
+}
+
+test("fetchNights keeps only completed scheduled runs and asks for each one's jobs", () => {
+  const calls = [];
+  const runsPayload = [
+    { id: 1, event: "schedule", status: "completed", created_at: night(0, true).created_at },
+    {
+      id: 2,
+      event: "workflow_dispatch",
+      status: "completed",
+      created_at: night(1, true).created_at,
+    },
+    { id: 3, event: "schedule", status: "in_progress", created_at: night(2, true).created_at },
+    { id: 4, event: "schedule", status: "completed", created_at: night(3, true).created_at },
+  ];
+  const gh = (endpoint, jq) => {
+    calls.push(endpoint);
+    assert.ok(jq.length > 0, "every gh call must pass a jq projection");
+    if (calls.length === 1) return runsPayload;
+    // Run 4 dropped a governed leg; run 1 is complete.
+    return endpoint.includes("/runs/4/") ? completeJobs().slice(1) : completeJobs();
+  };
+  const nights = fetchNights(gh);
+  assert.deepEqual(nights, [
+    { created_at: runsPayload[0].created_at, complete: true },
+    { created_at: runsPayload[3].created_at, complete: false },
+  ]);
+  // One runs listing + one jobs fetch per completed scheduled run — never for
+  // the dispatch rerun or the in-progress night.
+  assert.equal(calls.length, 3);
+  assert.match(calls[0], /workflows\/mutation\.yml\/runs\?event=schedule/);
+  assert.match(calls[1], /\/runs\/1\/jobs/);
+  assert.match(calls[2], /\/runs\/4\/jobs/);
+});
+
+test("main returns 0 and reports MET when the streak satisfies", () => {
+  const lines = [];
+  const nights = Array.from({ length: 10 }, (_, i) => night(i, true));
+  const code = main([], { fetch: () => nights, log: (line) => lines.push(line) });
+  assert.equal(code, 0);
+  assert.match(lines[0], /10 consecutive complete scheduled nightlies/);
+  assert.match(lines[1], /precondition MET/);
+});
+
+test("main --json returns 1 with the machine shape when unsatisfied", () => {
+  const lines = [];
+  const code = main(["--json"], { fetch: () => [], log: (line) => lines.push(line) });
+  assert.equal(code, 1);
+  assert.deepEqual(JSON.parse(lines[0]), {
+    streak: 0,
+    daysSpanned: 0,
+    requiredStreak: REQUIRED_STREAK,
+    requiredDays: REQUIRED_DAYS,
+    deliberateRedLegs: ["bugbot-security"],
+    satisfied: false,
+  });
+});
+
+test("main returns 2 and explains when the gh lookup fails", () => {
+  const errors = [];
+  const code = main([], {
+    fetch: () => {
+      throw new Error("gh: HTTP 502");
+    },
+    logError: (line) => errors.push(line),
+  });
+  assert.equal(code, 2);
+  assert.match(errors[0], /cannot read mutation\.yml runs via gh api: gh: HTTP 502/);
+});
+
+test("the CLI entry runs end-to-end against a canned gh on PATH", () => {
+  // Covers ghJson + the entry guard with a real subprocess: a fake `gh`
+  // first on PATH returns one canned completed scheduled night whose
+  // governed legs all succeeded — streak 1, precondition unmet, exit 1.
+  const shimDir = mkdtempSync(path.join(tmpdir(), "soak-gh-shim-"));
+  const runsJson = JSON.stringify([
+    { id: 7, event: "schedule", status: "completed", created_at: night(0, true).created_at },
+  ]);
+  const jobsJson = JSON.stringify(completeJobs());
+  writeFileSync(
+    path.join(shimDir, "gh"),
+    `#!/usr/bin/env node\n` +
+      `const endpoint = process.argv[3] ?? "";\n` +
+      `console.log(endpoint.includes("/jobs") ? ${JSON.stringify(jobsJson)} : ${JSON.stringify(runsJson)});\n`,
+    { mode: 0o755 }
+  );
+  const result = spawnSync(
+    process.execPath,
+    [path.join(ROOT, "scripts", "mutation-soak-streak.mjs"), "--json"],
+    { encoding: "utf8", env: { ...process.env, PATH: `${shimDir}:${process.env.PATH}` } }
+  );
+  assert.equal(result.status, 1, result.stderr);
+  const report = JSON.parse(result.stdout);
+  assert.equal(report.streak, 1);
+  assert.equal(report.satisfied, false);
+  rmSync(shimDir, { recursive: true, force: true });
 });

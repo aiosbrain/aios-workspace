@@ -150,19 +150,23 @@ function ghJson(endpoint, jq) {
   return JSON.parse(output);
 }
 
-/** 20 scheduled nights is ample evidence for a 10-night streak check. */
-function fetchNights() {
+/**
+ * 20 scheduled nights is ample evidence for a 10-night streak check. The gh
+ * caller is injectable so the night-assembly logic (event/status filtering,
+ * per-run job fetch, completeness) is testable without a subprocess.
+ */
+export function fetchNights(gh = ghJson) {
   const expectedLegs = expectedGovernedLegs(
     readFileSync(path.join(ROOT, ".github", "workflows", "mutation.yml"), "utf8")
   );
-  const runs = ghJson(
+  const runs = gh(
     "repos/{owner}/{repo}/actions/workflows/mutation.yml/runs?event=schedule&per_page=20",
     ".workflow_runs | map({id, event, status, created_at})"
   );
   const nights = [];
   for (const run of runs) {
     if (run.event !== "schedule" || run.status !== "completed") continue;
-    const jobs = ghJson(
+    const jobs = gh(
       `repos/{owner}/{repo}/actions/runs/${run.id}/jobs?per_page=100`,
       ".jobs | map({name, conclusion})"
     );
@@ -171,21 +175,20 @@ function fetchNights() {
   return nights;
 }
 
-function main(argv) {
+/** Returns the process exit code (0 met / 1 not met / 2 lookup failure). */
+export function main(argv, deps = {}) {
+  const { fetch = fetchNights, log = console.log, logError = console.error } = deps;
   const json = argv.includes("--json");
   let nights;
   try {
-    nights = fetchNights();
+    nights = fetch();
   } catch (error) {
-    console.error(
-      `mutation-soak-streak: cannot read mutation.yml runs via gh api: ${error.message}`
-    );
-    process.exitCode = 2;
-    return;
+    logError(`mutation-soak-streak: cannot read mutation.yml runs via gh api: ${error.message}`);
+    return 2;
   }
   const { count, daysSpanned, satisfied } = soakStreak(nights);
   if (json) {
-    console.log(
+    log(
       JSON.stringify({
         streak: count,
         daysSpanned: Number(daysSpanned.toFixed(2)),
@@ -196,21 +199,21 @@ function main(argv) {
       })
     );
   } else {
-    console.log(
+    log(
       `mutation soak streak: ${count} consecutive complete scheduled nightlies ` +
         `(need ${REQUIRED_STREAK}) spanning ${daysSpanned.toFixed(1)} days (need ${REQUIRED_DAYS}); ` +
         `a night is complete when every governed leg succeeds ` +
         `(excluded deliberate-red legs: ${[...DELIBERATE_RED_LEGS].join(", ") || "none"})`
     );
-    console.log(
+    log(
       satisfied
         ? "precondition MET — the mandatory flip may be reassessed (see docs/testing.md)"
         : "precondition NOT met — the PR mutation lane stays non-blocking (docs/testing.md)"
     );
   }
-  process.exitCode = satisfied ? 0 : 1;
+  return satisfied ? 0 : 1;
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  main(process.argv.slice(2));
+  process.exitCode = main(process.argv.slice(2));
 }

@@ -7,10 +7,16 @@
 //   bypass, plus its label-collision guard.
 import assert from "node:assert/strict";
 import test from "node:test";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { configFor, MUTATION_GROUPS, splitCampaigns } from "../scripts/run-mutation.mjs";
+import {
+  clearStaleSplitReports,
+  configFor,
+  MUTATION_GROUPS,
+  splitCampaigns,
+} from "../scripts/run-mutation.mjs";
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -104,4 +110,22 @@ test("splitCampaigns keeps single-campaign selections under the plain group name
     [{ mutate: ["scripts/toolkit-merge.mjs", "scripts/update.mjs"], label: "update-safety" }]
   );
   assert.deepEqual(splitCampaigns(updateSafety, []), []);
+});
+
+test("clearStaleSplitReports deletes only the selected groups' split reports", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "mutation-reports-"));
+  const files = [
+    "inbox-authorization--capability.json", // stale split report: goes
+    "inbox-authorization.json", // main group report: stays
+    "inbox-authorization--capability.txt", // not a report: stays
+    "update-safety--merge.json", // other group not selected: stays
+  ];
+  for (const file of files) writeFileSync(path.join(dir, file), "{}");
+  clearStaleSplitReports(["inbox-authorization", "inbox-authorization"], dir);
+  assert.deepEqual(readdirSync(dir).sort(), [
+    "inbox-authorization--capability.txt",
+    "inbox-authorization.json",
+    "update-safety--merge.json",
+  ]);
+  rmSync(dir, { recursive: true, force: true });
 });

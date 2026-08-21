@@ -245,6 +245,24 @@ export function splitCampaigns(group, mutate) {
   return campaigns;
 }
 
+/**
+ * Delete stale split-campaign reports (label `<group>--<basename>.json`) for
+ * the groups about to run. A stale one left by an earlier diff (whose
+ * selection produced a split this run does not) would double-count the group
+ * in codebase-health's checkMutationScore, which sums every
+ * reports/mutation/*.json. Live split reports are rewritten by the campaigns
+ * that follow.
+ */
+export function clearStaleSplitReports(groupNames, reportsDir) {
+  for (const name of new Set(groupNames)) {
+    for (const file of readdirSync(reportsDir)) {
+      if (file.startsWith(`${name}--`) && file.endsWith(".json")) {
+        unlinkSync(path.join(reportsDir, file));
+      }
+    }
+  }
+}
+
 export function configFor(group, mutate, nightly, label = group.name) {
   // A threshold calibrated on one file is valid only when that file is the
   // complete campaign denominator. splitCampaigns() upstream guarantees a
@@ -371,17 +389,12 @@ function main(argv) {
   const reportsDir = path.join(ROOT, "reports", "mutation");
   mkdirSync(reportsDir, { recursive: true });
 
-  // Split-campaign reports are labelled `<group>--<basename>.json`. A stale
-  // one left by an earlier diff (whose selection produced a split this run
-  // does not) would double-count the group in codebase-health's
-  // checkMutationScore, which reads every reports/mutation/*.json. Clear the
-  // selected groups' split reports up front; live ones are rewritten below.
-  for (const name of new Set(selected.map(({ group }) => group.name))) {
-    for (const file of readdirSync(reportsDir)) {
-      if (file.startsWith(`${name}--`) && file.endsWith(".json")) {
-        unlinkSync(path.join(reportsDir, file));
-      }
-    }
+  // Not in --list mode: a dry run must not delete real reports.
+  if (!options.list) {
+    clearStaleSplitReports(
+      selected.map(({ group }) => group.name),
+      reportsDir
+    );
   }
 
   if (!options.list && selected.some(({ group }) => group.mutateDist)) {
