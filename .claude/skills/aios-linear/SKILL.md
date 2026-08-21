@@ -28,12 +28,12 @@ Plane MCP:
 
 ```bash
 AIOS_WS=../aios-workspace   # adjust to this repo's actual relative/absolute path to aios-workspace
-node "$AIOS_WS/scripts/linear.mjs" <command>
+node "$AIOS_WS/.claude/skills/aios-linear/linear.mjs" <command>
 ```
 
 Do not `dotenvx run -f $AIOS_WS/.env` to call Linear. That decrypts every secret in the file
 and prints `[WRONG_PRIVATE_KEY]` / `[DECRYPTION_FAILED]` for unrelated keys the current
-keypair cannot read (AIO-790). `scripts/linear.mjs` decrypts only `LINEAR_API_KEY`.
+keypair cannot read (AIO-790). The CLI decrypts only `LINEAR_API_KEY`.
 
 **Never hand-maintain a second divergent copy of `linear.mjs`.** If a fix or a new command
 belongs here, make it in the aios-workspace canonical copy and let it propagate (via `aios
@@ -44,11 +44,16 @@ project-committed copy, and the canonical scaffold copy — all with different c
 
 ## Use the script, not ad-hoc GraphQL
 
-The CLI ships with this skill at `.claude/skills/aios-linear/linear.mjs`. From this repo, call
-the scoped wrapper so only `LINEAR_API_KEY` is decrypted from `.env`:
+The CLI ships with this skill at `.claude/skills/aios-linear/linear.mjs`, so that path resolves in **any** AIOS workspace —
+the `aios-workspace` checkout and every scaffolded member workspace alike. Call it so only
+`LINEAR_API_KEY` is decrypted from `.env`:
+
+> `scripts/linear.mjs` is a thin PATH shim that exists **only inside the `aios-workspace`
+> checkout** — `scripts/toolkit-manifest.mjs` deliberately does not vendor it into scaffolded
+> workspaces. Naming it in instructions sends members to a `MODULE_NOT_FOUND` (AIO-1027).
 
 ```bash
-LIN="node scripts/linear.mjs"
+LIN="node .claude/skills/aios-linear/linear.mjs"
 
 $LIN get AIO-75                 # one line: identifier, title, state, id
 $LIN get AIO-75 --full         # + url + full metadata + description + comments
@@ -180,7 +185,7 @@ reference only the one it should close.
 ## AIOS ops cheatsheet
 
 - **dotenvx noise (AIO-790):** do not `dotenvx run -f .env` to call Linear. That decrypts every
-  secret and emits key-mismatch warnings for unrelated keys. Use `node scripts/linear.mjs`.
+  secret and emits key-mismatch warnings for unrelated keys. Use `node .claude/skills/aios-linear/linear.mjs`.
   `--quiet` only hides the dotenvx banner, not those warnings.
 - **Plane MCP** returns huge, mostly-irrelevant blobs for AIOS-internal work — use this script instead. Plane remains a supported _customer_ integration; that's a different boundary.
 
