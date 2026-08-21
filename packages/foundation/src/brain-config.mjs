@@ -4,7 +4,9 @@
  * and aios.yaml (brain_url, team_id, api_key_env).
  *
  * Used by the `aios` CLI (mergeBrainSecrets) AND the GUI server's OAuth proxy routes,
- * so both reach the brain the same way. Zero npm deps.
+ * so both reach the brain the same way. Zero hard npm deps; @dotenvx/dotenvx is an
+ * optional peer — when it resolves from the consumer's tree the F-C6 decrypt path works
+ * without direnv, and when it doesn't the code degrades to a `dotenvx` on PATH.
  */
 
 import { existsSync, readFileSync } from "node:fs";

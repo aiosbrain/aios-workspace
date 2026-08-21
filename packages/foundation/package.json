@@ -15,6 +15,14 @@
   "engines": {
     "node": ">=22"
   },
+  "peerDependencies": {
+    "@dotenvx/dotenvx": "^2.19.1"
+  },
+  "peerDependenciesMeta": {
+    "@dotenvx/dotenvx": {
+      "optional": true
+    }
+  },
   "files": [
     "src",
     "README.md",
