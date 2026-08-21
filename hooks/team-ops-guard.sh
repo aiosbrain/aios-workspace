@@ -225,7 +225,7 @@ else
   SECRETS_PATTERNS=(
     "AKIA[0-9A-Z]{16}"
     "-----BEGIN (RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----"
-    "gh[ps]_[A-Za-z0-9_]{36,}"
+    "gh[pousr]_[A-Za-z0-9_]{36,}"
     "xox[bporas]-[A-Za-z0-9-]+"
     "sk-[A-Za-z0-9_-]{40,}"
     "sk-ant-[A-Za-z0-9_-]{20,}"
@@ -237,11 +237,26 @@ else
     "[sr]k_live_[A-Za-z0-9]{20,}"
     "npm_[A-Za-z0-9]{36}"
     "eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}"
+    "(^|[^A-Za-z0-9_-])pk_[0-9]+_[A-Za-z0-9]{20,}"
+    "(^|[^A-Za-z0-9_-])lin_(api|oauth)_[A-Za-z0-9]{20,}"
   )
 fi
 
+# AIO-952: honor the VALUE-BOUND fixture-declaration marker (see validation/check-secrets.sh)
+# so the blessed workflow for realistic marker-free fixture values also works at write time.
+# "aios-secret-fixture:<prefix>" (>=12 token chars of the declared value, or the full value)
+# strips ONLY tokens starting with that declared prefix before matching — never the whole
+# line/content, which would let one marker smuggle an unrelated real secret past the gate.
+SECRET_SCAN_CONTENT="$CONTENT"
+while IFS= read -r declared; do
+  [ -n "$declared" ] || continue
+  declared_prefix="${declared#*:}"
+  SECRET_SCAN_CONTENT=$(printf '%s\n' "$SECRET_SCAN_CONTENT" |
+    sed -E "s/(^|[^A-Za-z0-9_-])${declared_prefix}[A-Za-z0-9_-]*/\1/gI")
+done < <(printf '%s\n' "$CONTENT" | grep -oiE 'aios-secret-fixture:[A-Za-z0-9_-]{12,}' | sort -u || true)
+
 for pattern in "${SECRETS_PATTERNS[@]}"; do
-  if echo "$CONTENT" | grep -qE -e "$pattern" 2>/dev/null; then
+  if printf '%s\n' "$SECRET_SCAN_CONTENT" | grep -qE -e "$pattern" 2>/dev/null; then
     echo "BLOCKED by team-ops-guard: Potential secret detected in $FILE_PATH" >&2
     echo "Pattern matched: $pattern" >&2
     echo "Remove the secret before writing this file." >&2

@@ -39,8 +39,10 @@ PATTERNS=(
   "Generic Secret|['\"]?secret['\"]?\s*[:=]\s*['\"][A-Za-z0-9_\-]{20,}['\"]"
   "Generic Token|['\"]?token['\"]?\s*[:=]\s*['\"][A-Za-z0-9_\-]{20,}['\"]"
   "Private Key Header|-----BEGIN (RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----"
-  "GitHub Token|gh[ps]_[A-Za-z0-9_]{36,}"
-  "Slack Token|xox[bporas]-[A-Za-z0-9-]+"
+  # AIO-952: GitHub and Slack tokens are matched via validation/secret-patterns.txt, which is
+  # merged below. Inline copies drifted — the old inline Slack rule lacked the AIO-965 left
+  # token boundary, silently re-opening the hyphenated-prose false-positive class inside this
+  # scanner. Do not re-add value rules here that the shared file already owns.
   "Toggl API Token|[0-9a-f]{32}"
   # Userinfo tokens are anchored: `user`/`pass` contain no `/`, `@`, whitespace, or quote, so the
   # pattern cannot bridge an ordinary `scheme://host/…:…@…` span (e.g. minified CSS, where an earlier
@@ -213,6 +215,11 @@ fi
 
 # Merge in shared patterns (validation/secret-patterns.txt) — the single
 # source also consumed by hooks/team-ops-guard.sh and scripts/aios.mjs.
+# FAIL CLOSED if it is missing (AIO-952): the GitHub/Slack value rules live only
+# there now, so a vendored copy of this script without its sibling would silently
+# scan with a strictly weaker rule set and still print PASSED — the exact failure
+# mode this scanner exists to prevent. Scaffolding and the toolkit manifest always
+# ship the two files together; a missing sibling is a broken deployment, not a mode.
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 if [ -f "$SCRIPT_DIR/secret-patterns.txt" ]; then
   while IFS= read -r shared_pattern; do
@@ -220,6 +227,9 @@ if [ -f "$SCRIPT_DIR/secret-patterns.txt" ]; then
     case "$shared_pattern" in \#*) continue ;; esac
     PATTERNS+=("Shared pattern|$shared_pattern")
   done < "$SCRIPT_DIR/secret-patterns.txt"
+else
+  echo -e "  ${RED}✗ missing $SCRIPT_DIR/secret-patterns.txt — scan cannot be trusted${NC}" >&2
+  ERRORS=$((ERRORS + 1))
 fi
 
 for entry in "${PATTERNS[@]}"; do
@@ -262,6 +272,25 @@ for entry in "${PATTERNS[@]}"; do
       numbered_line="${hit#*:}"
       line_number="${numbered_line%%:*}"
       matched_line="${numbered_line#*:}"
+      # AIO-952: VALUE-BOUND fixture declaration. "aios-secret-fixture:<prefix>" — at
+      # least 12 token chars of the declared value, or the full value — suppresses ONLY
+      # credential-shaped tokens on this line that START WITH the declared prefix. It is
+      # the reviewable alternative to renaming a binding (the PR #575 bypass) when a
+      # fixture value has to stay realistic and marker-free: the marker lives OUTSIDE
+      # the value, so it composes with the AIO-965 token sanitizer below. Whole-line
+      # semantics would be a gate bypass — a one-line file (minified bundle, JSON,
+      # transcript) carrying any marker would scan entirely clean, real secrets
+      # included — so declared tokens are stripped and every pattern re-checked: an
+      # undeclared secret sharing the line still fails. Case-insensitive to mirror this
+      # scanner's grep -i. Declaring a REAL credential's prefix is the same explicit,
+      # diff-visible act as editing .aios-secretignore.
+      while IFS= read -r declared; do
+        [ -n "$declared" ] || continue
+        declared_prefix="${declared#*:}"
+        matched_line=$(printf '%s\n' "$matched_line" |
+          sed -E "s/(^|[^A-Za-z0-9_-])${declared_prefix}[A-Za-z0-9_-]*/\1/gI")
+      done < <(printf '%s\n' "$matched_line" |
+        grep -oiE 'aios-secret-fixture:[A-Za-z0-9_-]{12,}' || true)
       sanitized_line=$(strip_known_non_secrets "$label" "$matched_line" "$match_file")
       if ! printf '%s\n' "$sanitized_line" | grep -qiE -e "$effective_pattern"; then
         continue

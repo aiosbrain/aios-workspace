@@ -85,10 +85,10 @@ function fixture() {
   mkdirSync(path.join(repo, "scripts"));
   mkdirSync(path.join(repo, "validation"));
   writeFileSync(path.join(repo, "scripts", "aios.mjs"), "#!/usr/bin/env node\n");
-  writeFileSync(
-    path.join(repo, "validation", "check-secrets.sh"),
-    readFileSync(path.join(REPO, "validation", "check-secrets.sh"))
-  );
+  for (const f of ["check-secrets.sh", "secret-patterns.txt"]) {
+    // vendored as a pair — the scanner fails closed without its sibling (AIO-952)
+    writeFileSync(path.join(repo, "validation", f), readFileSync(path.join(REPO, "validation", f)));
+  }
   writeFileSync(path.join(repo, "package.json"), '{"name":"aios-workspace","type":"module"}\n');
   writeFileSync(path.join(repo, "tracked.txt"), "base\n");
   git(repo, "add", ".");
