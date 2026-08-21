@@ -5,8 +5,110 @@ loosely based on [Keep a Changelog](https://keepachangelog.com/); dates are
 ISO-8601.
 
 This is the **individual workspace** repo. The Team Brain sync contract
-(`docs/brain-api.md`) is versioned separately; it is currently at **v1.20**
+(`docs/brain-api.md`) is versioned separately; it is currently at **v1.22**
 (additive within major `v1`). Entries predating a bump did not change the protocol.
+
+## [0.12.0] — 2026-08-21
+
+**Minor release, and the licence changes.** AIOS Workspace is now **AGPL-3.0-only** (it was MIT
+through `0.11.1`), with an Apache-2.0 carve-out for the vendored `.harness/`. If you depend on this
+package, read that first — it is the one change in this release that can affect how you are allowed
+to use it. `@aiosbrain/foundation` moves to `0.1.2` in two steps for the same
+reason: `0.1.0` was published to npm under MIT and npm versions are immutable, so the relicensed
+manifest needed a version of its own (`0.1.1`, published 2026-08-21), and the credential-resolution
+fix below changed `brain-config.mjs` after that publish, so it needs one too.
+
+Three shipped defects are fixed here that only a *published install* could see, which is the theme
+of this release: `slack` and `linear` on your `PATH` could not run at all, `aios spec eval` could
+not find its rubric, and a workspace's dotenvx-encrypted `.env` could not be decrypted without a
+global `dotenvx`. All were invisible to a repo-only test suite, and the release now has a gate that
+makes that class of bug visible.
+
+### Changed
+
+- **Licence: MIT → AGPL-3.0-only (RELIC-1).** The vendored `.harness/` directory stays Apache-2.0 as
+  an explicit carve-out, and `LICENSE` is now in a form GitHub detects and displays.
+- **Brain API contract: v1.20 → v1.22.** v1.21 adds `in_review` to the canonical task status set
+  (between `in_progress` and `done`) — a row a pre-1.21 client read as `in_progress` may now arrive
+  as `in_review`. v1.22 makes coverage arrive with its denominator, so a coverage figure can no
+  longer be reported without the total it is a fraction of.
+
+### Fixed
+
+- **`slack` and `linear` on your `PATH` now run.** Both bins were tracked `100644` and shipped that
+  way in the `0.11.1` tarball, so invoking either by name returned `permission denied`; only
+  `scripts/aios.mjs` carried the exec bit. Invoking the same files through an interpreter always
+  worked, which is why the defect survived so long. All three bin targets are now `100755` and the
+  packed tarball is asserted to contain them that way.
+- **`aios spec eval` finds its rubric on a published install (AIO-686, AIO-976).** The fallback path
+  was module-relative and outlived the devtools repo split: it resolved into the sibling
+  `@aiosbrain/aios-devtools` package, which ships no rubric. Resolution now goes through the
+  sanctioned toolkit seam, lazily, so explicit `--rubric` and a repo-local rubric still take
+  precedence and neither invokes the locator. Requires `@aiosbrain/aios-devtools@0.3.0`, which this
+  release pins exactly.
+- **`slack file` uploads no longer interpolate a filename into a header.** The upload path uses
+  Slack's documented external flow with a raw `application/octet-stream` body, which removes the
+  `Content-Disposition` injection surface rather than sanitizing it, and refuses any upload URL that
+  is not `https` (or loopback `http`). Path arguments are opened under workspace containment with
+  `O_NOFOLLOW` + `dir_fd`, so a symlink cannot redirect a read outside the workspace.
+- **Secret ignores cover every `.env.keys`-derived file**, not only the exact name.
+- **`LINEAR_API_KEY` survives a failing sibling dotenvx key (AIO-790).**
+- **The brain-URL guard stops warning about differences that are not differences.**
+- **Cursor hooks dispatch from the payload `cwd`.**
+- **A fresh scaffold no longer ships a sample task row** that lands on a real PM board, and two
+  client identifiers are removed from shipped skill docs.
+- **The documented Linear invocation is one that can authenticate (AIO-1027).** The skill docs named
+  `scripts/linear.mjs`, which is not vendored into scaffolded workspaces, so the documented command
+  failed `MODULE_NOT_FOUND`. The first correction moved everything to
+  `.claude/skills/aios-linear/linear.mjs`, which *is* vendored but performs no credential resolution
+  at all — it worked only where `LINEAR_API_KEY` was already exported. Both are fixed: `linear <cmd>`
+  (the PATH bin, which resolves the key) is the documented invocation, the skill path is an explicit
+  fallback, and the missing-key error no longer tells the reader to re-run the command that just
+  failed.
+- **A published install can decrypt a workspace `.env` without direnv or a global `dotenvx`
+  (AIO-1029).** `@dotenvx/dotenvx` shipped as a devDependency, so the tarball carried no copy and
+  credential resolution fell back to a `dotenvx` on PATH that a member's machine may not have —
+  `linear` and `slack` then failed "key not set" with the key sitting encrypted next to a valid
+  `.env.keys`. It is now a runtime dependency, resolved with Node module resolution (the fixed
+  `node_modules/.bin` path never worked in a hoisted local install), and `@aiosbrain/foundation`
+  declares it as an optional peer for standalone consumers. The packed-artifact gate now asserts
+  decryption from the installed tree with `dotenvx` stripped from PATH.
+- **Worktree hydration never overwrites a branch's tracked `.claude/settings.json` (AIO-920).**
+- **The write-time secret guard flags provider-shaped values under any binding name (AIO-952).**
+- **The mutation-testing capability oracle is restored, closing a shotgun bypass (AIO-994, AIO-534).**
+
+### Added
+
+- **A connector routing guard (`hooks/connector-routing-guard.mjs`), enabled by default.** Generic
+  Linear MCP calls that are *provably* AIOS-targeted — an `AIO-<n>` identifier or a configured team
+  marker in a structured team field — are blocked with a message naming the AIOS CLI to use instead.
+  Ambiguous and customer Linear work is never blocked. Bash commands are **advised, never blocked**:
+  a shell string cannot be soundly classified (every language on the machine is an HTTP client), so
+  the guard does not pretend otherwise. Configure via `.aios/connector-routing.json` with
+  `mode: "block" | "warn" | "off"`. This enforces Claude Code only — there is no Codex or OpenCode
+  parity claim.
+- **A packed-artifact golden-path gate (`test/npm-pack-golden-path.test.mjs`).** It packs the
+  tarball, installs it into a clean prefix, and asserts what users actually receive: bin file modes,
+  every bin runnable by bare name, the Slack verb surface including `file` and `resolve`, the exact
+  devtools pin, and a rubric-less `spec eval`. **All three defects fixed above would have been
+  caught by this test**, and none were caught by the repo suite.
+- **`slack resolve --member`** — read-only member lookup, so a recipient can be resolved without a
+  live send probe.
+- **`aios-linear` can create and list projects**, and set project and priority at creation
+  (AIO-942); it also catches the descriptions Linear silently corrupts.
+- **A claim-check guard and the `check-claim` skill** — surfaces unverified "it works" claims.
+- **Scaffolded workspaces ship the validators their own rules cite (AIO-965).**
+- **A byte-parity CI gate for the two canonical `aios-linear` skill copies (AIO-927)** — the repo
+  keeps a dev-facing copy and a scaffold copy, and nothing previously made editing one imply editing
+  the other.
+- **`linear` gains a finding template and label-filtered listing (AIO-999).**
+- **`npm run guard:selftest`** — one command to prove the write-time secret guard is live (AIO-953).
+
+### Upgrading
+
+`npm i -g @aiosbrain/aios@0.12.0`. No migration steps. If you have a workspace scaffolded from an
+earlier release, `aios update` brings the hook and validators across; the routing guard arrives
+enabled, and `mode: "off"` in `.aios/connector-routing.json` disables it.
 
 ## [0.11.1] — 2026-08-17
 
