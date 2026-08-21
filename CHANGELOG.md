@@ -55,6 +55,17 @@ that makes that class of bug visible.
 - **Cursor hooks dispatch from the payload `cwd`.**
 - **A fresh scaffold no longer ships a sample task row** that lands on a real PM board, and two
   client identifiers are removed from shipped skill docs.
+- **The documented Linear invocation is one that can authenticate (AIO-1027).** The skill docs named
+  `scripts/linear.mjs`, which is not vendored into scaffolded workspaces, so the documented command
+  failed `MODULE_NOT_FOUND`. The first correction moved everything to
+  `.claude/skills/aios-linear/linear.mjs`, which *is* vendored but performs no credential resolution
+  at all — it worked only where `LINEAR_API_KEY` was already exported. Both are fixed: `linear <cmd>`
+  (the PATH bin, which resolves the key) is the documented invocation, the skill path is an explicit
+  fallback, and the missing-key error no longer tells the reader to re-run the command that just
+  failed.
+- **Worktree hydration never overwrites a branch's tracked `.claude/settings.json` (AIO-920).**
+- **The write-time secret guard flags provider-shaped values under any binding name (AIO-952).**
+- **The mutation-testing capability oracle is restored, closing a shotgun bypass (AIO-994, AIO-534).**
 
 ### Added
 
@@ -77,6 +88,11 @@ that makes that class of bug visible.
   (AIO-942); it also catches the descriptions Linear silently corrupts.
 - **A claim-check guard and the `check-claim` skill** — surfaces unverified "it works" claims.
 - **Scaffolded workspaces ship the validators their own rules cite (AIO-965).**
+- **A byte-parity CI gate for the two canonical `aios-linear` skill copies (AIO-927)** — the repo
+  keeps a dev-facing copy and a scaffold copy, and nothing previously made editing one imply editing
+  the other.
+- **`linear` gains a finding template and label-filtered listing (AIO-999).**
+- **`npm run guard:selftest`** — one command to prove the write-time secret guard is live (AIO-953).
 
 ### Upgrading
 
