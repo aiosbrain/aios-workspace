@@ -265,24 +265,32 @@ export function loadSecretPatterns() {
       .map((l) => l.trim())
       .filter((l) => l && !l.startsWith("#"));
   }
-  return lines.map((l) => new RegExp(l));
+  // "i" mirrors the grep -i in validation/check-secrets.sh — the OGR03 gate these
+  // patterns must agree with. Compiling case-sensitively here made push/review a
+  // strictly weaker check than the release gate for the same content (AIO-952 r3).
+  return lines.map((l) => new RegExp(l, "i"));
 }
 
 /**
  * First matching pattern source in `content`, or null if clean.
  *
- * AIO-952: lines carrying the literal "aios-secret-fixture:" marker are declared test
- * fixtures (same convention as validation/check-secrets.sh) and are dropped before
- * matching, so the blessed fixture workflow also clears `aios push`/review/promote.
- * The exemption is line-scoped — every other line is still checked in full.
+ * AIO-952: VALUE-BOUND fixture declarations (same convention as
+ * validation/check-secrets.sh). "aios-secret-fixture:<prefix>" — at least 12 token
+ * chars of the declared value, or the full value — strips ONLY tokens starting with
+ * that declared prefix before matching, so the blessed fixture workflow clears
+ * `aios push`/review/promote. Never whole lines: one marker must not smuggle an
+ * unrelated real secret past the check.
  */
+const FIXTURE_MARKER_RE = /aios-secret-fixture:([A-Za-z0-9_-]{12,})/gi;
+
 export function findSecret(content, patterns) {
-  const scanned = content.includes("aios-secret-fixture:")
-    ? content
-        .split("\n")
-        .filter((line) => !line.includes("aios-secret-fixture:"))
-        .join("\n")
-    : content;
+  let scanned = content;
+  const prefixes = new Set();
+  for (const m of content.matchAll(FIXTURE_MARKER_RE)) prefixes.add(m[1]);
+  for (const prefix of prefixes) {
+    // Prefixes are token chars only ([A-Za-z0-9_-]), so no regex escaping is needed.
+    scanned = scanned.replace(new RegExp(`(^|[^A-Za-z0-9_-])${prefix}[A-Za-z0-9_-]*`, "gi"), "$1");
+  }
   for (const re of patterns) if (re.test(scanned)) return re.source;
   return null;
 }

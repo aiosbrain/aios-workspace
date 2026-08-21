@@ -242,11 +242,18 @@ else
   )
 fi
 
-# AIO-952: honor the line-scoped fixture-declaration marker (see validation/check-secrets.sh) so
-# the blessed workflow for realistic marker-free fixture values also works at write time — the
-# scan gate accepting a declared fixture is useless if this hook blocks writing it. Only the
-# marker-bearing lines are dropped; every other line is still checked in full.
-SECRET_SCAN_CONTENT=$(printf '%s\n' "$CONTENT" | grep -v 'aios-secret-fixture:' || true)
+# AIO-952: honor the VALUE-BOUND fixture-declaration marker (see validation/check-secrets.sh)
+# so the blessed workflow for realistic marker-free fixture values also works at write time.
+# "aios-secret-fixture:<prefix>" (>=12 token chars of the declared value, or the full value)
+# strips ONLY tokens starting with that declared prefix before matching — never the whole
+# line/content, which would let one marker smuggle an unrelated real secret past the gate.
+SECRET_SCAN_CONTENT="$CONTENT"
+while IFS= read -r declared; do
+  [ -n "$declared" ] || continue
+  declared_prefix="${declared#*:}"
+  SECRET_SCAN_CONTENT=$(printf '%s\n' "$SECRET_SCAN_CONTENT" |
+    sed -E "s/(^|[^A-Za-z0-9_-])${declared_prefix}[A-Za-z0-9_-]*/\1/gI")
+done < <(printf '%s\n' "$CONTENT" | grep -oiE 'aios-secret-fixture:[A-Za-z0-9_-]{12,}' | sort -u || true)
 
 for pattern in "${SECRETS_PATTERNS[@]}"; do
   if printf '%s\n' "$SECRET_SCAN_CONTENT" | grep -qE -e "$pattern" 2>/dev/null; then

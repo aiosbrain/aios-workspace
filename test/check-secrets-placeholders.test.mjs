@@ -66,7 +66,9 @@ test("OGR03 still blocks nearby real-secret counterexamples", () => {
     assert.equal(result.status, 1, output);
     assert.match(output, /Generic Secret/);
     assert.match(output, /Generic Token/);
-    assert.match(output, /Slack Token/);
+    // AIO-952: the Slack rule now lives only in secret-patterns.txt (the inline copy
+    // lacked the AIO-965 left boundary), so its finding label is "Shared pattern".
+    assert.match(output, /Shared pattern/);
     assert.match(output, /Password Assignment/);
     assert.match(output, /OGR03 FAILED/);
     assert.match(output, /line 1: \[REDACTED\]/);

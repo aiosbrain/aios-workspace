@@ -75,24 +75,38 @@ test("OGR03: renaming a binding no longer flips CRITICAL to PASS (the PR #575 by
   assert.equal(renamed.status, 1, `${renamed.stdout}${renamed.stderr}`);
 });
 
-test("OGR03 accepts a secret-shaped value on a line declared as a fixture", () => {
+test("OGR03 accepts a secret-shaped value declared by a VALUE-BOUND fixture marker", () => {
+  // Prefix form (first 12+ chars of the declared value) and full-value form both work.
   const result = scanLines("fixture.mjs", [
-    `const clickupToken = "${CLICKUP_VALUE}"; // aios-secret-fixture: synthetic ClickUp shape for scanner tests`,
+    `const clickupToken = "${CLICKUP_VALUE}"; // aios-secret-fixture:${CLICKUP_VALUE.slice(0, 16)}`,
+    `const linearToken = "${LINEAR_VALUE}"; // aios-secret-fixture:${LINEAR_VALUE}`,
   ]);
   const output = `${result.stdout}${result.stderr}`;
   assert.equal(result.status, 0, output);
   assert.match(output, /OGR03 PASSED/);
 });
 
-test("OGR03: a fixture declaration silences only its own line", () => {
-  const result = scanLines("mixed.mjs", [
-    `const declared = "${CLICKUP_VALUE}"; // aios-secret-fixture: synthetic shape under test`,
-    `const undeclared = "${LINEAR_VALUE}";`,
+test("OGR03: a fixture declaration suppresses only the declared value, not the line", () => {
+  // The round-2 whole-line semantics was a CRITICAL-gate bypass: a real token sharing a
+  // line with ANY marker (think one-line JSON, minified bundles, transcripts) scanned
+  // clean. A marker must suppress only matches of the value it declares.
+  const realShapedGithub = "ghp_" + "aB3dE5fG7hI9jK1lM3nO5pQ7rS9tU1vW3xYz8Q";
+  const result = scanLines("bundle.json", [
+    `{"deploy":"${realShapedGithub}","note":"aios-secret-fixture:${CLICKUP_VALUE.slice(0, 16)}"}`,
   ]);
   const output = `${result.stdout}${result.stderr}`;
   assert.equal(result.status, 1, output);
-  assert.match(output, /line 2: \[REDACTED\]/);
-  assert.ok(!/line 1: \[REDACTED\]/.test(output), "declared line must not be reported");
+  assert.match(output, /line 1: \[REDACTED\]/);
+  assert.ok(!output.includes(realShapedGithub), "diagnostics must not echo the token");
+});
+
+test("OGR03: a fixture declaration does not cover a different value on the same line", () => {
+  const result = scanLines("mixed.mjs", [
+    `const declared = "${CLICKUP_VALUE}"; const undeclared = "${LINEAR_VALUE}"; // aios-secret-fixture:${CLICKUP_VALUE.slice(0, 16)}`,
+  ]);
+  const output = `${result.stdout}${result.stderr}`;
+  assert.equal(result.status, 1, output);
+  assert.match(output, /line 1: \[REDACTED\]/);
 });
 
 test("OGR03 does not cry wolf on pk_-prefixed non-secrets", () => {
@@ -109,10 +123,14 @@ test("OGR03 does not cry wolf on pk_-prefixed non-secrets", () => {
   assert.match(output, /OGR03 PASSED/);
 });
 
-test("OGR03 keeps flagging the classic gh[ps]_ token shapes", () => {
-  const legacy = "ghp_" + "Ab1Cd2Ef3Gh4Ij5Kl6Mn7Op8Qr9St0Uv1Wx2Yz";
-  const result = scanLines("legacy.mjs", [`const deployRef = "${legacy}";`]);
-  assert.equal(result.status, 1, `${result.stdout}${result.stderr}`);
+test("OGR03 flags every gh[pousr]_ token class", () => {
+  // All five classic GitHub prefixes — a silent narrowing of gh[pousr]_ must go red here.
+  const body = "Ab1Cd2Ef3Gh4Ij5Kl6Mn7Op8Qr9St0Uv1Wx2Yz";
+  const prefixes = ["ghp_", "gho_", "ghu_", "ghs_", "ghr_"];
+  for (const prefix of prefixes) {
+    const result = scanLines("ref.mjs", [`const deployRef = "${prefix + body}";`]);
+    assert.equal(result.status, 1, `${prefix}: ${result.stdout}${result.stderr}`);
+  }
 });
 
 test("findSecret (aios push/review/promote) shares the value rules and the fixture escape", () => {
@@ -120,18 +138,31 @@ test("findSecret (aios push/review/promote) shares the value rules and the fixtu
   const plain = `const clickupProjectRef = "${CLICKUP_VALUE}";`;
   assert.ok(findSecret(plain, patterns), "undeclared provider-shaped value must be flagged");
   assert.equal(
-    findSecret(`${plain} // aios-secret-fixture: synthetic shape under test`, patterns),
+    findSecret(`${plain} // aios-secret-fixture:${CLICKUP_VALUE.slice(0, 16)}`, patterns),
     null,
-    "a declared fixture line must clear the push/review leak check"
+    "a value-bound declaration must clear the push/review leak check"
+  );
+  const realShapedGithub = "ghp_" + "aB3dE5fG7hI9jK1lM3nO5pQ7rS9tU1vW3xYz8Q";
+  assert.ok(
+    findSecret(
+      `{"deploy":"${realShapedGithub}","note":"aios-secret-fixture:${CLICKUP_VALUE.slice(0, 16)}"}`,
+      patterns
+    ),
+    "a marker must not exempt a different secret sharing its line"
   );
   assert.ok(
     findSecret(
       [
-        `const declared = "${CLICKUP_VALUE}"; // aios-secret-fixture: synthetic shape`,
+        `const declared = "${CLICKUP_VALUE}"; // aios-secret-fixture:${CLICKUP_VALUE.slice(0, 16)}`,
         `const undeclared = "${LINEAR_VALUE}";`,
       ].join("\n"),
       patterns
     ),
-    "the fixture escape must be line-scoped"
+    "an undeclared value on another line must still be flagged"
+  );
+  // The scanner greps with -i; loadSecretPatterns must match that case-insensitivity.
+  assert.ok(
+    findSecret(`const ref = "${CLICKUP_VALUE.toLowerCase()}";`, patterns),
+    "pattern compilation must be case-insensitive like the OGR03 grep -i"
   );
 });

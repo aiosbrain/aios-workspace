@@ -15,9 +15,16 @@ CONTENT=$(printf '%s' "$EVENT" | jq -r '.added_content[].content') || exit 3
 [ -n "$CONTENT" ] || exit 0
 FILE_PATHS=$(printf '%s' "$EVENT" | jq -r '[.added_content[].path] | unique | join(",")') || exit 3
 
-# AIO-952: lines carrying the literal "aios-secret-fixture:" marker are declared test fixtures
-# (same convention as validation/check-secrets.sh) — drop only those lines before matching.
-CONTENT=$(printf '%s\n' "$CONTENT" | grep -v 'aios-secret-fixture:' || true)
+# AIO-952: VALUE-BOUND fixture declarations (same convention as validation/check-secrets.sh).
+# "aios-secret-fixture:<prefix>" (>=12 token chars of the declared value, or the full value)
+# strips ONLY tokens starting with that declared prefix — never whole lines, which would let
+# one marker smuggle an unrelated real secret past the gate.
+DECLARED_PREFIXES=$(printf '%s\n' "$CONTENT" | grep -oiE 'aios-secret-fixture:[A-Za-z0-9_-]{12,}' | sort -u || true)
+for declared in $DECLARED_PREFIXES; do
+  declared_prefix=${declared#*:}
+  CONTENT=$(printf '%s\n' "$CONTENT" |
+    sed -E "s/(^|[^A-Za-z0-9_-])${declared_prefix}[A-Za-z0-9_-]*/\1/gI")
+done
 [ -n "$CONTENT" ] || exit 0
 
 PATTERNS_FILE="$SCRIPT_DIR/secret-patterns.txt"
