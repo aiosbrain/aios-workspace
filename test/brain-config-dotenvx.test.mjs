@@ -170,3 +170,23 @@ test("resolveBrainConfig: dotenvx-encrypted .env with NO .env.keys -> empty key 
     rmSync(repo, { recursive: true, force: true });
   }
 });
+
+// The decrypt path above only works OUTSIDE this repo because the published package vendors
+// dotenvx: resolveDotenvxBin() prefers <toolkit>/node_modules/.bin/dotenvx and falls back to a
+// bare `dotenvx` on PATH, which a plain npm install of the toolkit cannot assume. Shipping
+// dotenvx as a devDependency made every one of these tests green in the checkout while the
+// tarball install could not decrypt anything on a machine without a global dotenvx (masked on
+// dev machines by direnv exporting the keys). The full property is asserted from the installed
+// artifact in npm-pack-golden-path.test.mjs (4e); this is the fast in-repo guard.
+test("dotenvx is a runtime dependency, so the F-C6 decrypt path survives a tarball install", () => {
+  const pkg = JSON.parse(
+    execFileSync(process.execPath, ["-p", "JSON.stringify(require('./package.json'))"], {
+      cwd: ROOT,
+      encoding: "utf8",
+    })
+  );
+  assert.ok(
+    pkg.dependencies?.["@dotenvx/dotenvx"],
+    "@dotenvx/dotenvx must be in dependencies (not devDependencies): resolveDotenvxBin() needs the vendored binary in a production install"
+  );
+});

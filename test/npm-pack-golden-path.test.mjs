@@ -201,6 +201,45 @@ test(
       assert.notEqual(specStatus, 4, `spec eval must not die on rubric loading: ${specOut}`);
       assert.doesNotMatch(specOut, /rubric not found/, specOut);
 
+      // 4e. Credential resolution must not depend on a dotenvx that happens to be on PATH.
+      //     When the package shipped @dotenvx/dotenvx as a devDependency, a production install
+      //     carried no copy at all, so on any machine without a global dotenvx the F-C6 decrypt
+      //     path silently returned "" and `linear`/`slack` could not resolve a key sitting
+      //     encrypted in the workspace .env. Every dev machine masked it twice (direnv had
+      //     already exported the key, and dotenvx was on PATH). Assert the property from the
+      //     installed tree with dotenvx stripped from PATH: encrypt a key, then decrypt it using
+      //     ONLY what the tarball installed. This install layout HOISTS the dependency to the
+      //     prefix's node_modules (a global install nests it instead), which is exactly why
+      //     resolveDotenvxInvocation() must use Node module resolution, not a fixed .bin path.
+      const vendoredDotenvx = path.join(prefix, "node_modules", ".bin", "dotenvx");
+      assert.ok(
+        existsSync(vendoredDotenvx),
+        "the install must carry dotenvx (runtime dependency, not dev)"
+      );
+      const envFixture = path.join(base, "dotenvx-fixture");
+      mkdirSync(envFixture, { recursive: true });
+      writeFileSync(path.join(envFixture, ".env"), "");
+      run(vendoredDotenvx, ["set", "AIOS_API_KEY", "golden-secret", "-f", ".env"], {
+        cwd: envFixture,
+      });
+      const barePath = [path.dirname(process.execPath), "/usr/bin", "/bin"].join(path.delimiter);
+      const decrypted = run(
+        process.execPath,
+        [
+          "--input-type=module",
+          "-e",
+          `import { decryptDotenvKey } from ${JSON.stringify(
+            path.join(pkgDir, "packages", "foundation", "src", "brain-config.mjs")
+          )};\nprocess.stdout.write(decryptDotenvKey(${JSON.stringify(envFixture)}, "AIOS_API_KEY"));`,
+        ],
+        { env: { ...process.env, CI: "1", PATH: barePath } }
+      );
+      assert.equal(
+        decrypted,
+        "golden-secret",
+        "installed brain-config must decrypt a workspace .env key without a global dotenvx on PATH"
+      );
+
       // 5. Scaffold a consultant workspace from the INSTALLED package (synthetic data).
       const ws = path.join(base, "golden-ws");
       run("bash", [

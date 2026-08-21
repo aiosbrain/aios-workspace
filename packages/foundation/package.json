@@ -1,6 +1,6 @@
 {
   "name": "@aiosbrain/foundation",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "description": "Shared hub modules of the AIOS workspace toolkit (AIO-601, multi-repo split): agent-runtime registry, workspace content parsers, brain/linear clients, git-backed file enumeration, and the engineering-constitution digest loader. ESM subpath exports only — no root export.",
   "type": "module",
   "license": "AGPL-3.0-only",
@@ -14,6 +14,14 @@
   },
   "engines": {
     "node": ">=22"
+  },
+  "peerDependencies": {
+    "@dotenvx/dotenvx": "^2.19.1"
+  },
+  "peerDependenciesMeta": {
+    "@dotenvx/dotenvx": {
+      "optional": true
+    }
   },
   "files": [
     "src",

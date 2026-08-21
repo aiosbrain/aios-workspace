@@ -4,11 +4,14 @@
  * and aios.yaml (brain_url, team_id, api_key_env).
  *
  * Used by the `aios` CLI (mergeBrainSecrets) AND the GUI server's OAuth proxy routes,
- * so both reach the brain the same way. Zero npm deps.
+ * so both reach the brain the same way. Zero hard npm deps; @dotenvx/dotenvx is an
+ * optional peer — when it resolves from the consumer's tree the F-C6 decrypt path works
+ * without direnv, and when it doesn't the code degrades to a `dotenvx` on PATH.
  */
 
 import { existsSync, readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
+import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseFlatYaml, stripQuotes } from "./internal/flat-yaml.mjs";
@@ -68,11 +71,28 @@ function dotenvxEnv() {
   return env;
 }
 
-// Prefer this repo's own vendored dotenvx (always present — it's a package.json dependency of
-// aios-workspace) over a bare `dotenvx` on PATH, which a cron/launchd job's minimal PATH may lack.
-function resolveDotenvxBin() {
+// Prefer the @dotenvx/dotenvx the toolkit itself depends on over a bare `dotenvx` on PATH,
+// which a cron/launchd job's minimal PATH — or a member's machine — may lack. Node module
+// resolution (not a fixed node_modules/.bin path) is what makes this hold in every install
+// layout: a dev checkout and a global `npm i -g` nest the dependency under the package, but a
+// local install hoists it to the consumer's node_modules, where TOOLKIT_ROOT/node_modules has
+// no .bin at all. Returns { command, args } because the resolved entry is a JS file, not an
+// executable shim.
+function resolveDotenvxInvocation() {
+  try {
+    const require_ = createRequire(import.meta.url);
+    const pkgPath = require_.resolve("@dotenvx/dotenvx/package.json");
+    const meta = JSON.parse(readFileSync(pkgPath, "utf8"));
+    const binRel = typeof meta.bin === "string" ? meta.bin : meta.bin?.dotenvx;
+    if (binRel) {
+      return { command: process.execPath, args: [path.join(path.dirname(pkgPath), binRel)] };
+    }
+  } catch {
+    // fall through — a standalone @aiosbrain/foundation consumer may not depend on dotenvx
+  }
   const vendored = path.join(TOOLKIT_ROOT, "node_modules", ".bin", "dotenvx");
-  return existsSync(vendored) ? vendored : "dotenvx";
+  if (existsSync(vendored)) return { command: vendored, args: [] };
+  return { command: "dotenvx", args: [] };
 }
 
 /** Decrypt one key out of a dotenvx-encrypted .env using the repo's .env.keys. Returns "" (never
@@ -84,7 +104,8 @@ export function decryptDotenvKey(repo, key) {
   const envPath = path.join(repo, ".env");
   if (!existsSync(envPath) || !existsSync(path.join(repo, ".env.keys"))) return "";
   try {
-    const result = spawnSync(resolveDotenvxBin(), ["get", key, "-f", envPath], {
+    const dotenvx = resolveDotenvxInvocation();
+    const result = spawnSync(dotenvx.command, [...dotenvx.args, "get", key, "-f", envPath], {
       cwd: repo,
       env: dotenvxEnv(),
       encoding: "utf8",
