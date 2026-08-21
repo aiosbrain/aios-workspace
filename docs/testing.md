@@ -96,6 +96,17 @@ directly. A failed campaign is reported after the remaining groups run, so one s
 cannot starve later groups of reports. The PR mutation job remains non-blocking until the
 machine-checked soak streak above is met. Equivalent mutants require a reviewed justification.
 
+The CI changed-code lane runs on push to main (AIO-630), where `GITHUB_BASE_REF` is empty and
+the pushed commit is origin/main's tip — so the old `origin/main` default base diffed HEAD
+against itself and the lane always greened without measuring (AIO-1016). CI now passes
+`github.event.before` (the pre-push main tip; with squash merges, exactly the merged PR's
+changed set) as `MUTATION_BASE_SHA`, resolved by `scripts/mutation-push-base.mjs`: an explicit
+`--base` still wins, a valid sha becomes the diff base, and an all-zeros or unresolvable sha
+(force push, branch creation, rewritten history) produces an explicit "mutation base
+undeterminable for this push — skipping measurement" line in the log and step summary — never
+the measured-empty "no changed critical production files" message, which is reserved for diffs
+that were actually taken. Both outcomes exit 0 because the lane is advisory calibration.
+
 TypeScript groups mutate the compiled `dist/` output, not `src/`: Stryker's command runner
 scores purely on exit code, so mutating source TypeScript would let compile-breaking mutants be
 recorded as "killed" by `tsc` rather than by tests, inflating the score. The orchestrator builds
