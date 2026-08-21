@@ -16,8 +16,8 @@ export async function gql(query, variables) {
   const key = process.env.LINEAR_API_KEY;
   if (!key) {
     fail(
-      "LINEAR_API_KEY not set — run via: node .claude/skills/aios-linear/linear.mjs ... " +
-        "(from a sibling repo: node <path-to-an-aios-workspace>/.claude/skills/aios-linear/linear.mjs ...). " +
+      "LINEAR_API_KEY not set — run via the `linear` bin on PATH, which resolves it: linear <cmd> ... " +
+        "(from a sibling repo: node <path-to-an-aios-workspace>/scripts/linear.mjs ...). " +
         "Do not dotenvx-run the whole toolkit .env; that decrypts unrelated secrets (AIO-790)."
     );
   }
