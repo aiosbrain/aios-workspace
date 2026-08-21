@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://aios.dev/contracts/brain-api/1.22/codebase-payload.schema.json",
-  "title": "AIOS Brain API 1.22 codebase scan payload (POST /api/v1/codebases)",
-  "description": "Machine-readable contract for the POST /api/v1/codebases request body. Supersedes the 1.15 schema, which it extends with the six optional coverage-denominator and run-integrity measures added at document revision 1.22 (AIO-995). Strictness is deliberately scoped: `codebase_health` is a closed object (additionalProperties: false, all fields required when present); the surrounding `codebase`/`metrics` shapes stay OPEN to additive scanner-side fields exactly as docs/brain-api.md allows. The full raw-metrics block is required - a sparse health-only payload is invalid here just as the brain rejects it with 422, because the metrics upsert REPLACES the row on (codebase_id, head_sha). LIMIT OF THIS FILE, stated so nobody mistakes green for complete: JSON Schema 2020-12 cannot compare two sibling properties, so the 1.22 CROSS-FIELD invariants (test_coverage_lines_covered <= test_coverage_lines_total; each tests_* part <= tests_total; the parts summing within tests_total; test_coverage_pct agreeing with the counts) are normative in docs/brain-api.md and enforced by the brain, NOT expressible here. What this file does pin - and what it previously did not, letting a payload valid by the canonical contract be 422'd by the brain - is that every one of the six is an integer >= 0 or null.",
+  "$id": "https://aios.dev/contracts/brain-api/1.23/codebase-payload.schema.json",
+  "title": "AIOS Brain API 1.23 codebase scan payload (POST /api/v1/codebases)",
+  "description": "Machine-readable contract for the POST /api/v1/codebases request body. Supersedes the 1.22 schema, which it extends with the two optional scanner-identity fields added at document revision 1.23 (AIO-1011): `metrics.scanner_version` and `metrics.scanner_sha`. Strictness is deliberately scoped: `codebase_health` is a closed object (additionalProperties: false, all fields required when present); the surrounding `codebase`/`metrics` shapes stay OPEN to additive scanner-side fields exactly as docs/brain-api.md allows. The full raw-metrics block is required - a sparse health-only payload is invalid here just as the brain rejects it with 422, because the metrics upsert REPLACES the row on (codebase_id, head_sha). LIMIT OF THIS FILE, stated so nobody mistakes green for complete: JSON Schema 2020-12 cannot compare two sibling properties, so the 1.22 CROSS-FIELD invariants (test_coverage_lines_covered <= test_coverage_lines_total; each tests_* part <= tests_total; the parts summing within tests_total; test_coverage_pct agreeing with the counts) are normative in docs/brain-api.md and enforced by the brain, NOT expressible here. What this file does pin - and what it previously did not, letting a payload valid by the canonical contract be 422'd by the brain - is that every one of the six is an integer >= 0 or null. SECOND LIMIT, new at 1.23 and deliberate: the scanner-identity fields are typed loosely (string or null, bounded length) and carry NO `pattern`. Their SHAPE is the scanner's promise, not the brain's gate. A malformed version string must never 422 a scan - a rejected payload drops the repo's whole scan, findings and contributions included, and returns before the ingest run is even logged - so the brain accepts any bounded string and NORMALIZES an unparseable one to the unknown state at read time. Pinning a pattern here would make the canonical contract STRICTER than the implementation, which is the same class of drift as 1.22's looser-than-implementation gap, pointed the other way.",
   "type": "object",
   "required": [
     "codebase",
@@ -221,6 +221,22 @@
         },
         "codebase_health": {
           "$ref": "#/$defs/codebaseHealth"
+        },
+        "scanner_version": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 64,
+          "description": "brain-api 1.23 (AIO-1011). The version of the ingestion package that BUILT this payload - `aios_ingest.__version__`, a dotted semver such as \"0.2.0\". null or absent = UNKNOWN scanner build, which is what every scan produced before 1.23 reports; it is never read as \"current\". The brain compares it against the contract's declared `minScannerVersion` (see brain-contract.json's codebasePayloadContract block) to decide whether a repo's scanner predates what the current contract needs, and says so at the point of confusion instead of rendering an unexplained \"(scope unknown)\". A value the brain cannot parse as a version is treated as unknown, not rejected."
+        },
+        "scanner_sha": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 64,
+          "description": "brain-api 1.23 (AIO-1011). PROVENANCE ONLY: the git commit of the aios-team-brain checkout the scanner ran from, when it is knowable - `.github/scripts/fetch-brain-scanner.sh` leaves a real detached checkout at the pinned BRAIN_SHA, so the scanner can read its own build. null when the scanner was installed without git history (a future package install). Never used to compute staleness: commit identity is not ordered, is meaningless across branches, and stops existing the moment the scanner ships as a package. It exists so a stale repo's pin can be located and bumped without guessing."
         }
       },
       "additionalProperties": true

@@ -1,7 +1,7 @@
 {
   "$schema": "aios-brain-contract/v1",
   "_note": "Canonical conformance fixture for the workspace<->brain seam (AIO-314). Home: aios-workspace/docs/contract. Vendored into aios-team-brain/test/fixtures/contract. contentHash pins the content; /docs-sync compares the two copies. Regenerate: node scripts/gen-contract-fixture.mjs.",
-  "version": "1.22",
+  "version": "1.23",
   "tierAliases": {
     "shared": {
       "team": "team",
@@ -99,5 +99,18 @@
       "sha256": "9862e47581b9bdd68ecfd7aa92216011a6b56bc9dc7abaee3bd5e301240bfbea"
     }
   },
-  "contentHash": "c4e4d2358d1f0efc03c0559321c396f999caabecaa9272aedb7135d5c506697d"
+  "codebasePayloadContract": {
+    "version": "1.23",
+    "minScannerVersion": "0.2.0",
+    "_minScannerVersionNote": "The oldest ingestion-package build (aios_ingest.__version__) that emits everything this contract revision asks a scanner for. A scan whose metrics.scanner_version is absent, unparseable, or orders below this is STALE, and the brain says so at the point of confusion rather than rendering an unexplained '(scope unknown)'. Deliberately a declared minimum and NOT a commit distance: commit distance is undefined across branches and forks, needs a git history the brain does not hold at runtime, stops existing when the scanner ships as a package, and says nothing about whether anything the contract needs actually changed. The cost of the choice, stated so it is not forgotten: RAISE THIS in the same PR as any revision that requires new scanner output, or staleness detection is silently off for that field. The brain mirrors this value in lib/codebases/scanner-version.ts and a guard asserts the two agree.",
+    "schema": {
+      "path": "codebase-payload-1.23.schema.json",
+      "sha256": "988a981dc88e4f1fb86634900358edda86dc99af2d6a0fc93d091bb35fd6af1c"
+    },
+    "fixtures": {
+      "path": "codebase-payload-1.23-fixtures.json",
+      "sha256": "a335cdc123264b1ba2c63e0ce4822d5516a950667498dee5e3b3f56a1f815b95"
+    }
+  },
+  "contentHash": "ca902be591c8f99d359c0b32bc912f8742b7869eef98c1b056a45acf37e983cb"
 }
