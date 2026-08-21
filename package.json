@@ -27,6 +27,7 @@
     ".claude/rubrics/spec-readiness.md",
     "docs/brain-api.md",
     "docs/agentic-ergonomics/aios-issue-template.md",
+    "docs/agentic-ergonomics/aios-finding-template.md",
     "docs/devtools-*.md",
     "docs/ENGINEERING-CONSTITUTION.md",
     "docs/GETTING-STARTED.md",

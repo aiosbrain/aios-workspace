@@ -107,7 +107,7 @@ export async function listTeamIssues(teamKey) {
     const data = await gql(
       `query($k:String!,$after:String){
         issues(first:250, after:$after, filter:{ team:{ key:{ eq:$k } } }){
-          nodes{ identifier title state{ name } }
+          nodes{ identifier title state{ name type } labels(first:250){ nodes{ name } } }
           pageInfo{ hasNextPage endCursor }
         }
       }`,
@@ -123,6 +123,72 @@ export async function listTeamIssues(teamKey) {
     after = page.endCursor;
   } while (true);
   return issues;
+}
+
+/* ── list filtering (AIO-999) — label taxonomy queries; vocabulary: aios docs/finding-taxonomy.md ── */
+
+// Linear workflow-state types that count as "open" for --open.
+const OPEN_STATE_TYPES = new Set(["triage", "backlog", "unstarted", "started"]);
+
+export function parseListArgs(args) {
+  const teamKey = args[0];
+  const filters = { open: false, labels: [], missingLabels: [] };
+  for (let index = 1; index < args.length; index++) {
+    const option = args[index];
+    if (option === "--open") {
+      filters.open = true;
+    } else if (option === "--label" || option === "--missing-label") {
+      const value = args[++index];
+      // A following flag means the value was forgotten — consuming it would silently
+      // drop both the filter and the next flag and return zero-surprise rows.
+      if (!value || value.startsWith("--")) fail(`${option} requires a value`);
+      if (option === "--label") {
+        // Repeated --label flags AND; commas inside one flag OR.
+        const group = value
+          .split(",")
+          .map((name) => name.trim())
+          .filter(Boolean);
+        if (!group.length) fail(`--label "${value}" contains no label names`);
+        // --label matches exact names; --missing-label matches prefixes. A prefix-shaped
+        // value here would match nothing and silently return zero rows.
+        const prefixShaped = group.find((name) => name.endsWith(":"));
+        if (prefixShaped) {
+          fail(
+            `--label matches exact label names and "${prefixShaped}" looks like a prefix — ` +
+              `did you mean --missing-label ${prefixShaped}?`
+          );
+        }
+        filters.labels.push(group);
+      } else {
+        filters.missingLabels.push(value);
+      }
+    } else {
+      fail(`unknown list option "${option}"`);
+    }
+  }
+  return { teamKey, filters };
+}
+
+export function hasListFilters(filters) {
+  return filters.open || filters.labels.length > 0 || filters.missingLabels.length > 0;
+}
+
+export function filterIssues(issues, filters) {
+  return issues.filter((issue) => {
+    if (filters.open && !OPEN_STATE_TYPES.has(issue.state?.type)) return false;
+    const names = (issue.labels?.nodes ?? []).map((label) => label.name.toLowerCase());
+    for (const group of filters.labels) {
+      if (!group.some((want) => names.includes(want.toLowerCase()))) return false;
+    }
+    if (filters.missingLabels.length) {
+      // Keep issues missing at least one of the listed names/prefixes (needs-triage semantics).
+      const missingSome = filters.missingLabels.some(
+        (prefix) => !names.some((name) => name.startsWith(prefix.toLowerCase()))
+      );
+      if (!missingSome) return false;
+    }
+    return true;
+  });
 }
 
 export function parseCreateArgs(args) {
@@ -168,7 +234,9 @@ export function parseCreateArgs(args) {
   if (template) {
     const body = resolveLinearTemplate(template);
     if (!body) fail(`unknown template "${template}"`);
-    description = body.replace(/^# TITLE — outcome-oriented slice name/m, `# ${title}`);
+    // Function replacement: a literal-string second argument would expand `$&`/`$$`
+    // sequences in the title and corrupt the stamped heading.
+    description = body.replace(/^# TITLE — .*$/m, () => `# ${title}`);
     if (descFile) console.error("warning: --desc ignored when --template is set");
   }
   const originLabel = process.env.AIOS_LINEAR_ORIGIN_LABEL;
