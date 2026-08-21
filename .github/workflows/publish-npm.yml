@@ -131,14 +131,6 @@ jobs:
         if: inputs.package == 'aios'
         run: npm publish
 
-      # Publish from INSIDE the package directory rather than `npm publish --workspace
-      # packages/foundation`. Trusted Publishing resolves the OIDC exchange against the
-      # manifest in the working directory; run from the repo root with --workspace, npm
-      # 12.0.2 made no OIDC attempt at all and fell straight through to token auth
-      # (ENEEDAUTH, runs 32440195908 and 32461576495) — while `@aiosbrain/aios`, which
-      # publishes as a plain `npm publish` with its manifest in the CWD, has always
-      # minted provenance successfully. Keep this shape identical to the aios step.
       - name: Publish @aiosbrain/foundation
         if: inputs.package == 'foundation'
-        working-directory: packages/foundation
-        run: npm publish
+        run: npm publish --workspace packages/foundation
