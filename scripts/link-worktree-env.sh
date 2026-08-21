@@ -66,25 +66,50 @@ if [[ ! -e "$here/opencode.json" ]]; then
   fi
 fi
 
-# .claude/settings.json — hooks + rails allowlist. Copy from primary (overwrites
-# any git-tracked version — primary is source of truth), but only when the content
-# actually differs: this script now also runs as a per-session self-heal
-# (hooks/worktree-self-heal.mjs), and a no-op re-copy every session would churn
-# the file's mtime for nothing.
-copy_settings_from() {
-  local src="$1" label="$2"
-  if cmp -s "$src" "$here/.claude/settings.json"; then
-    echo "skip .claude/settings.json — already current"
-    return
-  fi
+# .claude/settings.json — hooks + rails allowlist. Semantics (AIO-920):
+#
+#   * COMMITTED in the branch (HEAD has it): the branch's copy is authoritative.
+#     Present on disk → leave it alone; missing/unreadable → RESTORE it from
+#     HEAD (a bare skip would let a self-heal after an agent deletes the file
+#     report success while the worktree runs with no guards and no rails
+#     allowlist). Hydration must never impose the primary's copy: the file is
+#     test-asserted (test/adapter-worktree-guard.test.mjs reads it from the
+#     repo root), so the old always-copy made guard-test results depend on the
+#     primary checkout's position — a stale primary produced a false RED
+#     (AIO-751), and a primary ahead of the branch could green a genuinely
+#     broken change.
+#
+#   * ABSENT from HEAD: seed only when nothing is on disk ([[ ! -e ]], matching
+#     every other seeded file) — primary first, scaffold fallback. HEAD alone
+#     cannot distinguish "branch predates the file" from "branch committed its
+#     deletion"; seed-if-absent is the accepted trade, and it never overwrites
+#     a file someone has put (or left) on disk.
+#
+# HEAD — not the index — is deliberate: a staged deletion (git rm --cached)
+# keeps the branch content on disk and must not re-open the primary-copy path,
+# and a merely staged, never-committed file must not be described as committed.
+# Hydration exists to supply UNTRACKED local config (.envrc, .mcp.json,
+# node_modules); a committed file comes from the branch. Re-runs (the
+# per-session self-heal, hooks/worktree-self-heal.mjs) are no-ops on every
+# already-present file, so nothing churns mtimes.
+seed_settings_from() {
   mkdir -p "$here/.claude"
-  cp "$src" "$here/.claude/settings.json"
-  echo "copied .claude/settings.json${label}"
+  cp "$1" "$here/.claude/settings.json"
+  echo "copied .claude/settings.json$2"
 }
-if [[ -f "$main_worktree/.claude/settings.json" ]]; then
-  copy_settings_from "$main_worktree/.claude/settings.json" ""
-elif [[ -f "$scaffold/.claude/settings.json" ]]; then
-  copy_settings_from "$scaffold/.claude/settings.json" " (from scaffold)"
+if git -C "$here" cat-file -e "HEAD:.claude/settings.json" 2>/dev/null; then
+  if [[ -f "$here/.claude/settings.json" && -r "$here/.claude/settings.json" ]]; then
+    echo "skip .claude/settings.json — committed in this branch (branch copy wins)"
+  else
+    git -C "$here" checkout -- .claude/settings.json
+    echo "restored .claude/settings.json from HEAD (branch copy wins)"
+  fi
+elif [[ ! -e "$here/.claude/settings.json" ]]; then
+  if [[ -f "$main_worktree/.claude/settings.json" ]]; then
+    seed_settings_from "$main_worktree/.claude/settings.json" ""
+  elif [[ -f "$scaffold/.claude/settings.json" ]]; then
+    seed_settings_from "$scaffold/.claude/settings.json" " (from scaffold)"
+  fi
 fi
 
 # .claude/ — full directory: rules, skills, commands, agents, memory, personalities, rubrics, descriptors
