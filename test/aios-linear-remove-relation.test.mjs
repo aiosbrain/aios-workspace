@@ -24,26 +24,28 @@ globalThis.fetch = async (_url, init) => {
   let data;
   if (query.includes("issue(id:$id){ id identifier")) {
     data = { issue: issues.find((item) => item.identifier === variables.id) ?? null };
-  } else if (query.includes("inverseRelations(first:250")) {
+  } else if (query.includes("Relations(first:250") || query.includes("relations(first:250")) {
+    const inverse = query.includes("inverseRelations(first:250");
     const relation = {
       id: "relation-1",
       type: process.env.MOCK_RELATION_MODE === "related-inverse" ? "related" : "blocks",
       issue: process.env.MOCK_RELATION_MODE === "related-inverse" ? issues[1] : issues[0],
       relatedIssue: process.env.MOCK_RELATION_MODE === "related-inverse" ? issues[0] : issues[1],
     };
-    const secondPage = variables.relationsAfter === "relations-page-2";
+    const secondPage = variables.after === "relations-page-2";
     const paged = process.env.MOCK_RELATION_MODE === "blocks-page-2";
     data = {
       issue: {
         identifier: "AIO-73",
-        relations: {
-          nodes: (process.env.MOCK_RELATION_MODE === "blocks" || (paged && secondPage)) ? [relation] : [],
-          pageInfo: { hasNextPage: paged && !secondPage, endCursor: paged && !secondPage ? "relations-page-2" : null },
-        },
-        inverseRelations: {
-          nodes: process.env.MOCK_RELATION_MODE === "related-inverse" ? [relation] : [],
-          pageInfo: { hasNextPage: false, endCursor: null },
-        },
+        [inverse ? "inverseRelations" : "relations"]: inverse
+          ? {
+              nodes: process.env.MOCK_RELATION_MODE === "related-inverse" ? [relation] : [],
+              pageInfo: { hasNextPage: false, endCursor: null },
+            }
+          : {
+              nodes: (process.env.MOCK_RELATION_MODE === "blocks" || (paged && secondPage)) ? [relation] : [],
+              pageInfo: { hasNextPage: paged && !secondPage, endCursor: paged && !secondPage ? "relations-page-2" : null },
+            },
       },
     };
   } else if (query.includes("issueRelationDelete")) {

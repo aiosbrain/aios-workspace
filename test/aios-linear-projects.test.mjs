@@ -3,98 +3,38 @@
 // one — Linear will happily create two projects with the same name, and a duplicate makes
 // every later `set-project` resolve ambiguously.
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
 import { pathToFileURL } from "node:url";
 
+import { validateProjectsQuery } from "./helpers/linear-projects-mock.mjs";
+
 const ROOT = path.resolve(import.meta.dirname, "..");
 // The primary copy is exercised directly; the scaffold copy is proven byte-identical to it
 // by the parity test in linear-dotenvx-scope.test.mjs, so it is covered transitively.
 const CLI = path.join(ROOT, ".claude/skills/aios-linear/linear.mjs");
+// Schema-derived mock Linear server (see the helper's header): validates every projects
+// query against a checked-in introspection snapshot, then serves `pages` — an array of
+// arrays, one entry per Relay page — passed to the subprocess through MOCK_PAGES.
+const MOCK = path.join(import.meta.dirname, "helpers/linear-projects-mock.mjs");
 
-// `existing` is the project list the mocked Linear returns for any ProjectFilter query.
-//
-// The mock VALIDATES before it fabricates. A real GraphQL server rejects an unknown field
-// or an undeclared variable at validation time; a substring-matching mock does not, which
-// lets a broken production query pass a green test. So this mock checks the selection set
-// and the variable definitions against the real Project/connection surface and throws on
-// anything it does not recognise — the same way the server would.
-const PROJECT_FIELDS = new Set(["id", "name", "state", "url"]);
-const PAGE_INFO_FIELDS = new Set(["hasNextPage", "endCursor"]);
-
-function validateProjectsQuery(query) {
-  const declared = [...query.matchAll(/\$(\w+)\s*:/g)].map((m) => m[1]);
-  for (const v of declared) {
-    if (!["f", "after"].includes(v)) throw new Error("undeclared variable: $" + v);
-  }
-  const nodes = /nodes\s*\{([^}]*)\}/.exec(query);
-  if (!nodes) throw new Error("projects query selects no nodes");
-  for (const field of nodes[1].trim().split(/\s+/).filter(Boolean)) {
-    if (!PROJECT_FIELDS.has(field)) {
-      throw new Error(`Cannot query field "${field}" on type "Project"`);
-    }
-  }
-  const pi = /pageInfo\s*\{([^}]*)\}/.exec(query);
-  if (!pi) throw new Error("projects query selects no pageInfo — it cannot paginate");
-  for (const field of pi[1].trim().split(/\s+/).filter(Boolean)) {
-    if (!PAGE_INFO_FIELDS.has(field)) {
-      throw new Error(`Cannot query field "${field}" on type "PageInfo"`);
-    }
-  }
-  if (!/projects\([^)]*after:\s*\$after/.test(query)) {
-    throw new Error("projects query does not pass $after — it cannot paginate");
-  }
-}
-
-// `pages` is an array of arrays: one entry per Relay page the server will hand back.
 function runCli(args, pages = [[]], extraEnv = {}) {
   const dir = mkdtempSync(path.join(tmpdir(), "aios-linear-projects-"));
-  const preload = path.join(dir, "mock-fetch.mjs");
   const log = path.join(dir, "mutations.log");
-  writeFileSync(
-    preload,
-    `import { appendFileSync } from "node:fs";
-const pages = ${JSON.stringify("__PAGES__")};
-const PROJECT_FIELDS = new Set(${JSON.stringify([...PROJECT_FIELDS])});
-const PAGE_INFO_FIELDS = new Set(${JSON.stringify([...PAGE_INFO_FIELDS])});
-const validate = ${validateProjectsQuery.toString()};
-globalThis.fetch = async (_url, init) => {
-  const { query, variables } = JSON.parse(init.body);
-  let data;
-  if (query.includes("projects(")) {
-    validate(query);
-    const all = JSON.parse(pages);
-    const index = variables.after ? Number(variables.after.replace("cursor-", "")) : 0;
-    const needle = (variables.f?.name?.containsIgnoreCase ?? "").toLowerCase();
-    const nodes = (all[index] ?? []).filter((p) => p.name.toLowerCase().includes(needle));
-    const cycle = process.env.MOCK_CYCLE === "1";
-    const hasNextPage = index + 1 < all.length || cycle;
-    const endCursor = !hasNextPage ? null : index + 1 < all.length ? "cursor-" + (index + 1) : "cursor-0";
-    data = { projects: { nodes, pageInfo: { hasNextPage, endCursor } } };
-  } else if (query.includes("team(id:$key){ id }")) {
-    data = { team: { id: "team-1" } };
-  } else if (query.includes("states")) {
-    data = { team: { states: { nodes: [{ id: "state-1", name: "Backlog" }] } } };
-  } else if (query.includes("projectCreate")) {
-    appendFileSync(${JSON.stringify(log)}, JSON.stringify(variables) + "\\n");
-    data = { projectCreate: { success: true, project: { id: "p-new", name: variables.input.name, url: "https://linear.app/x/project/new" } } };
-  } else if (query.includes("issueCreate")) {
-    appendFileSync(${JSON.stringify(log)}, JSON.stringify(variables) + "\\n");
-    data = { issueCreate: { success: true, issue: { identifier: "AIO-1", title: "t", url: "u", branchName: "b" } } };
-  } else {
-    throw new Error("unexpected query: " + query);
-  }
-  return { ok: true, json: async () => ({ data }) };
-};
-`.replace('"__PAGES__"', JSON.stringify(JSON.stringify(pages)))
-  );
-  const result = spawnSync(process.execPath, ["--import", preload, CLI, ...args], {
+  const result = spawnSync(process.execPath, ["--import", MOCK, CLI, ...args], {
     cwd: ROOT,
     encoding: "utf8",
-    env: { ...process.env, LINEAR_API_KEY: "test-key", AIOS_LINEAR_TEAM_KEY: "AIO", ...extraEnv },
+    env: {
+      ...process.env,
+      LINEAR_API_KEY: "test-key",
+      AIOS_LINEAR_TEAM_KEY: "AIO",
+      MOCK_PAGES: JSON.stringify(pages),
+      MOCK_LOG: log,
+      ...extraEnv,
+    },
     // Bounds a pagination regression (e.g. an uncaught cursor cycle) to a test failure
     // instead of a hung suite.
     timeout: 15_000,
@@ -116,7 +56,7 @@ globalThis.fetch = async (_url, init) => {
 const P = (name) => ({
   id: "p-" + name,
   name,
-  state: "backlog",
+  status: { name: "Backlog", type: "backlog" },
   url: "https://linear.app/x/" + encodeURIComponent(name),
 });
 
@@ -125,6 +65,8 @@ test("projects lists every project when given no filter", () => {
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /Ultraharden/);
   assert.match(r.stdout, /Demo Sandbox/);
+  // The printed status column comes from status.name now that Project.state is deprecated.
+  assert.match(r.stdout, /\[Backlog\]/);
 });
 
 test("projects filters by case-insensitive substring", () => {
@@ -314,9 +256,28 @@ test("the mock rejects a projects query selecting a nonexistent field", () => {
   assert.throws(() => validateProjectsQuery(bad), /Cannot query field/);
 });
 
+// The self-referential-allowlist defect (AIO-1012): the old hand-maintained allowlist kept
+// accepting `Project.state` after Linear deprecated it, so an upstream removal would break
+// every project command while tests stayed green. The schema-derived mock rejects the
+// deprecated field the way the removal eventually would.
+test("the mock rejects the deprecated Project.state selection", () => {
+  const stale = `query($f:ProjectFilter,$after:String){ projects(first:100, filter:$f, after:$after){ nodes{ id name state url } pageInfo{ hasNextPage endCursor } } }`;
+  assert.throws(() => validateProjectsQuery(stale), /deprecated: Use project\.status instead/);
+});
+
+test("the mock rejects a status selection without subfields", () => {
+  const flat = `query($f:ProjectFilter,$after:String){ projects(first:100, filter:$f, after:$after){ nodes{ id name status url } pageInfo{ hasNextPage endCursor } } }`;
+  assert.throws(() => validateProjectsQuery(flat), /must have a selection of subfields/);
+  const badSub = `query($f:ProjectFilter,$after:String){ projects(first:100, filter:$f, after:$after){ nodes{ id name status{ nope } url } pageInfo{ hasNextPage endCursor } } }`;
+  assert.throws(
+    () => validateProjectsQuery(badSub),
+    /Cannot query field "nope" on type "ProjectStatus"/
+  );
+});
+
 test("the mock rejects a projects query that cannot paginate", () => {
-  const noPageInfo = `query($f:ProjectFilter,$after:String){ projects(first:100, filter:$f, after:$after){ nodes{ id name state url } } }`;
+  const noPageInfo = `query($f:ProjectFilter,$after:String){ projects(first:100, filter:$f, after:$after){ nodes{ id name url status{ name type } } } }`;
   assert.throws(() => validateProjectsQuery(noPageInfo), /no pageInfo/);
-  const noAfter = `query($f:ProjectFilter,$after:String){ projects(first:100, filter:$f){ nodes{ id name state url } pageInfo{ hasNextPage endCursor } } }`;
+  const noAfter = `query($f:ProjectFilter,$after:String){ projects(first:100, filter:$f){ nodes{ id name url status{ name type } } pageInfo{ hasNextPage endCursor } } }`;
   assert.throws(() => validateProjectsQuery(noAfter), /does not pass \$after/);
 });

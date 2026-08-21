@@ -98,12 +98,33 @@ export async function printFullIssue(issueId) {
   console.log(parts.join("\n"));
 }
 
+// Shared Relay pagination (AIO-1012). Every connection walk in this file uses this one
+// loop so the guards cannot diverge: `fetchPage(after)` returns one
+// `{ nodes, pageInfo:{ hasNextPage, endCursor } }` page, and a missing or already-seen
+// cursor fails closed — a seen-cursor SET, because a guard that only remembers the
+// previous cursor loops forever on an A→B→A cycle. `stallMessage` may be a function so
+// it can name an identifier learned from the first page.
+export async function paginate(fetchPage, stallMessage) {
+  const nodes = [];
+  const seenCursors = new Set();
+  let after = null;
+  do {
+    const page = await fetchPage(after);
+    nodes.push(...page.nodes);
+    if (!page.pageInfo?.hasNextPage) break;
+    const cursor = page.pageInfo.endCursor;
+    if (!cursor || seenCursors.has(cursor)) {
+      fail(typeof stallMessage === "function" ? stallMessage() : stallMessage);
+    }
+    seenCursors.add(cursor);
+    after = cursor;
+  } while (true);
+  return nodes;
+}
+
 export async function listTeamIssues(teamKey) {
   if (!teamKey) fail("list requires <TEAMKEY>");
-  const issues = [];
-  let after = null;
-  const seenCursors = new Set();
-  do {
+  return paginate(async (after) => {
     const data = await gql(
       `query($k:String!,$after:String){
         issues(first:250, after:$after, filter:{ team:{ key:{ eq:$k } } }){
@@ -113,16 +134,8 @@ export async function listTeamIssues(teamKey) {
       }`,
       { k: teamKey, after }
     );
-    issues.push(...data.issues.nodes);
-    const page = data.issues.pageInfo;
-    if (!page.hasNextPage) break;
-    if (!page.endCursor || seenCursors.has(page.endCursor)) {
-      fail(`Linear issue pagination stalled for team ${teamKey}`);
-    }
-    seenCursors.add(page.endCursor);
-    after = page.endCursor;
-  } while (true);
-  return issues;
+    return data.issues;
+  }, `Linear issue pagination stalled for team ${teamKey}`);
 }
 
 /* ── list filtering (AIO-999) — label taxonomy queries; vocabulary: aios docs/finding-taxonomy.md ── */
@@ -255,14 +268,22 @@ export async function findTeamId(teamKey = DEFAULT_TEAM_KEY) {
   return data.team.id;
 }
 
+// Paginated (AIO-1012): the unpaginated form returned only the server-default first page,
+// so a label beyond it silently failed to match (or a substring matched the wrong label).
 export async function findLabel(teamId, name) {
-  const data = await gql(`query($id:String!){ team(id:$id){ labels{ nodes{ id name } } } }`, {
-    id: teamId,
-  });
+  const labels = await paginate(async (after) => {
+    const data = await gql(
+      `query($id:String!,$after:String){
+        team(id:$id){ labels(first:250, after:$after){ nodes{ id name } pageInfo{ hasNextPage endCursor } } }
+      }`,
+      { id: teamId, after }
+    );
+    return data.team.labels;
+  }, `Linear label pagination stalled for team ${teamId}`);
   const want = String(name).toLowerCase();
   return (
-    data.team.labels.nodes.find((label) => label.name.toLowerCase() === want) ||
-    data.team.labels.nodes.find((label) => label.name.toLowerCase().includes(want))
+    labels.find((label) => label.name.toLowerCase() === want) ||
+    labels.find((label) => label.name.toLowerCase().includes(want))
   );
 }
 
@@ -278,9 +299,7 @@ export async function findTeamState(teamId, name) {
 }
 
 export async function listTeamMembers(teamKey) {
-  const members = [];
-  let after = null;
-  do {
+  return paginate(async (after) => {
     const data = await gql(
       `query($key:String!,$after:String){
         team(id:$key){
@@ -293,15 +312,8 @@ export async function listTeamMembers(teamKey) {
       { key: teamKey, after }
     );
     if (!data.team) fail(`team "${teamKey}" not found`);
-    const page = data.team.members;
-    members.push(...page.nodes);
-    if (!page.pageInfo.hasNextPage) break;
-    if (!page.pageInfo.endCursor || page.pageInfo.endCursor === after) {
-      fail(`Linear member pagination stalled for team ${teamKey}`);
-    }
-    after = page.pageInfo.endCursor;
-  } while (true);
-  return members;
+    return data.team.members;
+  }, `Linear member pagination stalled for team ${teamKey}`);
 }
 
 export async function findUser(teamKey, query) {
@@ -327,42 +339,21 @@ export async function findUser(teamKey, query) {
 }
 
 export async function getRelations(issueId) {
-  const relations = [];
-  const inverseRelations = [];
-  let relationsAfter = null;
-  let inverseAfter = null;
-  let relationsOpen = true;
-  let inverseOpen = true;
   let identifier;
-  while (relationsOpen || inverseOpen) {
+  const RELATION_PAGE = `nodes{ id type issue{ id identifier title state{ name } } relatedIssue{ id identifier title state{ name } } } pageInfo{ hasNextPage endCursor }`;
+  const fetchSide = (field) => async (after) => {
     const data = await gql(
-      `query($id:String!,$relationsAfter:String,$inverseAfter:String){
-      issue(id:$id){
-        identifier
-        relations(first:250,after:$relationsAfter){ nodes{ id type issue{ id identifier title state{ name } } relatedIssue{ id identifier title state{ name } } } pageInfo{ hasNextPage endCursor } }
-        inverseRelations(first:250,after:$inverseAfter){ nodes{ id type issue{ id identifier title state{ name } } relatedIssue{ id identifier title state{ name } } } pageInfo{ hasNextPage endCursor } }
-      }
-    }`,
-      { id: issueId, relationsAfter, inverseAfter }
+      `query($id:String!,$after:String){
+        issue(id:$id){ identifier ${field}(first:250,after:$after){ ${RELATION_PAGE} } }
+      }`,
+      { id: issueId, after }
     );
     identifier = data.issue.identifier;
-    for (const [page, nodes, isOpen, cursor] of [
-      [data.issue.relations, relations, relationsOpen, relationsAfter],
-      [data.issue.inverseRelations, inverseRelations, inverseOpen, inverseAfter],
-    ]) {
-      if (!isOpen) continue;
-      nodes.push(...page.nodes);
-      if (
-        page.pageInfo.hasNextPage &&
-        (!page.pageInfo.endCursor || page.pageInfo.endCursor === cursor)
-      )
-        fail(`Linear relation pagination stalled for ${identifier}`);
-    }
-    relationsOpen = relationsOpen && data.issue.relations.pageInfo.hasNextPage;
-    inverseOpen = inverseOpen && data.issue.inverseRelations.pageInfo.hasNextPage;
-    if (relationsOpen) relationsAfter = data.issue.relations.pageInfo.endCursor;
-    if (inverseOpen) inverseAfter = data.issue.inverseRelations.pageInfo.endCursor;
-  }
+    return data.issue[field];
+  };
+  const stall = () => `Linear relation pagination stalled for ${identifier}`;
+  const relations = await paginate(fetchSide("relations"), stall);
+  const inverseRelations = await paginate(fetchSide("inverseRelations"), stall);
   return {
     identifier,
     relations: { nodes: relations },
@@ -416,41 +407,32 @@ export function canonicalizeProjectName(name) {
   return (
     String(name)
       .normalize("NFKC")
-      // every Unicode space separator (incl. NBSP) collapses to a single ASCII space
-      .replace(/[\s\u00a0\u1680\u2000-\u200a\u202f\u205f\u3000]+/gu, " ")
+      // every whitespace run \u2014 JS \s already covers the Unicode space separators
+      // (NBSP, U+1680, U+2000\u2013U+200A, U+202F, U+205F, U+3000, \u2026) \u2014 collapses to one space
+      .replace(/\s+/g, " ")
       .trim()
       .toLowerCase()
   );
 }
 
 // Paginated: a project on page two must not be invisible to the duplicate guard or to
-// ambiguity detection. Mirrors the seen-cursor guard in listTeamIssues — remembering only
-// the previous cursor would loop forever on an A→B→A cycle.
+// ambiguity detection. Selects `status` (an object — name + type), never `state`:
+// `Project.state` is deprecated upstream ("Use project.status instead"), so selecting it
+// would break every project command the day Linear removes it.
 export async function findProjects(nameSubstring = null) {
   const filter = nameSubstring ? { name: { containsIgnoreCase: nameSubstring } } : {};
-  const projects = [];
-  const seenCursors = new Set();
-  let after = null;
-  do {
+  return paginate(async (after) => {
     const d = await gql(
       `query($f:ProjectFilter,$after:String){
         projects(first:100, filter:$f, after:$after){
-          nodes{ id name state url }
+          nodes{ id name url status{ name type } }
           pageInfo{ hasNextPage endCursor }
         }
       }`,
       { f: filter, after }
     );
-    const page = d.projects;
-    projects.push(...page.nodes);
-    if (!page.pageInfo?.hasNextPage) break;
-    if (!page.pageInfo.endCursor || seenCursors.has(page.pageInfo.endCursor)) {
-      fail("Linear project pagination stalled");
-    }
-    seenCursors.add(page.pageInfo.endCursor);
-    after = page.pageInfo.endCursor;
-  } while (true);
-  return projects;
+    return d.projects;
+  }, "Linear project pagination stalled");
 }
 
 // Resolve a project by name. The comparison is CANONICAL over the full unfiltered set:
