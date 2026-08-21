@@ -670,7 +670,16 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      # On a push event GITHUB_BASE_REF is empty and origin/main's tip IS the
+      # pushed commit, so the old default base made this lane inert — the diff
+      # was always empty and the job greened without measuring (AIO-1016).
+      # `github.event.before` is the pre-push main tip (with squash merges,
+      # exactly the merged PR's changed set); fetch-depth: 0 above keeps it
+      # resolvable. When it isn't (all-zeros / rewritten history), the runner
+      # prints an explicit skip instead of a measured-empty green.
       - run: npm run test:mutation
+        env:
+          MUTATION_BASE_SHA: ${{ github.event.before }}
       # The `test:mutation:smoke` step that lived here exercised the
       # Stryker/Vitest integration; both the script and the Vitest (gui/client)
       # group left with the AIO-612 cut, so the step could only fail (masked by

@@ -23,9 +23,14 @@
  * cost is the WHOLE kill command, so nightly feasibility depends on both fields.
  */
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdirSync, readdirSync, unlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, readdirSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  MEASURED_EMPTY_MESSAGE,
+  mutationBaseSkipMessage,
+  resolveMutationBase,
+} from "./mutation-push-base.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -338,7 +343,9 @@ export function parseArgs(argv) {
   const options = {
     nightly: false,
     list: process.env.AIOS_MUTATION_DRY_RUN === "1",
-    base: process.env.GITHUB_BASE_REF ? `origin/${process.env.GITHUB_BASE_REF}` : "origin/main",
+    // null = no explicit --base; main() resolves the real base from the CI
+    // environment via resolveMutationBase (push sha > PR base ref > origin/main).
+    base: null,
     group: null,
     mutate: null,
   };
@@ -357,6 +364,39 @@ export function parseArgs(argv) {
   return options;
 }
 
+function isCommit(sha) {
+  try {
+    git(["cat-file", "-e", `${sha}^{commit}`]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Resolve the diff base from CLI/CI inputs and enumerate changed files.
+ * Returns null after reporting an explicit skip when the base cannot be
+ * determined for this push (never a silent measured-empty green, AIO-1016).
+ */
+function resolveChangedFiles(options) {
+  const resolution = resolveMutationBase({
+    baseFlag: options.base,
+    mutationBaseSha: process.env.MUTATION_BASE_SHA ?? "",
+    githubBaseRef: process.env.GITHUB_BASE_REF ?? "",
+    isCommit,
+  });
+  if (resolution.skip) {
+    // Advisory lane (AIO-630): exit 0, but never green as if measured.
+    const message = mutationBaseSkipMessage(resolution.skip);
+    console.log(message);
+    if (process.env.GITHUB_STEP_SUMMARY) {
+      appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${message}\n`);
+    }
+    return null;
+  }
+  return changedFiles(resolution.base);
+}
+
 function main(argv) {
   const options = parseArgs(argv);
   if (options.mutate && !options.group) {
@@ -365,7 +405,12 @@ function main(argv) {
   if (options.group && !MUTATION_GROUPS.some((group) => group.name === options.group)) {
     throw new Error(`unknown mutation group: ${options.group}`);
   }
-  const changed = options.nightly || options.mutate ? [] : changedFiles(options.base);
+  let changed = [];
+  if (!options.nightly && !options.mutate) {
+    const resolved = resolveChangedFiles(options);
+    if (resolved === null) return;
+    changed = resolved;
+  }
   const selected = MUTATION_GROUPS.filter((group) => !options.group || group.name === options.group)
     .flatMap((group) => {
       const mutate = (
@@ -382,7 +427,7 @@ function main(argv) {
     .filter(({ mutate }) => mutate.length);
 
   if (!selected.length) {
-    console.log("mutation: no changed critical production files");
+    console.log(MEASURED_EMPTY_MESSAGE);
     return;
   }
   mkdirSync(path.join(ROOT, ".stryker-tmp"), { recursive: true });
