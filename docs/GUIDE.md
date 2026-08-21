@@ -586,7 +586,9 @@ Missing rails — /Users/…/sandbox
 Typical use on a fresh client repo: `rails missing` → `rails suggest` → `rails apply --dry-run` →
 `rails apply`. The allowlist is one rail of several — add the CLAUDE.md, a PreToolUse guard, and a
 leak gate that `missing` named. Guards and human review still gate everything; an allowlist only
-speeds up *safe repetition*.
+speeds up *safe repetition*. Note: grants must be **committed** to reach new worktrees — hydration
+takes the branch's committed `.claude/settings.json`, never the primary's uncommitted working copy
+(AIO-920; see `docs/agentic-ergonomics/rails.md`).
 
 ---
 

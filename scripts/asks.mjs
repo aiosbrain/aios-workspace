@@ -15,11 +15,12 @@ import { loadOperatorLoop } from "./operator-loop-loader.mjs";
 
 // This toolkit's own hooks dir, resolved from aios.mjs's own location (works whether invoked
 // from the main checkout or an npm-linked global `aios` — either way this file lives inside the
-// one real toolkit checkout). `aios asks wire` (AIO-167 follow-up) uses ABSOLUTE paths into this
-// dir rather than `${CLAUDE_PROJECT_DIR}`-relative ones, so capture keeps working in a worktree
-// even when that worktree's own checked-out branch predates the hooks being added to main —
-// the same pattern already used to wire capture into john-workspace (a repo with no copy of
-// these hooks at all).
+// one real toolkit checkout). `aios asks wire` (AIO-167 follow-up) prefers
+// `${CLAUDE_PROJECT_DIR}`-relative commands when the TARGET repo carries the hook in-tree (the
+// convention its tracked settings.json already uses — Claude Code expands the var to the project
+// root), and falls back to ABSOLUTE paths into this dir only for repos with no copy of these
+// hooks at all (e.g. john-workspace). An absolute path written into a TRACKED settings.json is
+// the AIO-1014 failure: `git commit -am` sweeps a machine-local path into the feature branch.
 const TOOLKIT_HOOKS_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "hooks");
 const ASKS_SUBCOMMANDS = [
   "list",
@@ -69,14 +70,34 @@ function discoverWorktreePaths(repo) {
   }
 }
 
+// True when `target`'s branch has .claude/settings.json committed at HEAD — the AIO-920 case
+// where the branch copy is authoritative and hydration must not edit it. HEAD (not the index)
+// deliberately matches scripts/link-worktree-env.sh's own check.
+function settingsCommittedInHead(target) {
+  try {
+    execFileSync("git", ["-C", target, "cat-file", "-e", "HEAD:.claude/settings.json"], {
+      stdio: "ignore",
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // Idempotently ensure `target`'s .claude/settings.json has the Notification/Stop asks-capture
-// hook and the PostToolUse decision-capture hook, pointed at THIS toolkit's absolute hook paths.
-// Merge-only: every other key (permissions, other hook events, other hooks on the same event) is
-// left byte-for-byte alone. Detection is a substring match on the hook script's basename, so a
-// hook already wired via `${CLAUDE_PROJECT_DIR}`-relative path (the in-tree convention once a
-// branch has the hooks merged) still counts as wired and is never duplicated.
-function wireAsksHooksInto(target, { dryRun = false } = {}) {
+// hook and the PostToolUse decision-capture hook — `${CLAUDE_PROJECT_DIR}`-relative when the
+// target carries the hook in-tree, this toolkit's absolute path otherwise (see TOOLKIT_HOOKS_DIR
+// note). Merge-only: every other key (permissions, other hook events, other hooks on the same
+// event) is left byte-for-byte alone. Detection is a substring match on the hook script's
+// basename, so a hook already wired either way still counts as wired and is never duplicated.
+// `hydration: true` (how link-worktree-env.sh invokes it) additionally refuses to touch a
+// settings.json committed in the branch's HEAD: post-AIO-920 the branch copy is authoritative,
+// and the hydration-time staleness notice (scripts/worktree-settings-notice.mjs) — not an
+// unasked edit that dirties the worktree — is the signal that hooks are missing.
+function wireAsksHooksInto(target, { dryRun = false, hydration = false } = {}) {
   const settingsPath = path.join(target, ".claude", "settings.json");
+  if (hydration && settingsCommittedInHead(target))
+    return { repo: target, ok: true, changed: false, skipped: "tracked-in-branch" };
   let settings = {};
   if (existsSync(settingsPath)) {
     try {
@@ -108,9 +129,14 @@ function wireAsksHooksInto(target, { dryRun = false } = {}) {
         (matcher === undefined || group.matcher === matcher) &&
         (group.hooks ?? []).some((h) => String(h.command ?? "").includes(basename))
     );
+  // In-tree copy of the hook → the portable tracked-settings convention; no copy → absolute.
+  const hookCommand = (basename) =>
+    existsSync(path.join(target, "hooks", basename))
+      ? "${CLAUDE_PROJECT_DIR}/hooks/" + basename
+      : path.join(TOOLKIT_HOOKS_DIR, basename);
   const addHook = (event, basename, matcher) => {
     settings.hooks[event] ??= [];
-    const entry = { hooks: [{ type: "command", command: path.join(TOOLKIT_HOOKS_DIR, basename) }] };
+    const entry = { hooks: [{ type: "command", command: hookCommand(basename) }] };
     if (matcher !== undefined) entry.matcher = matcher;
     settings.hooks[event].push(entry);
   };
@@ -154,8 +180,9 @@ export async function cmdAsks(repo, cfg, args) {
   // operator-loop dist check below, unlike every other subcommand here.
   if (sub === "wire") {
     const dryRun = flags.has("--dry-run");
+    const hydration = flags.has("--hydration");
     const targets = flags.has("--all-worktrees") ? discoverWorktreePaths(repo) : [repo];
-    const results = targets.map((t) => wireAsksHooksInto(t, { dryRun }));
+    const results = targets.map((t) => wireAsksHooksInto(t, { dryRun, hydration }));
     if (asJson) {
       console.log(JSON.stringify({ results }, null, 2));
       if (results.some((r) => !r.ok)) process.exitCode = 1;
@@ -168,6 +195,10 @@ export async function cmdAsks(repo, cfg, args) {
     );
     for (const r of results) {
       if (!r.ok) console.log(`  ${c.dim(r.repo)}  ${c.dim("error: " + r.error)}`);
+      else if (r.skipped === "tracked-in-branch")
+        console.log(
+          `  ${c.dim(r.repo)}  ${c.dim("settings.json committed in branch — left alone (hydration)")}`
+        );
       else if (!r.changed) console.log(`  ${c.dim(r.repo)}  ${c.dim("already wired")}`);
       else {
         console.log(`  ${r.repo}  ${dryRun ? "would add" : "added"}:`);
@@ -449,6 +480,6 @@ export async function cmdAsks(repo, cfg, args) {
       "       aios asks auto-approve [--watch] [--interval N]\n" +
       "       aios asks add --kind <k> --severity <blocker|decision|fyi> --title <t> [--body <b>] [--ref <r>] [--json]\n" +
       "       aios asks harvest [--cadence daily|weekly] [--json]\n" +
-      "       aios asks wire [--all-worktrees] [--dry-run] [--json]"
+      "       aios asks wire [--all-worktrees] [--hydration] [--dry-run] [--json]"
   );
 }

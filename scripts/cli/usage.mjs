@@ -139,8 +139,9 @@ export const USAGE_LINES = {
     "  aios asks harvest [--cadence d|w]     surface loop events (decisions/assignments/…) into the queue",
     "    [--json]                            via the tier-gated comms sender (collect→detect→dispatch)",
     "  aios asks wire [--all-worktrees]      stamp/refresh the asks+decision capture hooks into",
-    "    [--dry-run] [--json]                .claude/settings.json via ABSOLUTE toolkit paths — fixes",
-    "                                         worktrees whose checked-out branch predates the hooks",
+    "    [--hydration] [--dry-run] [--json]  .claude/settings.json — repo-relative when the hooks are",
+    "                                         in-tree, absolute toolkit paths otherwise; --hydration",
+    "                                         never edits a settings.json committed in the branch",
   ],
   transcripts: [
     "  aios transcripts <enable-sync|draft|list|approve>  one-gate transcript → decisions/tasks pipeline",

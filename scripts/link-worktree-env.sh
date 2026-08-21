@@ -112,6 +112,16 @@ elif [[ ! -e "$here/.claude/settings.json" ]]; then
   fi
 fi
 
+# Staleness signal (AIO-1014): keeping the branch's committed settings.json is
+# correct, but it pins the worktree to its branch-point hook set — a hook that
+# landed on main later never reaches this worktree, and the skip above reads as
+# success. Print a one-line "branch settings behind main" notice when main's
+# committed hook list has entries the branch lacks. Read-only, never a rewrite
+# (picking hooks up is a merge decision), and never fails hydration.
+if command -v node >/dev/null 2>&1 && [[ -f "$main_worktree/scripts/worktree-settings-notice.mjs" ]]; then
+  node "$main_worktree/scripts/worktree-settings-notice.mjs" --worktree "$here" || true
+fi
+
 # .claude/ — full directory: rules, skills, commands, agents, memory, personalities, rubrics, descriptors
 for sub in rules skills commands agents memory personalities rubrics descriptors integrations.json; do
   src="$main_worktree/.claude/$sub"
@@ -168,8 +178,12 @@ if command -v direnv >/dev/null 2>&1; then
 fi
 
 # ── aios asks hooks ─────────────────────────────────────────────────────────
+# --hydration: wire must never edit a settings.json committed in this branch's
+# HEAD (AIO-920/AIO-1014 — the branch copy is authoritative; the staleness
+# notice above is the signal for missing hooks). Untracked settings still get
+# wired, `${CLAUDE_PROJECT_DIR}`-relative when the repo carries the hooks.
 if command -v node >/dev/null 2>&1 && [[ -f "$main_worktree/scripts/aios.mjs" ]]; then
-  node "$main_worktree/scripts/aios.mjs" asks wire --repo "$here" 2>/dev/null || echo "aios asks wire: skipped (CLI may not be built)"
+  node "$main_worktree/scripts/aios.mjs" asks wire --hydration --repo "$here" 2>/dev/null || echo "aios asks wire: skipped (CLI may not be built)"
 fi
 
 # ── native-module ABI guard ─────────────────────────────────────────────────
