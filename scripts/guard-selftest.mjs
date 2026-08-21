@@ -22,7 +22,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -49,6 +49,20 @@ function parseArgs(argv) {
   return args;
 }
 
+// Did the interpreter fail to RUN at all? spawnSync can report an error even when the
+// process ran and exited: on Linux, dash dies at `set -o pipefail` before reading
+// stdin, so writing the payload raises EPIPE and spawnSync returns BOTH a numeric
+// status and error=EPIPE — the very trap case 3 demonstrates. A numeric r.status means
+// the interpreter ran and exited; classify that by exit code/stderr as usual. Exec
+// failure is only "the process never ran": no exit status at all (spawn failure or
+// signal death), or a spawn-level ENOENT/EACCES.
+export function isExecFailure(r) {
+  return (
+    r.status === null ||
+    (r.error !== undefined && (r.error.code === "ENOENT" || r.error.code === "EACCES"))
+  );
+}
+
 // Run the guard exactly the way Claude Code does: via an interpreter, event JSON on
 // stdin, verdict = exit code (0 allow, 2 block + stderr naming the reason).
 function runGuard(interpreter, guardPath, stdinText) {
@@ -62,11 +76,11 @@ function runGuard(interpreter, guardPath, stdinText) {
     encoding: "utf8",
     env,
   });
-  if (r.error || r.status === null) {
-    // The interpreter itself could not run (missing binary, signal death). That is an
-    // environmental failure of THIS harness, not a guard verdict — reporting it as
-    // "exit 0, fail-open" would be exactly the false diagnosis this tool exists to
-    // prevent, so stop the whole self-test here.
+  if (isExecFailure(r)) {
+    // The interpreter itself never ran (missing binary, permission, signal death).
+    // That is an environmental failure of THIS harness, not a guard verdict —
+    // reporting it as "exit 0, fail-open" would be exactly the false diagnosis this
+    // tool exists to prevent, so stop the whole self-test here.
     console.error(
       `could not execute '${interpreter}' to run the guard: ` +
         `${r.error ? r.error.message : `terminated without an exit code (signal: ${r.signal})`}`
@@ -285,4 +299,8 @@ function main() {
   console.log("guard self-test passed: the secret guard is enforcing on this machine.");
 }
 
-main();
+// Run only when executed directly — the pinning test imports isExecFailure without
+// triggering a full self-test run.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main();
+}

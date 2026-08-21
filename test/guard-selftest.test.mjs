@@ -72,6 +72,32 @@ test("self-test exits non-zero when the guard fails to block the known-secret ca
   }
 });
 
+test("spawn-result classification: ran-and-exited is never an exec failure", async () => {
+  // CI regression (ubuntu): dash dies at `set -o pipefail` BEFORE reading stdin, so
+  // writing the payload raises EPIPE — spawnSync returns error=EPIPE alongside a
+  // NUMERIC status. That is the trap being demonstrated, not a harness failure, and
+  // must be classified by exit code, not aborted as "could not execute".
+  const { isExecFailure } = await import("../scripts/guard-selftest.mjs");
+  // ran and exited, EPIPE on stdin (the ubuntu dash case) — not an exec failure
+  assert.equal(
+    isExecFailure({ status: 2, error: Object.assign(new Error("EPIPE"), { code: "EPIPE" }) }),
+    false
+  );
+  // ran and exited cleanly — not an exec failure
+  assert.equal(isExecFailure({ status: 0, error: undefined }), false);
+  // never ran: missing binary / permission — exec failure, must abort without a verdict
+  assert.equal(
+    isExecFailure({ status: null, error: Object.assign(new Error("ENOENT"), { code: "ENOENT" }) }),
+    true
+  );
+  assert.equal(
+    isExecFailure({ status: 7, error: Object.assign(new Error("EACCES"), { code: "EACCES" }) }),
+    true
+  );
+  // killed by signal, no exit code — no verdict either
+  assert.equal(isExecFailure({ status: null, error: undefined, signal: "SIGKILL" }), true);
+});
+
 test("self-test fails cleanly when pointed at a missing guard", () => {
   const r = runSelftest(["--guard", "/nonexistent/team-ops-guard.sh"]);
   assert.notEqual(r.status, 0);
