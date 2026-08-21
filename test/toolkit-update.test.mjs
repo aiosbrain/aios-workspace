@@ -271,11 +271,12 @@ test("mergeManaged: an excluded file present at the base sha is not propagated a
 
 // ---- pm_tool gating (AIO-844) ----
 
-/** The three Linear-specific managed destinations this seam gates. */
+/** The four Linear-specific managed destinations this seam gates. */
 const LINEAR_DESTS = [
   ".claude/rules/linear-factory.md",
   ".claude/skills/aios-linear",
   "docs/agentic-ergonomics/aios-issue-template.md",
+  "docs/agentic-ergonomics/aios-finding-template.md",
 ];
 
 test("pmToolOf defaults an absent/blank pm_tool to linear and honors any explicit value", () => {
@@ -303,7 +304,7 @@ test("managedPathsForConfig ships the Linear assets only when pm_tool selects li
   for (const pm_tool of ["clickup", "none"]) {
     const d = dests({ pm_tool });
     for (const dest of LINEAR_DESTS) assert.ok(!d.has(dest), `${dest} leaked into ${pm_tool}`);
-    // Everything else is untouched — the gate must move exactly three entries and no others,
+    // Everything else is untouched — the gate must move exactly the LINEAR_DESTS entries,
     // so switching PM tool can never quietly stop syncing unrelated governance.
     const linear = managedPathsForConfig({ pm_tool: "linear" });
     assert.equal(managedPathsForConfig({ pm_tool }).length, linear.length - LINEAR_DESTS.length);
