@@ -87,6 +87,12 @@ other key (`hooks`, `permissions.deny`/`ask`, `model`, …) is copied through un
 prints the diff and writes nothing. `--from <file>` applies a previously saved `rails suggest --json`
 instead of re-scanning.
 
+**Grants must be COMMITTED to reach new worktrees.** Since AIO-920, worktree hydration takes the
+`.claude/settings.json` committed on the worktree's branch and never copies the primary checkout's
+working copy over it — so an `aios rails apply` grant that sits uncommitted in the primary stays
+local to that checkout and does not propagate to any new worktree. Commit the settings change (and
+merge it to `main`) for grants to follow the branches cut from it.
+
 `missing` is the missing-rails backlog. It reuses the `aios assess-codebase` readiness checks for the
 rubric-covered rails (agent instructions, secret scanning, tests, linter, pre-commit hooks, CI) and
 adds the AIOS-native rails the general rubric doesn't cover — the **allowlist**, **guard hooks**, and
