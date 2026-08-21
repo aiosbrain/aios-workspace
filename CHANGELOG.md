@@ -13,14 +13,16 @@ This is the **individual workspace** repo. The Team Brain sync contract
 **Minor release, and the licence changes.** AIOS Workspace is now **AGPL-3.0-only** (it was MIT
 through `0.11.1`), with an Apache-2.0 carve-out for the vendored `.harness/`. If you depend on this
 package, read that first — it is the one change in this release that can affect how you are allowed
-to use it. `@aiosbrain/foundation` moves to `0.1.1` for the same reason: `0.1.0` was published to
-npm under MIT and npm versions are immutable, so the relicensed manifest needs a version of its own
-rather than a republish.
+to use it. `@aiosbrain/foundation` moves to `0.1.2` in two steps for the same
+reason: `0.1.0` was published to npm under MIT and npm versions are immutable, so the relicensed
+manifest needed a version of its own (`0.1.1`, published 2026-08-21), and the credential-resolution
+fix below changed `brain-config.mjs` after that publish, so it needs one too.
 
-Two shipped defects are fixed here that only a *published install* could see, which is the theme of
-this release: `slack` and `linear` on your `PATH` could not run at all, and `aios spec eval` could
-not find its rubric. Both were invisible to a repo-only test suite, and the release now has a gate
-that makes that class of bug visible.
+Three shipped defects are fixed here that only a *published install* could see, which is the theme
+of this release: `slack` and `linear` on your `PATH` could not run at all, `aios spec eval` could
+not find its rubric, and a workspace's dotenvx-encrypted `.env` could not be decrypted without a
+global `dotenvx`. All were invisible to a repo-only test suite, and the release now has a gate that
+makes that class of bug visible.
 
 ### Changed
 
@@ -63,6 +65,14 @@ that makes that class of bug visible.
   (the PATH bin, which resolves the key) is the documented invocation, the skill path is an explicit
   fallback, and the missing-key error no longer tells the reader to re-run the command that just
   failed.
+- **A published install can decrypt a workspace `.env` without direnv or a global `dotenvx`
+  (AIO-1029).** `@dotenvx/dotenvx` shipped as a devDependency, so the tarball carried no copy and
+  credential resolution fell back to a `dotenvx` on PATH that a member's machine may not have —
+  `linear` and `slack` then failed "key not set" with the key sitting encrypted next to a valid
+  `.env.keys`. It is now a runtime dependency, resolved with Node module resolution (the fixed
+  `node_modules/.bin` path never worked in a hoisted local install), and `@aiosbrain/foundation`
+  declares it as an optional peer for standalone consumers. The packed-artifact gate now asserts
+  decryption from the installed tree with `dotenvx` stripped from PATH.
 - **Worktree hydration never overwrites a branch's tracked `.claude/settings.json` (AIO-920).**
 - **The write-time secret guard flags provider-shaped values under any binding name (AIO-952).**
 - **The mutation-testing capability oracle is restored, closing a shotgun bypass (AIO-994, AIO-534).**
