@@ -32,14 +32,17 @@ globalThis.fetch = async (_url, init) => {
       : { issues: { nodes: [issue("issue-1", "AIO-1")], pageInfo: { hasNextPage: true, endCursor: "page-2" } } };
   } else if (query.includes("inverseRelations(first:250")) {
     const relation = { id: "relation-1", type: "related", issue: b, relatedIssue: a };
-    const secondPage = variables.inverseAfter === "inverse-page-2";
+    const secondPage = variables.after === "inverse-page-2";
     const paged = mode === "related-page-2";
     data = { issue: { identifier: "AIO-73",
-      relations: { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } },
       inverseRelations: {
         nodes: !paged || secondPage ? [relation] : [],
         pageInfo: { hasNextPage: paged && !secondPage, endCursor: paged && !secondPage ? "inverse-page-2" : null }
       }
+    } };
+  } else if (query.includes("relations(first:250")) {
+    data = { issue: { identifier: "AIO-73",
+      relations: { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } }
     } };
   } else if (query.includes("members(first:250")) {
     if (variables.key !== "AIO") throw new Error("unexpected team key: " + variables.key);

@@ -14,7 +14,9 @@ export async function cmdProjects(argv) {
   if (!projects.length) {
     console.log("no projects");
   } else {
-    for (const p of projects) console.log(`${p.name}\t[${p.state}]\t${p.url}`);
+    // status.name is the human-readable status ("Backlog", "In Progress"); Project.state
+    // (the old flat string this printed) is deprecated upstream in favour of status.
+    for (const p of projects) console.log(`${p.name}\t[${p.status?.name}]\t${p.url}`);
   }
 }
 

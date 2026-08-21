@@ -1,0 +1,337 @@
+{
+  "__provenance": "Linear GraphQL introspection snapshot, generated 2026-08-21. Each field: name, optional `type` (named composite type requiring a nested selection; absent for scalars/enums), optional `deprecated` (the upstream deprecationReason). Regenerate with the query in test/helpers/linear-projects-mock.mjs against https://api.linear.app/graphql.",
+  "Project": {
+    "fields": [
+      {
+        "name": "id"
+      },
+      {
+        "name": "createdAt"
+      },
+      {
+        "name": "updatedAt"
+      },
+      {
+        "name": "archivedAt"
+      },
+      {
+        "name": "updateReminderFrequencyInWeeks"
+      },
+      {
+        "name": "updateReminderFrequency"
+      },
+      {
+        "name": "frequencyResolution"
+      },
+      {
+        "name": "updateRemindersDay"
+      },
+      {
+        "name": "updateRemindersHour"
+      },
+      {
+        "name": "name"
+      },
+      {
+        "name": "description"
+      },
+      {
+        "name": "slugId"
+      },
+      {
+        "name": "icon"
+      },
+      {
+        "name": "color"
+      },
+      {
+        "name": "status",
+        "type": "ProjectStatus"
+      },
+      {
+        "name": "creator",
+        "type": "User"
+      },
+      {
+        "name": "lead",
+        "type": "User"
+      },
+      {
+        "name": "leadTeam",
+        "type": "Team"
+      },
+      {
+        "name": "facets",
+        "type": "Facet"
+      },
+      {
+        "name": "projectUpdateRemindersPausedUntilAt"
+      },
+      {
+        "name": "startDate"
+      },
+      {
+        "name": "startDateResolution"
+      },
+      {
+        "name": "targetDate"
+      },
+      {
+        "name": "targetDateResolution"
+      },
+      {
+        "name": "startedAt"
+      },
+      {
+        "name": "completedAt"
+      },
+      {
+        "name": "canceledAt"
+      },
+      {
+        "name": "autoArchivedAt"
+      },
+      {
+        "name": "trashed"
+      },
+      {
+        "name": "sortOrder"
+      },
+      {
+        "name": "prioritySortOrder"
+      },
+      {
+        "name": "convertedFromIssue",
+        "type": "Issue"
+      },
+      {
+        "name": "lastAppliedTemplate",
+        "type": "Template"
+      },
+      {
+        "name": "priority"
+      },
+      {
+        "name": "lastUpdate",
+        "type": "ProjectUpdate"
+      },
+      {
+        "name": "health"
+      },
+      {
+        "name": "healthUpdatedAt"
+      },
+      {
+        "name": "issueCountHistory"
+      },
+      {
+        "name": "completedIssueCountHistory"
+      },
+      {
+        "name": "scopeHistory"
+      },
+      {
+        "name": "completedScopeHistory"
+      },
+      {
+        "name": "inProgressScopeHistory"
+      },
+      {
+        "name": "progressHistory"
+      },
+      {
+        "name": "currentProgress"
+      },
+      {
+        "name": "slackNewIssue",
+        "deprecated": "No longer in use"
+      },
+      {
+        "name": "slackIssueComments",
+        "deprecated": "No longer in use"
+      },
+      {
+        "name": "slackIssueStatuses",
+        "deprecated": "No longer is use"
+      },
+      {
+        "name": "labelIds"
+      },
+      {
+        "name": "favorite",
+        "type": "Favorite"
+      },
+      {
+        "name": "url"
+      },
+      {
+        "name": "identifier"
+      },
+      {
+        "name": "previousIdentifiers"
+      },
+      {
+        "name": "initiatives",
+        "type": "InitiativeConnection"
+      },
+      {
+        "name": "initiativeToProjects",
+        "type": "InitiativeToProjectConnection"
+      },
+      {
+        "name": "teams",
+        "type": "TeamConnection"
+      },
+      {
+        "name": "members",
+        "type": "UserConnection"
+      },
+      {
+        "name": "projectUpdates",
+        "type": "ProjectUpdateConnection"
+      },
+      {
+        "name": "documents",
+        "type": "DocumentConnection"
+      },
+      {
+        "name": "projectMilestones",
+        "type": "ProjectMilestoneConnection"
+      },
+      {
+        "name": "issues",
+        "type": "IssueConnection"
+      },
+      {
+        "name": "externalLinks",
+        "type": "EntityExternalLinkConnection"
+      },
+      {
+        "name": "attachments",
+        "type": "ProjectAttachmentConnection"
+      },
+      {
+        "name": "resourceCount"
+      },
+      {
+        "name": "history",
+        "type": "ProjectHistoryConnection"
+      },
+      {
+        "name": "labels",
+        "type": "ProjectLabelConnection"
+      },
+      {
+        "name": "progress"
+      },
+      {
+        "name": "scope"
+      },
+      {
+        "name": "integrationsSettings",
+        "type": "IntegrationsSettings"
+      },
+      {
+        "name": "slackChannelId"
+      },
+      {
+        "name": "microsoftTeamsChannelId"
+      },
+      {
+        "name": "content"
+      },
+      {
+        "name": "contentState"
+      },
+      {
+        "name": "documentContent",
+        "type": "DocumentContent"
+      },
+      {
+        "name": "comments",
+        "type": "CommentConnection"
+      },
+      {
+        "name": "relations",
+        "type": "ProjectRelationConnection"
+      },
+      {
+        "name": "inverseRelations",
+        "type": "ProjectRelationConnection"
+      },
+      {
+        "name": "needs",
+        "type": "CustomerNeedConnection"
+      },
+      {
+        "name": "state",
+        "deprecated": "Use project.status instead"
+      },
+      {
+        "name": "priorityLabel"
+      },
+      {
+        "name": "syncedWith",
+        "type": "ExternalEntityInfo"
+      }
+    ]
+  },
+  "ProjectStatus": {
+    "fields": [
+      {
+        "name": "id"
+      },
+      {
+        "name": "createdAt"
+      },
+      {
+        "name": "updatedAt"
+      },
+      {
+        "name": "archivedAt"
+      },
+      {
+        "name": "name"
+      },
+      {
+        "name": "color"
+      },
+      {
+        "name": "description"
+      },
+      {
+        "name": "position"
+      },
+      {
+        "name": "type"
+      },
+      {
+        "name": "indefinite"
+      },
+      {
+        "name": "team",
+        "type": "Team"
+      },
+      {
+        "name": "inheritedFrom",
+        "type": "ProjectStatus"
+      }
+    ]
+  },
+  "PageInfo": {
+    "fields": [
+      {
+        "name": "hasPreviousPage"
+      },
+      {
+        "name": "hasNextPage"
+      },
+      {
+        "name": "startCursor"
+      },
+      {
+        "name": "endCursor"
+      }
+    ]
+  }
+}
