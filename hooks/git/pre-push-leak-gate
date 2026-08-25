@@ -3,11 +3,11 @@
 # pre-push-leak-gate — run the confidentiality leak gate before anything is published.
 #
 # WHY PRE-PUSH AND NOT JUST PRE-COMMIT/CI:
-# On a PUBLIC repository, content becomes world-readable the instant a branch is pushed —
+# Content is published to everyone with access to the remote the instant a branch is pushed —
 # not when a PR merges. The gate was wired into CI (a merge-time check), so a contributor
 # could push a branch carrying confidential material, have CI fail, and the content would
-# still be public: a failing check cannot unpublish. That is exactly how a client prospect
-# brief sat on a public branch of this repo from July until it was found.
+# still be exposed to remote readers: a failing check cannot unpublish. That is exactly how a
+# client prospect brief sat on a branch of this repo from July until it was found.
 #
 # Push is the publication event, so push is where the gate belongs.
 #
@@ -69,6 +69,43 @@ if [ "${AIOS_ALLOW_UNGATED_PUSH:-}" = "1" ]; then
   exit 0
 fi
 
+# Product-only baseline rules are an installation property, not a property of the mutable
+# checkout or of any tree being pushed. The installer records the decision under the Git common
+# hooks directory, outside every worktree and pushed tree. A missing or malformed decision means
+# the installation is incomplete; guessing here could either brick a non-product repository or
+# let a product commit delete its own scanner signature and evade the baseline.
+mode_state_error() {
+  echo "pre-push: BLOCKED — the leak-gate scan could not complete safely." >&2
+  echo "pre-push: installed product-mode state is missing, unreadable, or malformed." >&2
+  echo "pre-push: reinstall with: bash scripts/install-leak-gate-push-hook.sh" >&2
+  echo "pre-push: override with AIOS_ALLOW_UNGATED_PUSH=1 only if publication is intentional." >&2
+  exit 1
+}
+
+if ! common_dir="$(git rev-parse --git-common-dir 2>/dev/null)"; then
+  mode_state_error
+fi
+if [ "$common_dir" != "${common_dir#/}" ]; then
+  :
+elif ! common_dir="$(cd "$common_dir" 2>/dev/null && pwd)"; then
+  mode_state_error
+fi
+product_mode_state="$common_dir/hooks/pre-push-leak-gate.product-mode"
+if [ ! -f "$product_mode_state" ] || [ ! -r "$product_mode_state" ]; then
+  mode_state_error
+fi
+if ! product_mode_size="$(LC_ALL=C wc -c < "$product_mode_state" 2>/dev/null)"; then
+  mode_state_error
+fi
+product_mode_size="${product_mode_size//[[:space:]]/}"
+if [ "$product_mode_size" != "2" ] || ! IFS= read -r product_mode < "$product_mode_state"; then
+  mode_state_error
+fi
+case "$product_mode" in
+  0 | 1) ;;
+  *) mode_state_error ;;
+esac
+
 gate="$repo_root/scripts/leak-gate.sh"
 # A missing gate script must not silently allow the push: that is the failure mode this
 # whole change exists to remove. Refuse, and say why.
@@ -79,8 +116,8 @@ if [ ! -f "$gate" ]; then
 fi
 
 scan_target() {
-  local target="$1" force_product="${2:-0}" status
-  if AIOS_LEAK_GATE_PRODUCT_REPO="$force_product" bash "$gate" "$target" \
+  local target="$1" status
+  if AIOS_LEAK_GATE_PRODUCT_REPO="$product_mode" bash "$gate" "$target" \
     > "$gate_output" 2>&1; then
     return 0
   else
@@ -102,9 +139,7 @@ scan_treeish() {
     echo "pre-push: could not materialize a Git tree for leak scanning." >&2
     return 2
   fi
-  # The tree may itself delete the scanner or scaffold signature. It still comes from this
-  # product repository, so keep the name-free product rules active while judging it.
-  scan_target "$snapshot" 1
+  scan_target "$snapshot"
 }
 
 scan_detached_object() {
@@ -115,7 +150,7 @@ scan_detached_object() {
     echo "pre-push: could not read a detached Git object for leak scanning." >&2
     return 2
   fi
-  scan_target "$target" 1
+  scan_target "$target"
 }
 
 # A commit's message and identity headers are published objects exactly like its tree, so the
@@ -131,7 +166,7 @@ scan_commit_metadata() {
     echo "pre-push: could not read a commit object for leak scanning." >&2
     return 2
   fi
-  scan_target "$target" 1
+  scan_target "$target"
 }
 
 scan_commit_list() {
@@ -272,7 +307,7 @@ if [ "$gate_status" -ne 1 ]; then
 fi
 
 echo "pre-push: BLOCKED — the leak gate found confidential material in the tree." >&2
-echo "pre-push: this repository is PUBLIC; pushing publishes immediately, and a later" >&2
-echo "pre-push: CI failure or branch deletion cannot fully undo that." >&2
+echo "pre-push: pushing publishes to the remote immediately; a later CI failure or" >&2
+echo "pre-push: branch deletion cannot fully undo that exposure." >&2
 echo "pre-push: team/client context belongs in your workspace or the team brain, not here." >&2
 exit 1

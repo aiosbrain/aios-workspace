@@ -237,15 +237,25 @@ function writeVersionStamp({ toolkitDir, targetDir, params, nextFiles }) {
 function installGitHooks(targetDir, report) {
   // NOSONAR javascript:S4036 — `bash`/`git` come from the operator's PATH by design
   // (developer CLI, no fixed install location); the script args are absolute paths.
-  const run = (cmd, args) =>
-    execFileSync(cmd, args, { cwd: targetDir, encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] }); // NOSONAR
+  const run = (cmd, args, options = {}) =>
+    execFileSync(cmd, args, {
+      cwd: targetDir,
+      encoding: "utf8",
+      stdio: ["pipe", "pipe", "pipe"],
+      ...options,
+    }); // NOSONAR
 
   // pre-commit + pre-merge-commit + reference-transaction (worktree guards).
   run("bash", [path.join(targetDir, ".harness/hooks/git/install-primary-commit-guard.sh")]);
   report.hooks.push("pre-commit", "pre-merge-commit", "reference-transaction");
 
   // pre-push leak gate (chains any pre-existing pre-push hook).
-  run("bash", [path.join(targetDir, "scripts/install-leak-gate-push-hook.sh")]);
+  run("bash", [path.join(targetDir, "scripts/install-leak-gate-push-hook.sh")], {
+    // Split product repos intentionally have no scaffold/ signature. Make the canonical
+    // bootstrap classification explicit; the installer validates the exact 0/1 domain and
+    // persists it machine-locally in common hooks.
+    env: { ...process.env, AIOS_LEAK_GATE_INSTALL_PRODUCT_MODE: "1" },
+  });
   report.hooks.push("pre-push");
 
   // post-checkout worktree self-hydration. Installed only when absent or ours —

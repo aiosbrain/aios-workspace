@@ -86,8 +86,8 @@ test("push rejects a confidential commit even when a later commit deletes the fi
   execFileSync("git", ["-C", repo, "add", "-A"]);
   execFileSync("git", ["-C", repo, "commit", "-q", "-m", "safe base"]);
   install(repo);
-
   rmSync(path.join(repo, "scripts", "leak-gate.sh"));
+  rmSync(path.join(repo, "scaffold"), { recursive: true, force: true });
   mkdirSync(path.join(repo, "docs", "bd"), { recursive: true });
   writeFileSync(path.join(repo, ".gitattributes"), "docs/bd/** export-ignore\n");
   writeFileSync(path.join(repo, "docs", "bd", "prospect.md"), "confidential prospect\n");
@@ -157,8 +157,8 @@ test("push rejects a lightweight tag that publishes a protected blob", () => {
   assert.match(push.stderr, /confidential material/i);
 });
 
-test("push rejects owner-only frontmatter in a detached blob without private terms", () => {
-  const { repo } = makeRepo();
+test("product mode rejects owner-only frontmatter in a detached blob without private terms", () => {
+  const { repo } = makeRepo({ hooksPath: "scaffold" });
   const remote = mkdtempSync(path.join(os.tmpdir(), "aios-pre-push-tier-blob-remote-"));
   roots.push(remote);
   copyFileSync(

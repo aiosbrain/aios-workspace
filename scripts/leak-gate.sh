@@ -316,13 +316,19 @@ scan_paths() {
 # when that is what we are scanning. The same gate is also called on workspace-shaped roots —
 # `aios promote` passes one deliverable copied out of a workspace, `aios timeline` a render dir —
 # where a `2-work/` or `clients/<name>/` path is entirely normal and firing there would be a
-# false positive on legitimate content. `scaffold/` + `scripts/leak-gate.sh` is the toolkit's
-# own signature: a stamped workspace has the latter but never the former.
+# false positive on legitimate content. An explicit `AIOS_LEAK_GATE_PRODUCT_REPO=0|1` is an
+# authoritative caller decision; without it, `scaffold/` + `scripts/leak-gate.sh` is the
+# toolkit's own auto-detection signature (a stamped workspace has the latter but never the former).
 IS_PRODUCT_REPO=0
-if [ "${AIOS_LEAK_GATE_PRODUCT_REPO:-}" = "1" ] ||
-  { [ -d "$ROOT/scaffold" ] && [ -f "$ROOT/scripts/leak-gate.sh" ]; }; then
-  IS_PRODUCT_REPO=1
-fi
+case "${AIOS_LEAK_GATE_PRODUCT_REPO:-auto}" in
+  1) IS_PRODUCT_REPO=1 ;;
+  0) IS_PRODUCT_REPO=0 ;;
+  *)
+    if [ -d "$ROOT/scaffold" ] && [ -f "$ROOT/scripts/leak-gate.sh" ]; then
+      IS_PRODUCT_REPO=1
+    fi
+    ;;
+esac
 
 if [ "$IS_PRODUCT_REPO" -eq 1 ]; then
   scan_paths "$BASELINE_PATHS" "$BASELINE_PATH_EXEMPT" "workspace/client material in the product repo"

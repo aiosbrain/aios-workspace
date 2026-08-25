@@ -35,6 +35,7 @@ import {
 const TOOLKIT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const AIOS = path.join(TOOLKIT, "scripts", "aios.mjs");
 const PARAMS = { REPO_NAME: "t", LINT_SCRIPT: "lint", TEST_SCRIPT: "test", BOOTSTRAP_VERSION };
+const PRODUCT_MODE_STATE = "pre-push-leak-gate.product-mode";
 
 // Hermetic git: no global/system config (a user's core.hooksPath or hooks templateDir
 // would poison the guard-install assertions), and none of the guard override vars.
@@ -50,6 +51,7 @@ const GIT_ENV = {
 };
 delete GIT_ENV.GIT_DIR;
 delete GIT_ENV.GIT_WORK_TREE;
+delete GIT_ENV.AIOS_LEAK_GATE_INSTALL_PRODUCT_MODE;
 
 function git(dir, args, opts = {}) {
   return spawnSync("git", ["-C", dir, ...args], { encoding: "utf8", env: GIT_ENV, ...opts });
@@ -360,6 +362,44 @@ test("acceptance: primary commit BLOCKED; worktree add -b feat/x origin/main + c
       });
       assert.equal(r.status, 0, `${gate}: ${r.stdout}${r.stderr}`);
     }
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test("repo-bootstrap installs product mode in a split repo with no scaffold and blocks product paths", () => {
+  const { base, target } = makeTarget();
+  try {
+    const originalRemoteHead = gitOkRaw(target, ["rev-parse", "origin/main"]);
+    const stampRun = runCli([target]);
+    assert.equal(stampRun.status, 0, stampRun.stdout + stampRun.stderr);
+    assert.equal(
+      existsSync(path.join(target, "scaffold")),
+      false,
+      "split repo fixture has no scaffold"
+    );
+
+    const commonDir = gitOkRaw(target, ["rev-parse", "--git-common-dir"]);
+    const modeState = path.join(path.resolve(target, commonDir), "hooks", PRODUCT_MODE_STATE);
+    assert.equal(readFileSync(modeState, "utf8"), "1\n");
+
+    mkdirSync(path.join(target, "docs", "bd"), { recursive: true });
+    writeFileSync(path.join(target, "docs", "bd", "prospect.md"), "synthetic prospect\n");
+    gitOk(target, ["add", "-A"]);
+    const commit = git(target, ["commit", "-qm", "test: split product forbidden path"], {
+      env: { ...GIT_ENV, AIOS_ALLOW_PRIMARY_COMMIT: "1" },
+    });
+    assert.equal(commit.status, 0, commit.stderr);
+
+    const push = git(target, ["push", "origin", "main"], {
+      env: { ...GIT_ENV, AIOS_LEAK_TERMS_FILE: "/nonexistent-terms-file" },
+    });
+    assert.notEqual(push.status, 0, "product-only forbidden paths must be blocked");
+    assert.match(push.stderr, /confidential material/i);
+    assert.equal(
+      gitOkRaw(target, ["ls-remote", "origin", "refs/heads/main"]).split("\t")[0],
+      originalRemoteHead
+    );
   } finally {
     rmSync(base, { recursive: true, force: true });
   }
