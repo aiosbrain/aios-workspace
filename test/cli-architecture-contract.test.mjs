@@ -1,10 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { COMMANDS } from "../scripts/cli/registry.mjs";
+import { DEVTOOLS_COMMANDS } from "../scripts/cli/devtools-commands.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const INVENTORY_PATH = path.join(ROOT, "docs", "architecture", "cli-command-inventory.v1.json");
@@ -12,6 +13,10 @@ const ADR_PATH = path.join(ROOT, "docs", "adr", "0002-single-binary-cli-platform
 const PACKAGE_PATH = path.join(ROOT, "package.json");
 const DISPATCH_PATH = path.join(ROOT, "scripts", "cli", "dispatch.mjs");
 const CI_PATH = path.join(ROOT, ".github", "workflows", "ci.yml");
+const REGISTRY_PATH = path.join(ROOT, "scripts", "cli", "registry.mjs");
+const DEVTOOLS_COMMANDS_PATH = path.join(ROOT, "scripts", "cli", "devtools-commands.mjs");
+const DEVTOOLS_DISPATCH_PATH = path.join(ROOT, "scripts", "devtools-dispatch.mjs");
+const SHELL_INSTALL_PATH = path.join(ROOT, "scripts", "install-aios-shell.sh");
 
 const inventoryText = readFileSync(INVENTORY_PATH, "utf8");
 const inventory = JSON.parse(inventoryText);
@@ -19,8 +24,25 @@ const packageJson = JSON.parse(readFileSync(PACKAGE_PATH, "utf8"));
 const adr = readFileSync(ADR_PATH, "utf8");
 const dispatchSource = readFileSync(DISPATCH_PATH, "utf8");
 const ciSource = readFileSync(CI_PATH, "utf8");
+const registrySource = readFileSync(REGISTRY_PATH, "utf8");
+const devtoolsCommandsSource = readFileSync(DEVTOOLS_COMMANDS_PATH, "utf8");
+const devtoolsDispatchSource = readFileSync(DEVTOOLS_DISPATCH_PATH, "utf8");
+const shellInstallSource = readFileSync(SHELL_INSTALL_PATH, "utf8");
 
 const sorted = (values) => [...values].sort((a, b) => a.localeCompare(b, "en"));
+
+function walkFiles(relativeRoot) {
+  const found = [];
+  const visit = (relativeDirectory) => {
+    for (const entry of readdirSync(path.join(ROOT, relativeDirectory), { withFileTypes: true })) {
+      const relativePath = path.posix.join(relativeDirectory, entry.name);
+      if (entry.isDirectory()) visit(relativePath);
+      else if (entry.isFile()) found.push(relativePath);
+    }
+  };
+  visit(relativeRoot);
+  return found;
+}
 
 test("CLI architecture: every published bin is inventoried exactly once", () => {
   const published = inventory.routes.filter((route) => route.kind === "published-bin");
@@ -73,6 +95,29 @@ test("CLI architecture: current special diagnostic routes are inventoried and di
     dispatchSource,
     /const VERSION_TOKENS = new Set\(\["-v", "--version", "version"\]\)/
   );
+});
+
+test("CLI architecture: every executable in a declared non-registry seam is inventoried", () => {
+  const discovered = inventory.executableSeamRoots
+    .flatMap(walkFiles)
+    .filter((relativePath) => readFileSync(path.join(ROOT, relativePath), "utf8").startsWith("#!"));
+  const inventoryPaths = new Set(
+    inventory.routes
+      .flatMap((route) => [route.source, ...route.evidence])
+      .flatMap((reference) => {
+        if (reference.startsWith("@aiosbrain/")) return [];
+        return [reference.split("#", 1)[0]];
+      })
+  );
+  for (const executable of discovered) {
+    assert.ok(inventoryPaths.has(executable), `un-inventoried executable seam: ${executable}`);
+  }
+
+  assert.match(shellInstallSource, /^aios\(\) \{/m, "shell installer must still define aios() ");
+  const shellRoute = inventory.routes.find(
+    (route) => route.id === "entrypoint.shell-function-aios"
+  );
+  assert.equal(shellRoute?.source, "scripts/install-aios-shell.sh");
 });
 
 test("CLI architecture: every route has one valid future owner, disposition, and metadata", () => {
@@ -152,6 +197,17 @@ test("CLI architecture: aios is canonical and connector implementations are lazy
   }
 });
 
+test("CLI architecture: adapter runtime modules load only at point of use", () => {
+  for (const source of [registrySource, dispatchSource, devtoolsCommandsSource]) {
+    assert.doesNotMatch(source, /from ["']@aiosbrain\/aios-devtools/);
+    assert.doesNotMatch(source, /import ["']@aiosbrain\/aios-devtools/);
+  }
+  assert.match(devtoolsDispatchSource, /await import\(resolved\.specifier\)/);
+  for (const [name, descriptor] of Object.entries(DEVTOOLS_COMMANDS)) {
+    assert.match(String(descriptor.loader), /loadDevtoolsModule/, `${name}: eager devtools loader`);
+  }
+});
+
 test("CLI architecture: diagnostics require no config, credentials, network, or connectors", () => {
   for (const name of ["help", "version", "doctor", "provenance"]) {
     const route = inventory.routes.find((candidate) => candidate.id === `command.aios.${name}`);
@@ -228,8 +284,34 @@ test("CLI architecture: repository evidence paths resolve", () => {
 
 test("CLI architecture: Node support and contract prose contain no TBD", () => {
   assert.deepEqual(inventory.supportedNodeMajors, [22, 24, 26]);
-  assert.equal(packageJson.engines.node, ">=22");
+  assert.equal(packageJson.engines.node, inventory.currentPackageEngine);
+  assert.equal(inventory.v2PackageEngine, "22.x || 24.x || 26.x");
   assert.match(ciSource, /node: \[22, 24, 26\]/, "CI must test the exact supported Node majors");
   assert.doesNotMatch(inventoryText, /\bTBD\b/i);
   assert.doesNotMatch(adr, /\bTBD\b/i);
+});
+
+test("CLI architecture: deferred runtime proofs are owned and mandatory before v2", () => {
+  const expected = [
+    "config-resolution",
+    "credential-source-isolation",
+    "destination-and-redirect-validation",
+    "migration-and-rollback",
+    "node-engine-and-devtools-compatibility",
+    "output-errors-and-exits",
+  ];
+  assert.deepEqual(sorted(inventory.implementationProofs.map((proof) => proof.id)), expected);
+  for (const proof of inventory.implementationProofs) {
+    assert.ok(inventory.owners[proof.owner], `${proof.id}: unknown proof owner`);
+    assert.equal(proof.status, "required-before-v2-release", `${proof.id}: deferral status`);
+    assert.equal(proof.releaseBoundary, "v2.0.0", `${proof.id}: release boundary`);
+    assert.ok(proof.tests.length >= 3, `${proof.id}: deterministic acceptance tests required`);
+  }
+  const transport = inventory.implementationProofs.find(
+    (proof) => proof.id === "destination-and-redirect-validation"
+  );
+  assert.ok(
+    transport.tests.some((criterion) => criterion.includes("AIOS_ALLOW_INSECURE_LOOPBACK=1"))
+  );
+  assert.match(adr, /AIOS_ALLOW_INSECURE_LOOPBACK=1/);
 });

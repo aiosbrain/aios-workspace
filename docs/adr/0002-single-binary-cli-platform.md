@@ -36,10 +36,12 @@ The evidence frozen for this decision is:
 ### 1. One executable and one supported runtime
 
 `aios` is the only canonical executable. The v2 package supports and tests exactly Node major
-versions 22, 24, and 26. The current v1 package's permissive `>=22` engine declaration is not the v2
-support contract and must be narrowed before the v2 release. Node is the only runtime required by a
-canonical route. Python, `jq`, a global `dotenvx`, a source checkout, a linked package, or an
-executable copied into a workspace may not be a runtime prerequisite.
+versions 22, 24, and 26 through the manifest range `22.x || 24.x || 26.x`. The current v1 root range
+`>=22` and the pinned devtools package's `>=22 <23` range are recorded evidence, not the v2 support
+contract. Before v2 release, the root range must narrow and the devtools dependency must be replaced
+by a version that installs without engine warnings on all three supported majors. Node is the only
+runtime required by a canonical route. Python, `jq`, a global `dotenvx`, a source checkout, a linked
+package, or an executable copied into a workspace may not be a runtime prerequisite.
 
 The canonical connector routes are `aios linear …` and `aios slack …`. The published `linear` and
 `slack` names remain warning-only delegates for every v2 release. They invoke the same registry
@@ -136,8 +138,9 @@ name, never the resolved values.
 
 Credentials may be attached only after destination validation. Remote destinations require HTTPS.
 Credential-free HTTP is allowed only for literal loopback hosts (`127.0.0.0/8`, `::1`, or
-`localhost`) in an explicitly enabled development/test mode. Redirects are revalidated before a
-credential is forwarded; credentials are not forwarded across origins.
+`localhost`) when the process environment contains exactly `AIOS_ALLOW_INSECURE_LOOPBACK=1`. This
+flag never permits credentials, non-loopback HTTP, or a redirect away from loopback. Redirects are
+revalidated before a credential is forwarded; credentials are not forwarded across origins.
 
 ### 6. Output, errors, and exit behavior are stable
 
@@ -241,7 +244,15 @@ registries, or a plugin state database. Two built-in adapters do not justify tho
 ## Verification contract
 
 `node --test test/cli-architecture-contract.test.mjs` proves that every published bin and every
-registered top-level command is inventoried; every entry has one future owner and valid
-disposition; compatibility entries contain replacement, removal, rollback, and evidence; the
-canonical connector routes are `aios linear` and `aios slack`; diagnostic startup is isolated; and
-no implementation-blocking placeholder remains.
+registered top-level command is inventoried; every executable in the named skill, descriptor,
+scaffold, shell-function, and update seams is referenced by the inventory; every entry has one
+future owner and valid disposition; adapter runtime imports are deferred; compatibility entries
+contain replacement, removal, rollback, and evidence; the canonical connector routes are
+`aios linear` and `aios slack`; diagnostic startup is isolated; and no implementation-blocking
+placeholder remains.
+
+Phase 1 cannot behavior-test modules that do not exist. The inventory therefore carries a
+machine-checked `implementationProofs` list. Each proof is mandatory before the v2 release and
+names the owner and required tests for the Node/devtools engine range, config resolution,
+credential-source isolation, destination and redirect validation, output/error behavior, and
+atomic/idempotent migration. Deferral means “required before v2,” not optional or unspecified.

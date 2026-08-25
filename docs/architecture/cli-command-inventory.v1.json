@@ -9,6 +9,17 @@
     24,
     26
   ],
+  "currentPackageEngine": ">=22",
+  "v2PackageEngine": "22.x || 24.x || 26.x",
+  "executableSeamRoots": [
+    ".claude/skills/aios-linear",
+    "scaffold/.claude/skills/aios-linear",
+    "scaffold/.claude/skills/workstream-update",
+    "scaffold/.claude/descriptors/skills/linear-direct",
+    "scaffold/.claude/descriptors/skills/slack-personal",
+    "scaffold/bin",
+    "scaffold/scripts"
+  ],
   "canonicalConnectorRoutes": {
     "linear": "aios linear",
     "slack": "aios slack"
@@ -25,6 +36,74 @@
     "devtoolsPackage": "0.3.0",
     "openClawSource": "1af9b07e30df15fb5387a5650cc48f7033f8fc2d"
   },
+  "implementationProofs": [
+    {
+      "id": "node-engine-and-devtools-compatibility",
+      "owner": "adapter.devtools",
+      "status": "required-before-v2-release",
+      "releaseBoundary": "v2.0.0",
+      "tests": [
+        "root package engine is exactly 22.x || 24.x || 26.x",
+        "pinned devtools package installs without engine warnings on Node 22, 24, and 26",
+        "packed aios artifact passes help, version, doctor, and provenance on all supported majors"
+      ]
+    },
+    {
+      "id": "config-resolution",
+      "owner": "core.cli",
+      "status": "required-before-v2-release",
+      "releaseBoundary": "v2.0.0",
+      "tests": [
+        "platform-specific user paths and absolute AIOS_CONFIG_DIR overrides",
+        "workspace non-secret schema and unknown-field preservation",
+        "same-directory atomic write, snapshot, and failure preservation"
+      ]
+    },
+    {
+      "id": "credential-source-isolation",
+      "owner": "core.cli",
+      "status": "required-before-v2-release",
+      "releaseBoundary": "v2.0.0",
+      "tests": [
+        "complete-source precedence without cross-root field assembly",
+        "incomplete higher-precedence root stops with AIOS_E_CREDENTIAL_INCOMPLETE",
+        "diagnostics never expose resolved secret values"
+      ]
+    },
+    {
+      "id": "destination-and-redirect-validation",
+      "owner": "core.cli",
+      "status": "required-before-v2-release",
+      "releaseBoundary": "v2.0.0",
+      "tests": [
+        "remote destinations require HTTPS before credentials are attached",
+        "AIOS_ALLOW_INSECURE_LOOPBACK=1 permits only credential-free literal loopback HTTP",
+        "redirect destinations are revalidated and credentials never cross origins"
+      ]
+    },
+    {
+      "id": "output-errors-and-exits",
+      "owner": "core.cli",
+      "status": "required-before-v2-release",
+      "releaseBoundary": "v2.0.0",
+      "tests": [
+        "JSON mode emits exactly one stdout value and diagnostics only on stderr",
+        "stable core error codes map to the declared exit classes",
+        "every failure exposes one actionable remediation"
+      ]
+    },
+    {
+      "id": "migration-and-rollback",
+      "owner": "core.cli",
+      "status": "required-before-v2-release",
+      "releaseBoundary": "v2.0.0",
+      "tests": [
+        "migration state transitions are atomic and idempotent",
+        "re-entry from every non-committed state converges or restores the snapshot",
+        "rollback reinstalls the exact recorded package and last-known-good config"
+      ]
+    }
+  ],
   "owners": {
     "core.cli": {
       "responsibility": "Canonical executable, registry, startup, config broker, output/errors, diagnostics, update and compatibility policy."
