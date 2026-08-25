@@ -38,6 +38,8 @@ import {
   SIMPLIFY_NOOP_TOKEN,
   detectSimplifyToken,
 } from "../scripts/simplify.mjs";
+import { AiosError, CORE_ERROR_CODES, exitCodeFor } from "../scripts/cli/errors.mjs";
+import { createOutput } from "../scripts/cli/output.mjs";
 
 const REPO = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -185,4 +187,61 @@ test("no Class-D token is a prefix of another (substring matching stays unambigu
       assert.ok(!a.startsWith(b), `${a} must not start with ${b}`);
     }
   }
+});
+
+test("v2 core errors have stable codes, one remediation, and declared exit classes", () => {
+  const expected = {
+    AIOS_E_USAGE: 2,
+    AIOS_E_CONFIG_MISSING: 3,
+    AIOS_E_CONFIG_INVALID: 3,
+    AIOS_E_CREDENTIAL_MISSING: 3,
+    AIOS_E_CREDENTIAL_INCOMPLETE: 3,
+    AIOS_E_DESTINATION_UNTRUSTED: 3,
+    AIOS_E_NETWORK: 4,
+    AIOS_E_PROVIDER: 4,
+    AIOS_E_CONFLICT: 5,
+    AIOS_E_MIGRATION: 5,
+    AIOS_E_INTERNAL: 6,
+  };
+  assert.deepEqual(CORE_ERROR_CODES, Object.keys(expected));
+  for (const code of CORE_ERROR_CODES) {
+    const error = new AiosError(code, "fixture failure", "Take one corrective action.");
+    assert.equal(exitCodeFor(error), expected[code]);
+    assert.deepEqual(Object.keys(error.toJSON().error), ["code", "message", "remediation"]);
+  }
+});
+
+test("JSON mode emits exactly one stdout value and diagnostics only on stderr", () => {
+  let stdout = "";
+  let stderr = "";
+  const output = createOutput({
+    json: true,
+    stdout: { write: (value) => (stdout += value) },
+    stderr: { write: (value) => (stderr += value) },
+  });
+  output.diagnostic("fixture diagnostic");
+  assert.equal(output.success({ ok: true }), 0);
+  assert.deepEqual(JSON.parse(stdout), { ok: true });
+  assert.equal(stderr, "fixture diagnostic\n");
+  assert.throws(() => output.success({ second: true }), /already contains a value/);
+});
+
+test("the canonical bootstrap normalizes top-level JSON failures", () => {
+  const result = spawnSync(
+    process.execPath,
+    [
+      "--no-warnings",
+      "--experimental-loader",
+      path.join(REPO, "test", "fixtures", "cli-import-blocker-loader.mjs"),
+      path.join(REPO, "scripts", "aios.mjs"),
+      "status",
+      "--json",
+    ],
+    { encoding: "utf8" }
+  );
+  assert.equal(result.status, 6);
+  assert.equal(result.stderr, "");
+  const document = JSON.parse(result.stdout);
+  assert.equal(document.error.code, "AIOS_E_INTERNAL");
+  assert.equal(typeof document.error.remediation, "string");
 });

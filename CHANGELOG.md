@@ -8,6 +8,24 @@ This is the **individual workspace** repo. The Team Brain sync contract
 (`docs/brain-api.md`) is versioned separately; it is currently at **v1.22**
 (additive within major `v1`). Entries predating a bump did not change the protocol.
 
+## Unreleased
+
+### Added
+
+- **Portable CLI runtime foundation (AIO-1066).** The canonical `aios` bin now starts through a
+  dependency-light bootstrap and loads legacy handlers only after registry selection. Ordinary
+  registry-owned `help`, `version`, `doctor`, and `provenance` diagnostics remain usable with
+  missing or invalid config and broken adapters. The foundation adds versioned user config,
+  complete-root credential selection, destination/redirect trust, stable errors and output,
+  symlink-safe atomic writes, and resumable byte-stable migration/rollback primitives.
+
+### Changed
+
+- Root and foundation runtime support is explicit at `22.x || 24.x || 26.x`; packed installation
+  and diagnostic/config/migration smoke now run with engine-strict and an explicit environment
+  allowlist across all three majors. The exact devtools pin will advance only after its separately
+  gated compatibility release is published.
+
 ## [0.12.0] — 2026-08-21
 
 **Minor release, and the licence changes.** AIOS Workspace is now **AGPL-3.0-only** (it was MIT

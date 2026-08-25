@@ -1,6 +1,8 @@
 aios — AIOS Team Brain sync client (contract: docs/brain-api.md)
 
 usage:
+  aios doctor [--json]                  read-only local runtime/config diagnostics
+  aios provenance [--json]              report the exact local installation and PATH
   aios status [--json|--porcelain]      what would sync (new/modified/blocked/clean)
   aios validate [path]                  run the toolkit's OGR validators against a workspace
     [--critical|--quick]                --critical = OGR03 secrets only; --quick = OGR01 only

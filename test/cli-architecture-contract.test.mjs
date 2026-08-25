@@ -66,7 +66,9 @@ test("CLI architecture: every published bin is inventoried exactly once", () => 
 });
 
 test("CLI architecture: every registered top-level command is inventoried exactly once", () => {
-  const registered = inventory.routes.filter((route) => route.kind === "registered-command");
+  const registered = inventory.routes.filter(
+    (route) => route.registryCommand && route.status === "current"
+  );
   assert.deepEqual(
     sorted(registered.map((route) => route.registryCommand)),
     sorted(COMMANDS.map((command) => command.name))
@@ -81,20 +83,35 @@ test("CLI architecture: every registered top-level command is inventoried exactl
   }
 });
 
-test("CLI architecture: current special diagnostic routes are inventoried and dispatched", () => {
+test("CLI architecture: diagnostics are ordinary cold registry descriptors", () => {
   const currentDiagnostics = inventory.routes.filter(
     (route) => route.kind === "diagnostic-command" && route.status === "current"
   );
   assert.deepEqual(sorted(currentDiagnostics.map((route) => route.route)), [
+    "aios doctor",
     "aios help",
+    "aios provenance",
     "aios version",
   ]);
-  assert.ok(currentDiagnostics.every((route) => route.source === "scripts/cli/dispatch.mjs"));
-  assert.match(dispatchSource, /const HELP_TOKENS = new Set\(\["-h", "--help", "help"\]\)/);
-  assert.match(
-    dispatchSource,
-    /const VERSION_TOKENS = new Set\(\["-v", "--version", "version"\]\)/
+  assert.ok(
+    currentDiagnostics.every((route) => route.source === "scripts/cli/diagnostic-commands.mjs")
   );
+  assert.doesNotMatch(dispatchSource, /HELP_TOKENS|VERSION_TOKENS/);
+  for (const route of currentDiagnostics) {
+    const descriptor = COMMANDS.find((command) => command.name === route.registryCommand);
+    assert.ok(descriptor, route.id);
+    assert.deepEqual(descriptor.metadata, route.metadata, `${route.id}: cold metadata drift`);
+  }
+});
+
+test("CLI architecture: every runtime descriptor exactly matches inventory cold metadata", () => {
+  for (const descriptor of COMMANDS) {
+    const route = inventory.routes.find(
+      (candidate) => candidate.registryCommand === descriptor.name && candidate.status === "current"
+    );
+    assert.ok(route, `${descriptor.name}: missing current inventory route`);
+    assert.deepEqual(descriptor.metadata, route.metadata, `${descriptor.name}: metadata drift`);
+  }
 });
 
 test("CLI architecture: every executable in a declared non-registry seam is inventoried", () => {

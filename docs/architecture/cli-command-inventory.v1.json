@@ -9,7 +9,7 @@
     24,
     26
   ],
-  "currentPackageEngine": ">=22",
+  "currentPackageEngine": "22.x || 24.x || 26.x",
   "v2PackageEngine": "22.x || 24.x || 26.x",
   "executableSeamRoots": [
     ".claude/skills/aios-linear",
@@ -151,7 +151,7 @@
         "startupPolicy": "requires-workspace",
         "implementation": {
           "module": "scripts/cli/registry.mjs#status",
-          "lazy": false
+          "lazy": true
         }
       }
     },
@@ -238,7 +238,7 @@
         "startupPolicy": "offline",
         "implementation": {
           "module": "scripts/cli/registry.mjs#connect",
-          "lazy": false
+          "lazy": true
         }
       }
     },
@@ -267,7 +267,7 @@
         "startupPolicy": "requires-workspace",
         "implementation": {
           "module": "scripts/cli/registry.mjs#review",
-          "lazy": false
+          "lazy": true
         }
       }
     },
@@ -296,7 +296,7 @@
         "startupPolicy": "requires-workspace",
         "implementation": {
           "module": "scripts/cli/registry.mjs#push",
-          "lazy": false
+          "lazy": true
         }
       }
     },
@@ -325,7 +325,7 @@
         "startupPolicy": "requires-workspace",
         "implementation": {
           "module": "scripts/cli/registry.mjs#work",
-          "lazy": false
+          "lazy": true
         }
       }
     },
@@ -354,7 +354,7 @@
         "startupPolicy": "requires-workspace",
         "implementation": {
           "module": "scripts/cli/registry.mjs#pull",
-          "lazy": false
+          "lazy": true
         }
       }
     },
@@ -412,7 +412,7 @@
         "startupPolicy": "offline",
         "implementation": {
           "module": "scripts/cli/registry.mjs#install-skill",
-          "lazy": false
+          "lazy": true
         }
       }
     },
@@ -441,7 +441,7 @@
         "startupPolicy": "requires-workspace",
         "implementation": {
           "module": "scripts/cli/registry.mjs#query",
-          "lazy": false
+          "lazy": true
         }
       }
     },
@@ -499,7 +499,7 @@
         "startupPolicy": "requires-workspace",
         "implementation": {
           "module": "scripts/cli/registry.mjs#stakeholders",
-          "lazy": false
+          "lazy": true
         }
       }
     },
@@ -934,7 +934,7 @@
         "startupPolicy": "offline",
         "implementation": {
           "module": "scripts/cli/registry.mjs#export-okf",
-          "lazy": false
+          "lazy": true
         }
       }
     },
@@ -963,7 +963,7 @@
         "startupPolicy": "requires-workspace",
         "implementation": {
           "module": "scripts/cli/registry.mjs#pull-bundle",
-          "lazy": false
+          "lazy": true
         }
       }
     },
@@ -992,7 +992,7 @@
         "startupPolicy": "offline",
         "implementation": {
           "module": "scripts/cli/registry.mjs#graph",
-          "lazy": false
+          "lazy": true
         }
       }
     },
@@ -1021,7 +1021,7 @@
         "startupPolicy": "offline",
         "implementation": {
           "module": "scripts/cli/registry.mjs#skills",
-          "lazy": false
+          "lazy": true
         }
       }
     },
@@ -1050,7 +1050,7 @@
         "startupPolicy": "offline",
         "implementation": {
           "module": "scripts/cli/registry.mjs#assess-codebase",
-          "lazy": false
+          "lazy": true
         }
       }
     },
@@ -1224,7 +1224,7 @@
         "startupPolicy": "offline",
         "implementation": {
           "module": "scripts/cli/registry.mjs#learn",
-          "lazy": false
+          "lazy": true
         }
       }
     },
@@ -1611,7 +1611,7 @@
         "startupPolicy": "requires-workspace",
         "implementation": {
           "module": "scripts/cli/registry.mjs#whoami",
-          "lazy": false
+          "lazy": true
         }
       }
     },
@@ -1707,7 +1707,7 @@
       "kind": "diagnostic-command",
       "route": "aios help",
       "status": "current",
-      "source": "scripts/cli/dispatch.mjs",
+      "source": "scripts/cli/diagnostic-commands.mjs",
       "futureOwner": "core.cli",
       "disposition": "keep",
       "releaseBoundary": "v2.0.0",
@@ -1715,6 +1715,9 @@
       "replacement": null,
       "rollback": null,
       "evidence": [
+        "scripts/cli/help.mjs",
+        "scripts/cli/diagnostic-commands.mjs",
+        "scripts/cli/registry.mjs",
         "scripts/cli/dispatch.mjs",
         "docs/adr/0002-single-binary-cli-platform.md"
       ],
@@ -1726,17 +1729,18 @@
         "outputMode": "human-or-json",
         "startupPolicy": "diagnostic",
         "implementation": {
-          "module": "scripts/cli/diagnostics/help.mjs",
+          "module": "scripts/cli/help.mjs",
           "lazy": true
         }
-      }
+      },
+      "registryCommand": "help"
     },
     {
       "id": "command.aios.version",
       "kind": "diagnostic-command",
       "route": "aios version",
       "status": "current",
-      "source": "scripts/cli/dispatch.mjs",
+      "source": "scripts/cli/diagnostic-commands.mjs",
       "futureOwner": "core.cli",
       "disposition": "keep",
       "releaseBoundary": "v2.0.0",
@@ -1744,6 +1748,9 @@
       "replacement": null,
       "rollback": null,
       "evidence": [
+        "scripts/cli/version.mjs",
+        "scripts/cli/diagnostic-commands.mjs",
+        "scripts/cli/registry.mjs",
         "scripts/cli/dispatch.mjs",
         "docs/adr/0002-single-binary-cli-platform.md"
       ],
@@ -1755,17 +1762,18 @@
         "outputMode": "human-or-json",
         "startupPolicy": "diagnostic",
         "implementation": {
-          "module": "scripts/cli/diagnostics/version.mjs",
+          "module": "scripts/cli/version.mjs",
           "lazy": true
         }
-      }
+      },
+      "registryCommand": "version"
     },
     {
       "id": "command.aios.doctor",
       "kind": "diagnostic-command",
       "route": "aios doctor",
-      "status": "planned-v2",
-      "source": "docs/adr/0002-single-binary-cli-platform.md",
+      "status": "current",
+      "source": "scripts/cli/diagnostic-commands.mjs",
       "futureOwner": "core.cli",
       "disposition": "keep",
       "releaseBoundary": "v2.0.0",
@@ -1773,7 +1781,10 @@
       "replacement": null,
       "rollback": null,
       "evidence": [
-        "docs/adr/0002-single-binary-cli-platform.md",
+        "scripts/cli/doctor.mjs",
+        "scripts/cli/diagnostic-commands.mjs",
+        "scripts/cli/registry.mjs",
+        "scripts/cli/dispatch.mjs",
         "docs/adr/0002-single-binary-cli-platform.md"
       ],
       "metadata": {
@@ -1784,17 +1795,18 @@
         "outputMode": "human-or-json",
         "startupPolicy": "diagnostic",
         "implementation": {
-          "module": "scripts/cli/diagnostics/doctor.mjs",
+          "module": "scripts/cli/doctor.mjs",
           "lazy": true
         }
-      }
+      },
+      "registryCommand": "doctor"
     },
     {
       "id": "command.aios.provenance",
       "kind": "diagnostic-command",
       "route": "aios provenance",
-      "status": "planned-v2",
-      "source": "docs/adr/0002-single-binary-cli-platform.md",
+      "status": "current",
+      "source": "scripts/cli/diagnostic-commands.mjs",
       "futureOwner": "core.cli",
       "disposition": "keep",
       "releaseBoundary": "v2.0.0",
@@ -1802,7 +1814,10 @@
       "replacement": null,
       "rollback": null,
       "evidence": [
-        "docs/adr/0002-single-binary-cli-platform.md",
+        "scripts/cli/provenance.mjs",
+        "scripts/cli/diagnostic-commands.mjs",
+        "scripts/cli/registry.mjs",
+        "scripts/cli/dispatch.mjs",
         "docs/adr/0002-single-binary-cli-platform.md"
       ],
       "metadata": {
@@ -1813,10 +1828,11 @@
         "outputMode": "human-or-json",
         "startupPolicy": "diagnostic",
         "implementation": {
-          "module": "scripts/cli/diagnostics/provenance.mjs",
+          "module": "scripts/cli/provenance.mjs",
           "lazy": true
         }
-      }
+      },
+      "registryCommand": "provenance"
     },
     {
       "id": "command.aios.linear",

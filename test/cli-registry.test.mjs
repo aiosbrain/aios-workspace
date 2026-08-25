@@ -1,8 +1,4 @@
-// test/cli-registry.test.mjs — parity guard for the aios.mjs command registry (AIO-512
-// Phase 1; replaced a 45-branch dispatch chain + hand-maintained USAGE). These tests prove
-// behavior identity: command set, root-resolution modes, help text + exit codes, the
-// `--repo` carve-out, each `exit` mode's contract, and (the payoff) that `aios status`
-// must not drag ship/build into its startup graph.
+// Parity guard for the aios.mjs command registry and lazy startup graph.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -23,7 +19,6 @@ const PROBE = pathToFileURL(path.join(DIR, "helpers", "import-probe.mjs")).href;
 
 // ── pre-refactor truth, transcribed from aios.mjs@737116f — NOT regenerated from the registry.
 const PRE_REFACTOR = {
-  // workspace: findRepoRoot, aios.yaml REQUIRED
   status: "workspace",
   review: "workspace",
   push: "workspace",
@@ -37,7 +32,6 @@ const PRE_REFACTOR = {
   transcripts: "workspace",
   pm: "workspace",
   promote: "workspace",
-  // offline: findRepoRootOffline, aios.yaml optional
   "export-okf": "offline",
   graph: "offline",
   "install-skill": "offline",
@@ -70,23 +64,26 @@ const PRE_REFACTOR = {
   instincts: "offline",
   worktree: "offline",
   timeline: "offline",
-  // Post-snapshot: AIO-579 delivery + AIO-605 codebase-health (read-only), AIO-602
-  // repo-bootstrap, AIO-600 gen-catalog/catalog/connector (hidden GUI seams, shelled).
   delivery: "offline",
   "codebase-health": "offline",
   "repo-bootstrap": "offline",
   "gen-catalog": "offline",
   catalog: "offline",
   connector: "offline",
-  // AIO-864 follow-up: `aios validate` runs the toolkit's OGR validators against a
-  // workspace (the validators are a toolkit path a scaffolded workspace does not have).
   validate: "offline",
-  // special resolution
   update: "update-root",
   mcp: "pre-config",
 };
 
-// Pre-refactor `--repo` owners (plus later `delivery` — a GitHub slug filter, not the ws path).
+const V2_DIAGNOSTICS = {
+  help: "diagnostic",
+  version: "diagnostic",
+  doctor: "diagnostic",
+  provenance: "diagnostic",
+};
+
+const EXPECTED_RESOLUTIONS = { ...PRE_REFACTOR, ...V2_DIAGNOSTICS };
+
 const PRE_REFACTOR_OWNS_REPO = ["pr", "consolidate-findings", "timeline", "delivery"];
 
 function run(args, opts = {}) {
@@ -102,8 +99,6 @@ function tmpDir(prefix) {
   return mkdtempSync(path.join(tmpdir(), prefix));
 }
 
-// ── registry shape ───────────────────────────────────────────────────────────
-
 test("registry: every command is registered exactly once", () => {
   const seen = new Set();
   for (const d of COMMANDS) {
@@ -118,16 +113,14 @@ test("registry: every command is registered exactly once", () => {
   );
 });
 
-test("registry: command set matches the pre-refactor dispatch chain exactly", () => {
+test("registry: command set preserves the legacy chain and adds only v2 diagnostics", () => {
   const registered = COMMANDS.map((d) => d.name).sort();
-  const expected = Object.keys(PRE_REFACTOR).sort();
+  const expected = Object.keys(EXPECTED_RESOLUTIONS).sort();
   assert.deepEqual(registered, expected);
 });
 
-test("registry: each command keeps its pre-refactor resolution mode", () => {
-  // A silent widening from "workspace" to "offline" would let a sync command run against an
-  // unconfigured directory — this is the tier-safety assertion, not a style check.
-  for (const [name, mode] of Object.entries(PRE_REFACTOR)) {
+test("registry: each command keeps its declared resolution mode", () => {
+  for (const [name, mode] of Object.entries(EXPECTED_RESOLUTIONS)) {
     assert.equal(findCommand(name)?.resolution, mode, `${name} resolution drifted`);
   }
 });
@@ -159,8 +152,6 @@ test("registry: loaders are lazy — no descriptor holds an eagerly-resolved mod
 });
 
 test("registry: every loader resolves to a real module", async () => {
-  // A typo in a loader's specifier is otherwise only discoverable by running that command
-  // — the old static imports failed at startup, so this restores that guarantee.
   for (const d of COMMANDS) {
     if (!d.loader) continue;
     const mod = await d.loader();
@@ -170,14 +161,12 @@ test("registry: every loader resolves to a real module", async () => {
 });
 
 test("registry: every adapt hands its module the EXACT argument signature (table-driven)", async () => {
-  // The parity claim lives or dies here: a reorder like cmdPush(repo, cfg, REST, PATTERNS)
-  // would pass every other test. So: distinct ctx sentinels, exact signature per command.
   const R = "@repo";
   const C = "@cfg";
   const P = "@patterns";
   const A = "@rest";
+  const K = { usage: "@usage", commands: ["@commands"] };
 
-  // Every helper/handler the registry may pull off ctx.local, as identity-checkable recorders.
   const LOCAL_KEYS = [
     "cmdStatus",
     "cmdReview",
@@ -211,7 +200,6 @@ test("registry: every adapt hands its module the EXACT argument signature (table
     for (const key of LOCAL_KEYS) {
       const fn = (...args) => {
         calls.push({ owner: "local", prop: key, args });
-        // Shape that satisfies every consumer: `mcp` reads .missing, `update` .exitStatus.
         return { missing: [] };
       };
       local[key] = fn;
@@ -227,16 +215,18 @@ test("registry: every adapt hands its module the EXACT argument signature (table
           },
       }
     );
-    return { ctx: { repo: R, cfg: C, patterns: P, rest: A, local }, local, mod, calls };
+    return {
+      ctx: { repo: R, cfg: C, patterns: P, rest: A, catalog: K, local },
+      local,
+      mod,
+      calls,
+    };
   }
 
-  // A marker for an argument that is a closure built by adapt — identity can't be asserted,
-  // so the closure is invoked and its downstream call is checked instead.
   const closure = (verify) => Object.assign(() => {}, { __closure: true, verify });
 
   /** name -> [owner, exported/handler name, ...expected args] */
   const EXPECTED = (l) => ({
-    // ── inline handlers still living in scripts/aios.mjs ───────────────────────
     status: ["local", "cmdStatus", R, C, P, A],
     review: ["local", "cmdReview", R, C, P, A],
     push: ["local", "cmdPush", R, C, P, A],
@@ -253,7 +243,6 @@ test("registry: every adapt hands its module the EXACT argument signature (table
     "install-skill": ["local", "cmdInstallSkill", R, A],
     "assess-codebase": ["local", "cmdAssessCodebase", R, C, P, A],
     learn: ["local", "cmdLearn", R, C, P, A],
-    // ── lazily loaded command modules ──────────────────────────────────────────
     onboard: [
       "mod",
       "cmdOnboard",
@@ -335,6 +324,11 @@ test("registry: every adapt hands its module the EXACT argument signature (table
     "review-bugbot": ["mod", "cmdReviewBugbot", R, A],
     ship: ["mod", "cmdShip", R, A],
     "roadmap-run": ["mod", "cmdRoadmapRun", R, A],
+    // ── v2 diagnostics: no workspace resolution or legacy runtime context ─────
+    help: ["mod", "cmdHelp", A, K],
+    version: ["mod", "cmdVersion", A],
+    doctor: ["mod", "cmdDoctor", A],
+    provenance: ["mod", "cmdProvenance", A],
     // mcp inlines its pre-config block: resolve the env-first config, then own the process.
     mcp: ["mod", "runStdio", { missing: [] }],
   });

@@ -1,10 +1,18 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -26,6 +34,15 @@ const DIR_OVERRIDE = process.env.AIOS_PACK_GOLDEN_DIR || null;
 const REQUIRED_TARBALL_PATHS = [
   "package/package.json",
   "package/scripts/aios.mjs",
+  "package/scripts/aios-runtime.mjs",
+  "package/scripts/cli.mjs",
+  "package/scripts/cli/bootstrap.mjs",
+  "package/scripts/cli/config-broker.mjs",
+  "package/scripts/cli/credential-broker.mjs",
+  "package/scripts/cli/destination-policy.mjs",
+  "package/scripts/cli/migration.mjs",
+  "package/scripts/cli/doctor.mjs",
+  "package/scripts/cli/provenance.mjs",
   "package/scripts/scaffold-project.sh",
   "package/scripts/leak-gate.sh",
   "package/scaffold/aios.yaml.tmpl",
@@ -58,11 +75,38 @@ const FORBIDDEN_TARBALL_PREFIXES = [
   "package/src/",
 ];
 
+const ALLOWED_ENV_KEYS = [
+  "PATH",
+  "SystemRoot",
+  "WINDIR",
+  "COMSPEC",
+  "PATHEXT",
+  "TMPDIR",
+  "TMP",
+  "TEMP",
+  "LANG",
+  "LC_ALL",
+  "SSL_CERT_FILE",
+  "SSL_CERT_DIR",
+  "NODE_EXTRA_CA_CERTS",
+];
+let isolatedHome = null;
+
+function allowlistedEnv(extra = {}) {
+  const env = { CI: "1", NO_COLOR: "1", npm_config_engine_strict: "true" };
+  for (const key of ALLOWED_ENV_KEYS) {
+    if (process.env[key] !== undefined) env[key] = process.env[key];
+  }
+  env.HOME = isolatedHome ?? tmpdir();
+  env.USERPROFILE = env.HOME;
+  return { ...env, ...extra };
+}
+
 function run(cmd, args, opts = {}) {
   return execFileSync(cmd, args, {
     encoding: "utf8",
     ...opts,
-    env: { ...process.env, CI: "1", ...(opts.env || {}) },
+    env: allowlistedEnv(opts.env),
   });
 }
 
@@ -75,6 +119,8 @@ test(
   async (t) => {
     const base = DIR_OVERRIDE ?? mkdtempSync(path.join(tmpdir(), "aios-pack-golden-"));
     if (DIR_OVERRIDE) mkdirSync(base, { recursive: true });
+    isolatedHome = path.join(base, "home");
+    mkdirSync(isolatedHome, { recursive: true });
     try {
       // 1. Pack the toolkit. dist/ must exist first (it ships prebuilt); npm ci's
       //    postinstall normally builds it, but self-heal here so a partial local
@@ -133,6 +179,103 @@ test(
       const help = run(bin, ["--help"], { cwd: prefix });
       assert.match(help, /aios/i);
       assert.match(help, /status/);
+
+      // 4a. The diagnostic/config foundation must run from the packed installation with an
+      //     explicit environment allowlist. PATH contains Node only: no Python, jq, global
+      //     dotenvx, source-checkout helpers, or ambient provider credentials can participate.
+      const diagnosticConfig = path.join(base, "diagnostic-config");
+      mkdirSync(diagnosticConfig, { recursive: true });
+      writeFileSync(path.join(diagnosticConfig, "config.json"), "invalid config fixture\n");
+      const nodeOnlyPath = path.dirname(process.execPath);
+      const diagnosticEnv = { PATH: nodeOnlyPath, AIOS_CONFIG_DIR: diagnosticConfig };
+      for (const key of [
+        "AIOS_API_KEY",
+        "AIOS_CREDENTIAL_SOURCE",
+        "LINEAR_API_KEY",
+        "LINEAR_OAUTH_TOKEN",
+        "SLACK_BOT_TOKEN",
+        "SLACK_USER_TOKEN",
+      ]) {
+        assert.equal(allowlistedEnv(diagnosticEnv)[key], undefined, `${key} must not be inherited`);
+      }
+      const devtoolsRoot = path.join(prefix, "node_modules", "@aiosbrain", "aios-devtools");
+      const brokenDevtoolsRoot = `${devtoolsRoot}.broken-fixture`;
+      renameSync(devtoolsRoot, brokenDevtoolsRoot);
+      try {
+        for (const command of ["help", "version", "doctor", "provenance"]) {
+          const stdout = run(bin, [command, "--json"], { cwd: prefix, env: diagnosticEnv });
+          const document = JSON.parse(stdout);
+          assert.equal(document.command, command, `${command} must emit its own JSON document`);
+          assert.equal(stdout.trim().split("\n").at(0).startsWith("{"), true);
+          assert.doesNotMatch(stdout, /fixture-value/i);
+          if (command === "doctor") assert.equal(document.ok, false, "invalid config is reported");
+        }
+      } finally {
+        renameSync(brokenDevtoolsRoot, devtoolsRoot);
+      }
+
+      const configModule = pathToFileURL(path.join(pkgDir, "scripts", "cli", "config-broker.mjs"));
+      const migrationModule = pathToFileURL(path.join(pkgDir, "scripts", "cli", "migration.mjs"));
+      const foundationFixture = path.join(base, "packed-foundation-fixture");
+      mkdirSync(foundationFixture, { recursive: true });
+      const foundationProof = run(
+        process.execPath,
+        [
+          "--input-type=module",
+          "-e",
+          `import fs from "node:fs/promises";
+import path from "node:path";
+import { writeUserConfig } from ${JSON.stringify(configModule.href)};
+import { runMigration } from ${JSON.stringify(migrationModule.href)};
+const root = process.argv[1];
+const userConfig = path.join(root, "config.json");
+await fs.writeFile(userConfig, '{"schemaVersion":2,"future":{"enabled":true}}\\n', { mode: 0o600 });
+await writeUserConfig(userConfig, { defaultWorkspace: "/fixture/workspace" });
+const preserved = JSON.parse(await fs.readFile(userConfig, "utf8"));
+const migrating = path.join(root, "migrating.json");
+const original = Buffer.from("legacy-config-bytes\\n");
+await fs.writeFile(migrating, original, { mode: 0o600 });
+let interrupted = false;
+try {
+  await runMigration({
+    configPath: migrating,
+    packageRecord: { name: "@aiosbrain/aios", version: "fixture-prior" },
+    stage: async (source) => Buffer.concat([source, Buffer.from("migrated\\n")]),
+    validate: async () => {},
+    interrupt: (state) => { if (state === "staged") throw new Error("fixture interruption"); },
+  });
+} catch (error) {
+  if (error.code !== "AIOS_E_MIGRATION") throw error;
+  interrupted = true;
+}
+const options = {
+  configPath: migrating,
+  packageRecord: { name: "@aiosbrain/aios", version: "fixture-prior" },
+  stage: async (source) => Buffer.concat([source, Buffer.from("migrated\\n")]),
+  validate: async () => {},
+};
+const resumed = await runMigration(options);
+const afterFirst = await fs.readFile(migrating);
+const converged = await runMigration(options);
+const afterSecond = await fs.readFile(migrating);
+process.stdout.write(JSON.stringify({
+  interrupted,
+  unknownPreserved: preserved.future?.enabled === true,
+  resumed: resumed.resumed,
+  state: converged.journal.state,
+  byteStable: afterFirst.equals(afterSecond),
+}));`,
+          foundationFixture,
+        ],
+        { cwd: foundationFixture, env: { PATH: nodeOnlyPath } }
+      );
+      assert.deepEqual(JSON.parse(foundationProof), {
+        interrupted: true,
+        unknownPreserved: true,
+        resumed: true,
+        state: "committed",
+        byteStable: true,
+      });
 
       // 4b. The OTHER two bins must also be present and RUNNABLE by bare name — that is the
       //     entrypoint the docs advertise, and the one that was broken.
@@ -232,7 +375,7 @@ test(
             path.join(pkgDir, "packages", "foundation", "src", "brain-config.mjs")
           )};\nprocess.stdout.write(decryptDotenvKey(${JSON.stringify(envFixture)}, "AIOS_API_KEY"));`,
         ],
-        { env: { ...process.env, CI: "1", PATH: barePath } }
+        { env: { PATH: barePath } }
       );
       assert.equal(
         decrypted,
@@ -267,6 +410,7 @@ test(
 
       t.diagnostic(`golden path green: pack → install → scaffold → validate → status (${base})`);
     } finally {
+      isolatedHome = null;
       if (!DIR_OVERRIDE) rmSync(base, { recursive: true, force: true });
     }
   }

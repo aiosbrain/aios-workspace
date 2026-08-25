@@ -21,6 +21,10 @@ export const USAGE_FOOTER = [
 ];
 
 export const USAGE_LINES = {
+  doctor: ["  aios doctor [--json]                  read-only local runtime/config diagnostics"],
+  provenance: [
+    "  aios provenance [--json]              report the exact local installation and PATH",
+  ],
   status: ["  aios status [--json|--porcelain]      what would sync (new/modified/blocked/clean)"],
   validate: [
     "  aios validate [path]                  run the toolkit's OGR validators against a workspace",

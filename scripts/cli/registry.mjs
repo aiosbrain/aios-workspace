@@ -1,16 +1,11 @@
 /**
- * registry.mjs — declarative command table for `aios` (AIO-512): ONE descriptor per
- * subcommand, replacing the old USAGE string + 45-branch dispatch chain in aios.mjs.
- * Invariants (asserted by test/cli-registry.test.mjs): every name/alias appears exactly
- * once; `resolution` is the ONLY thing deciding repo-root + config resolution (modes are
- * parity-tested — a silently widened mode would run against an unconfigured directory);
- * `loader` is ALWAYS lazy (`aios status` must not parse ship.mjs/build.mjs); `usage` is
- * the exact `aios help` block this command owns ([] = hidden).
+ * The single declarative `aios` command registry. Tests enforce unique names, cold metadata,
+ * lazy loaders, resolution modes, argument adaptation, usage, and exit semantics.
  *
  * @typedef {Object} CommandDescriptor
  * @property {string}   name
  * @property {string[]} [aliases]
- * @property {"pre-config"|"update-root"|"offline"|"workspace"} resolution
+ * @property {"diagnostic"|"pre-config"|"update-root"|"offline"|"workspace"} resolution
  * @property {boolean}  [ownsRepoFlag]  true => dispatch must NOT consume `--repo`
  * @property {boolean}  [usesDevtoolsDir] true => dispatch consumes the global devtools selector
  * @property {boolean}  [agentWorkspaceFallback] use AIOS_AGENT_WORKSPACE when cwd is not stamped
@@ -23,15 +18,16 @@
 
 import { USAGE_HEADER, USAGE_FOOTER, USAGE_LINES as U } from "./usage.mjs";
 import { DEVTOOLS_COMMANDS as DT } from "./devtools-commands.mjs";
+import { commandMetadata as M } from "./command-contract.mjs";
+import { commandIndex, nearestName, renderCommandUsage } from "./registry-lookup.mjs";
+import { DIAGNOSTIC_COMMANDS } from "./diagnostic-commands.mjs";
 
-/**
- * The command table, in `aios help` order; hidden commands (usage: []) go last. ctx =
- * { repo, cfg, patterns, rest, local }; `local` = handlers still in aios.mjs + helpers.
- * @type {CommandDescriptor[]}
- */
+/** @type {CommandDescriptor[]} Help order; hidden commands (`usage: []`) stay last. */
 export const COMMANDS = [
+  ...DIAGNOSTIC_COMMANDS,
   {
     name: "status",
+    metadata: M`status core.cli workspace brain required human-or-json requires-workspace`,
     resolution: "workspace",
     adapt: (ctx) => ctx.local.cmdStatus(ctx.repo, ctx.cfg, ctx.patterns, ctx.rest),
     usage: U.status,
@@ -46,6 +42,7 @@ export const COMMANDS = [
     // target and no workspace above cwd still gets dispatch's "could not locate repo root"
     // rather than silently validating whatever directory you happen to be in.
     name: "validate",
+    metadata: M`validate core.cli optional none never human-or-json offline`,
     resolution: "offline",
     cwdFallback: (rest) => rest.some((a) => !a.startsWith("-") || a === "-h" || a === "--help"),
     loader: () => import("../validate-cmd.mjs"),
@@ -55,6 +52,7 @@ export const COMMANDS = [
   },
   {
     name: "onboard",
+    metadata: M`onboard core.cli optional optional optional human-or-json offline`,
     resolution: "offline",
     cwdFallback: (rest) => rest.includes("--inspect"),
     loader: () => import("../onboard-command.mjs"),
@@ -67,6 +65,7 @@ export const COMMANDS = [
   },
   {
     name: "connect",
+    metadata: M`connect core.cli optional none required human offline`,
     resolution: "offline",
     agentWorkspaceFallback: true,
     adapt: (ctx) => ctx.local.cmdConnect(ctx.repo, ctx.rest),
@@ -74,30 +73,35 @@ export const COMMANDS = [
   },
   {
     name: "review",
+    metadata: M`review core.cli workspace brain required human requires-workspace`,
     resolution: "workspace",
     adapt: (ctx) => ctx.local.cmdReview(ctx.repo, ctx.cfg, ctx.patterns, ctx.rest),
     usage: U.review,
   },
   {
     name: "push",
+    metadata: M`push core.cli workspace brain required human requires-workspace`,
     resolution: "workspace",
     adapt: (ctx) => ctx.local.cmdPush(ctx.repo, ctx.cfg, ctx.patterns, ctx.rest),
     usage: U.push,
   },
   {
     name: "work",
+    metadata: M`work core.cli workspace brain required human requires-workspace`,
     resolution: "workspace",
     adapt: (ctx) => ctx.local.cmdWork(ctx.repo, ctx.cfg, ctx.patterns, ctx.rest),
     usage: U.work,
   },
   {
     name: "pull",
+    metadata: M`pull core.cli workspace brain required human requires-workspace`,
     resolution: "workspace",
     adapt: (ctx) => ctx.local.cmdPull(ctx.repo, ctx.cfg, ctx.rest),
     usage: U.pull,
   },
   {
     name: "promote",
+    metadata: M`promote core.cli workspace brain required human requires-workspace`,
     resolution: "workspace",
     loader: () => import("../promote.mjs"),
     adapt: (ctx, mod) =>
@@ -109,12 +113,14 @@ export const COMMANDS = [
   },
   {
     name: "install-skill",
+    metadata: M`install-skill core.cli optional brain required human offline`,
     resolution: "offline",
     adapt: (ctx) => ctx.local.cmdInstallSkill(ctx.repo, ctx.rest),
     usage: U["install-skill"],
   },
   {
     name: "query",
+    metadata: M`query core.cli workspace brain required human-or-json requires-workspace`,
     resolution: "workspace",
     agentWorkspaceFallback: true,
     adapt: (ctx) => ctx.local.cmdQuery(ctx.repo, ctx.cfg, ctx.rest),
@@ -122,6 +128,7 @@ export const COMMANDS = [
   },
   {
     name: "member",
+    metadata: M`member core.cli workspace brain required human-or-json requires-workspace`,
     resolution: "workspace",
     agentWorkspaceFallback: true,
     loader: () => import("../member-cli.mjs"),
@@ -133,6 +140,7 @@ export const COMMANDS = [
   },
   {
     name: "stakeholders",
+    metadata: M`stakeholders core.cli workspace brain required human-or-json requires-workspace`,
     resolution: "workspace",
     agentWorkspaceFallback: true,
     adapt: (ctx) => ctx.local.cmdStakeholders(ctx.repo, ctx.cfg, ctx.rest),
@@ -140,6 +148,7 @@ export const COMMANDS = [
   },
   {
     name: "loop",
+    metadata: M`loop core.cli optional optional optional human offline`,
     resolution: "offline",
     loader: () => import("../loop.mjs"),
     adapt: (ctx, mod) => mod.cmdLoop(ctx.repo, ctx.cfg, ctx.rest),
@@ -147,6 +156,7 @@ export const COMMANDS = [
   },
   {
     name: "timeline",
+    metadata: M`timeline core.cli optional optional optional human-or-json offline`,
     resolution: "offline",
     // Owns `--repo`: repeatable TARGET repo paths (workspace root = cwd walk-up/--workspace).
     ownsRepoFlag: true,
@@ -157,6 +167,7 @@ export const COMMANDS = [
   },
   {
     name: "mcp",
+    metadata: M`mcp core.cli none optional optional protocol pre-config`,
     // Stdio MCP server for agents that can't shell out; env-first, no workspace, owns the process.
     resolution: "pre-config",
     loader: () => import("../brain-mcp.mjs"),
@@ -184,6 +195,7 @@ export const COMMANDS = [
   },
   {
     name: "analyze",
+    metadata: M`analyze core.cli optional optional optional human-or-json offline`,
     resolution: "offline",
     loader: () => import("../analyze/index.mjs"),
     adapt: (ctx, mod) =>
@@ -196,6 +208,7 @@ export const COMMANDS = [
   },
   {
     name: "maturity-week",
+    metadata: M`maturity-week core.cli optional optional optional human-or-json offline`,
     resolution: "offline",
     loader: () => import("../maturity-week-cmd.mjs"),
     adapt: (ctx, mod) => mod.cmdMaturityWeek(ctx.repo, ctx.rest),
@@ -203,6 +216,7 @@ export const COMMANDS = [
   },
   {
     name: "instincts",
+    metadata: M`instincts core.cli optional optional optional human-or-json offline`,
     resolution: "offline",
     loader: () => import("../instincts.mjs"),
     adapt: (ctx, mod) => mod.cmdInstincts(ctx.repo, ctx.rest),
@@ -210,6 +224,7 @@ export const COMMANDS = [
   },
   {
     name: "time",
+    metadata: M`time core.cli optional optional optional human-or-json offline`,
     resolution: "offline",
     loader: () => import("../time.mjs"),
     adapt: (ctx, mod) => mod.cmdTime(ctx.repo, ctx.cfg, ctx.rest),
@@ -217,6 +232,7 @@ export const COMMANDS = [
   },
   {
     name: "asks",
+    metadata: M`asks core.cli optional optional optional human-or-json offline`,
     resolution: "offline",
     loader: () => import("../asks.mjs"),
     adapt: (ctx, mod) => mod.cmdAsks(ctx.repo, ctx.cfg, ctx.rest),
@@ -224,6 +240,7 @@ export const COMMANDS = [
   },
   {
     name: "transcripts",
+    metadata: M`transcripts core.cli workspace optional optional human requires-workspace`,
     resolution: "workspace",
     loader: () => import("../transcripts.mjs"),
     adapt: (ctx, mod) => mod.cmdTranscripts(ctx.repo, ctx.cfg, ctx.rest),
@@ -231,6 +248,7 @@ export const COMMANDS = [
   },
   {
     name: "pm",
+    metadata: M`pm core.cli workspace provider required human-or-json requires-workspace`,
     resolution: "workspace",
     agentWorkspaceFallback: true,
     loader: () => import("../pm.mjs"),
@@ -239,6 +257,7 @@ export const COMMANDS = [
   },
   {
     name: "mode",
+    metadata: M`mode core.cli optional none never human offline`,
     resolution: "offline",
     loader: () => import("../mode.mjs"),
     adapt: (ctx, mod) => mod.cmdMode(ctx.repo, ctx.cfg, ctx.rest),
@@ -246,6 +265,7 @@ export const COMMANDS = [
   },
   {
     name: "decisions",
+    metadata: M`decisions core.cli optional none never human-or-json offline`,
     resolution: "offline",
     loader: () => import("../decisions.mjs"),
     adapt: (ctx, mod) => mod.cmdDecisions(ctx.repo, ctx.cfg, ctx.rest),
@@ -253,6 +273,7 @@ export const COMMANDS = [
   },
   {
     name: "council",
+    metadata: M`council core.cli optional optional optional human offline`,
     resolution: "offline",
     loader: () => import("../council.mjs"),
     adapt: (ctx, mod) => mod.runCouncil(ctx.repo, ctx.rest),
@@ -260,6 +281,7 @@ export const COMMANDS = [
   },
   {
     name: "verify",
+    metadata: M`verify core.cli optional none never human-or-json offline`,
     resolution: "offline",
     loader: () => import("../verify.mjs"),
     adapt: (ctx, mod) => mod.cmdVerify(ctx.repo, ctx.rest),
@@ -268,36 +290,42 @@ export const COMMANDS = [
   },
   {
     name: "export-okf",
+    metadata: M`export-okf core.cli optional none never human offline`,
     resolution: "offline",
     adapt: (ctx) => ctx.local.cmdExportOkf(ctx.repo, ctx.cfg, ctx.rest),
     usage: U["export-okf"],
   },
   {
     name: "pull-bundle",
+    metadata: M`pull-bundle core.cli workspace brain required human requires-workspace`,
     resolution: "workspace",
     adapt: (ctx) => ctx.local.cmdPullBundle(ctx.repo, ctx.cfg, ctx.rest),
     usage: U["pull-bundle"],
   },
   {
     name: "graph",
+    metadata: M`graph core.cli optional none never human-or-json offline`,
     resolution: "offline",
     adapt: (ctx) => ctx.local.cmdGraph(ctx.repo, ctx.cfg, ctx.rest),
     usage: U.graph,
   },
   {
     name: "skills",
+    metadata: M`skills core.cli optional none never human offline`,
     resolution: "offline",
     adapt: (ctx) => ctx.local.cmdSkills(ctx.repo, ctx.rest),
     usage: U.skills,
   },
   {
     name: "assess-codebase",
+    metadata: M`assess-codebase core.cli optional none never human-or-json offline`,
     resolution: "offline",
     adapt: (ctx) => ctx.local.cmdAssessCodebase(ctx.repo, ctx.cfg, ctx.patterns, ctx.rest),
     usage: U["assess-codebase"],
   },
   {
     name: "context-health",
+    metadata: M`context-health core.cli optional none never human-or-json offline`,
     resolution: "offline",
     loader: () => import("../context-health.mjs"),
     adapt: (ctx, mod) => mod.runContextHealthCli(ctx.repo, ctx.rest, ctx.local.c),
@@ -305,6 +333,7 @@ export const COMMANDS = [
   },
   {
     name: "codebase-health", // AIO-605 composed structural scorer — read-only; exit 0 on scoring
+    metadata: M`codebase-health core.cli optional none never human-or-json offline`,
     resolution: "offline",
     loader: () => import("../codebase-health.mjs"),
     adapt: (ctx, mod) => mod.runCodebaseHealthCli(ctx.repo, ctx.rest, ctx.local.c),
@@ -312,6 +341,7 @@ export const COMMANDS = [
   },
   {
     name: "worktree",
+    metadata: M`worktree core.cli optional none never human-or-json offline`,
     resolution: "offline",
     loader: () => import("../worktree.mjs"),
     adapt: (ctx, mod) => mod.cmdWorktree(ctx.repo, ctx.cfg, ctx.rest),
@@ -319,6 +349,7 @@ export const COMMANDS = [
   },
   {
     name: "update",
+    metadata: M`update core.cli user-or-workspace none required human-or-json offline`,
     // Resolves a workspace OR the toolkit checkout — never a bare dir; --repo validated same way.
     resolution: "update-root",
     loader: () => import("../update.mjs"),
@@ -329,6 +360,7 @@ export const COMMANDS = [
   },
   {
     name: "rails",
+    metadata: M`rails core.cli optional none never human-or-json offline`,
     resolution: "offline",
     loader: () => import("../rails.mjs"),
     adapt: (ctx, mod) => mod.cmdRails(ctx.repo, ctx.cfg, ctx.rest),
@@ -337,12 +369,14 @@ export const COMMANDS = [
   },
   {
     name: "learn",
+    metadata: M`learn core.cli optional none never human offline`,
     resolution: "offline",
     adapt: (ctx) => ctx.local.cmdLearn(ctx.repo, ctx.cfg, ctx.patterns, ctx.rest),
     usage: U.learn,
   },
   {
     name: "relay",
+    metadata: M`relay core.cli optional optional optional human offline`,
     resolution: "offline",
     loader: () => import("../relay.mjs"),
     adapt: (ctx, mod) => mod.cmdRelay(ctx.repo, ctx.rest),
@@ -351,6 +385,7 @@ export const COMMANDS = [
   DT.build,
   {
     name: "simplify",
+    metadata: M`simplify core.cli optional none never human offline`,
     resolution: "offline",
     loader: () => import("../simplify.mjs"),
     adapt: (ctx, mod) => mod.cmdSimplify(ctx.repo, ctx.rest),
@@ -360,6 +395,7 @@ export const COMMANDS = [
   DT.spec,
   {
     name: "pr",
+    metadata: M`pr core.cli optional none required human-or-json offline`,
     resolution: "offline",
     ownsRepoFlag: true, // its `--repo` is a GitHub owner/repo slug, NOT the workspace path
     loader: () => import("../pr.mjs"),
@@ -369,6 +405,7 @@ export const COMMANDS = [
   DT["consolidate-findings"],
   {
     name: "review-bugbot",
+    metadata: M`review-bugbot core.cli optional optional optional human-or-json offline`,
     resolution: "offline",
     loader: () => import("../review-bugbot.mjs"),
     adapt: (ctx, mod) => mod.cmdReviewBugbot(ctx.repo, ctx.rest),
@@ -378,6 +415,7 @@ export const COMMANDS = [
   DT["roadmap-run"],
   {
     name: "inbox", // headline V1 surface — unreachable from `aios --help` until UX audit S3-8
+    metadata: M`inbox core.cli optional optional optional human-or-json offline`,
     resolution: "offline",
     loader: () => import("../inbox.mjs"),
     adapt: (ctx, mod) => mod.cmdInbox(ctx.repo, ctx.cfg, ctx.rest),
@@ -385,6 +423,7 @@ export const COMMANDS = [
   },
   {
     name: "delivery", // AIO-579 read-only reconciliation; owns `--repo` (a GitHub slug filter)
+    metadata: M`delivery core.cli optional none required human-or-json offline`,
     resolution: "offline",
     ownsRepoFlag: true,
     loader: () => import("../delivery-status.mjs"),
@@ -394,6 +433,7 @@ export const COMMANDS = [
   },
   {
     name: "repo-bootstrap", // AIO-602 split stamp — SOURCE is this toolkit checkout; TARGET positional
+    metadata: M`repo-bootstrap core.cli optional none never human offline`,
     resolution: "offline",
     cwdFallback: () => true,
     loader: () => import("../repo-bootstrap.mjs"),
@@ -405,6 +445,7 @@ export const COMMANDS = [
   // ── hidden (no help text; reachable but undocumented, exactly as before) ────
   {
     name: "whoami",
+    metadata: M`whoami core.cli workspace brain required human requires-workspace`,
     resolution: "workspace",
     adapt: (ctx) => ctx.local.cmdWhoami(ctx.repo, ctx.cfg),
     usage: U.whoami,
@@ -412,6 +453,7 @@ export const COMMANDS = [
   // AIO-600 GUI seams: gui/server shells `aios gen-catalog|catalog|connector`, never scripts/*.
   {
     name: "gen-catalog",
+    metadata: M`gen-catalog core.cli optional none never human offline`,
     resolution: "offline",
     loader: () => import("../gen-catalog.mjs"),
     adapt: (ctx, mod) => mod.generate(ctx.repo),
@@ -419,6 +461,7 @@ export const COMMANDS = [
   },
   {
     name: "catalog",
+    metadata: M`catalog core.cli optional none never human offline`,
     resolution: "offline",
     loader: () => import("../gen-catalog.mjs"),
     adapt: (ctx, mod) => mod.cmdCatalog(ctx.repo, ctx.rest),
@@ -426,6 +469,7 @@ export const COMMANDS = [
   },
   {
     name: "connector",
+    metadata: M`connector core.cli optional optional optional human-or-json offline`,
     resolution: "offline",
     loader: () => import("../connector-cli.mjs"),
     adapt: (ctx, mod) => mod.cmdConnector(ctx.repo, ctx.rest),
@@ -434,13 +478,7 @@ export const COMMANDS = [
   },
 ];
 
-const BY_NAME = new Map();
-for (const d of COMMANDS) {
-  for (const n of [d.name, ...(d.aliases ?? [])]) {
-    if (BY_NAME.has(n)) throw new Error(`aios registry: duplicate command name '${n}'`);
-    BY_NAME.set(n, d);
-  }
-}
+const BY_NAME = commandIndex(COMMANDS);
 
 /** @returns {CommandDescriptor|undefined} */
 export function findCommand(name) {
@@ -452,39 +490,11 @@ export function commandNames() {
   return [...BY_NAME.keys()];
 }
 
-/** Levenshtein distance — small inputs only (command names), so the naive DP is fine. */
-function editDistance(a, b) {
-  const rows = a.length + 1;
-  const cols = b.length + 1;
-  let prev = Array.from({ length: cols }, (_, j) => j);
-  for (let i = 1; i < rows; i++) {
-    const cur = [i];
-    for (let j = 1; j < cols; j++) {
-      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
-    }
-    prev = cur;
-  }
-  return prev[cols - 1];
-}
-
-/**
- * The registered verb closest to `input`, or null when nothing is close enough. Same
- * threshold `aios inbox`/`aios asks` use for their subcommands (audit S6-4: `aios statu`
- * used to answer with 176 lines of help and no hint).
- */
 export function nearestCommand(input) {
-  if (!input) return null;
-  const ranked = commandNames()
-    .map((name) => ({ name, distance: editDistance(input, name) }))
-    .sort((a, b) => a.distance - b.distance || a.name.localeCompare(b.name));
-  const best = ranked[0];
-  return best && best.distance <= Math.max(2, Math.floor(input.length / 3)) ? best.name : null;
+  return nearestName(commandNames(), input);
 }
 
 /** The full `aios help` text, derived from the descriptors. No other source exists. */
 export function renderUsage() {
-  const lines = [...USAGE_HEADER];
-  for (const d of COMMANDS) lines.push(...d.usage);
-  lines.push(...USAGE_FOOTER);
-  return lines.join("\n");
+  return renderCommandUsage(COMMANDS, USAGE_HEADER, USAGE_FOOTER);
 }
