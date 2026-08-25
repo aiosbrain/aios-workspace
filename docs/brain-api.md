@@ -1,6 +1,6 @@
 # AIOS Team Brain — API Contract
 
-**Version: 1.22** is the shipped member-facing Brain API (`/api/v1`). **Document revision: 1.22**
+**Version: 1.23** is the shipped member-facing Brain API (`/api/v1`). **Document revision: 1.23**
 also carries the separately negotiated internal Executor gateway contract **1.10**; it does not
 claim unimplemented member-facing v1.10 routes. This document is the single pinned contract between the
 contributor repo (this toolkit's `aios` CLI) and the `aios-team-brain` service. Both
@@ -194,9 +194,9 @@ writeback/registration pulls), so a newer client still works against an older br
   2026-06-19 rule); a health-only push would zero existing analytics and is rejected `422` like
   any other sparse push. Scalars only — no file paths, no source text, no contributor identity
   ever cross the boundary. The machine-readable payload contract is
-  [`contract/codebase-payload-1.22.schema.json`](./contract/codebase-payload-1.22.schema.json),
+  [`contract/codebase-payload-1.23.schema.json`](./contract/codebase-payload-1.23.schema.json),
   with canonical parity fixtures in
-  [`contract/codebase-payload-1.22-fixtures.json`](./contract/codebase-payload-1.22-fixtures.json).
+  [`contract/codebase-payload-1.23-fixtures.json`](./contract/codebase-payload-1.23-fixtures.json).
   This revision is doc + schema only — it enables no push lane; the canonical pusher remains the
   ingestion sidecar.*
 - *2026-08-03 — **v1.16**: documented two authenticated reads that were already shipped:
@@ -310,6 +310,20 @@ writeback/registration pulls), so a newer client still works against an older br
   discarded — no error, no signal, the exact defect this revision exists to remove. Wire
   acceptance is not graceful degradation. Upgrade the brain before, or with, the scanners.
   Sources and the normative attribute→field mapping are in the endpoint section below.*
+- *2026-08-25 — **v1.23**: each `metrics.recent_commits[]` entry may carry two OPTIONAL,
+  versioned debt observations (AIO-1073). `commit_classification` records
+  `{scheme: "conventional-commit-v1", type: "fix"|"feat"|"other"|"unparseable"}`.
+  A classified fix may also carry `fix_analysis`, using method
+  `first-parent-line-blame-v1`, with parent-side candidate/blamed line counts, six age-bucket
+  counts, and the count of blamed lines whose prior commit was also classified `fix`. These are
+  evidence inputs, not scores. The analytical objects are closed and contain counts only: no
+  paths, source text, contributor identity, or blame excerpts. Legacy commit objects remain
+  valid. The executable contract advances to
+  [`contract/codebase-payload-1.23.schema.json`](./contract/codebase-payload-1.23.schema.json)
+  with fixtures in
+  [`contract/codebase-payload-1.23-fixtures.json`](./contract/codebase-payload-1.23-fixtures.json).
+  Upgrade the brain before relying on the fields: a pre-1.23 brain accepts the surrounding open
+  commit object but strips the unknown analytical keys, so semantic coverage is lost silently.*
 
 ---
 
@@ -1778,7 +1792,20 @@ isolation is enforced in app code, with no DB backstop). Rate limit: 60/min per 
     "ai_commits_window": 18,
     "additions_window": 3200,
     "deletions_window": 900,
-    "recent_commits": [{ "sha": "abc123", "author": "Jo", "ai": true, "committed_at": "2026-06-18T…" }],
+    "recent_commits": [{
+      "sha": "abc123d",
+      "author": "Jo",
+      "ai": true,
+      "committed_at": "2026-06-18T10:00:00Z",
+      "commit_classification": { "scheme": "conventional-commit-v1", "type": "fix" },
+      "fix_analysis": {
+        "method": "first-parent-line-blame-v1",
+        "candidate_parent_lines": 42,
+        "blamed_parent_lines": 39,
+        "age_buckets": { "0_1d": 2, "2_7d": 6, "8_30d": 8, "31_90d": 9, "91_365d": 10, "366d_plus": 4 },
+        "prior_fix_parent_lines": 7
+      }
+    }],
     "has_claude_md": true,
     "has_agents_md": false,
     "agents_md_count": 0,
@@ -1812,6 +1839,30 @@ isolation is enforced in app code, with no DB backstop). Rate limit: 60/min per 
 - The core raw-scan fields above (commits / loc / files / `recent_commits` / scaffolding) are
   **required**; a sparse/partial push is rejected `422` (see the 2026-06-19 revision). `window_days`,
   `test_coverage_pct`, and the cadence inputs may be omitted.
+- **Commit debt observations** (document revision 1.23, **optional**, AIO-1073):
+  - `commit_classification.scheme` MUST be `conventional-commit-v1`. `type` is `fix` or `feat`
+    when the lower-cased Conventional Commit prefix has that exact value, `other` for any other
+    parseable prefix, and `unparseable` when no prefix is present. Classification coverage is
+    therefore measurable independently from the fix/feature mix.
+  - `fix_analysis` MUST appear only beside a `commit_classification.type` of `fix`. Its method
+    MUST be `first-parent-line-blame-v1`: diff the fix against its first parent with zero context;
+    candidate lines are deleted or modified lines on the parent side (pure additions contribute
+    zero); blame those parent ranges at the parent commit; bucket each successfully blamed line
+    by whole-day age at the fix commit into `0_1d`, `2_7d`, `8_30d`, `31_90d`, `91_365d`, or
+    `366d_plus`; and count a line as prior-fix when its blamed commit has type `fix` under the
+    same classification scheme.
+  - Numeric coherence is enforced by the brain with `422`: `blamed_parent_lines <=
+    candidate_parent_lines`; all six age buckets sum exactly to `blamed_parent_lines`; and
+    `prior_fix_parent_lines <= blamed_parent_lines`. JSON Schema 2020-12 cannot compare sibling
+    sums, so the machine schema pins shape/ranges while these rules remain normative here and
+    executable at the brain boundary.
+  - A root commit or unavailable first parent omits `fix_analysis`. Individual blame gaps are
+    represented by `candidate_parent_lines - blamed_parent_lines`, never silently converted to
+    fresh code. Consumers MUST report classification, feed, and blame coverage separately from
+    the ratios derived from covered commits/lines.
+  - Both analytical objects are closed, counts-only objects. Senders MUST NOT include file paths,
+    source text, patch hunks, contributor identity, or blame excerpts. `recent_commits` itself
+    remains open and both objects remain optional, preserving pre-1.23 payload validity.
 - **Coverage denominator and run integrity** (document revision 1.22, **all optional and
   nullable**, AIO-995). `test_coverage_pct` on its own is a bare percentage with no denominator:
   a report measuring 436 lines and one measuring 10,647 send an identical-looking number. These
@@ -1892,8 +1943,8 @@ isolation is enforced in app code, with no DB backstop). Rate limit: 60/min per 
   (`"pass" | "warn" | "fail"`), `dimensions` (a map of short dimension id →
   `{ "passed": int, "total": int }` counts), `failed_invariant_ids` (array of short invariant
   ids), and `measured_at` (ISO-8601 UTC timestamp). The machine-readable contract is
-  [`contract/codebase-payload-1.22.schema.json`](./contract/codebase-payload-1.22.schema.json)
-  (fixtures: [`contract/codebase-payload-1.22-fixtures.json`](./contract/codebase-payload-1.22-fixtures.json)).
+  [`contract/codebase-payload-1.23.schema.json`](./contract/codebase-payload-1.23.schema.json)
+  (fixtures: [`contract/codebase-payload-1.23-fixtures.json`](./contract/codebase-payload-1.23-fixtures.json)).
   Three normative rules:
   - **Additive:** a payload without `codebase_health` remains valid exactly as before 1.15
     (older scanners are unaffected; an older brain ignores the unknown key).
