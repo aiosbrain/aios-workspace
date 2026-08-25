@@ -89,7 +89,8 @@
       "tests": [
         "JSON mode emits exactly one stdout value and diagnostics only on stderr",
         "stable core error codes map to the declared exit classes",
-        "every failure exposes one actionable remediation"
+        "every failure exposes one actionable remediation",
+        "legacy linear and slack delegates warn only on stderr while preserving canonical stdout and exit status"
       ]
     },
     {

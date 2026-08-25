@@ -314,4 +314,16 @@ test("CLI architecture: deferred runtime proofs are owned and mandatory before v
     transport.tests.some((criterion) => criterion.includes("AIOS_ALLOW_INSECURE_LOOPBACK=1"))
   );
   assert.match(adr, /AIOS_ALLOW_INSECURE_LOOPBACK=1/);
+
+  const output = inventory.implementationProofs.find(
+    (proof) => proof.id === "output-errors-and-exits"
+  );
+  assert.ok(
+    output.tests.some(
+      (criterion) =>
+        criterion.includes("legacy linear and slack delegates") &&
+        criterion.includes("stderr") &&
+        criterion.includes("stdout and exit status")
+    )
+  );
 });
