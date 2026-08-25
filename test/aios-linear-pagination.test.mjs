@@ -29,11 +29,46 @@ const pageInfoFor = (index, length, prefix) => {
 };
 globalThis.fetch = async (_url, init) => {
   const { query, variables } = JSON.parse(init.body);
+  const compactQuery = query.replace(/\\s+/g, " ");
   let data;
   if (query.includes("issue(id:$id){ id identifier")) {
     data = { issue: { id: "issue-1", identifier: "AIO-73", title: "t", state: { name: "Backlog" } } };
-  } else if (query.includes("issue(id:$id){ labels{")) {
-    data = { issue: { labels: { nodes: [{ id: "existing-1" }] } } };
+  } else if (compactQuery.includes("issue(id:$id){ labels")) {
+    const pages = JSON.parse(process.env.MOCK_ISSUE_LABEL_PAGES ?? '[[{"id":"existing-1"}]]');
+    const index = query.includes("labels(first:250") ? pageFor(variables.after, "issue-label-cursor-") : 0;
+    data = { issue: { labels: {
+      nodes: pages[index] ?? [],
+      ...(query.includes("labels(first:250")
+        ? { pageInfo: pageInfoFor(index, pages.length, "issue-label-cursor-") }
+        : {})
+    } } };
+  } else if (compactQuery.includes("issue(id:$id){ comments")) {
+    const pages = JSON.parse(process.env.MOCK_COMMENT_PAGES ?? "[[]]");
+    const index = query.includes("comments(first:250") ? pageFor(variables.after, "comment-cursor-") : 0;
+    data = { issue: { comments: {
+      nodes: pages[index] ?? [],
+      ...(query.includes("comments(first:250")
+        ? { pageInfo: pageInfoFor(index, pages.length, "comment-cursor-") }
+        : {})
+    } } };
+  } else if (compactQuery.includes("team(id:$id){ states")) {
+    const pages = JSON.parse(process.env.MOCK_TEAM_STATE_PAGES ?? "[[]]");
+    const index = query.includes("states(first:250") ? pageFor(variables.after, "team-state-cursor-") : 0;
+    data = { team: { states: {
+      nodes: pages[index] ?? [],
+      ...(query.includes("states(first:250")
+        ? { pageInfo: pageInfoFor(index, pages.length, "team-state-cursor-") }
+        : {})
+    } } };
+  } else if (query.includes("workflowStates(")) {
+    const pages = JSON.parse(process.env.MOCK_WORKFLOW_STATE_PAGES ?? "[[]]");
+    const index = query.includes("first:250") ? pageFor(variables.after, "workflow-state-cursor-") : 0;
+    data = { workflowStates: {
+      nodes: pages[index] ?? [],
+      ...(query.includes("first:250")
+        ? { pageInfo: pageInfoFor(index, pages.length, "workflow-state-cursor-") }
+        : {})
+    } };
   } else if (query.includes("team(id:$id){ labels")) {
     const pages = JSON.parse(process.env.MOCK_LABEL_PAGES ?? "[[]]");
     const index = pageFor(variables.after, "label-cursor-");
@@ -47,6 +82,12 @@ globalThis.fetch = async (_url, init) => {
   } else if (query.includes("issueUpdate")) {
     appendFileSync(process.env.MOCK_LOG, JSON.stringify(variables) + "\\n");
     data = { issueUpdate: { success: true } };
+  } else if (query.includes("issueCreate")) {
+    appendFileSync(process.env.MOCK_LOG, JSON.stringify(variables) + "\\n");
+    data = { issueCreate: { success: true, issue: {
+      identifier: "AIO-9999", title: variables.input.title,
+      url: "https://linear.test/AIO-9999", branchName: "test/aio-9999"
+    } } };
   } else {
     throw new Error("unexpected query: " + query);
   }
@@ -81,6 +122,21 @@ const LABEL_PAGES = JSON.stringify([
   [{ id: "l-1", name: "needs-triage" }],
 ]);
 
+// Destructive first-page-only defect: add-label rewrites the full label id set, so omitting
+// a later page silently deletes those labels from the issue.
+test("add-label preserves current issue labels from every page", () => {
+  const r = runCli(["add-label", "AIO-73", "needs-triage"], {
+    MOCK_LABEL_PAGES: JSON.stringify([[{ id: "l-1", name: "needs-triage" }]]),
+    MOCK_ISSUE_LABEL_PAGES: JSON.stringify([[{ id: "existing-1" }], [{ id: "existing-2" }]]),
+  });
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(
+    r.mutations[0].labels.toSorted(),
+    ["existing-1", "existing-2", "l-1"],
+    "the mutation must preserve labels from later pages"
+  );
+});
+
 // The first-page-only defect: >1 page of team labels made every label beyond page one
 // unmatchable, so add-label failed (and create --label silently dropped the label).
 test("add-label finds a team label beyond the first page", () => {
@@ -92,6 +148,47 @@ test("add-label finds a team label beyond the first page", () => {
     ["existing-1", "l-1"],
     "the mutation must carry the page-two label id alongside the existing labels"
   );
+});
+
+const STATE_PAGES = JSON.stringify([
+  [{ id: "state-0", name: "Backlog" }],
+  [{ id: "state-1", name: "In Progress" }],
+]);
+
+test("create resolves a team state beyond the first page", () => {
+  const r = runCli(["create", "Paginated state", "--state", "In Progress"], {
+    MOCK_TEAM_STATE_PAGES: STATE_PAGES,
+  });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.mutations[0].input.stateId, "state-1");
+});
+
+test("set-state resolves a workflow state beyond the first page", () => {
+  const r = runCli(["set-state", "AIO-73", "In Progress"], {
+    MOCK_WORKFLOW_STATE_PAGES: STATE_PAGES,
+  });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.mutations[0].s, "state-1");
+});
+
+const COMMENT = (id, body, createdAt) => ({
+  id,
+  body,
+  createdAt,
+  updatedAt: createdAt,
+  user: { name: "Agent" },
+});
+
+test("comments prints comments from every page", () => {
+  const r = runCli(["comments", "AIO-73"], {
+    MOCK_COMMENT_PAGES: JSON.stringify([
+      [COMMENT("comment-1", "first page", "2026-01-01T00:00:00.000Z")],
+      [COMMENT("comment-2", "second page", "2026-01-02T00:00:00.000Z")],
+    ]),
+  });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /comment-1[\s\S]*first page/);
+  assert.match(r.stdout, /comment-2[\s\S]*second page/);
 });
 
 test("add-label fails closed on a label cursor cycle instead of looping", () => {

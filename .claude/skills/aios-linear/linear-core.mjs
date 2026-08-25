@@ -288,13 +288,24 @@ export async function findLabel(teamId, name) {
 }
 
 export async function findTeamState(teamId, name) {
-  const data = await gql(`query($id:String!){ team(id:$id){ states{ nodes{ id name } } } }`, {
-    id: teamId,
-  });
+  const states = await paginate(async (after) => {
+    const data = await gql(
+      `query($id:String!,$after:String){
+        team(id:$id){
+          states(first:250, after:$after){
+            nodes{ id name }
+            pageInfo{ hasNextPage endCursor }
+          }
+        }
+      }`,
+      { id: teamId, after }
+    );
+    return data.team.states;
+  }, `Linear state pagination stalled for team ${teamId}`);
   const want = String(name).toLowerCase();
   return (
-    data.team.states.nodes.find((state) => state.name.toLowerCase() === want) ||
-    data.team.states.nodes.find((state) => state.name.toLowerCase().includes(want))
+    states.find((state) => state.name.toLowerCase() === want) ||
+    states.find((state) => state.name.toLowerCase().includes(want))
   );
 }
 
