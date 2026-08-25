@@ -32,6 +32,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -44,6 +45,7 @@ import { installWorktreeSafetyBackstops } from "../scripts/worktree.mjs";
 const TOOLKIT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const GUARD_INSTALLER = path.join(TOOLKIT, "scripts", "install-primary-commit-guard.sh");
 const PUSH_INSTALLER = path.join(TOOLKIT, "scripts", "install-leak-gate-push-hook.sh");
+const PRODUCT_MODE_STATE = "pre-push-leak-gate.product-mode";
 const HARNESS_INSTALLER = path.join(
   TOOLKIT,
   ".harness",
@@ -58,6 +60,7 @@ const GIT_ENV = {
   GIT_CONFIG_GLOBAL: "/dev/null",
   GIT_CONFIG_SYSTEM: "/dev/null",
 };
+delete GIT_ENV.AIOS_LEAK_GATE_INSTALL_PRODUCT_MODE;
 
 const roots = [];
 test.after(() => {
@@ -126,8 +129,12 @@ function makeRepo({ hooksPath = null, tracked = [] } = {}) {
   return { repo, hooksDir, commonHooksDir };
 }
 
-function run(installer, repo) {
-  const res = spawnSync("bash", [installer], { cwd: repo, encoding: "utf8", env: GIT_ENV });
+function run(installer, repo, env = {}) {
+  const res = spawnSync("bash", [installer], {
+    cwd: repo,
+    encoding: "utf8",
+    env: { ...GIT_ENV, ...env },
+  });
   assert.equal(res.status, 0, res.stderr || res.stdout);
   return res;
 }
@@ -167,6 +174,8 @@ test("tracked pre-push hook stays byte-identical; gate lands in the common dir",
   assert.deepEqual(readFileSync(path.join(hooksDir, "pre-push")), trackedBefore);
   const gate = readFileSync(path.join(commonHooksDir, "pre-push"), "utf8");
   assert.match(gate, /pre-push-leak-gate/);
+  assert.equal(readFileSync(path.join(commonHooksDir, PRODUCT_MODE_STATE), "utf8"), "0\n");
+  assert.ok(!existsSync(path.join(hooksDir, PRODUCT_MODE_STATE)));
   assert.match(res.stdout, /tracked pre-push hook .* installing machine-local gate/);
 });
 
@@ -232,6 +241,8 @@ test("hooksPath without the marker keeps the legacy install into the hooksPath d
   assert.match(readFileSync(path.join(hooksDir, "pre-commit"), "utf8"), /pre-commit-primary-guard/);
   assert.ok(existsSync(path.join(hooksDir, "pre-commit.chained")));
   assert.match(readFileSync(path.join(hooksDir, "pre-push"), "utf8"), /pre-push-leak-gate/);
+  assert.equal(readFileSync(path.join(commonHooksDir, PRODUCT_MODE_STATE), "utf8"), "0\n");
+  assert.ok(!existsSync(path.join(hooksDir, PRODUCT_MODE_STATE)));
   assert.ok(!existsSync(path.join(commonHooksDir, "pre-commit")));
   assert.ok(!existsSync(path.join(commonHooksDir, "pre-push")));
 });
@@ -249,6 +260,34 @@ test("no hooksPath keeps the legacy install into .git/hooks", () => {
     /pre-commit-primary-guard/
   );
   assert.match(readFileSync(path.join(commonHooksDir, "pre-push"), "utf8"), /pre-push-leak-gate/);
+  assert.equal(readFileSync(path.join(commonHooksDir, PRODUCT_MODE_STATE), "utf8"), "0\n");
+});
+
+test("installer accepts exact explicit mode 0 and rejects every invalid explicit mode", () => {
+  const { repo, commonHooksDir } = makeRepo();
+  run(PUSH_INSTALLER, repo, { AIOS_LEAK_GATE_INSTALL_PRODUCT_MODE: "0" });
+  assert.equal(readFileSync(path.join(commonHooksDir, PRODUCT_MODE_STATE), "utf8"), "0\n");
+
+  for (const invalid of ["", "2", " 1", "1 ", "true"]) {
+    const fixture = makeRepo();
+    const result = spawnSync("bash", [PUSH_INSTALLER], {
+      cwd: fixture.repo,
+      encoding: "utf8",
+      env: { ...GIT_ENV, AIOS_LEAK_GATE_INSTALL_PRODUCT_MODE: invalid },
+    });
+    assert.notEqual(result.status, 0, `invalid override ${JSON.stringify(invalid)} must abort`);
+    assert.match(result.stderr, /must be exactly 0 or 1/i);
+    assert.equal(
+      existsSync(path.join(fixture.commonHooksDir, PRODUCT_MODE_STATE)),
+      false,
+      "invalid override must not persist state"
+    );
+    assert.equal(
+      existsSync(path.join(fixture.commonHooksDir, "pre-push")),
+      false,
+      "invalid override must not install a hook"
+    );
+  }
 });
 
 // ── (d) idempotent re-run ────────────────────────────────────────────────────
@@ -276,6 +315,57 @@ test("re-running both installers in the tracked case is idempotent", () => {
   // the guard must not have been preserved as its own chain target
   assert.ok(!existsSync(path.join(commonHooksDir, "pre-commit.chained")));
   assert.ok(!existsSync(path.join(hooksDir, "pre-commit.chained")));
+  assert.equal(readFileSync(path.join(commonHooksDir, PRODUCT_MODE_STATE), "utf8"), "0\n");
+  assert.deepEqual(
+    readdirSync(commonHooksDir).filter((name) =>
+      name.startsWith(".pre-push-leak-gate.product-mode.")
+    ),
+    [],
+    "atomic installs must not leave partial state siblings"
+  );
+});
+
+test("reinstall promotes detected product mode and never downgrades a validated mode 1", () => {
+  const { repo, commonHooksDir } = makeRepo();
+  run(PUSH_INSTALLER, repo);
+  const state = path.join(commonHooksDir, PRODUCT_MODE_STATE);
+  assert.equal(readFileSync(state, "utf8"), "0\n");
+
+  mkdirSync(path.join(repo, "scaffold"));
+  run(PUSH_INSTALLER, repo);
+  assert.equal(readFileSync(state, "utf8"), "1\n");
+  assert.equal(
+    execFileSync("git", ["-C", repo, "status", "--porcelain"], {
+      encoding: "utf8",
+      env: GIT_ENV,
+    }).trim(),
+    "",
+    "the machine-local mode state must not dirty the worktree"
+  );
+
+  rmSync(path.join(repo, "scaffold"), { recursive: true, force: true });
+  run(PUSH_INSTALLER, repo);
+  assert.equal(readFileSync(state, "utf8"), "1\n");
+  run(PUSH_INSTALLER, repo, { AIOS_LEAK_GATE_INSTALL_PRODUCT_MODE: "0" });
+  assert.equal(readFileSync(state, "utf8"), "1\n");
+});
+
+test("reinstall refuses malformed prior mode state instead of guessing or overwriting", () => {
+  const { repo, commonHooksDir } = makeRepo();
+  run(PUSH_INSTALLER, repo);
+  const state = path.join(commonHooksDir, PRODUCT_MODE_STATE);
+  writeFileSync(state, "invalid\n");
+
+  const result = spawnSync("bash", [PUSH_INSTALLER], {
+    cwd: repo,
+    encoding: "utf8",
+    env: GIT_ENV,
+  });
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /product-mode state.*malformed/i);
+  assert.match(result.stderr, /refusing to overwrite/i);
+  assert.equal(readFileSync(state, "utf8"), "invalid\n");
 });
 
 // ── (e) the `aios worktree add` path exercises the same logic ────────────────

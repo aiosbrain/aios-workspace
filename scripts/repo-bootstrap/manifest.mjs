@@ -29,7 +29,7 @@
  */
 
 /** Bootstrap installer semver — bump on any manifest/semantics change. */
-export const BOOTSTRAP_VERSION = "0.1.0";
+export const BOOTSTRAP_VERSION = "0.1.1";
 
 /** The version stamp a bootstrapped repo carries (bootstrap semver + toolkit sha + hashes). */
 export const BOOTSTRAP_VERSION_FILE = ".aios-bootstrap-version";
