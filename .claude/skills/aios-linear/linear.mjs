@@ -79,6 +79,7 @@ import {
   relatedIssues,
   resolveProject,
 } from "./linear-core.mjs";
+import { findWorkflowState, listIssueComments, listIssueLabels } from "./linear-pagination.mjs";
 import { cmdCreateProject, cmdProjects } from "./linear-projects.mjs";
 import { cmdList } from "./linear-list.mjs";
 
@@ -216,17 +217,10 @@ if (cmd === "get") {
   const arg = argv[2];
   const n = await findIssue(ident);
   const key = String(n.identifier).split("-")[0];
-  const d = await gql(
-    `query($k:String!){ workflowStates(filter:{ team:{ key:{ eq:$k } } }){ nodes{ id name } } }`,
-    { k: key }
-  );
-  const want = String(arg).toLowerCase();
-  const st =
-    d.workflowStates.nodes.find((s) => s.name.toLowerCase() === want) ||
-    d.workflowStates.nodes.find((s) => s.name.toLowerCase().includes(want));
+  const { state: st, states } = await findWorkflowState(key, arg);
   if (!st) {
     console.error(
-      `state "${arg}" not found in team ${key}. states: ${d.workflowStates.nodes.map((s) => s.name).join(", ")}`
+      `state "${arg}" not found in team ${key}. states: ${states.map((s) => s.name).join(", ")}`
     );
     process.exit(1);
   }
@@ -257,11 +251,8 @@ if (cmd === "get") {
 } else if (cmd === "comments") {
   const ident = argv[1];
   const n = await findIssue(ident);
-  const d = await gql(
-    `query($id:String!){ issue(id:$id){ comments(first:50){ nodes{ id body createdAt updatedAt user{ name } } } } }`,
-    { id: n.id }
-  );
-  const comments = d.issue.comments.nodes.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  const comments = await listIssueComments(n.id, n.identifier);
+  comments.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
   if (!comments.length) console.log("(none)");
   for (const item of comments) {
     console.log(
@@ -401,10 +392,8 @@ if (cmd === "get") {
     console.error(`label "${labelName}" not found`);
     process.exit(1);
   }
-  const current = await gql(`query($id:String!){ issue(id:$id){ labels{ nodes{ id } } } }`, {
-    id: n.id,
-  });
-  const labelIds = [...new Set([...current.issue.labels.nodes.map((item) => item.id), label.id])];
+  const currentLabels = await listIssueLabels(n.id, n.identifier);
+  const labelIds = [...new Set([...currentLabels.map((item) => item.id), label.id])];
   await gql(
     `mutation($id:String!,$labels:[String!]!){ issueUpdate(id:$id, input:{ labelIds:$labels }){ success } }`,
     { id: n.id, labels: labelIds }
