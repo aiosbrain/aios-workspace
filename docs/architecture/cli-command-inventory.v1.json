@@ -1081,7 +1081,7 @@
         "owner": "core.cli",
         "configurationRequirement": "user-or-workspace",
         "credentialRequirement": "none",
-        "networkBehavior": "never",
+        "networkBehavior": "required",
         "outputMode": "human-or-json",
         "startupPolicy": "offline",
         "implementation": {
@@ -1656,7 +1656,7 @@
       "kind": "diagnostic-command",
       "route": "aios version",
       "status": "current",
-      "source": "scripts/aios.mjs",
+      "source": "scripts/cli/dispatch.mjs",
       "futureOwner": "core.cli",
       "disposition": "keep",
       "releaseBoundary": "v2.0.0",
@@ -1664,7 +1664,7 @@
       "replacement": null,
       "rollback": null,
       "evidence": [
-        "scripts/aios.mjs",
+        "scripts/cli/dispatch.mjs",
         "docs/adr/0002-single-binary-cli-platform.md"
       ],
       "metadata": {

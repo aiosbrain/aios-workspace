@@ -10,11 +10,15 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const INVENTORY_PATH = path.join(ROOT, "docs", "architecture", "cli-command-inventory.v1.json");
 const ADR_PATH = path.join(ROOT, "docs", "adr", "0002-single-binary-cli-platform.md");
 const PACKAGE_PATH = path.join(ROOT, "package.json");
+const DISPATCH_PATH = path.join(ROOT, "scripts", "cli", "dispatch.mjs");
+const CI_PATH = path.join(ROOT, ".github", "workflows", "ci.yml");
 
 const inventoryText = readFileSync(INVENTORY_PATH, "utf8");
 const inventory = JSON.parse(inventoryText);
 const packageJson = JSON.parse(readFileSync(PACKAGE_PATH, "utf8"));
 const adr = readFileSync(ADR_PATH, "utf8");
+const dispatchSource = readFileSync(DISPATCH_PATH, "utf8");
+const ciSource = readFileSync(CI_PATH, "utf8");
 
 const sorted = (values) => [...values].sort((a, b) => a.localeCompare(b, "en"));
 
@@ -46,6 +50,29 @@ test("CLI architecture: every registered top-level command is inventoried exactl
     sorted(COMMANDS.map((command) => command.name))
   );
   assert.equal(new Set(registered.map((route) => route.registryCommand)).size, registered.length);
+  for (const route of registered) {
+    assert.equal(
+      route.route,
+      `aios ${route.registryCommand}`,
+      `${route.id}: canonical route drift`
+    );
+  }
+});
+
+test("CLI architecture: current special diagnostic routes are inventoried and dispatched", () => {
+  const currentDiagnostics = inventory.routes.filter(
+    (route) => route.kind === "diagnostic-command" && route.status === "current"
+  );
+  assert.deepEqual(sorted(currentDiagnostics.map((route) => route.route)), [
+    "aios help",
+    "aios version",
+  ]);
+  assert.ok(currentDiagnostics.every((route) => route.source === "scripts/cli/dispatch.mjs"));
+  assert.match(dispatchSource, /const HELP_TOKENS = new Set\(\["-h", "--help", "help"\]\)/);
+  assert.match(
+    dispatchSource,
+    /const VERSION_TOKENS = new Set\(\["-v", "--version", "version"\]\)/
+  );
 });
 
 test("CLI architecture: every route has one valid future owner, disposition, and metadata", () => {
@@ -81,6 +108,9 @@ test("CLI architecture: every route has one valid future owner, disposition, and
     assert.ok(startupValues.has(route.metadata?.startupPolicy), `${route.id}: startup`);
     assert.equal(typeof route.metadata?.implementation?.module, "string", `${route.id}: module`);
     assert.equal(typeof route.metadata?.implementation?.lazy, "boolean", `${route.id}: lazy flag`);
+    if (route.futureOwner.startsWith("adapter.")) {
+      assert.equal(route.metadata.implementation.lazy, true, `${route.id}: adapters must be lazy`);
+    }
     assert.match(route.releaseBoundary, /^v\d+\.\d+\.\d+$/, `${route.id}: release boundary`);
     assert.ok(Array.isArray(route.evidence) && route.evidence.length > 0, `${route.id}: evidence`);
   }
@@ -157,6 +187,15 @@ test("CLI architecture: required route families and pinned seams cannot disappea
   const ids = new Set(inventory.routes.map((route) => route.id));
   for (const id of requiredIds) assert.ok(ids.has(id), `missing required route family ${id}`);
 
+  for (const name of ["build", "spec", "consolidate-findings", "ship", "roadmap-run"]) {
+    const route = inventory.routes.find((candidate) => candidate.id === `command.aios.${name}`);
+    assert.equal(route?.futureOwner, "adapter.devtools", `${name}: devtools ownership drift`);
+    assert.equal(route?.metadata?.implementation?.lazy, true, `${name}: devtools must be lazy`);
+  }
+
+  const update = inventory.routes.find((route) => route.id === "command.aios.update");
+  assert.equal(update?.metadata?.networkBehavior, "required", "update performs network delivery");
+
   assert.match(inventory.evidence.coreBase, /^[0-9a-f]{40}$/);
   assert.match(inventory.evidence.devtoolsSource, /^[0-9a-f]{40}$/);
   assert.match(inventory.evidence.openClawSource, /^[0-9a-f]{40}$/);
@@ -175,12 +214,22 @@ test("CLI architecture: repository evidence paths resolve", () => {
       existsSync(path.join(ROOT, sourcePath)),
       `${route.id}: source not found: ${sourcePath}`
     );
+
+    for (const evidence of route.evidence) {
+      if (evidence.startsWith("@aiosbrain/")) continue;
+      const evidencePath = evidence.split("#", 1)[0];
+      assert.ok(
+        existsSync(path.join(ROOT, evidencePath)),
+        `${route.id}: evidence not found: ${evidencePath}`
+      );
+    }
   }
 });
 
 test("CLI architecture: Node support and contract prose contain no TBD", () => {
   assert.deepEqual(inventory.supportedNodeMajors, [22, 24, 26]);
   assert.equal(packageJson.engines.node, ">=22");
+  assert.match(ciSource, /node: \[22, 24, 26\]/, "CI must test the exact supported Node majors");
   assert.doesNotMatch(inventoryText, /\bTBD\b/i);
   assert.doesNotMatch(adr, /\bTBD\b/i);
 });

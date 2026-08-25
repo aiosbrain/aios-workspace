@@ -35,10 +35,11 @@ The evidence frozen for this decision is:
 
 ### 1. One executable and one supported runtime
 
-`aios` is the only canonical executable. The v2 package supports and tests Node major versions 22,
-24, and 26; Node is the only runtime required by a canonical route. Python, `jq`, a global
-`dotenvx`, a source checkout, a linked package, or an executable copied into a workspace may not
-be a runtime prerequisite.
+`aios` is the only canonical executable. The v2 package supports and tests exactly Node major
+versions 22, 24, and 26. The current v1 package's permissive `>=22` engine declaration is not the v2
+support contract and must be narrowed before the v2 release. Node is the only runtime required by a
+canonical route. Python, `jq`, a global `dotenvx`, a source checkout, a linked package, or an
+executable copied into a workspace may not be a runtime prerequisite.
 
 The canonical connector routes are `aios linear …` and `aios slack …`. The published `linear` and
 `slack` names remain warning-only delegates for every v2 release. They invoke the same registry
@@ -51,9 +52,16 @@ moves behind the existing lazy `aios build`, `aios spec`, `aios consolidate-find
 and `aios roadmap-run` routes in v2. The devtools package may remain a pinned implementation
 dependency with module exports, but it does not own a canonical bin.
 
-### 2. Registry metadata is the authority
+### 2. The versioned inventory is the Phase-1 authority
 
-Every top-level command has one descriptor in the `aios` registry. A descriptor declares:
+The versioned inventory is the normative ownership and migration authority until the v2 runtime
+lands. The current execution registry in `scripts/cli/registry.mjs` contains its 54 descriptor-based
+commands, while `help` and `version` are pre-configuration token routes in
+`scripts/cli/dispatch.mjs`. The inventory deliberately normalizes both current mechanisms plus the
+planned `doctor`, `provenance`, `linear`, and `slack` routes. This is a migration fact, not a second
+future authority.
+
+In v2, every top-level command has one descriptor in the `aios` registry. A descriptor declares:
 
 ```ts
 interface CommandMetadata {
@@ -68,10 +76,11 @@ interface CommandMetadata {
 }
 ```
 
-The versioned inventory freezes those values for the current registry and the four planned
-diagnostic/connector routes. A new bin, registry command, compatibility route, scaffolded
-executable, or executable skill path is incomplete until the same PR assigns it one future owner
-and a disposition in the inventory.
+The versioned inventory freezes those values for the current registry, the two current diagnostic
+token routes, and the four planned diagnostic/connector routes. The contract test separately proves
+that every current registry entry, published bin, and special diagnostic token route is present. A
+new bin, registry command, compatibility route, scaffolded executable, or executable skill path is
+incomplete until the same PR assigns it one future owner and a disposition in the inventory.
 
 All adapter implementation imports are lazy. A load or parse failure in one adapter is contained
 to that adapter's commands and diagnostics; it cannot prevent unrelated commands from starting.
