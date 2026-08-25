@@ -73,7 +73,7 @@ test("documents brain-enforced 1.23 sibling invariants outside JSON Schema's exp
     assert.equal(
       verdict(fixture.payload),
       true,
-      `${fixture.name}: machine schema should leave sibling arithmetic to the brain boundary`,
+      `${fixture.name}: machine schema should leave sibling arithmetic to the brain boundary`
     );
   }
 });
