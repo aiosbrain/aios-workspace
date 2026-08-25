@@ -1,0 +1,2404 @@
+{
+  "schemaVersion": 1,
+  "contractVersion": "2.0.0",
+  "status": "accepted",
+  "issue": "AIO-1065",
+  "canonicalExecutable": "aios",
+  "supportedNodeMajors": [
+    22,
+    24,
+    26
+  ],
+  "canonicalConnectorRoutes": {
+    "linear": "aios linear",
+    "slack": "aios slack"
+  },
+  "compatibilityPolicy": {
+    "introducedIn": "v2.0.0",
+    "linearAndSlackDelegatesThrough": "all v2 releases",
+    "earliestLegacyBinRemoval": "v3.0.0",
+    "rollback": "Reinstall the exact pre-v2 @aiosbrain/aios package recorded by update and atomically restore the last-known-good config snapshot."
+  },
+  "evidence": {
+    "coreBase": "42c8cba11ade76c2950e41c2cdb6dd24f72cd9c4",
+    "devtoolsSource": "a4b8dcbe424c42a0f492691a6d5411f324bf56ca",
+    "devtoolsPackage": "0.3.0",
+    "openClawSource": "1af9b07e30df15fb5387a5650cc48f7033f8fc2d"
+  },
+  "owners": {
+    "core.cli": {
+      "responsibility": "Canonical executable, registry, startup, config broker, output/errors, diagnostics, update and compatibility policy."
+    },
+    "adapter.linear": {
+      "responsibility": "Built-in Linear cold metadata and lazy connector implementation."
+    },
+    "adapter.slack": {
+      "responsibility": "Built-in Slack cold metadata and lazy Node connector implementation."
+    },
+    "adapter.devtools": {
+      "responsibility": "Pinned lazy implementations for build, spec, findings consolidation, ship and roadmap-run behind aios."
+    }
+  },
+  "allowedDispositions": [
+    "keep",
+    "delegate",
+    "migrate",
+    "delete"
+  ],
+  "routes": [
+    {
+      "id": "command.aios.status",
+      "kind": "registered-command",
+      "route": "aios status",
+      "status": "current",
+      "registryCommand": "status",
+      "source": "scripts/cli/registry.mjs",
+      "futureOwner": "core.cli",
+      "disposition": "keep",
+      "releaseBoundary": "v2.0.0",
+      "removalBoundary": null,
+      "replacement": null,
+      "rollback": null,
+      "evidence": [
+        "scripts/cli/registry.mjs"
+      ],
+      "metadata": {
+        "owner": "core.cli",
+        "configurationRequirement": "workspace",
+        "credentialRequirement": "brain",
+        "networkBehavior": "required",
+        "outputMode": "human-or-json",
+        "startupPolicy": "requires-workspace",
+        "implementation": {
+          "module": "scripts/cli/registry.mjs#status",
+          "lazy": false
+        }
+      }
+    },
+    {
+      "id": "command.aios.validate",
+      "kind": "registered-command",
+      "route": "aios validate",
+      "status": "current",
+      "registryCommand": "validate",
+      "source": "scripts/cli/registry.mjs",
+      "futureOwner": "core.cli",
+      "disposition": "keep",
+      "releaseBoundary": "v2.0.0",
+      "removalBoundary": null,
+      "replacement": null,
+      "rollback": null,
+      "evidence": [
+        "scripts/cli/registry.mjs"
+      ],
+      "metadata": {
+        "owner": "core.cli",
+        "configurationRequirement": "optional",
+        "credentialRequirement": "none",
+        "networkBehavior": "never",
+        "outputMode": "human-or-json",
+        "startupPolicy": "offline",
+        "implementation": {
+          "module": "scripts/cli/registry.mjs#validate",
+          "lazy": true
+        }
+      }
+    },
+    {
+      "id": "command.aios.onboard",
+      "kind": "registered-command",
+      "route": "aios onboard",
+      "status": "current",
+      "registryCommand": "onboard",
+      "source": "scripts/cli/registry.mjs",
+      "futureOwner": "core.cli",
+      "disposition": "keep",
+      "releaseBoundary": "v2.0.0",
+      "removalBoundary": null,
+      "replacement": null,
+      "rollback": null,
+      "evidence": [
+        "scripts/cli/registry.mjs"
+      ],
+      "metadata": {
+        "owner": "core.cli",
+        "configurationRequirement": "optional",
+        "credentialRequirement": "optional",
+        "networkBehavior": "optional",
+        "outputMode": "human-or-json",
+        "startupPolicy": "offline",
+        "implementation": {
+          "module": "scripts/cli/registry.mjs#onboard",
+          "lazy": true
+        }
+      }
+    },
+    {
+      "id": "command.aios.connect",
+      "kind": "registered-command",
+      "route": "aios connect",
+      "status": "current",
+      "registryCommand": "connect",
+      "source": "scripts/cli/registry.mjs",
+      "futureOwner": "core.cli",
+      "disposition": "keep",
+      "releaseBoundary": "v2.0.0",
+      "removalBoundary": null,
+      "replacement": null,
+      "rollback": null,
+      "evidence": [
+        "scripts/cli/registry.mjs"
+      ],
+      "metadata": {
+        "owner": "core.cli",
+        "configurationRequirement": "optional",
+        "credentialRequirement": "none",
+        "networkBehavior": "required",
+        "outputMode": "human",
+        "startupPolicy": "offline",
+        "implementation": {
+          "module": "scripts/cli/registry.mjs#connect",
+          "lazy": false
+        }
+      }
+    },
+    {
+      "id": "command.aios.review",
+      "kind": "registered-command",
+      "route": "aios review",
+      "status": "current",
+      "registryCommand": "review",
+      "source": "scripts/cli/registry.mjs",
+      "futureOwner": "core.cli",
+      "disposition": "keep",
+      "releaseBoundary": "v2.0.0",
+      "removalBoundary": null,
+      "replacement": null,
+      "rollback": null,
+      "evidence": [
+        "scripts/cli/registry.mjs"
+      ],
+      "metadata": {
+        "owner": "core.cli",
+        "configurationRequirement": "workspace",
+        "credentialRequirement": "brain",
+        "networkBehavior": "required",
+        "outputMode": "human",
+        "startupPolicy": "requires-workspace",
+        "implementation": {
+          "module": "scripts/cli/registry.mjs#review",
+          "lazy": false
+        }
+      }
+    },
+    {
+      "id": "command.aios.push",
+      "kind": "registered-command",
+      "route": "aios push",
+      "status": "current",
+      "registryCommand": "push",
+      "source": "scripts/cli/registry.mjs",
+      "futureOwner": "core.cli",
+      "disposition": "keep",
+      "releaseBoundary": "v2.0.0",
+      "removalBoundary": null,
+      "replacement": null,
+      "rollback": null,
+      "evidence": [
+        "scripts/cli/registry.mjs"
+      ],
+      "metadata": {
+        "owner": "core.cli",
+        "configurationRequirement": "workspace",
+        "credentialRequirement": "brain",
+        "networkBehavior": "required",
+        "outputMode": "human",
+        "startupPolicy": "requires-workspace",
+        "implementation": {
+          "module": "scripts/cli/registry.mjs#push",
+          "lazy": false
+        }
+      }
+    },
+    {
+      "id": "command.aios.work",
+      "kind": "registered-command",
+      "route": "aios work",
+      "status": "current",
+      "registryCommand": "work",
+      "source": "scripts/cli/registry.mjs",
+      "futureOwner": "core.cli",
+      "disposition": "keep",
+      "releaseBoundary": "v2.0.0",
+      "removalBoundary": null,
+      "replacement": null,
+      "rollback": null,
+      "evidence": [
+        "scripts/cli/registry.mjs"
+      ],
+      "metadata": {
+        "owner": "core.cli",
+        "configurationRequirement": "workspace",
+        "credentialRequirement": "brain",
+        "networkBehavior": "required",
+        "outputMode": "human",
+        "startupPolicy": "requires-workspace",
+        "implementation": {
+          "module": "scripts/cli/registry.mjs#work",
+          "lazy": false
+        }
+      }
+    },
+    {
+      "id": "command.aios.pull",
+      "kind": "registered-command",
+      "route": "aios pull",
+      "status": "current",
+      "registryCommand": "pull",
+      "source": "scripts/cli/registry.mjs",
+      "futureOwner": "core.cli",
+      "disposition": "keep",
+      "releaseBoundary": "v2.0.0",
+      "removalBoundary": null,
+      "replacement": null,
+      "rollback": null,
+      "evidence": [
+        "scripts/cli/registry.mjs"
+      ],
+      "metadata": {
+        "owner": "core.cli",
+        "configurationRequirement": "workspace",
+        "credentialRequirement": "brain",
+        "networkBehavior": "required",
+        "outputMode": "human",
+        "startupPolicy": "requires-workspace",
+        "implementation": {
+          "module": "scripts/cli/registry.mjs#pull",
+          "lazy": false
+        }
+      }
+    },
+    {
+      "id": "command.aios.promote",
+      "kind": "registered-command",
+      "route": "aios promote",
+      "status": "current",
+      "registryCommand": "promote",
+      "source": "scripts/cli/registry.mjs",
+      "futureOwner": "core.cli",
+      "disposition": "keep",
+      "releaseBoundary": "v2.0.0",
+      "removalBoundary": null,
+      "replacement": null,
+      "rollback": null,
+      "evidence": [
+        "scripts/cli/registry.mjs"
+      ],
+      "metadata": {
+        "owner": "core.cli",
+        "configurationRequirement": "workspace",
+        "credentialRequirement": "brain",
+        "networkBehavior": "required",
+        "outputMode": "human",
+        "startupPolicy": "requires-workspace",
+        "implementation": {
+          "module": "scripts/cli/registry.mjs#promote",
+          "lazy": true
+        }
+      }
+    },
+    {
+      "id": "command.aios.install-skill",
+      "kind": "registered-command",
+      "route": "aios install-skill",
+      "status": "current",
+      "registryCommand": "install-skill",
+      "source": "scripts/cli/registry.mjs",
+      "futureOwner": "core.cli",
+      "disposition": "keep",
+      "releaseBoundary": "v2.0.0",
+      "removalBoundary": null,
+      "replacement": null,
+      "rollback": null,
+      "evidence": [
+        "scripts/cli/registry.mjs"
+      ],
+      "metadata": {
+        "owner": "core.cli",
+        "configurationRequirement": "optional",
+        "credentialRequirement": "brain",
+        "networkBehavior": "required",
+        "outputMode": "human",
+        "startupPolicy": "offline",
+        "implementation": {
+          "module": "scripts/cli/registry.mjs#install-skill",
+          "lazy": false
+        }
+      }
+    },
+    {
+      "id": "command.aios.query",
+      "kind": "registered-command",
+      "route": "aios query",
+      "status": "current",
+      "registryCommand": "query",
+      "source": "scripts/cli/registry.mjs",
+      "futureOwner": "core.cli",
+      "disposition": "keep",
+      "releaseBoundary": "v2.0.0",
+      "removalBoundary": null,
+      "replacement": null,
+      "rollback": null,
+      "evidence": [
+        "scripts/cli/registry.mjs"
+      ],
+      "metadata": {
+        "owner": "core.cli",
+        "configurationRequirement": "workspace",
+        "credentialRequirement": "brain",
+        "networkBehavior": "required",
+        "outputMode": "human-or-json",
+        "startupPolicy": "requires-workspace",
+        "implementation": {
+          "module": "scripts/cli/registry.mjs#query",
+          "lazy": false
+        }
+      }
+    },
+    {
+      "id": "command.aios.member",
+      "kind": "registered-command",
+      "route": "aios member",
+      "status": "current",
+      "registryCommand": "member",
+      "source": "scripts/cli/registry.mjs",
+      "futureOwner": "core.cli",
+      "disposition": "keep",
+      "releaseBoundary": "v2.0.0",
+      "removalBoundary": null,
+      "replacement": null,
+      "rollback": null,
+      "evidence": [
+        "scripts/cli/registry.mjs"
+      ],
+      "metadata": {
+        "owner": "core.cli",
+        "configurationRequirement": "workspace",
+        "credentialRequirement": "brain",
+        "networkBehavior": "required",
+        "outputMode": "human-or-json",
+        "startupPolicy": "requires-workspace",
+        "implementation": {
+          "module": "scripts/cli/registry.mjs#member",
+          "lazy": true
+        }
+      }
+    },
+    {
+      "id": "command.aios.stakeholders",
+      "kind": "registered-command",
+      "route": "aios stakeholders",
+      "status": "current",
+      "registryCommand": "stakeholders",
+      "source": "scripts/cli/registry.mjs",
+      "futureOwner": "core.cli",
+      "disposition": "keep",
+      "releaseBoundary": "v2.0.0",
+      "removalBoundary": null,
+      "replacement": null,
+      "rollback": null,
+      "evidence": [
+        "scripts/cli/registry.mjs"
+      ],
+      "metadata": {
+        "owner": "core.cli",
+        "configurationRequirement": "workspace",
+        "credentialRequirement": "brain",
+        "networkBehavior": "required",
+        "outputMode": "human-or-json",
+        "startupPolicy": "requires-workspace",
+        "implementation": {
+          "module": "scripts/cli/registry.mjs#stakeholders",
+          "lazy": false
+        }
+      }
+    },
+    {
+      "id": "command.aios.loop",
+      "kind": "registered-command",
+      "route": "aios loop",
+      "status": "current",
+      "registryCommand": "loop",
+      "source": "scripts/cli/registry.mjs",
+      "futureOwner": "core.cli",
+      "disposition": "keep",
+      "releaseBoundary": "v2.0.0",
+      "removalBoundary": null,
+      "replacement": null,
+      "rollback": null,
+      "evidence": [
+        "scripts/cli/registry.mjs"
+      ],
+      "metadata": {
+        "owner": "core.cli",
+        "configurationRequirement": "optional",
+        "credentialRequirement": "optional",
+        "networkBehavior": "optional",
+        "outputMode": "human",
+        "startupPolicy": "offline",
+        "implementation": {
+          "module": "scripts/cli/registry.mjs#loop",
+          "lazy": true
+        }
+      }
+    },
+    {
+      "id": "command.aios.timeline",
+      "kind": "registered-command",
+      "route": "aios timeline",
+      "status": "current",
+      "registryCommand": "timeline",
+      "source": "scripts/cli/registry.mjs",
+      "futureOwner": "core.cli",
+      "disposition": "keep",
+      "releaseBoundary": "v2.0.0",
+      "removalBoundary": null,
+      "replacement": null,
+      "rollback": null,
+      "evidence": [
+        "scripts/cli/registry.mjs"
+      ],
+      "metadata": {
+        "owner": "core.cli",
+        "configurationRequirement": "optional",
+        "credentialRequirement": "optional",
+        "networkBehavior": "optional",
+        "outputMode": "human-or-json",
+        "startupPolicy": "offline",
+        "implementation": {
+          "module": "scripts/cli/registry.mjs#timeline",
+          "lazy": true
+        }
+      }
+    },
+    {
+      "id": "command.aios.mcp",
+      "kind": "registered-command",
+      "route": "aios mcp",
+      "status": "current",
+      "registryCommand": "mcp",
+      "source": "scripts/cli/registry.mjs",
+      "futureOwner": "core.cli",
+      "disposition": "keep",
+      "releaseBoundary": "v2.0.0",
+      "removalBoundary": null,
+      "replacement": null,
+      "rollback": null,
+      "evidence": [
+        "scripts/cli/registry.mjs"
+      ],
+      "metadata": {
+        "owner": "core.cli",
+        "configurationRequirement": "none",
+        "credentialRequirement": "optional",
+        "networkBehavior": "optional",
+        "outputMode": "protocol",
+        "startupPolicy": "pre-config",
+        "implementation": {
+          "module": "scripts/cli/registry.mjs#mcp",
+          "lazy": true
+        }
+      }
+    },
+    {
+      "id": "command.aios.analyze",
+      "kind": "registered-command",
+      "route": "aios analyze",
+      "status": "current",
+      "registryCommand": "analyze",
+      "source": "scripts/cli/registry.mjs",
+      "futureOwner": "core.cli",
+      "disposition": "keep",
+      "releaseBoundary": "v2.0.0",
+      "removalBoundary": null,
+      "replacement": null,
+      "rollback": null,
+      "evidence": [
+        "scripts/cli/registry.mjs"
+      ],
+      "metadata": {
+        "owner": "core.cli",
+        "configurationRequirement": "optional",
+        "credentialRequirement": "optional",
+        "networkBehavior": "optional",
+        "outputMode": "human-or-json",
+        "startupPolicy": "offline",
+        "implementation": {
+          "module": "scripts/cli/registry.mjs#analyze",
+          "lazy": true
+        }
+      }
+    },
+    {
+      "id": "command.aios.maturity-week",
+      "kind": "registered-command",
+      "route": "aios maturity-week",
+      "status": "current",
+      "registryCommand": "maturity-week",
+      "source": "scripts/cli/registry.mjs",
+      "futureOwner": "core.cli",
+      "disposition": "keep",
+      "releaseBoundary": "v2.0.0",
+      "removalBoundary": null,
+      "replacement": null,
+      "rollback": null,
+      "evidence": [
+        "scripts/cli/registry.mjs"
+      ],
+      "metadata": {
+        "owner": "core.cli",
+        "configurationRequirement": "optional",
+        "credentialRequirement": "optional",
+        "networkBehavior": "optional",
+        "outputMode": "human-or-json",
+        "startupPolicy": "offline",
+        "implementation": {
+          "module": "scripts/cli/registry.mjs#maturity-week",
+          "lazy": true
+        }
+      }
+    },
+    {
+      "id": "command.aios.instincts",
+      "kind": "registered-command",
+      "route": "aios instincts",
+      "status": "current",
+      "registryCommand": "instincts",
+      "source": "scripts/cli/registry.mjs",
+      "futureOwner": "core.cli",
+      "disposition": "keep",
+      "releaseBoundary": "v2.0.0",
+      "removalBoundary": null,
+      "replacement": null,
+      "rollback": null,
+      "evidence": [
+        "scripts/cli/registry.mjs"
+      ],
+      "metadata": {
+        "owner": "core.cli",
+        "configurationRequirement": "optional",
+        "credentialRequirement": "optional",
+        "networkBehavior": "optional",
+        "outputMode": "human-or-json",
+        "startupPolicy": "offline",
+        "implementation": {
+          "module": "scripts/cli/registry.mjs#instincts",
+          "lazy": true
+        }
+      }
+    },
+    {
+      "id": "command.aios.time",
+      "kind": "registered-command",
+      "route": "aios time",
+      "status": "current",
+      "registryCommand": "time",
+      "source": "scripts/cli/registry.mjs",
+      "futureOwner": "core.cli",
+      "disposition": "keep",
+      "releaseBoundary": "v2.0.0",
+      "removalBoundary": null,
+      "replacement": null,
+      "rollback": null,
+      "evidence": [
+        "scripts/cli/registry.mjs"
+      ],
+      "metadata": {
+        "owner": "core.cli",
+        "configurationRequirement": "optional",
+        "credentialRequirement": "optional",
+        "networkBehavior": "optional",
+        "outputMode": "human-or-json",
+        "startupPolicy": "offline",
+        "implementation": {
+          "module": "scripts/cli/registry.mjs#time",
+          "lazy": true
+        }
+      }
+    },
+    {
+      "id": "command.aios.asks",
+      "kind": "registered-command",
+      "route": "aios asks",
+      "status": "current",
+      "registryCommand": "asks",
+      "source": "scripts/cli/registry.mjs",
+      "futureOwner": "core.cli",
+      "disposition": "keep",
+      "releaseBoundary": "v2.0.0",
+      "removalBoundary": null,
+      "replacement": null,
+      "rollback": null,
+      "evidence": [
+        "scripts/cli/registry.mjs"
+      ],
+      "metadata": {
+        "owner": "core.cli",
+        "configurationRequirement": "optional",
+        "credentialRequirement": "optional",
+        "networkBehavior": "optional",
+        "outputMode": "human-or-json",
+        "startupPolicy": "offline",
+        "implementation": {
+          "module": "scripts/cli/registry.mjs#asks",
+          "lazy": true
+        }
+      }
+    },
+    {
+      "id": "command.aios.transcripts",
+      "kind": "registered-command",
+      "route": "aios transcripts",
+      "status": "current",
+      "registryCommand": "transcripts",
+      "source": "scripts/cli/registry.mjs",
+      "futureOwner": "core.cli",
+      "disposition": "keep",
+      "releaseBoundary": "v2.0.0",
+      "removalBoundary": null,
+      "replacement": null,
+      "rollback": null,
+      "evidence": [
+        "scripts/cli/registry.mjs"
+      ],
+      "metadata": {
+        "owner": "core.cli",
+        "configurationRequirement": "workspace",
+        "credentialRequirement": "optional",
+        "networkBehavior": "optional",
+        "outputMode": "human",
+        "startupPolicy": "requires-workspace",
+        "implementation": {
+          "module": "scripts/cli/registry.mjs#transcripts",
+          "lazy": true
+        }
+      }
+    },
+    {
+      "id": "command.aios.pm",
+      "kind": "registered-command",
+      "route": "aios pm",
+      "status": "current",
+      "registryCommand": "pm",
+      "source": "scripts/cli/registry.mjs",
+      "futureOwner": "core.cli",
+      "disposition": "keep",
+      "releaseBoundary": "v2.0.0",
+      "removalBoundary": null,
+      "replacement": null,
+      "rollback": null,
+      "evidence": [
+        "scripts/cli/registry.mjs"
+      ],
+      "metadata": {
+        "owner": "core.cli",
+        "configurationRequirement": "workspace",
+        "credentialRequirement": "provider",
+        "networkBehavior": "required",
+        "outputMode": "human-or-json",
+        "startupPolicy": "requires-workspace",
+        "implementation": {
+          "module": "scripts/cli/registry.mjs#pm",
+          "lazy": true
+        }
+      }
+    },
+    {
+      "id": "command.aios.mode",
+      "kind": "registered-command",
+      "route": "aios mode",
+      "status": "current",
+      "registryCommand": "mode",
+      "source": "scripts/cli/registry.mjs",
+      "futureOwner": "core.cli",
+      "disposition": "keep",
+      "releaseBoundary": "v2.0.0",
+      "removalBoundary": null,
+      "replacement": null,
+      "rollback": null,
+      "evidence": [
+        "scripts/cli/registry.mjs"
+      ],
+      "metadata": {
+        "owner": "core.cli",
+        "configurationRequirement": "optional",
+        "credentialRequirement": "none",
+        "networkBehavior": "never",
+        "outputMode": "human",
+        "startupPolicy": "offline",
+        "implementation": {
+          "module": "scripts/cli/registry.mjs#mode",
+          "lazy": true
+        }
+      }
+    },
+    {
+      "id": "command.aios.decisions",
+      "kind": "registered-command",
+      "route": "aios decisions",
+      "status": "current",
+      "registryCommand": "decisions",
+      "source": "scripts/cli/registry.mjs",
+      "futureOwner": "core.cli",
+      "disposition": "keep",
+      "releaseBoundary": "v2.0.0",
+      "removalBoundary": null,
+      "replacement": null,
+      "rollback": null,
+      "evidence": [
+        "scripts/cli/registry.mjs"
+      ],
+      "metadata": {
+        "owner": "core.cli",
+        "configurationRequirement": "optional",
+        "credentialRequirement": "none",
+        "networkBehavior": "never",
+        "outputMode": "human-or-json",
+        "startupPolicy": "offline",
+        "implementation": {
+          "module": "scripts/cli/registry.mjs#decisions",
+          "lazy": true
+        }
+      }
+    },
+    {
+      "id": "command.aios.council",
+      "kind": "registered-command",
+      "route": "aios council",
+      "status": "current",
+      "registryCommand": "council",
+      "source": "scripts/cli/registry.mjs",
+      "futureOwner": "core.cli",
+      "disposition": "keep",
+      "releaseBoundary": "v2.0.0",
+      "removalBoundary": null,
+      "replacement": null,
+      "rollback": null,
+      "evidence": [
+        "scripts/cli/registry.mjs"
+      ],
+      "metadata": {
+        "owner": "core.cli",
+        "configurationRequirement": "optional",
+        "credentialRequirement": "optional",
+        "networkBehavior": "optional",
+        "outputMode": "human",
+        "startupPolicy": "offline",
+        "implementation": {
+          "module": "scripts/cli/registry.mjs#council",
+          "lazy": true
+        }
+      }
+    },
+    {
+      "id": "command.aios.verify",
+      "kind": "registered-command",
+      "route": "aios verify",
+      "status": "current",
+      "registryCommand": "verify",
+      "source": "scripts/cli/registry.mjs",
+      "futureOwner": "core.cli",
+      "disposition": "keep",
+      "releaseBoundary": "v2.0.0",
+      "removalBoundary": null,
+      "replacement": null,
+      "rollback": null,
+      "evidence": [
+        "scripts/cli/registry.mjs"
+      ],
+      "metadata": {
+        "owner": "core.cli",
+        "configurationRequirement": "optional",
+        "credentialRequirement": "none",
+        "networkBehavior": "never",
+        "outputMode": "human-or-json",
+        "startupPolicy": "offline",
+        "implementation": {
+          "module": "scripts/cli/registry.mjs#verify",
+          "lazy": true
+        }
+      }
+    },
+    {
+      "id": "command.aios.export-okf",
+      "kind": "registered-command",
+      "route": "aios export-okf",
+      "status": "current",
+      "registryCommand": "export-okf",
+      "source": "scripts/cli/registry.mjs",
+      "futureOwner": "core.cli",
+      "disposition": "keep",
+      "releaseBoundary": "v2.0.0",
+      "removalBoundary": null,
+      "replacement": null,
+      "rollback": null,
+      "evidence": [
+        "scripts/cli/registry.mjs"
+      ],
+      "metadata": {
+        "owner": "core.cli",
+        "configurationRequirement": "optional",
+        "credentialRequirement": "none",
+        "networkBehavior": "never",
+        "outputMode": "human",
+        "startupPolicy": "offline",
+        "implementation": {
+          "module": "scripts/cli/registry.mjs#export-okf",
+          "lazy": false
+        }
+      }
+    },
+    {
+      "id": "command.aios.pull-bundle",
+      "kind": "registered-command",
+      "route": "aios pull-bundle",
+      "status": "current",
+      "registryCommand": "pull-bundle",
+      "source": "scripts/cli/registry.mjs",
+      "futureOwner": "core.cli",
+      "disposition": "keep",
+      "releaseBoundary": "v2.0.0",
+      "removalBoundary": null,
+      "replacement": null,
+      "rollback": null,
+      "evidence": [
+        "scripts/cli/registry.mjs"
+      ],
+      "metadata": {
+        "owner": "core.cli",
+        "configurationRequirement": "workspace",
+        "credentialRequirement": "brain",
+        "networkBehavior": "required",
+        "outputMode": "human",
+        "startupPolicy": "requires-workspace",
+        "implementation": {
+          "module": "scripts/cli/registry.mjs#pull-bundle",
+          "lazy": false
+        }
+      }
+    },
+    {
+      "id": "command.aios.graph",
+      "kind": "registered-command",
+      "route": "aios graph",
+      "status": "current",
+      "registryCommand": "graph",
+      "source": "scripts/cli/registry.mjs",
+      "futureOwner": "core.cli",
+      "disposition": "keep",
+      "releaseBoundary": "v2.0.0",
+      "removalBoundary": null,
+      "replacement": null,
+      "rollback": null,
+      "evidence": [
+        "scripts/cli/registry.mjs"
+      ],
+      "metadata": {
+        "owner": "core.cli",
+        "configurationRequirement": "optional",
+        "credentialRequirement": "none",
+        "networkBehavior": "never",
+        "outputMode": "human-or-json",
+        "startupPolicy": "offline",
+        "implementation": {
+          "module": "scripts/cli/registry.mjs#graph",
+          "lazy": false
+        }
+      }
+    },
+    {
+      "id": "command.aios.skills",
+      "kind": "registered-command",
+      "route": "aios skills",
+      "status": "current",
+      "registryCommand": "skills",
+      "source": "scripts/cli/registry.mjs",
+      "futureOwner": "core.cli",
+      "disposition": "keep",
+      "releaseBoundary": "v2.0.0",
+      "removalBoundary": null,
+      "replacement": null,
+      "rollback": null,
+      "evidence": [
+        "scripts/cli/registry.mjs"
+      ],
+      "metadata": {
+        "owner": "core.cli",
+        "configurationRequirement": "optional",
+        "credentialRequirement": "none",
+        "networkBehavior": "never",
+        "outputMode": "human",
+        "startupPolicy": "offline",
+        "implementation": {
+          "module": "scripts/cli/registry.mjs#skills",
+          "lazy": false
+        }
+      }
+    },
+    {
+      "id": "command.aios.assess-codebase",
+      "kind": "registered-command",
+      "route": "aios assess-codebase",
+      "status": "current",
+      "registryCommand": "assess-codebase",
+      "source": "scripts/cli/registry.mjs",
+      "futureOwner": "core.cli",
+      "disposition": "keep",
+      "releaseBoundary": "v2.0.0",
+      "removalBoundary": null,
+      "replacement": null,
+      "rollback": null,
+      "evidence": [
+        "scripts/cli/registry.mjs"
+      ],
+      "metadata": {
+        "owner": "core.cli",
+        "configurationRequirement": "optional",
+        "credentialRequirement": "none",
+        "networkBehavior": "never",
+        "outputMode": "human-or-json",
+        "startupPolicy": "offline",
+        "implementation": {
+          "module": "scripts/cli/registry.mjs#assess-codebase",
+          "lazy": false
+        }
+      }
+    },
+    {
+      "id": "command.aios.context-health",
+      "kind": "registered-command",
+      "route": "aios context-health",
+      "status": "current",
+      "registryCommand": "context-health",
+      "source": "scripts/cli/registry.mjs",
+      "futureOwner": "core.cli",
+      "disposition": "keep",
+      "releaseBoundary": "v2.0.0",
+      "removalBoundary": null,
+      "replacement": null,
+      "rollback": null,
+      "evidence": [
+        "scripts/cli/registry.mjs"
+      ],
+      "metadata": {
+        "owner": "core.cli",
+        "configurationRequirement": "optional",
+        "credentialRequirement": "none",
+        "networkBehavior": "never",
+        "outputMode": "human-or-json",
+        "startupPolicy": "offline",
+        "implementation": {
+          "module": "scripts/cli/registry.mjs#context-health",
+          "lazy": true
+        }
+      }
+    },
+    {
+      "id": "command.aios.codebase-health",
+      "kind": "registered-command",
+      "route": "aios codebase-health",
+      "status": "current",
+      "registryCommand": "codebase-health",
+      "source": "scripts/cli/registry.mjs",
+      "futureOwner": "core.cli",
+      "disposition": "keep",
+      "releaseBoundary": "v2.0.0",
+      "removalBoundary": null,
+      "replacement": null,
+      "rollback": null,
+      "evidence": [
+        "scripts/cli/registry.mjs"
+      ],
+      "metadata": {
+        "owner": "core.cli",
+        "configurationRequirement": "optional",
+        "credentialRequirement": "none",
+        "networkBehavior": "never",
+        "outputMode": "human-or-json",
+        "startupPolicy": "offline",
+        "implementation": {
+          "module": "scripts/cli/registry.mjs#codebase-health",
+          "lazy": true
+        }
+      }
+    },
+    {
+      "id": "command.aios.worktree",
+      "kind": "registered-command",
+      "route": "aios worktree",
+      "status": "current",
+      "registryCommand": "worktree",
+      "source": "scripts/cli/registry.mjs",
+      "futureOwner": "core.cli",
+      "disposition": "keep",
+      "releaseBoundary": "v2.0.0",
+      "removalBoundary": null,
+      "replacement": null,
+      "rollback": null,
+      "evidence": [
+        "scripts/cli/registry.mjs"
+      ],
+      "metadata": {
+        "owner": "core.cli",
+        "configurationRequirement": "optional",
+        "credentialRequirement": "none",
+        "networkBehavior": "never",
+        "outputMode": "human-or-json",
+        "startupPolicy": "offline",
+        "implementation": {
+          "module": "scripts/cli/registry.mjs#worktree",
+          "lazy": true
+        }
+      }
+    },
+    {
+      "id": "command.aios.update",
+      "kind": "registered-command",
+      "route": "aios update",
+      "status": "current",
+      "registryCommand": "update",
+      "source": "scripts/cli/registry.mjs",
+      "futureOwner": "core.cli",
+      "disposition": "keep",
+      "releaseBoundary": "v2.0.0",
+      "removalBoundary": null,
+      "replacement": null,
+      "rollback": null,
+      "evidence": [
+        "scripts/cli/registry.mjs"
+      ],
+      "metadata": {
+        "owner": "core.cli",
+        "configurationRequirement": "user-or-workspace",
+        "credentialRequirement": "none",
+        "networkBehavior": "never",
+        "outputMode": "human-or-json",
+        "startupPolicy": "offline",
+        "implementation": {
+          "module": "scripts/cli/registry.mjs#update",
+          "lazy": true
+        }
+      }
+    },
+    {
+      "id": "command.aios.rails",
+      "kind": "registered-command",
+      "route": "aios rails",
+      "status": "current",
+      "registryCommand": "rails",
+      "source": "scripts/cli/registry.mjs",
+      "futureOwner": "core.cli",
+      "disposition": "keep",
+      "releaseBoundary": "v2.0.0",
+      "removalBoundary": null,
+      "replacement": null,
+      "rollback": null,
+      "evidence": [
+        "scripts/cli/registry.mjs"
+      ],
+      "metadata": {
+        "owner": "core.cli",
+        "configurationRequirement": "optional",
+        "credentialRequirement": "none",
+        "networkBehavior": "never",
+        "outputMode": "human-or-json",
+        "startupPolicy": "offline",
+        "implementation": {
+          "module": "scripts/cli/registry.mjs#rails",
+          "lazy": true
+        }
+      }
+    },
+    {
+      "id": "command.aios.learn",
+      "kind": "registered-command",
+      "route": "aios learn",
+      "status": "current",
+      "registryCommand": "learn",
+      "source": "scripts/cli/registry.mjs",
+      "futureOwner": "core.cli",
+      "disposition": "keep",
+      "releaseBoundary": "v2.0.0",
+      "removalBoundary": null,
+      "replacement": null,
+      "rollback": null,
+      "evidence": [
+        "scripts/cli/registry.mjs"
+      ],
+      "metadata": {
+        "owner": "core.cli",
+        "configurationRequirement": "optional",
+        "credentialRequirement": "none",
+        "networkBehavior": "never",
+        "outputMode": "human",
+        "startupPolicy": "offline",
+        "implementation": {
+          "module": "scripts/cli/registry.mjs#learn",
+          "lazy": false
+        }
+      }
+    },
+    {
+      "id": "command.aios.relay",
+      "kind": "registered-command",
+      "route": "aios relay",
+      "status": "current",
+      "registryCommand": "relay",
+      "source": "scripts/cli/registry.mjs",
+      "futureOwner": "core.cli",
+      "disposition": "keep",
+      "releaseBoundary": "v2.0.0",
+      "removalBoundary": null,
+      "replacement": null,
+      "rollback": null,
+      "evidence": [
+        "scripts/cli/registry.mjs"
+      ],
+      "metadata": {
+        "owner": "core.cli",
+        "configurationRequirement": "optional",
+        "credentialRequirement": "optional",
+        "networkBehavior": "optional",
+        "outputMode": "human",
+        "startupPolicy": "offline",
+        "implementation": {
+          "module": "scripts/cli/registry.mjs#relay",
+          "lazy": true
+        }
+      }
+    },
+    {
+      "id": "command.aios.build",
+      "kind": "registered-command",
+      "route": "aios build",
+      "status": "current",
+      "registryCommand": "build",
+      "source": "scripts/cli/registry.mjs",
+      "futureOwner": "adapter.devtools",
+      "disposition": "keep",
+      "releaseBoundary": "v2.0.0",
+      "removalBoundary": null,
+      "replacement": null,
+      "rollback": null,
+      "evidence": [
+        "scripts/cli/registry.mjs",
+        "scripts/cli/devtools-commands.mjs",
+        "@aiosbrain/aios-devtools@a4b8dcbe424c42a0f492691a6d5411f324bf56ca"
+      ],
+      "metadata": {
+        "owner": "adapter.devtools",
+        "configurationRequirement": "optional",
+        "credentialRequirement": "optional",
+        "networkBehavior": "optional",
+        "outputMode": "human-or-json",
+        "startupPolicy": "offline",
+        "implementation": {
+          "module": "@aiosbrain/aios-devtools/build",
+          "lazy": true
+        }
+      }
+    },
+    {
+      "id": "command.aios.simplify",
+      "kind": "registered-command",
+      "route": "aios simplify",
+      "status": "current",
+      "registryCommand": "simplify",
+      "source": "scripts/cli/registry.mjs",
+      "futureOwner": "core.cli",
+      "disposition": "keep",
+      "releaseBoundary": "v2.0.0",
+      "removalBoundary": null,
+      "replacement": null,
+      "rollback": null,
+      "evidence": [
+        "scripts/cli/registry.mjs"
+      ],
+      "metadata": {
+        "owner": "core.cli",
+        "configurationRequirement": "optional",
+        "credentialRequirement": "none",
+        "networkBehavior": "never",
+        "outputMode": "human",
+        "startupPolicy": "offline",
+        "implementation": {
+          "module": "scripts/cli/registry.mjs#simplify",
+          "lazy": true
+        }
+      }
+    },
+    {
+      "id": "command.aios.spec",
+      "kind": "registered-command",
+      "route": "aios spec",
+      "status": "current",
+      "registryCommand": "spec",
+      "source": "scripts/cli/registry.mjs",
+      "futureOwner": "adapter.devtools",
+      "disposition": "keep",
+      "releaseBoundary": "v2.0.0",
+      "removalBoundary": null,
+      "replacement": null,
+      "rollback": null,
+      "evidence": [
+        "scripts/cli/registry.mjs",
+        "scripts/cli/devtools-commands.mjs",
+        "@aiosbrain/aios-devtools@a4b8dcbe424c42a0f492691a6d5411f324bf56ca"
+      ],
+      "metadata": {
+        "owner": "adapter.devtools",
+        "configurationRequirement": "optional",
+        "credentialRequirement": "optional",
+        "networkBehavior": "optional",
+        "outputMode": "human-or-json",
+        "startupPolicy": "offline",
+        "implementation": {
+          "module": "@aiosbrain/aios-devtools/spec-eval",
+          "lazy": true
+        }
+      }
+    },
+    {
+      "id": "command.aios.pr",
+      "kind": "registered-command",
+      "route": "aios pr",
+      "status": "current",
+      "registryCommand": "pr",
+      "source": "scripts/cli/registry.mjs",
+      "futureOwner": "core.cli",
+      "disposition": "keep",
+      "releaseBoundary": "v2.0.0",
+      "removalBoundary": null,
+      "replacement": null,
+      "rollback": null,
+      "evidence": [
+        "scripts/cli/registry.mjs"
+      ],
+      "metadata": {
+        "owner": "core.cli",
+        "configurationRequirement": "optional",
+        "credentialRequirement": "none",
+        "networkBehavior": "required",
+        "outputMode": "human-or-json",
+        "startupPolicy": "offline",
+        "implementation": {
+          "module": "scripts/cli/registry.mjs#pr",
+          "lazy": true
+        }
+      }
+    },
+    {
+      "id": "command.aios.consolidate-findings",
+      "kind": "registered-command",
+      "route": "aios consolidate-findings",
+      "status": "current",
+      "registryCommand": "consolidate-findings",
+      "source": "scripts/cli/registry.mjs",
+      "futureOwner": "adapter.devtools",
+      "disposition": "keep",
+      "releaseBoundary": "v2.0.0",
+      "removalBoundary": null,
+      "replacement": null,
+      "rollback": null,
+      "evidence": [
+        "scripts/cli/registry.mjs",
+        "scripts/cli/devtools-commands.mjs",
+        "@aiosbrain/aios-devtools@a4b8dcbe424c42a0f492691a6d5411f324bf56ca"
+      ],
+      "metadata": {
+        "owner": "adapter.devtools",
+        "configurationRequirement": "optional",
+        "credentialRequirement": "optional",
+        "networkBehavior": "optional",
+        "outputMode": "human-or-json",
+        "startupPolicy": "offline",
+        "implementation": {
+          "module": "@aiosbrain/aios-devtools/consolidate-findings",
+          "lazy": true
+        }
+      }
+    },
+    {
+      "id": "command.aios.review-bugbot",
+      "kind": "registered-command",
+      "route": "aios review-bugbot",
+      "status": "current",
+      "registryCommand": "review-bugbot",
+      "source": "scripts/cli/registry.mjs",
+      "futureOwner": "core.cli",
+      "disposition": "keep",
+      "releaseBoundary": "v2.0.0",
+      "removalBoundary": null,
+      "replacement": null,
+      "rollback": null,
+      "evidence": [
+        "scripts/cli/registry.mjs"
+      ],
+      "metadata": {
+        "owner": "core.cli",
+        "configurationRequirement": "optional",
+        "credentialRequirement": "optional",
+        "networkBehavior": "optional",
+        "outputMode": "human-or-json",
+        "startupPolicy": "offline",
+        "implementation": {
+          "module": "scripts/cli/registry.mjs#review-bugbot",
+          "lazy": true
+        }
+      }
+    },
+    {
+      "id": "command.aios.ship",
+      "kind": "registered-command",
+      "route": "aios ship",
+      "status": "current",
+      "registryCommand": "ship",
+      "source": "scripts/cli/registry.mjs",
+      "futureOwner": "adapter.devtools",
+      "disposition": "keep",
+      "releaseBoundary": "v2.0.0",
+      "removalBoundary": null,
+      "replacement": null,
+      "rollback": null,
+      "evidence": [
+        "scripts/cli/registry.mjs",
+        "scripts/cli/devtools-commands.mjs",
+        "@aiosbrain/aios-devtools@a4b8dcbe424c42a0f492691a6d5411f324bf56ca"
+      ],
+      "metadata": {
+        "owner": "adapter.devtools",
+        "configurationRequirement": "optional",
+        "credentialRequirement": "optional",
+        "networkBehavior": "optional",
+        "outputMode": "human-or-json",
+        "startupPolicy": "offline",
+        "implementation": {
+          "module": "@aiosbrain/aios-devtools/ship",
+          "lazy": true
+        }
+      }
+    },
+    {
+      "id": "command.aios.roadmap-run",
+      "kind": "registered-command",
+      "route": "aios roadmap-run",
+      "status": "current",
+      "registryCommand": "roadmap-run",
+      "source": "scripts/cli/registry.mjs",
+      "futureOwner": "adapter.devtools",
+      "disposition": "keep",
+      "releaseBoundary": "v2.0.0",
+      "removalBoundary": null,
+      "replacement": null,
+      "rollback": null,
+      "evidence": [
+        "scripts/cli/registry.mjs",
+        "scripts/cli/devtools-commands.mjs",
+        "@aiosbrain/aios-devtools@a4b8dcbe424c42a0f492691a6d5411f324bf56ca"
+      ],
+      "metadata": {
+        "owner": "adapter.devtools",
+        "configurationRequirement": "optional",
+        "credentialRequirement": "optional",
+        "networkBehavior": "optional",
+        "outputMode": "human-or-json",
+        "startupPolicy": "offline",
+        "implementation": {
+          "module": "@aiosbrain/aios-devtools/roadmap-run",
+          "lazy": true
+        }
+      }
+    },
+    {
+      "id": "command.aios.inbox",
+      "kind": "registered-command",
+      "route": "aios inbox",
+      "status": "current",
+      "registryCommand": "inbox",
+      "source": "scripts/cli/registry.mjs",
+      "futureOwner": "core.cli",
+      "disposition": "keep",
+      "releaseBoundary": "v2.0.0",
+      "removalBoundary": null,
+      "replacement": null,
+      "rollback": null,
+      "evidence": [
+        "scripts/cli/registry.mjs"
+      ],
+      "metadata": {
+        "owner": "core.cli",
+        "configurationRequirement": "optional",
+        "credentialRequirement": "optional",
+        "networkBehavior": "optional",
+        "outputMode": "human-or-json",
+        "startupPolicy": "offline",
+        "implementation": {
+          "module": "scripts/cli/registry.mjs#inbox",
+          "lazy": true
+        }
+      }
+    },
+    {
+      "id": "command.aios.delivery",
+      "kind": "registered-command",
+      "route": "aios delivery",
+      "status": "current",
+      "registryCommand": "delivery",
+      "source": "scripts/cli/registry.mjs",
+      "futureOwner": "core.cli",
+      "disposition": "keep",
+      "releaseBoundary": "v2.0.0",
+      "removalBoundary": null,
+      "replacement": null,
+      "rollback": null,
+      "evidence": [
+        "scripts/cli/registry.mjs"
+      ],
+      "metadata": {
+        "owner": "core.cli",
+        "configurationRequirement": "optional",
+        "credentialRequirement": "none",
+        "networkBehavior": "required",
+        "outputMode": "human-or-json",
+        "startupPolicy": "offline",
+        "implementation": {
+          "module": "scripts/cli/registry.mjs#delivery",
+          "lazy": true
+        }
+      }
+    },
+    {
+      "id": "command.aios.repo-bootstrap",
+      "kind": "registered-command",
+      "route": "aios repo-bootstrap",
+      "status": "current",
+      "registryCommand": "repo-bootstrap",
+      "source": "scripts/cli/registry.mjs",
+      "futureOwner": "core.cli",
+      "disposition": "keep",
+      "releaseBoundary": "v2.0.0",
+      "removalBoundary": null,
+      "replacement": null,
+      "rollback": null,
+      "evidence": [
+        "scripts/cli/registry.mjs"
+      ],
+      "metadata": {
+        "owner": "core.cli",
+        "configurationRequirement": "optional",
+        "credentialRequirement": "none",
+        "networkBehavior": "never",
+        "outputMode": "human",
+        "startupPolicy": "offline",
+        "implementation": {
+          "module": "scripts/cli/registry.mjs#repo-bootstrap",
+          "lazy": true
+        }
+      }
+    },
+    {
+      "id": "command.aios.whoami",
+      "kind": "registered-command",
+      "route": "aios whoami",
+      "status": "current",
+      "registryCommand": "whoami",
+      "source": "scripts/cli/registry.mjs",
+      "futureOwner": "core.cli",
+      "disposition": "keep",
+      "releaseBoundary": "v2.0.0",
+      "removalBoundary": null,
+      "replacement": null,
+      "rollback": null,
+      "evidence": [
+        "scripts/cli/registry.mjs"
+      ],
+      "metadata": {
+        "owner": "core.cli",
+        "configurationRequirement": "workspace",
+        "credentialRequirement": "brain",
+        "networkBehavior": "required",
+        "outputMode": "human",
+        "startupPolicy": "requires-workspace",
+        "implementation": {
+          "module": "scripts/cli/registry.mjs#whoami",
+          "lazy": false
+        }
+      }
+    },
+    {
+      "id": "command.aios.gen-catalog",
+      "kind": "registered-command",
+      "route": "aios gen-catalog",
+      "status": "current",
+      "registryCommand": "gen-catalog",
+      "source": "scripts/cli/registry.mjs",
+      "futureOwner": "core.cli",
+      "disposition": "keep",
+      "releaseBoundary": "v2.0.0",
+      "removalBoundary": null,
+      "replacement": null,
+      "rollback": null,
+      "evidence": [
+        "scripts/cli/registry.mjs"
+      ],
+      "metadata": {
+        "owner": "core.cli",
+        "configurationRequirement": "optional",
+        "credentialRequirement": "none",
+        "networkBehavior": "never",
+        "outputMode": "human",
+        "startupPolicy": "offline",
+        "implementation": {
+          "module": "scripts/cli/registry.mjs#gen-catalog",
+          "lazy": true
+        }
+      }
+    },
+    {
+      "id": "command.aios.catalog",
+      "kind": "registered-command",
+      "route": "aios catalog",
+      "status": "current",
+      "registryCommand": "catalog",
+      "source": "scripts/cli/registry.mjs",
+      "futureOwner": "core.cli",
+      "disposition": "keep",
+      "releaseBoundary": "v2.0.0",
+      "removalBoundary": null,
+      "replacement": null,
+      "rollback": null,
+      "evidence": [
+        "scripts/cli/registry.mjs"
+      ],
+      "metadata": {
+        "owner": "core.cli",
+        "configurationRequirement": "optional",
+        "credentialRequirement": "none",
+        "networkBehavior": "never",
+        "outputMode": "human",
+        "startupPolicy": "offline",
+        "implementation": {
+          "module": "scripts/cli/registry.mjs#catalog",
+          "lazy": true
+        }
+      }
+    },
+    {
+      "id": "command.aios.connector",
+      "kind": "registered-command",
+      "route": "aios connector",
+      "status": "current",
+      "registryCommand": "connector",
+      "source": "scripts/cli/registry.mjs",
+      "futureOwner": "core.cli",
+      "disposition": "keep",
+      "releaseBoundary": "v2.0.0",
+      "removalBoundary": null,
+      "replacement": null,
+      "rollback": null,
+      "evidence": [
+        "scripts/cli/registry.mjs"
+      ],
+      "metadata": {
+        "owner": "core.cli",
+        "configurationRequirement": "optional",
+        "credentialRequirement": "optional",
+        "networkBehavior": "optional",
+        "outputMode": "human-or-json",
+        "startupPolicy": "offline",
+        "implementation": {
+          "module": "scripts/cli/registry.mjs#connector",
+          "lazy": true
+        }
+      }
+    },
+    {
+      "id": "command.aios.help",
+      "kind": "diagnostic-command",
+      "route": "aios help",
+      "status": "current",
+      "source": "scripts/cli/dispatch.mjs",
+      "futureOwner": "core.cli",
+      "disposition": "keep",
+      "releaseBoundary": "v2.0.0",
+      "removalBoundary": null,
+      "replacement": null,
+      "rollback": null,
+      "evidence": [
+        "scripts/cli/dispatch.mjs",
+        "docs/adr/0002-single-binary-cli-platform.md"
+      ],
+      "metadata": {
+        "owner": "core.cli",
+        "configurationRequirement": "none",
+        "credentialRequirement": "none",
+        "networkBehavior": "never",
+        "outputMode": "human-or-json",
+        "startupPolicy": "diagnostic",
+        "implementation": {
+          "module": "scripts/cli/diagnostics/help.mjs",
+          "lazy": true
+        }
+      }
+    },
+    {
+      "id": "command.aios.version",
+      "kind": "diagnostic-command",
+      "route": "aios version",
+      "status": "current",
+      "source": "scripts/aios.mjs",
+      "futureOwner": "core.cli",
+      "disposition": "keep",
+      "releaseBoundary": "v2.0.0",
+      "removalBoundary": null,
+      "replacement": null,
+      "rollback": null,
+      "evidence": [
+        "scripts/aios.mjs",
+        "docs/adr/0002-single-binary-cli-platform.md"
+      ],
+      "metadata": {
+        "owner": "core.cli",
+        "configurationRequirement": "none",
+        "credentialRequirement": "none",
+        "networkBehavior": "never",
+        "outputMode": "human-or-json",
+        "startupPolicy": "diagnostic",
+        "implementation": {
+          "module": "scripts/cli/diagnostics/version.mjs",
+          "lazy": true
+        }
+      }
+    },
+    {
+      "id": "command.aios.doctor",
+      "kind": "diagnostic-command",
+      "route": "aios doctor",
+      "status": "planned-v2",
+      "source": "docs/adr/0002-single-binary-cli-platform.md",
+      "futureOwner": "core.cli",
+      "disposition": "keep",
+      "releaseBoundary": "v2.0.0",
+      "removalBoundary": null,
+      "replacement": null,
+      "rollback": null,
+      "evidence": [
+        "docs/adr/0002-single-binary-cli-platform.md",
+        "docs/adr/0002-single-binary-cli-platform.md"
+      ],
+      "metadata": {
+        "owner": "core.cli",
+        "configurationRequirement": "none",
+        "credentialRequirement": "none",
+        "networkBehavior": "never",
+        "outputMode": "human-or-json",
+        "startupPolicy": "diagnostic",
+        "implementation": {
+          "module": "scripts/cli/diagnostics/doctor.mjs",
+          "lazy": true
+        }
+      }
+    },
+    {
+      "id": "command.aios.provenance",
+      "kind": "diagnostic-command",
+      "route": "aios provenance",
+      "status": "planned-v2",
+      "source": "docs/adr/0002-single-binary-cli-platform.md",
+      "futureOwner": "core.cli",
+      "disposition": "keep",
+      "releaseBoundary": "v2.0.0",
+      "removalBoundary": null,
+      "replacement": null,
+      "rollback": null,
+      "evidence": [
+        "docs/adr/0002-single-binary-cli-platform.md",
+        "docs/adr/0002-single-binary-cli-platform.md"
+      ],
+      "metadata": {
+        "owner": "core.cli",
+        "configurationRequirement": "none",
+        "credentialRequirement": "none",
+        "networkBehavior": "never",
+        "outputMode": "human-or-json",
+        "startupPolicy": "diagnostic",
+        "implementation": {
+          "module": "scripts/cli/diagnostics/provenance.mjs",
+          "lazy": true
+        }
+      }
+    },
+    {
+      "id": "command.aios.linear",
+      "kind": "connector-command",
+      "route": "aios linear",
+      "status": "planned-v2",
+      "source": "docs/adr/0002-single-binary-cli-platform.md",
+      "futureOwner": "adapter.linear",
+      "disposition": "keep",
+      "releaseBoundary": "v2.0.0",
+      "removalBoundary": null,
+      "replacement": null,
+      "rollback": null,
+      "evidence": [
+        "docs/adr/0002-single-binary-cli-platform.md"
+      ],
+      "metadata": {
+        "owner": "adapter.linear",
+        "configurationRequirement": "user-or-workspace",
+        "credentialRequirement": "provider",
+        "networkBehavior": "required",
+        "outputMode": "human-or-json",
+        "startupPolicy": "offline",
+        "implementation": {
+          "module": "scripts/connectors/linear/index.mjs",
+          "lazy": true
+        }
+      }
+    },
+    {
+      "id": "command.aios.slack",
+      "kind": "connector-command",
+      "route": "aios slack",
+      "status": "planned-v2",
+      "source": "docs/adr/0002-single-binary-cli-platform.md",
+      "futureOwner": "adapter.slack",
+      "disposition": "keep",
+      "releaseBoundary": "v2.0.0",
+      "removalBoundary": null,
+      "replacement": null,
+      "rollback": null,
+      "evidence": [
+        "docs/adr/0002-single-binary-cli-platform.md"
+      ],
+      "metadata": {
+        "owner": "adapter.slack",
+        "configurationRequirement": "user-or-workspace",
+        "credentialRequirement": "brain-or-provider",
+        "networkBehavior": "required",
+        "outputMode": "human-or-json",
+        "startupPolicy": "offline",
+        "implementation": {
+          "module": "scripts/connectors/slack/index.mjs",
+          "lazy": true
+        }
+      }
+    },
+    {
+      "id": "bin.npm.aios",
+      "kind": "published-bin",
+      "bin": "aios",
+      "route": "aios",
+      "status": "current",
+      "source": "package.json#bin.aios",
+      "futureOwner": "core.cli",
+      "disposition": "keep",
+      "releaseBoundary": "v2.0.0",
+      "removalBoundary": null,
+      "replacement": null,
+      "rollback": null,
+      "evidence": [
+        "package.json",
+        "scripts/aios.mjs"
+      ],
+      "metadata": {
+        "owner": "core.cli",
+        "configurationRequirement": "none",
+        "credentialRequirement": "none",
+        "networkBehavior": "never",
+        "outputMode": "human",
+        "startupPolicy": "pre-config",
+        "implementation": {
+          "module": "scripts/aios.mjs",
+          "lazy": false
+        }
+      }
+    },
+    {
+      "id": "bin.npm.linear",
+      "kind": "published-bin",
+      "bin": "linear",
+      "route": "linear …",
+      "status": "current",
+      "source": "package.json#bin.linear",
+      "futureOwner": "adapter.linear",
+      "disposition": "delegate",
+      "releaseBoundary": "v2.0.0",
+      "removalBoundary": "v3.0.0-earliest",
+      "replacement": "aios linear …",
+      "rollback": "Reinstall the exact pre-v2 @aiosbrain/aios package recorded by update and atomically restore the last-known-good config snapshot.",
+      "evidence": [
+        "package.json",
+        "scripts/linear.mjs"
+      ],
+      "metadata": {
+        "owner": "adapter.linear",
+        "configurationRequirement": "user-or-workspace",
+        "credentialRequirement": "provider",
+        "networkBehavior": "required",
+        "outputMode": "human-or-json",
+        "startupPolicy": "offline",
+        "implementation": {
+          "module": "scripts/compat/linear-bin.mjs",
+          "lazy": true
+        }
+      }
+    },
+    {
+      "id": "bin.npm.slack",
+      "kind": "published-bin",
+      "bin": "slack",
+      "route": "slack …",
+      "status": "current",
+      "source": "package.json#bin.slack",
+      "futureOwner": "adapter.slack",
+      "disposition": "delegate",
+      "releaseBoundary": "v2.0.0",
+      "removalBoundary": "v3.0.0-earliest",
+      "replacement": "aios slack …",
+      "rollback": "Reinstall the exact pre-v2 @aiosbrain/aios package recorded by update and atomically restore the last-known-good config snapshot.",
+      "evidence": [
+        "package.json",
+        "scripts/slack.mjs"
+      ],
+      "metadata": {
+        "owner": "adapter.slack",
+        "configurationRequirement": "user-or-workspace",
+        "credentialRequirement": "brain-or-provider",
+        "networkBehavior": "required",
+        "outputMode": "human-or-json",
+        "startupPolicy": "offline",
+        "implementation": {
+          "module": "scripts/compat/slack-bin.mjs",
+          "lazy": true
+        }
+      }
+    },
+    {
+      "id": "bin.devtools.aios-devtools",
+      "kind": "external-published-bin",
+      "route": "aios-devtools …",
+      "status": "current",
+      "source": "@aiosbrain/aios-devtools/package.json#bin.aios-devtools",
+      "futureOwner": "adapter.devtools",
+      "disposition": "delete",
+      "releaseBoundary": "v2.0.0",
+      "removalBoundary": "v2.0.0",
+      "replacement": "aios build|spec|consolidate-findings|ship|roadmap-run …",
+      "rollback": "Reinstall the exact pre-v2 @aiosbrain/aios package recorded by update and atomically restore the last-known-good config snapshot.",
+      "evidence": [
+        "@aiosbrain/aios-devtools@a4b8dcbe424c42a0f492691a6d5411f324bf56ca",
+        "scripts/cli/devtools-commands.mjs"
+      ],
+      "metadata": {
+        "owner": "adapter.devtools",
+        "configurationRequirement": "optional",
+        "credentialRequirement": "optional",
+        "networkBehavior": "optional",
+        "outputMode": "human",
+        "startupPolicy": "offline",
+        "implementation": {
+          "module": "@aiosbrain/aios-devtools/cli",
+          "lazy": true
+        }
+      }
+    },
+    {
+      "id": "entrypoint.node.scripts-aios",
+      "kind": "direct-entrypoint",
+      "route": "node scripts/aios.mjs …",
+      "status": "current",
+      "source": "scripts/aios.mjs",
+      "futureOwner": "core.cli",
+      "disposition": "migrate",
+      "releaseBoundary": "v2.0.0",
+      "removalBoundary": "v3.0.0-earliest",
+      "replacement": "aios …",
+      "rollback": "Reinstall the exact pre-v2 @aiosbrain/aios package recorded by update and atomically restore the last-known-good config snapshot.",
+      "evidence": [
+        "scripts/aios.mjs",
+        "package.json#bin.aios"
+      ],
+      "metadata": {
+        "owner": "core.cli",
+        "configurationRequirement": "none",
+        "credentialRequirement": "none",
+        "networkBehavior": "never",
+        "outputMode": "human",
+        "startupPolicy": "pre-config",
+        "implementation": {
+          "module": "scripts/aios.mjs",
+          "lazy": false
+        }
+      }
+    },
+    {
+      "id": "entrypoint.npm-run-aios",
+      "kind": "npm-script",
+      "route": "npm run aios -- …",
+      "status": "current",
+      "source": "package.json#scripts.aios",
+      "futureOwner": "core.cli",
+      "disposition": "migrate",
+      "releaseBoundary": "v2.0.0",
+      "removalBoundary": "v3.0.0-earliest",
+      "replacement": "aios …",
+      "rollback": "Reinstall the exact pre-v2 @aiosbrain/aios package recorded by update and atomically restore the last-known-good config snapshot.",
+      "evidence": [
+        "package.json#scripts.aios"
+      ],
+      "metadata": {
+        "owner": "core.cli",
+        "configurationRequirement": "none",
+        "credentialRequirement": "none",
+        "networkBehavior": "never",
+        "outputMode": "human",
+        "startupPolicy": "pre-config",
+        "implementation": {
+          "module": "scripts/aios.mjs",
+          "lazy": false
+        }
+      }
+    },
+    {
+      "id": "entrypoint.shell-function-aios",
+      "kind": "shell-function",
+      "route": "aios() shell function",
+      "status": "current",
+      "source": "scripts/install-aios-shell.sh",
+      "futureOwner": "core.cli",
+      "disposition": "migrate",
+      "releaseBoundary": "v2.0.0",
+      "removalBoundary": "v3.0.0-earliest",
+      "replacement": "installed aios bin",
+      "rollback": "Reinstall the exact pre-v2 @aiosbrain/aios package recorded by update and atomically restore the last-known-good config snapshot.",
+      "evidence": [
+        "scripts/install-aios-shell.sh"
+      ],
+      "metadata": {
+        "owner": "core.cli",
+        "configurationRequirement": "none",
+        "credentialRequirement": "none",
+        "networkBehavior": "never",
+        "outputMode": "human",
+        "startupPolicy": "pre-config",
+        "implementation": {
+          "module": "scripts/install-aios-shell.sh#aios",
+          "lazy": false
+        }
+      }
+    },
+    {
+      "id": "entrypoint.scaffold-bin-aios",
+      "kind": "scaffolded-launcher",
+      "route": "workspace bin/aios",
+      "status": "current",
+      "source": "scaffold/bin/aios",
+      "futureOwner": "core.cli",
+      "disposition": "delegate",
+      "releaseBoundary": "v2.0.0",
+      "removalBoundary": "v3.0.0-earliest",
+      "replacement": "installed aios bin with explicit workspace selection",
+      "rollback": "Reinstall the exact pre-v2 @aiosbrain/aios package recorded by update and atomically restore the last-known-good config snapshot.",
+      "evidence": [
+        "scaffold/bin/aios",
+        "scripts/toolkit-manifest.mjs"
+      ],
+      "metadata": {
+        "owner": "core.cli",
+        "configurationRequirement": "workspace",
+        "credentialRequirement": "none",
+        "networkBehavior": "never",
+        "outputMode": "human",
+        "startupPolicy": "pre-config",
+        "implementation": {
+          "module": "scaffold/bin/aios",
+          "lazy": false
+        }
+      }
+    },
+    {
+      "id": "entrypoint.scaffold-scripts-aios",
+      "kind": "scaffolded-shim",
+      "route": "workspace scripts/aios.mjs",
+      "status": "current",
+      "source": "scaffold/scripts/aios.mjs",
+      "futureOwner": "core.cli",
+      "disposition": "delegate",
+      "releaseBoundary": "v2.0.0",
+      "removalBoundary": "v3.0.0-earliest",
+      "replacement": "installed aios bin with explicit workspace selection",
+      "rollback": "Reinstall the exact pre-v2 @aiosbrain/aios package recorded by update and atomically restore the last-known-good config snapshot.",
+      "evidence": [
+        "scaffold/scripts/aios.mjs",
+        "scripts/toolkit-manifest.mjs"
+      ],
+      "metadata": {
+        "owner": "core.cli",
+        "configurationRequirement": "workspace",
+        "credentialRequirement": "none",
+        "networkBehavior": "never",
+        "outputMode": "human",
+        "startupPolicy": "pre-config",
+        "implementation": {
+          "module": "scaffold/scripts/aios.mjs",
+          "lazy": false
+        }
+      }
+    },
+    {
+      "id": "linear.wrapper",
+      "kind": "connector-wrapper",
+      "route": "node scripts/linear.mjs …",
+      "status": "current",
+      "source": "scripts/linear.mjs",
+      "futureOwner": "adapter.linear",
+      "disposition": "delegate",
+      "releaseBoundary": "v2.0.0",
+      "removalBoundary": "v3.0.0-earliest",
+      "replacement": "aios linear …",
+      "rollback": "Reinstall the exact pre-v2 @aiosbrain/aios package recorded by update and atomically restore the last-known-good config snapshot.",
+      "evidence": [
+        "scripts/linear.mjs",
+        "scripts/global-connector-runtime.mjs"
+      ],
+      "metadata": {
+        "owner": "adapter.linear",
+        "configurationRequirement": "user-or-workspace",
+        "credentialRequirement": "provider",
+        "networkBehavior": "required",
+        "outputMode": "human-or-json",
+        "startupPolicy": "offline",
+        "implementation": {
+          "module": "scripts/compat/linear-bin.mjs",
+          "lazy": true
+        }
+      }
+    },
+    {
+      "id": "linear.skill-toolkit-copy",
+      "kind": "skill-executable",
+      "route": "node .claude/skills/aios-linear/linear.mjs …",
+      "status": "current",
+      "source": ".claude/skills/aios-linear/",
+      "futureOwner": "adapter.linear",
+      "disposition": "migrate",
+      "releaseBoundary": "v2.0.0",
+      "removalBoundary": "v2.0.0",
+      "replacement": "aios linear …; skill retains routing instructions only",
+      "rollback": "Reinstall the exact pre-v2 @aiosbrain/aios package recorded by update and atomically restore the last-known-good config snapshot.",
+      "evidence": [
+        ".claude/skills/aios-linear/linear.mjs",
+        "test/aios-linear-pagination.test.mjs"
+      ],
+      "metadata": {
+        "owner": "adapter.linear",
+        "configurationRequirement": "user-or-workspace",
+        "credentialRequirement": "provider",
+        "networkBehavior": "required",
+        "outputMode": "human",
+        "startupPolicy": "offline",
+        "implementation": {
+          "module": "scripts/connectors/linear/index.mjs",
+          "lazy": true
+        }
+      }
+    },
+    {
+      "id": "linear.skill-scaffold-copy",
+      "kind": "scaffolded-skill-executable",
+      "route": "node .claude/skills/aios-linear/linear.mjs … in a stamped workspace",
+      "status": "current",
+      "source": "scaffold/.claude/skills/aios-linear/",
+      "futureOwner": "adapter.linear",
+      "disposition": "migrate",
+      "releaseBoundary": "v2.0.0",
+      "removalBoundary": "v2.0.0",
+      "replacement": "aios linear …; scaffolded skill retains routing instructions only",
+      "rollback": "Reinstall the exact pre-v2 @aiosbrain/aios package recorded by update and atomically restore the last-known-good config snapshot.",
+      "evidence": [
+        "scaffold/.claude/skills/aios-linear/linear.mjs",
+        "scripts/toolkit-manifest.mjs"
+      ],
+      "metadata": {
+        "owner": "adapter.linear",
+        "configurationRequirement": "user-or-workspace",
+        "credentialRequirement": "provider",
+        "networkBehavior": "required",
+        "outputMode": "human",
+        "startupPolicy": "offline",
+        "implementation": {
+          "module": "scripts/connectors/linear/index.mjs",
+          "lazy": true
+        }
+      }
+    },
+    {
+      "id": "linear.skill-workstream-update",
+      "kind": "skill-internal-call",
+      "route": "workstream-update -> sibling aios-linear/linear.mjs",
+      "status": "current",
+      "source": "scaffold/.claude/skills/workstream-update/workstream-update.mjs",
+      "futureOwner": "adapter.linear",
+      "disposition": "migrate",
+      "releaseBoundary": "v2.0.0",
+      "removalBoundary": "v2.0.0",
+      "replacement": "aios linear list|get …",
+      "rollback": "Reinstall the exact pre-v2 @aiosbrain/aios package recorded by update and atomically restore the last-known-good config snapshot.",
+      "evidence": [
+        "scaffold/.claude/skills/workstream-update/workstream-update.mjs"
+      ],
+      "metadata": {
+        "owner": "adapter.linear",
+        "configurationRequirement": "user-or-workspace",
+        "credentialRequirement": "provider",
+        "networkBehavior": "required",
+        "outputMode": "human-or-json",
+        "startupPolicy": "offline",
+        "implementation": {
+          "module": "scripts/connectors/linear/index.mjs",
+          "lazy": true
+        }
+      }
+    },
+    {
+      "id": "linear.descriptor-query",
+      "kind": "descriptor-skill-executable",
+      "route": "linear-direct/linear-query.mjs",
+      "status": "current",
+      "source": "scaffold/.claude/descriptors/skills/linear-direct/linear-query.mjs",
+      "futureOwner": "adapter.linear",
+      "disposition": "migrate",
+      "releaseBoundary": "v2.0.0",
+      "removalBoundary": "v2.0.0",
+      "replacement": "aios linear query …",
+      "rollback": "Reinstall the exact pre-v2 @aiosbrain/aios package recorded by update and atomically restore the last-known-good config snapshot.",
+      "evidence": [
+        "scaffold/.claude/descriptors/linear.json",
+        "scaffold/.claude/descriptors/skills/linear-direct/linear-query.mjs"
+      ],
+      "metadata": {
+        "owner": "adapter.linear",
+        "configurationRequirement": "user-or-workspace",
+        "credentialRequirement": "provider",
+        "networkBehavior": "required",
+        "outputMode": "human-or-json",
+        "startupPolicy": "offline",
+        "implementation": {
+          "module": "scripts/connectors/linear/index.mjs",
+          "lazy": true
+        }
+      }
+    },
+    {
+      "id": "linear.descriptor-activity",
+      "kind": "descriptor-activity-executable",
+      "route": "linear-direct/linear-activity-pull.mjs",
+      "status": "current",
+      "source": "scaffold/.claude/descriptors/skills/linear-direct/linear-activity-pull.mjs",
+      "futureOwner": "adapter.linear",
+      "disposition": "migrate",
+      "releaseBoundary": "v2.0.0",
+      "removalBoundary": "v2.0.0",
+      "replacement": "aios linear activity pull …",
+      "rollback": "Reinstall the exact pre-v2 @aiosbrain/aios package recorded by update and atomically restore the last-known-good config snapshot.",
+      "evidence": [
+        "scaffold/.claude/descriptors/skills/linear-direct/linear-activity-pull.mjs"
+      ],
+      "metadata": {
+        "owner": "adapter.linear",
+        "configurationRequirement": "user-or-workspace",
+        "credentialRequirement": "provider",
+        "networkBehavior": "required",
+        "outputMode": "human-or-json",
+        "startupPolicy": "offline",
+        "implementation": {
+          "module": "scripts/connectors/linear/index.mjs",
+          "lazy": true
+        }
+      }
+    },
+    {
+      "id": "slack.wrapper",
+      "kind": "connector-wrapper",
+      "route": "node scripts/slack.mjs …",
+      "status": "current",
+      "source": "scripts/slack.mjs",
+      "futureOwner": "adapter.slack",
+      "disposition": "delegate",
+      "releaseBoundary": "v2.0.0",
+      "removalBoundary": "v3.0.0-earliest",
+      "replacement": "aios slack …",
+      "rollback": "Reinstall the exact pre-v2 @aiosbrain/aios package recorded by update and atomically restore the last-known-good config snapshot.",
+      "evidence": [
+        "scripts/slack.mjs",
+        "scripts/global-connector-runtime.mjs"
+      ],
+      "metadata": {
+        "owner": "adapter.slack",
+        "configurationRequirement": "user-or-workspace",
+        "credentialRequirement": "brain-or-provider",
+        "networkBehavior": "required",
+        "outputMode": "human-or-json",
+        "startupPolicy": "offline",
+        "implementation": {
+          "module": "scripts/compat/slack-bin.mjs",
+          "lazy": true
+        }
+      }
+    },
+    {
+      "id": "slack.skill-python",
+      "kind": "descriptor-skill-executable",
+      "route": "slack-personal/slack.py",
+      "status": "current",
+      "source": "scaffold/.claude/descriptors/skills/slack-personal/slack.py",
+      "futureOwner": "adapter.slack",
+      "disposition": "migrate",
+      "releaseBoundary": "v2.0.0",
+      "removalBoundary": "v2.0.0",
+      "replacement": "aios slack … using the built-in Node adapter",
+      "rollback": "Reinstall the exact pre-v2 @aiosbrain/aios package recorded by update and atomically restore the last-known-good config snapshot.",
+      "evidence": [
+        "scaffold/.claude/descriptors/skills/slack-personal/slack.py",
+        "scaffold/.claude/descriptors/skills/slack-personal/slack.py.sha256"
+      ],
+      "metadata": {
+        "owner": "adapter.slack",
+        "configurationRequirement": "user-or-workspace",
+        "credentialRequirement": "brain-or-provider",
+        "networkBehavior": "required",
+        "outputMode": "human-or-json",
+        "startupPolicy": "offline",
+        "implementation": {
+          "module": "scripts/connectors/slack/index.mjs",
+          "lazy": true
+        }
+      }
+    },
+    {
+      "id": "slack.descriptor-activity",
+      "kind": "descriptor-activity-executable",
+      "route": "slack-personal/slack-activity-pull.mjs",
+      "status": "current",
+      "source": "scaffold/.claude/descriptors/skills/slack-personal/slack-activity-pull.mjs",
+      "futureOwner": "adapter.slack",
+      "disposition": "migrate",
+      "releaseBoundary": "v2.0.0",
+      "removalBoundary": "v2.0.0",
+      "replacement": "aios slack activity pull …",
+      "rollback": "Reinstall the exact pre-v2 @aiosbrain/aios package recorded by update and atomically restore the last-known-good config snapshot.",
+      "evidence": [
+        "scaffold/.claude/descriptors/skills/slack-personal/slack-activity-pull.mjs"
+      ],
+      "metadata": {
+        "owner": "adapter.slack",
+        "configurationRequirement": "user-or-workspace",
+        "credentialRequirement": "brain-or-provider",
+        "networkBehavior": "required",
+        "outputMode": "human-or-json",
+        "startupPolicy": "offline",
+        "implementation": {
+          "module": "scripts/connectors/slack/index.mjs",
+          "lazy": true
+        }
+      }
+    },
+    {
+      "id": "slack.descriptor-mcp",
+      "kind": "descriptor-config",
+      "route": "Slack descriptor MCP server",
+      "status": "current",
+      "source": "scaffold/.claude/descriptors/slack.json",
+      "futureOwner": "adapter.slack",
+      "disposition": "migrate",
+      "releaseBoundary": "v2.0.0",
+      "removalBoundary": "v2.0.0",
+      "replacement": "built-in aios slack adapter metadata and connect flow",
+      "rollback": "Reinstall the exact pre-v2 @aiosbrain/aios package recorded by update and atomically restore the last-known-good config snapshot.",
+      "evidence": [
+        "scaffold/.claude/descriptors/slack.json"
+      ],
+      "metadata": {
+        "owner": "adapter.slack",
+        "configurationRequirement": "user-or-workspace",
+        "credentialRequirement": "provider",
+        "networkBehavior": "required",
+        "outputMode": "protocol",
+        "startupPolicy": "offline",
+        "implementation": {
+          "module": "scripts/connectors/slack/index.mjs",
+          "lazy": true
+        }
+      }
+    },
+    {
+      "id": "update.linear-skill-overlay",
+      "kind": "update-path",
+      "route": "aios update -> .claude/skills/aios-linear executable overlay",
+      "status": "current",
+      "source": "scripts/toolkit-manifest.mjs",
+      "futureOwner": "adapter.linear",
+      "disposition": "migrate",
+      "releaseBoundary": "v2.0.0",
+      "removalBoundary": "v2.0.0",
+      "replacement": "aios update installs routing-only Linear skill metadata",
+      "rollback": "Reinstall the exact pre-v2 @aiosbrain/aios package recorded by update and atomically restore the last-known-good config snapshot.",
+      "evidence": [
+        "scripts/toolkit-manifest.mjs#MANAGED_PATHS",
+        "scripts/scaffold-project.sh"
+      ],
+      "metadata": {
+        "owner": "adapter.linear",
+        "configurationRequirement": "workspace",
+        "credentialRequirement": "none",
+        "networkBehavior": "never",
+        "outputMode": "human",
+        "startupPolicy": "offline",
+        "implementation": {
+          "module": "scripts/update.mjs",
+          "lazy": true
+        }
+      }
+    },
+    {
+      "id": "update.descriptor-overlay",
+      "kind": "update-path",
+      "route": "aios update -> .claude/descriptors executable connector copies",
+      "status": "current",
+      "source": "scripts/toolkit-manifest.mjs",
+      "futureOwner": "core.cli",
+      "disposition": "migrate",
+      "releaseBoundary": "v2.0.0",
+      "removalBoundary": "v2.0.0",
+      "replacement": "aios update installs descriptor metadata that routes to built-in adapters",
+      "rollback": "Reinstall the exact pre-v2 @aiosbrain/aios package recorded by update and atomically restore the last-known-good config snapshot.",
+      "evidence": [
+        "scripts/toolkit-manifest.mjs#MANAGED_PATHS",
+        "scripts/scaffold-project.sh"
+      ],
+      "metadata": {
+        "owner": "core.cli",
+        "configurationRequirement": "workspace",
+        "credentialRequirement": "none",
+        "networkBehavior": "never",
+        "outputMode": "human",
+        "startupPolicy": "offline",
+        "implementation": {
+          "module": "scripts/update.mjs",
+          "lazy": true
+        }
+      }
+    }
+  ]
+}
