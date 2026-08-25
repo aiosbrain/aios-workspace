@@ -195,6 +195,31 @@ test("owner-only frontmatter is caught however long the frontmatter block is", (
   }
 });
 
+test("owner-only frontmatter is caught when `access:` comes FIRST in a huge block", () => {
+  // Regression, and a lesson about where the assertion goes. The test above already covered a
+  // "long" frontmatter — but it put `access:` at the END, which is the one position that cannot
+  // fail. The scan was `frontmatter_scope "$f" | grep -q ...`, and under `set -o pipefail` the
+  // pipeline reports awk's SIGPIPE, not grep's success, whenever `grep -q` finds its match and
+  // exits while awk is still writing. Trailing `access:` means grep reads to the end, awk exits
+  // normally, and the pipeline succeeds — so the bug was invisible to a test shaped that way.
+  //
+  // Put the match FIRST behind enough filler to keep awk writing after grep is gone, and the
+  // gate returned `exit 0 / CLEAN` on a file it exists to block. Verified against the pre-fix
+  // script: exit 0 here, exit 1 after.
+  //
+  // The fix captures the frontmatter to a file and greps that, so there is no pipe to break, and
+  // treats a grep exit >1 as a hard error rather than "no match".
+  const filler = Array.from({ length: 250_000 }, () => "x: 1\n").join("");
+  const root = repoWith({
+    "notes/private-thing.md": `---\naccess: admin\n${filler}---\n\nowner only\n`,
+  });
+  try {
+    assert.equal(runGateWithoutTerms(root).code, 1);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("prose merely discussing an access key is not mistaken for a tier-marked file", () => {
   // The widened scan must not start flagging documentation. Frontmatter ends at its fence.
   const root = repoWith({
