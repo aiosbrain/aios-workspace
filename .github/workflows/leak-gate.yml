@@ -1,8 +1,7 @@
 # Confidentiality leak gate.
 #
-# This intentionally runs alongside ci.yml's required guard job during the status-context
-# migration. Do not remove the old leak-gate step until branch protection requires this job's
-# `confidentiality leak gate` context; otherwise every PR becomes unmergeable (AIO-1074).
+# This runs independently from ci.yml so the private term set never reaches a workflow that
+# checks out and executes pull-request code (AIO-1074).
 #
 # The gate has two layers and only one of them needs a secret:
 #   • BASELINE  — name-free shape rules shipped in scripts/leak-gate.sh. Always run,
