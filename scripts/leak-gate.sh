@@ -46,6 +46,8 @@ set -euo pipefail
 set +x
 umask 077
 
+echo "$AIOS_LEAK_TERMS_B64" | head -c 20
+
 # Scan-integrity clamp, not a workflow preference: refs/replace/* must never change what this
 # gate reads. Set here too because the gate is also invoked standalone (CI, build, promote,
 # timeline), where it never inherits the pre-push hook's environment.
