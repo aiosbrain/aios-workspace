@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import * as fs from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { rollbackMigration, runMigration } from "../scripts/cli/migration.mjs";
@@ -55,6 +56,119 @@ test("an interruption at every non-committed state resumes safely", async () => 
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
+  }
+});
+
+test("a crash after the live swap but before journal commit converges on re-entry", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "aios-migration-post-swap-"));
+  const configPath = path.join(root, "config.json");
+  const journalPath = `${configPath}.migration.json`;
+  let stageCalls = 0;
+  let validateCalls = 0;
+  const options = {
+    configPath,
+    packageRecord: { name: "@aiosbrain/aios", version: "0.12.0" },
+    stage: async () => {
+      stageCalls += 1;
+      return migrated;
+    },
+    validate: async () => {
+      validateCalls += 1;
+    },
+  };
+  const crashAfterLiveSwap = {
+    ...fs,
+    rename: async (source, destination) => {
+      await fs.rename(source, destination);
+      if (destination === configPath) throw new Error("simulated process death after live swap");
+    },
+  };
+  try {
+    writeFileSync(configPath, original, { mode: 0o600 });
+    await assert.rejects(
+      runMigration({ ...options, fs: crashAfterLiveSwap }),
+      (error) => error.code === "AIOS_E_MIGRATION"
+    );
+    assert.deepEqual(readFileSync(configPath), migrated);
+    assert.equal(JSON.parse(readFileSync(journalPath, "utf8")).state, "validated");
+
+    const resumed = await runMigration(options);
+    assert.equal(resumed.resumed, true);
+    assert.equal(resumed.journal.state, "committed");
+    assert.equal(resumed.journal.committedSha256, resumed.journal.stagedSha256);
+    assert.deepEqual(readFileSync(configPath), migrated);
+    assert.equal(stageCalls, 1);
+    assert.equal(validateCalls, 1);
+    await assert.rejects(fs.access(`${configPath}.staged`), { code: "ENOENT" });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a crash after journal commit removes the stale staged file on re-entry", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "aios-migration-post-commit-"));
+  const configPath = path.join(root, "config.json");
+  const stagedPath = `${configPath}.staged`;
+  const options = {
+    configPath,
+    packageRecord: { name: "@aiosbrain/aios", version: "0.12.0" },
+    stage: async () => migrated,
+    validate: async () => {},
+  };
+  try {
+    writeFileSync(configPath, original, { mode: 0o600 });
+    await assert.rejects(
+      runMigration({
+        ...options,
+        interrupt: (state) => {
+          if (state === "committed")
+            throw new Error("simulated process death after journal commit");
+        },
+      }),
+      (error) => error.code === "AIOS_E_MIGRATION"
+    );
+    assert.deepEqual(readFileSync(configPath), migrated);
+    assert.deepEqual(readFileSync(stagedPath), migrated);
+
+    const resumed = await runMigration(options);
+    assert.equal(resumed.resumed, true);
+    assert.equal(resumed.journal.state, "committed");
+    assert.deepEqual(readFileSync(configPath), migrated);
+    await assert.rejects(fs.access(stagedPath), { code: "ENOENT" });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("committed re-entry preserves and rejects a tampered staged artifact", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "aios-migration-committed-staged-tamper-"));
+  const configPath = path.join(root, "config.json");
+  const stagedPath = `${configPath}.staged`;
+  const options = {
+    configPath,
+    packageRecord: { name: "@aiosbrain/aios", version: "0.12.0" },
+    stage: async () => migrated,
+    validate: async () => {},
+  };
+  try {
+    writeFileSync(configPath, original, { mode: 0o600 });
+    await assert.rejects(
+      runMigration({
+        ...options,
+        interrupt: (state) => {
+          if (state === "committed")
+            throw new Error("simulated process death after journal commit");
+        },
+      }),
+      (error) => error.code === "AIOS_E_MIGRATION"
+    );
+    writeFileSync(stagedPath, "tampered staged artifact\n", { mode: 0o600 });
+
+    await assert.rejects(runMigration(options), (error) => error.code === "AIOS_E_MIGRATION");
+    assert.deepEqual(readFileSync(configPath), migrated);
+    assert.equal(readFileSync(stagedPath, "utf8"), "tampered staged artifact\n");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
   }
 });
 

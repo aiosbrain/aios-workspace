@@ -5,6 +5,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   renameSync,
   rmSync,
   writeFileSync,
@@ -209,6 +210,10 @@ test(
           assert.equal(stdout.trim().split("\n").at(0).startsWith("{"), true);
           assert.doesNotMatch(stdout, /fixture-value/i);
           if (command === "doctor") assert.equal(document.ok, false, "invalid config is reported");
+          if (command === "provenance") {
+            assert.equal(document.installType, "registry", "npm tarball install is registry");
+            assert.equal(document.package.root, realpathSync(pkgDir));
+          }
         }
       } finally {
         renameSync(brokenDevtoolsRoot, devtoolsRoot);

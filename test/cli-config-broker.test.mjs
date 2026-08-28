@@ -44,22 +44,103 @@ test("platform user-config paths and absolute override are deterministic", () =>
   );
 });
 
-test("user/workspace config rejects plaintext secrets and preserves unknown fields", async () => {
+function assertSecretRejected(document, label) {
   assert.throws(
-    () => parseUserConfig('{"schemaVersion":2,"api_key":"not-a-real-key"}'),
-    (error) => error.code === "AIOS_E_CONFIG_INVALID"
+    () => parseUserConfig(JSON.stringify({ schemaVersion: 2, ...document })),
+    (error) => error.code === "AIOS_E_CONFIG_INVALID",
+    label
   );
+}
+
+test("user/workspace config rejects normalized plaintext-secret fields", () => {
+  for (const key of [
+    "api_key",
+    "apiKeys",
+    "API-KEYS",
+    "accessToken",
+    "access_tokens",
+    "provider-token",
+    "tokens",
+    "password",
+    "passwordValue",
+    "password_values",
+    "clientSecret",
+    "provider_secrets",
+    "privateKey",
+    "private-keys",
+    "credentials",
+  ]) {
+    assertSecretRejected({ nested: { [key]: "fixture-secret" } }, key);
+  }
+
+  for (const [label, document] of [
+    ["secret array", { apiKeys: ["fixture-one", "fixture-two"] }],
+    ["nested secret array", { providers: [{ name: "example", tokens: ["fixture"] }] }],
+    ["secret object", { secrets: { example: "fixture" } }],
+    ["nested secret value", { providers: { example: { auth: { passwordValue: "fixture" } } } }],
+    ["non-empty whitespace", { token: " " }],
+    ["non-string material value", { secrets: false }],
+    ["literal api-key reference", { apiKeyReference: "literal-plaintext-secret" }],
+    ["literal derived reference", { apiKeyReferenceValue: "literal-plaintext-secret" }],
+    ["literal value-reference", { apiKeyValueReference: "literal-plaintext-secret" }],
+    ["literal value-ref", { tokenValueRef: "literal-plaintext-secret" }],
+    ["literal value-source", { passwordValueSource: "literal-plaintext-secret" }],
+    ["literal plural-value refs", { privateKeyValuesRefs: ["literal-plaintext-secret"] }],
+    ["literal token sources", { tokenSources: ["literal-secret-one"] }],
+    ["nested password reference", { passwordRef: { value: "literal-secret-two" } }],
+    ["mixed reference collection", { tokenRefs: ["env:VALID_TOKEN", "literal-secret"] }],
+    ["nested reference collection", { tokenRefs: [["env:VALID_TOKEN"]] }],
+    ["unknown reference scheme", { apiKeyReference: "vault:secret-name" }],
+    ["malformed environment reference", { tokenRef: "env:NOT-VALID" }],
+    ["malformed keychain reference", { passwordSource: "keychain:contains whitespace" }],
+    ["literal credential-source map", { credentialSources: { default: "literal-secret" } }],
+    ["nested credential-source map", { credentialSources: { default: { ref: "env:TOKEN" } } }],
+  ]) {
+    assertSecretRejected(document, label);
+  }
+
   assert.throws(
     () => parseWorkspaceConfig("owner: alex\nprovider_token: fixture-value\n"),
     (error) => error.code === "AIOS_E_CONFIG_INVALID"
   );
-  for (const key of ["apiKey", "accessToken", "provider-token", "privateKey"]) {
-    assert.throws(
-      () => parseUserConfig(JSON.stringify({ schemaVersion: 2, nested: { [key]: "fixture" } })),
-      (error) => error.code === "AIOS_E_CONFIG_INVALID",
-      key
+});
+
+test("secret policy permits empty fields, references, and non-secret lookalikes", () => {
+  for (const [label, document] of [
+    ["null", { apiKey: null }],
+    ["empty string", { token: "" }],
+    ["empty array", { passwords: [] }],
+    ["recursively empty array", { secrets: [null, "", [], {}] }],
+    ["empty object", { privateKeys: {} }],
+    [
+      "credential sources",
+      { credentialSources: { default: "keychain:item", automation: "env:AIOS_TOKEN" } },
+    ],
+    ["credential reference", { credentialReference: "keychain:item" }],
+    ["credential ref", { credentialRef: "env:AIOS_CREDENTIAL" }],
+    ["camel reference", { apiKeyReference: "keychain:service/account" }],
+    ["derived reference", { apiKeyReferenceValue: "env:AIOS_API_KEY" }],
+    ["value-reference", { apiKeyValueReference: "env:AIOS_API_KEY" }],
+    ["value-ref", { tokenValueRef: "keychain:item" }],
+    ["value-source", { passwordValueSource: "env:AIOS_PASSWORD" }],
+    ["plural-value refs", { privateKeyValuesRefs: ["keychain:primary", "env:AIOS_PRIVATE_KEY"] }],
+    ["plural reference", { apiKeyReferences: ["keychain:one", "env:SECOND_API_KEY"] }],
+    ["underscored ref", { access_token_ref: "env:AIOS_TOKEN" }],
+    ["dashed source", { "private-key-source": "keychain:item" }],
+    ["token source", { tokenSource: "keychain:item" }],
+    ["nested refs", { providers: { example: { tokenRef: "keychain:item" } } }],
+    ["token lookalike", { tokenizer: "cl100k_base", tokenBudget: 4096 }],
+    ["password policy", { passwordPolicy: "external-provider" }],
+    ["secret rotation", { secretRotation: { enabled: true } }],
+  ]) {
+    assert.doesNotThrow(
+      () => parseUserConfig(JSON.stringify({ schemaVersion: 2, ...document })),
+      label
     );
   }
+});
+
+test("user config preserves unknown fields on write", async () => {
   assert.doesNotThrow(() =>
     parseUserConfig(
       JSON.stringify({ schemaVersion: 2, credentialSources: { apiKeyReference: "keychain:item" } })

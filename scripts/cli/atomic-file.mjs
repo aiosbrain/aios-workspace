@@ -5,6 +5,63 @@ import { randomBytes } from "node:crypto";
 import { AiosError } from "./errors.mjs";
 
 const bytes = (value) => (Buffer.isBuffer(value) ? value : Buffer.from(String(value)));
+const PARENT_CONFLICT = Symbol("parentConflict");
+
+function conflict(message, target) {
+  return new AiosError(
+    "AIOS_E_CONFLICT",
+    `${message}: ${target}`,
+    "Restore the expected directory and regular config file, then retry."
+  );
+}
+
+function parentConflict(message, target) {
+  const error = conflict(message, target);
+  error[PARENT_CONFLICT] = true;
+  return error;
+}
+
+function statIdentity(stat) {
+  const supported = (value) => typeof value === "number" || typeof value === "bigint";
+  return supported(stat.dev) && supported(stat.ino) ? `${stat.dev}:${stat.ino}` : null;
+}
+
+async function captureDirectory(directory, io) {
+  let stat;
+  try {
+    stat = await io.lstat(directory, { bigint: true });
+  } catch (error) {
+    if (["ENOENT", "ENOTDIR", "ELOOP"].includes(error?.code)) {
+      throw parentConflict("Parent directory became unavailable", directory);
+    }
+    throw error;
+  }
+  if (stat.isSymbolicLink()) {
+    throw parentConflict("Refusing to use symlink parent directory", directory);
+  }
+  if (!stat.isDirectory()) throw parentConflict("Parent path is not a directory", directory);
+  return { identity: statIdentity(stat) };
+}
+
+async function reassertDirectory(directory, initial, io) {
+  const current = await captureDirectory(directory, io);
+  if (
+    initial.identity !== null &&
+    (current.identity === null || current.identity !== initial.identity)
+  ) {
+    throw parentConflict("Parent directory changed during atomic write", directory);
+  }
+}
+
+async function removeTemporaryIfDirectoryIsUnchanged(temporary, directory, initial, io) {
+  try {
+    await reassertDirectory(directory, initial, io);
+    await io.rm(temporary, { force: true });
+  } catch {
+    // Best effort only: portable Node has no unlinkat-style API, and a parent swap can still occur
+    // between this recheck and the pathname-based removal. Known parent conflicts bypass this path.
+  }
+}
 
 export async function assertNotSymlink(target, options = {}) {
   const io = options.fs ?? fs;
@@ -45,7 +102,7 @@ export async function atomicWrite(target, content, options = {}) {
   const io = options.fs ?? fs;
   const directory = path.dirname(target);
   await io.mkdir(directory, { recursive: true, mode: 0o700 });
-  await assertNotSymlink(directory, { fs: io });
+  const initialDirectory = await captureDirectory(directory, io);
   await assertNotSymlink(target, { fs: io });
   const temporary = path.join(
     directory,
@@ -63,12 +120,18 @@ export async function atomicWrite(target, content, options = {}) {
     await handle.close();
     handle = null;
     options.failpoint?.("before-rename", { target, temporary });
+    // Portable Node has no fd-relative conditional rename. Rechecking immediately before rename
+    // narrows the swap window, but cannot eliminate a race after these checks complete.
+    await reassertDirectory(directory, initialDirectory, io);
+    await assertNotSymlink(target, { fs: io });
     await io.rename(temporary, target);
     const directorySync = await syncDirectory(directory, io);
     return { target, directorySync };
   } catch (error) {
     await handle?.close().catch(() => {});
-    await io.rm(temporary, { force: true }).catch(() => {});
+    if (!error?.[PARENT_CONFLICT]) {
+      await removeTemporaryIfDirectoryIsUnchanged(temporary, directory, initialDirectory, io);
+    }
     throw error;
   }
 }

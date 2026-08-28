@@ -67,6 +67,14 @@ export async function runMigration(options) {
       await assertNotSymlink(configPath, { fs: io });
       const live = await io.readFile(configPath);
       if (sha256(live) !== journal.committedSha256) throw new Error("committed digest mismatch");
+      await assertNotSymlink(stagedPath, { fs: io });
+      try {
+        const staged = await io.readFile(stagedPath);
+        if (sha256(staged) !== journal.stagedSha256) throw new Error("staged digest mismatch");
+        await io.rm(stagedPath);
+      } catch (error) {
+        if (error?.code !== "ENOENT") throw error;
+      }
       return { journal, resumed: true };
     }
     if (!journal) {
@@ -113,9 +121,12 @@ export async function runMigration(options) {
       const staged = await io.readFile(stagedPath);
       if (sha256(staged) !== journal.stagedSha256) throw new Error("staged digest mismatch");
       const live = await io.readFile(configPath);
-      if (sha256(live) !== journal.sourceSha256)
+      const liveSha256 = sha256(live);
+      if (liveSha256 === journal.sourceSha256) {
+        await atomicWrite(configPath, staged, options);
+      } else if (liveSha256 !== journal.stagedSha256) {
         throw new Error("live config changed after snapshot");
-      await atomicWrite(configPath, staged, options);
+      }
       journal.state = "committed";
       journal.committedSha256 = journal.stagedSha256;
       await persist(journalPath, journal, options);

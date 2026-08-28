@@ -28,9 +28,52 @@ function executableInfo(executable) {
   return { path: absolute, realpath, link };
 }
 
-function installType(info) {
-  if (fs.existsSync(path.join(packageRoot, ".git"))) return "checkout";
-  if (info.link || info.path !== info.realpath) return "link";
+function comparablePath(value, platform = process.platform) {
+  let comparable = value.replaceAll("\\", "/").replace(/\/+$/, "");
+  if (platform === "win32") comparable = comparable.toLowerCase();
+  return comparable;
+}
+
+function canonicalPath(value) {
+  try {
+    return fs.realpathSync.native(value);
+  } catch {
+    return path.resolve(value);
+  }
+}
+
+function isInstalledPackageRoot(root, packageName, platform) {
+  if (!packageName) return false;
+  const normalizedRoot = comparablePath(canonicalPath(root), platform);
+  const packageSuffix = comparablePath(path.posix.join("node_modules", packageName), platform);
+  return normalizedRoot.endsWith(`/${packageSuffix}`);
+}
+
+function isNodeModulesBin(executablePath, platform) {
+  return comparablePath(executablePath, platform).includes("/node_modules/.bin/");
+}
+
+export function classifyInstallType(options = {}) {
+  const root = options.packageRoot ?? packageRoot;
+  const platform = options.platform ?? process.platform;
+  const info =
+    typeof options.executable === "object"
+      ? options.executable
+      : executableInfo(options.executable ?? process.argv[1]);
+
+  if (fs.existsSync(path.join(root, ".git"))) return "checkout";
+  // npm, pnpm, and Yarn node_modules installs expose bins through symlinks on POSIX and
+  // generated shims on Windows. The package root, not the bin entrypoint, distinguishes
+  // those ordinary installs from an actual `npm link` target outside node_modules.
+  if (isInstalledPackageRoot(root, options.packageName, platform)) return "registry";
+  if (
+    info.link ||
+    isNodeModulesBin(info.path, platform) ||
+    comparablePath(canonicalPath(info.path), platform) !==
+      comparablePath(canonicalPath(info.realpath), platform)
+  ) {
+    return "link";
+  }
   return "registry";
 }
 
@@ -101,7 +144,12 @@ export function collectProvenance(options = {}) {
     executable,
     package: { name: pkg.name ?? null, version: pkg.version ?? null, root: packageRoot },
     build: { gitHead: head, expectedGitHead: expectedHead },
-    installType: installType(executable),
+    installType: classifyInstallType({
+      packageRoot,
+      packageName: pkg.name,
+      executable,
+      platform: options.platform,
+    }),
     node: process.version,
     configPaths,
     adapters: {

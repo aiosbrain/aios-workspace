@@ -8,6 +8,25 @@ function result(id, status, detail, remediation = null) {
   return { id, status, detail, remediation };
 }
 
+function availabilityResult(id, value) {
+  return result(id, value == null ? "warn" : "pass", value ?? "unavailable");
+}
+
+function binModeResult(name, mode) {
+  if (!Number.isInteger(mode)) return result(`bin-mode-${name}`, "warn", "unavailable");
+  const executable = Boolean(mode & 0o111);
+  return result(
+    `bin-mode-${name}`,
+    executable ? "pass" : "warn",
+    `0${mode.toString(8)}${executable ? " executable" : " not executable"}`
+  );
+}
+
+function driftResult(id, value, driftDetail, cleanDetail) {
+  if (value == null) return result(id, "warn", "unavailable");
+  return result(id, value ? "warn" : "pass", value ? driftDetail : cleanDetail);
+}
+
 export function collectDoctor(options = {}) {
   const env = options.env ?? process.env;
   const checks = [];
@@ -42,14 +61,36 @@ export function collectDoctor(options = {}) {
       )
     );
   }
-  const provenance = collectProvenance(options);
-  checks.push(result("runtime", "pass", provenance.node));
-  checks.push(result("installation", "pass", provenance.installType));
+  const provenance = options.provenance ?? collectProvenance(options);
+  checks.push(availabilityResult("runtime", provenance.node));
+  checks.push(availabilityResult("installation", provenance.installType));
   checks.push(
     result(
       "path-shadowing",
-      provenance.path.shadowed ? "warn" : "pass",
-      provenance.path.candidates.join(path.delimiter) || "not on PATH"
+      provenance.path?.shadowed || !provenance.path?.candidates?.length ? "warn" : "pass",
+      provenance.path?.candidates?.join(path.delimiter) || "not on PATH"
+    )
+  );
+  for (const name of ["devtools", "linear", "slack"]) {
+    checks.push(availabilityResult(`adapter-${name}`, provenance.adapters?.[name]));
+  }
+  for (const name of ["aios", "linear", "slack"]) {
+    checks.push(binModeResult(name, provenance.binModes?.[name]));
+  }
+  checks.push(
+    driftResult(
+      "drift-working-tree",
+      provenance.drift?.workingTreeDirty,
+      "working tree dirty",
+      "working tree clean"
+    )
+  );
+  checks.push(
+    driftResult(
+      "drift-package-head",
+      provenance.drift?.packageHeadMismatch,
+      "package metadata does not match HEAD",
+      "package metadata matches HEAD"
     )
   );
   return {

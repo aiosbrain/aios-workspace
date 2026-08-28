@@ -5,8 +5,13 @@ import { parseFlatYaml } from "../flat-yaml.mjs";
 import { atomicWrite } from "./atomic-file.mjs";
 import { AiosError } from "./errors.mjs";
 
-const REFERENCE_KEY = /(?:source|reference|ref)$/i;
 const KNOWN_USER_KEYS = new Set(["schemaVersion", "defaultWorkspace", "credentialSources"]);
+const REFERENCE_SUFFIXES = ["sources", "source", "references", "reference", "refs", "ref"];
+const VALUE_SUFFIXES = ["values", "value"];
+const SECRET_SUFFIXES = ["apikey", "token", "password", "secret", "privatekey", "credential"];
+const CREDENTIAL_SOURCE_NAME = /^[a-z][a-z0-9._-]{0,63}$/i;
+const ENV_REFERENCE = /^env:[A-Za-z_][A-Za-z0-9_]*$/;
+const KEYCHAIN_REFERENCE = /^keychain:[A-Za-z0-9][A-Za-z0-9._/@:+-]{0,255}$/;
 
 function platformPath(platform) {
   return platform === "win32" ? path.win32 : path.posix;
@@ -46,17 +51,98 @@ export function resolveUserConfigPath(options = {}) {
   return paths.join(base, "aios", "config.json");
 }
 
+function normalizedKey(key) {
+  return key.replace(/[^a-z0-9]/gi, "").toLowerCase();
+}
+
+function stripSuffix(key, suffixes) {
+  const suffix = suffixes.find((candidate) => key.endsWith(candidate));
+  return suffix ? { stem: key.slice(0, -suffix.length), suffix } : null;
+}
+
+function hasSecretSuffix(key) {
+  return SECRET_SUFFIXES.some((suffix) => key.endsWith(suffix) || key.endsWith(`${suffix}s`));
+}
+
+/**
+ * Config keys are compared without case or separators. Secret-bearing suffixes are forbidden in
+ * singular/plural form, including fields wrapped in a terminal value/values marker. A terminal
+ * source/reference/ref marker changes the value contract to an unresolved credential reference;
+ * the marker alone never exempts an arbitrary value.
+ */
+function classifySecretKey(key) {
+  const normalized = normalizedKey(key);
+  if (!normalized) return null;
+
+  let stem = normalized;
+  let reference = false;
+  while (stem) {
+    const referenceSuffix = stripSuffix(stem, REFERENCE_SUFFIXES);
+    if (referenceSuffix) {
+      reference = true;
+      stem = referenceSuffix.stem;
+      continue;
+    }
+    const valueSuffix = stripSuffix(stem, VALUE_SUFFIXES);
+    if (valueSuffix) {
+      stem = valueSuffix.stem;
+      continue;
+    }
+    break;
+  }
+
+  if (reference && hasSecretSuffix(stem)) {
+    return {
+      kind: "reference",
+      sourceMap: normalized === "credentialsources",
+    };
+  }
+  return hasSecretSuffix(stem) ? { kind: "plaintext" } : null;
+}
+
+function hasMaterialValue(value) {
+  if (value == null || value === "") return false;
+  if (Array.isArray(value)) return value.some(hasMaterialValue);
+  if (typeof value === "object") return Object.values(value).some(hasMaterialValue);
+  return true;
+}
+
+function isUnresolvedReference(value) {
+  return typeof value === "string" && (ENV_REFERENCE.test(value) || KEYCHAIN_REFERENCE.test(value));
+}
+
+function isReferenceCollection(value) {
+  if (isUnresolvedReference(value)) return true;
+  return Array.isArray(value) && value.length > 0 && value.every(isUnresolvedReference);
+}
+
+function isCredentialSourceMap(value) {
+  if (!value || Array.isArray(value) || typeof value !== "object") return false;
+  return Object.entries(value).every(
+    ([name, reference]) => CREDENTIAL_SOURCE_NAME.test(name) && isUnresolvedReference(reference)
+  );
+}
+
+function invalidReference(trail) {
+  throw new AiosError(
+    "AIOS_E_CONFIG_INVALID",
+    `Credential reference field is invalid at ${trail.join(".")}.`,
+    "Use an unresolved env:VARIABLE_NAME or keychain:locator reference; never store a literal secret."
+  );
+}
+
 function rejectSecrets(value, trail = []) {
   if (!value || typeof value !== "object") return;
   for (const [key, child] of Object.entries(value)) {
-    if (
-      /(?:apikey|token|password|secret|privatekey)$/.test(
-        key.replace(/[^a-z0-9]/gi, "").toLowerCase()
-      ) &&
-      !REFERENCE_KEY.test(key) &&
-      child != null &&
-      child !== ""
-    ) {
+    const classification = classifySecretKey(key);
+    if (classification?.kind === "reference" && hasMaterialValue(child)) {
+      const valid = classification.sourceMap
+        ? isCredentialSourceMap(child)
+        : isReferenceCollection(child);
+      if (!valid) invalidReference([...trail, key]);
+      continue;
+    }
+    if (classification?.kind === "plaintext" && hasMaterialValue(child)) {
       throw new AiosError(
         "AIOS_E_CONFIG_INVALID",
         `Plaintext secret field is forbidden at ${[...trail, key].join(".")}.`,

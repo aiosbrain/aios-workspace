@@ -29,6 +29,14 @@ export const STARTUP_POLICIES = values([
   "requires-workspace",
 ]);
 
+const STARTUP_POLICY_BY_RESOLUTION = Object.freeze({
+  diagnostic: "diagnostic",
+  "pre-config": "pre-config",
+  offline: "offline",
+  workspace: "requires-workspace",
+  "update-root": "offline",
+});
+
 function member(set, value, field) {
   if (!set.has(value)) throw new Error(`aios registry: invalid ${field} '${value}'`);
   return value;
@@ -104,6 +112,18 @@ export function validateCommandDescriptor(descriptor) {
   member(NETWORK_BEHAVIORS, metadata.networkBehavior, "networkBehavior");
   member(OUTPUT_MODES, metadata.outputMode, "outputMode");
   member(STARTUP_POLICIES, metadata.startupPolicy, "startupPolicy");
+  const expectedStartupPolicy = STARTUP_POLICY_BY_RESOLUTION[descriptor.resolution];
+  if (!expectedStartupPolicy) {
+    throw new Error(
+      `aios registry: invalid resolution '${descriptor.resolution}' for '${descriptor.name}'`
+    );
+  }
+  if (metadata.startupPolicy !== expectedStartupPolicy) {
+    throw new Error(
+      `aios registry: resolution '${descriptor.resolution}' for '${descriptor.name}' requires ` +
+        `startupPolicy '${expectedStartupPolicy}', got '${metadata.startupPolicy}'`
+    );
+  }
   if (!metadata.implementation?.module || metadata.implementation.lazy !== true) {
     throw new Error(`aios registry: invalid implementation metadata for '${descriptor.name}'`);
   }
