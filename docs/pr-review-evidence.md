@@ -271,7 +271,8 @@ gh api -X PATCH repos/aiosbrain/aios-workspace/branches/main/protection/required
   -F strict=false \
   -f 'contexts[]=unit tests (npm test)' \
   -f 'contexts[]=lint + format' \
-  -f 'contexts[]=leak-gate + secrets + harness checks' \
+  -f 'contexts[]=secrets + harness checks' \
+  -f 'contexts[]=confidentiality leak gate' \
   -f 'contexts[]=review-evidence'
 ```
 
