@@ -26,9 +26,10 @@ jobs:
   # that never triggers leaves the three protected contexts pending forever and no PR
   # can merge again. Do not move these filters up to the `on:` block.
   #
-  # The three protected contexts (`leak-gate + secrets + harness checks`,
-  # `lint + format`, `unit tests (npm test)`) are never filtered — see
-  # scripts/ci-changed-lanes.mjs for why each exclusion is deliberate.
+  # The CI-owned protected contexts (`secrets + harness checks`, `lint + format`,
+  # `unit tests (npm test)`) are never filtered — see scripts/ci-changed-lanes.mjs for why
+  # each exclusion is deliberate. The isolated `confidentiality leak gate` and the
+  # `review-evidence` status are produced by separate trusted workflows.
   #
   # Every filter below is written `!= 'false'`, NOT `== 'true'`. If the detect step ever
   # fails to write an output — a crash, a rename, a guard that stops firing — `== 'true'`
@@ -115,7 +116,7 @@ jobs:
         run: npm run check:codebase-health
 
   guard:
-    name: leak-gate + secrets + harness checks
+    name: secrets + harness checks
     runs-on: ubuntu-latest
     timeout-minutes: 15 # observed p100 1.8 min (three scaffolds + validators + eval smoke)
     steps:
@@ -125,13 +126,6 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-
-      - name: Confidentiality leak gate
-        # Terms come from the AIOS_LEAK_TERMS_B64 secret (the public repo never stores them).
-        # Without the secret the gate no-ops; with it, NDA identifiers fail the build.
-        env:
-          AIOS_LEAK_TERMS_B64: ${{ secrets.AIOS_LEAK_TERMS_B64 }}
-        run: bash scripts/leak-gate.sh .
 
       - name: Secret scan
         run: bash validation/check-secrets.sh .
@@ -199,6 +193,25 @@ jobs:
           bash evals/run.sh --runtime mock --scenario all --runs 1 --judge mock \
             --results-dir /tmp/ci-eval-lab-smoke
           jq -e '.total > 0 and .by_status.pass == .total' /tmp/ci-eval-lab-smoke/summary.json
+
+  guard-context-compatibility:
+    # Temporary fail-closed bridge for the protected status context while branch protection
+    # moves to `secrets + harness checks`. Remove after that migration.
+    name: leak-gate + secrets + harness checks
+    needs: guard
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Mirror renamed guard result
+        env:
+          GUARD_RESULT: ${{ needs.guard.result }}
+        run: |
+          if [ "$GUARD_RESULT" != "success" ]; then
+            echo "::error::The renamed secrets and harness job did not pass."
+            exit 1
+          fi
+          echo "Renamed secrets and harness job passed."
 
   clean-container:
     name: clean-container install (no jq)

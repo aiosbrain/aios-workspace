@@ -13,11 +13,12 @@
  * There is no input to this module that produces a `false` by accident.
  *
  * WHAT IS DELIBERATELY *NOT* FILTERED:
- *   - The three protected-branch contexts (`leak-gate + secrets + harness checks`,
+ *   - The three CI-owned protected-branch contexts (`secrets + harness checks`,
  *     `lint + format`, `unit tests (npm test)`) always run. They are matched by name
- *     by branch protection, and the leak gate must see every change — a docs-only diff
- *     is precisely where an NDA identifier would appear. `prettier --check .` also
- *     covers markdown, so `lint + format` is load-bearing for docs-only PRs.
+ *     by branch protection. The separate `confidentiality leak gate` also sees every
+ *     change through its trusted-base workflow — a docs-only diff is precisely where a
+ *     confidential identifier would appear. `prettier --check .` also covers markdown,
+ *     so `lint + format` is load-bearing for docs-only PRs.
  *   - `Node tests`, the coverage lanes, and the constitution guards. 47 files under
  *     test/ read `docs/` or root markdown (contract-conformance and toolkit-meta parse
  *     `docs/brain-api.md` directly), so "docs-only ⇒ skip the test suite" is not sound
