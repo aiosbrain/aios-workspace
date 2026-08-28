@@ -1,0 +1,102 @@
+# Confidentiality leak gate.
+#
+# This intentionally runs alongside ci.yml's required guard job during the status-context
+# migration. Do not remove the old leak-gate step until branch protection requires this job's
+# `confidentiality leak gate` context; otherwise every PR becomes unmergeable (AIO-1074).
+#
+# The gate has two layers and only one of them needs a secret:
+#   • BASELINE  — name-free shape rules shipped in scripts/leak-gate.sh. Always run,
+#                 including on fork PRs, which GitHub never gives secrets to.
+#   • TERM SET  — the private identifier list, supplied as $AIOS_LEAK_TERMS_B64.
+#
+# A missing term set degrades the gate to baseline-only and still exits 0. That is the
+# right behaviour for a fork PR and the WRONG thing to call green on a trusted event, so
+# push and same-repo PRs assert the secret is present BEFORE running the sweep. PR scans
+# execute this base-branch workflow and base-branch scanner against the candidate tree;
+# unreviewed PR code must never receive the private term set. A repo settings regression
+# must fail loudly rather than quietly stop checking identifiers.
+name: leak-gate
+
+on:
+  # Use the base branch's workflow and scanner. A normal pull_request workflow would let a
+  # same-repo PR replace scripts/leak-gate.sh and read AIOS_LEAK_TERMS_B64 before review.
+  # Candidate files are treated only as scanner input; no candidate code is executed.
+  pull_request_target:
+  push:
+    branches: [main]
+
+concurrency:
+  # pull_request_target uses the base ref for every PR, so include the PR number to avoid
+  # unrelated PR scans cancelling each other.
+  group: leak-gate-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  leak-gate:
+    name: confidentiality leak gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out trusted gate
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Download candidate tree as inert scanner input
+        if: github.event_name == 'pull_request_target'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          archive="$RUNNER_TEMP/leak-gate-candidate.tar.gz"
+          candidate="$RUNNER_TEMP/leak-gate-candidate"
+          mkdir "$candidate"
+          curl --fail --silent --show-error --location \
+            --proto '=https' \
+            --proto-redir '=https' \
+            --header "Authorization: Bearer $GH_TOKEN" \
+            --header "Accept: application/vnd.github+json" \
+            --output "$archive" \
+            "https://api.github.com/repos/$HEAD_REPOSITORY/tarball/$HEAD_SHA"
+          if ! tar -xzf "$archive" --strip-components=1 -C "$candidate" >/dev/null 2>&1; then
+            echo "::error::Candidate tree could not be extracted safely."
+            exit 2
+          fi
+
+      - name: Assert leak-gate term secret present (fail closed)
+        # Scoped to push + same-repo PRs: fork PRs never receive repo secrets, so requiring
+        # one there would block every outside contribution. Forks still get the baseline.
+        if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          # Boolean only. The secret value is never exported or echoed by this step.
+          HAS_LEAK_TERMS: ${{ secrets.AIOS_LEAK_TERMS_B64 != '' }}
+        run: |
+          if [ "$HAS_LEAK_TERMS" != "true" ]; then
+            echo "::error::AIOS_LEAK_TERMS_B64 repo secret is missing or empty — the confidential-identifier sweep cannot run, and a baseline-only pass must not look green on trusted events. Reinstall the secret (Settings > Secrets and variables > Actions) with: ~/.config/aios-nda/sync-nda-terms.sh"
+            exit 1
+          fi
+          echo "leak-gate term secret present — the identifier sweep will run."
+
+      - name: Confidentiality leak gate (trusted event, full term set)
+        if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+        # AIOS_LEAK_GATE_PRODUCT_REPO=1 turns on the baseline PATH rules for product repos.
+        # Candidate content remains scanner input only; this trusted script is the only code run.
+        env:
+          AIOS_LEAK_TERMS_B64: ${{ secrets.AIOS_LEAK_TERMS_B64 }}
+          AIOS_LEAK_GATE_PRODUCT_REPO: "1"
+        run: |
+          scan_root=.
+          if [ "${{ github.event_name }}" = "pull_request_target" ]; then
+            scan_root="$RUNNER_TEMP/leak-gate-candidate"
+          fi
+          bash scripts/leak-gate.sh "$scan_root"
+
+      - name: Confidentiality leak gate (fork PR, baseline only)
+        if: github.event_name == 'pull_request_target' && github.event.pull_request.head.repo.full_name != github.repository
+        env:
+          AIOS_LEAK_GATE_PRODUCT_REPO: "1"
+        run: bash scripts/leak-gate.sh "$RUNNER_TEMP/leak-gate-candidate"
