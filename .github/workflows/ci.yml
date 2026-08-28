@@ -194,25 +194,6 @@ jobs:
             --results-dir /tmp/ci-eval-lab-smoke
           jq -e '.total > 0 and .by_status.pass == .total' /tmp/ci-eval-lab-smoke/summary.json
 
-  guard-context-compatibility:
-    # Temporary fail-closed bridge for the protected status context while branch protection
-    # moves to `secrets + harness checks`. Remove after that migration.
-    name: leak-gate + secrets + harness checks
-    needs: guard
-    if: always()
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - name: Mirror renamed guard result
-        env:
-          GUARD_RESULT: ${{ needs.guard.result }}
-        run: |
-          if [ "$GUARD_RESULT" != "success" ]; then
-            echo "::error::The renamed secrets and harness job did not pass."
-            exit 1
-          fi
-          echo "Renamed secrets and harness job passed."
-
   clean-container:
     name: clean-container install (no jq)
     runs-on: ubuntu-latest
