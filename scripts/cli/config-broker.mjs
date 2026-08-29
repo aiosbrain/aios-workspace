@@ -171,8 +171,13 @@ function classifySecretKey(key) {
   return hasSecretSuffix(stem) ? { kind: "plaintext" } : null;
 }
 
+/**
+ * A value is "material" when it could carry a secret. Booleans and zero cannot: `basicAuth: false`
+ * is a disable flag and `tokens: 0` is a count. Any non-zero number stays material because
+ * numeric codes (`otp`, `accessCode`) are real credentials.
+ */
 function hasMaterialValue(value) {
-  if (value == null || value === "") return false;
+  if (value == null || value === "" || value === 0 || typeof value === "boolean") return false;
   if (Array.isArray(value)) return value.some(hasMaterialValue);
   if (typeof value === "object") return Object.values(value).some(hasMaterialValue);
   return true;

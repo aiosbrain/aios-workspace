@@ -166,7 +166,9 @@ test("user/workspace config rejects normalized plaintext-secret fields", () => {
     ["secret object", { secrets: { example: "fixture" } }],
     ["nested secret value", { providers: { example: { auth: { passwordValue: "fixture" } } } }],
     ["non-empty whitespace", { token: " " }],
-    ["non-string material value", { secrets: false }],
+    ["numeric code", { otp: 123456 }],
+    ["numeric token", { token: 1 }],
+    ["nested numeric code", { providers: { example: { accessCode: 4242 } } }],
   ]) {
     assertSecretRejected(document, label);
   }
@@ -325,6 +327,8 @@ test("secret policy permits empty fields, references, and non-secret lookalikes"
     ["ordinal lookalikes", { oauth2: "enabled", sha256: "abc", md5: "def", sortKey2: "id" }],
     ["numeric keys", { 1: "one", 42: "answer", retries3: 3, ipv6: true }],
     ["abbreviation lookalikes", { cwd: "/tmp", spin: true, format: "json", pattern: "x" }],
+    ["disable flags and counts", { basicAuth: false, auth: true, tokens: 0, secrets: false }],
+    ["nested disable flag", { providers: { example: { password: false, sessions: 0 } } }],
   ]) {
     assert.doesNotThrow(
       () => parseUserConfig(JSON.stringify({ schemaVersion: 2, ...document })),

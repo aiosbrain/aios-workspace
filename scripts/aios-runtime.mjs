@@ -1531,8 +1531,7 @@ function inferOkfType(rel, frontmatter) {
   if (/sprint-\d+-ledger\.md$/.test(rel)) return "Sprint Ledger";
   if (/(?:scope-baseline|scope-ledger|role|okrs)\.md$/.test(rel)) return "Scope";
   if (/[/\\]transcripts[/\\]/.test(rel)) return "Transcript";
-  if (/^(2-work|02-deliverables)[/\\]|[/\\](2-work|02-deliverables)[/\\]/.test(rel))
-    return "Deliverable";
+  if (/(?:^|[/\\])(2-work|02-deliverables)[/\\]/.test(rel)) return "Deliverable";
   if (/^(4-shared|04-client-surface|04-shared)[/\\]/.test(rel)) return "Deliverable";
   return "Artifact";
 }
