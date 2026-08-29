@@ -37,6 +37,10 @@ const SECRET_SUFFIXES = [
   "accesscode",
   "passcode",
   "passphrase",
+  "pwd",
+  "otp",
+  "pat",
+  "subscriptionkey",
 ];
 const CREDENTIAL_SOURCE_NAME = /^[a-z][a-z0-9._-]{0,63}$/i;
 const ENV_REFERENCE = /^env:[A-Za-z_][A-Za-z0-9_]*$/;
@@ -80,8 +84,16 @@ export function resolveUserConfigPath(options = {}) {
   return paths.join(base, "aios", "config.json");
 }
 
+/**
+ * Keys are compared without case or separators, and without a trailing ordinal run: `token2`,
+ * `apiKey_1`, and `db_password10` are the same family as `token`, `apiKey`, and `password`. A
+ * purely numeric key has no stem and is never secret-bearing.
+ */
 function normalizedKey(key) {
-  return key.replace(/[^a-z0-9]/gi, "").toLowerCase();
+  return key
+    .replace(/[^a-z0-9]/gi, "")
+    .toLowerCase()
+    .replace(/\d+$/, "");
 }
 
 function stripSuffix(key, suffixes) {

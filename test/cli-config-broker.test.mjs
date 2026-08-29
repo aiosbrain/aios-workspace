@@ -124,6 +124,26 @@ test("user/workspace config rejects normalized plaintext-secret fields", () => {
     "passphrase",
     "dbConnectionStringValue",
     "connectionStringKey",
+    // Trailing ordinals are the same family (AIO-1066 review): token2 is still a token.
+    "password1",
+    "token10",
+    "apiKey_1",
+    "db_password2",
+    "authorization2",
+    "connectionString2",
+    "dsn2",
+    "passcode1",
+    "tokens2",
+    "secretKey3",
+    "tokenValue2",
+    // Abbreviated carriers.
+    "pwd",
+    "dbPwd",
+    "otp",
+    "pat",
+    "githubPat",
+    "subscriptionKey",
+    "ocpApimSubscriptionKey",
   ]) {
     assertSecretRejected({ nested: { [key]: "fixture-secret" } }, key);
   }
@@ -262,6 +282,7 @@ test("secret policy permits empty fields, references, and non-secret lookalikes"
     ["plural reference", { apiKeyReferences: ["keychain:one", "env:SECOND_API_KEY"] }],
     ["connection-string reference", { connectionStringRef: "env:DATABASE_URL" }],
     ["dsn source", { dsnSource: "keychain:db/primary" }],
+    ["ordinal reference", { tokenRef2: "env:SECOND_TOKEN", apiKey2Reference: "keychain:two" }],
     ["underscored ref", { access_token_ref: "env:AIOS_TOKEN" }],
     ["dashed source", { "private-key-source": "keychain:item" }],
     ["token source", { tokenSource: "keychain:item" }],
@@ -290,6 +311,9 @@ test("secret policy permits empty fields, references, and non-secret lookalikes"
     ["connection metadata", { connectionTimeout: 30, connectionPool: 8, maxConnections: 4 }],
     ["database metadata", { databaseName: "aios", databaseHost: "db.internal" }],
     ["dsn metadata", { dsnLabel: "primary", dsnFormat: "uri" }],
+    ["ordinal lookalikes", { oauth2: "enabled", sha256: "abc", md5: "def", sortKey2: "id" }],
+    ["numeric keys", { 1: "one", 42: "answer", retries3: 3, ipv6: true }],
+    ["abbreviation lookalikes", { cwd: "/tmp", spin: true, format: "json", pattern: "x" }],
   ]) {
     assert.doesNotThrow(
       () => parseUserConfig(JSON.stringify({ schemaVersion: 2, ...document })),
