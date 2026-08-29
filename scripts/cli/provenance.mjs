@@ -53,6 +53,10 @@ function isNodeModulesBin(executablePath, platform) {
   return comparablePath(executablePath, platform).includes("/node_modules/.bin/");
 }
 
+function isCheckoutRoot(root) {
+  return fs.existsSync(path.join(root, ".git"));
+}
+
 export function classifyInstallType(options = {}) {
   const root = options.packageRoot ?? packageRoot;
   const platform = options.platform ?? process.platform;
@@ -61,7 +65,7 @@ export function classifyInstallType(options = {}) {
       ? options.executable
       : executableInfo(options.executable ?? process.argv[1]);
 
-  if (fs.existsSync(path.join(root, ".git"))) return "checkout";
+  if (isCheckoutRoot(root)) return "checkout";
   // npm, pnpm, and Yarn node_modules installs expose bins through symlinks on POSIX and
   // generated shims on Windows. The package root, not the bin entrypoint, distinguishes
   // those ordinary installs from an actual `npm link` target outside node_modules.
@@ -77,9 +81,10 @@ export function classifyInstallType(options = {}) {
   return "registry";
 }
 
-function gitHead() {
+function gitHead(root) {
+  if (!isCheckoutRoot(root)) return null;
   try {
-    return execFileSync("git", ["-C", packageRoot, "rev-parse", "HEAD"], {
+    return execFileSync("git", ["-C", root, "rev-parse", "HEAD"], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
     }).trim();
@@ -88,10 +93,11 @@ function gitHead() {
   }
 }
 
-function gitDirty() {
+function gitDirty(root) {
+  if (!isCheckoutRoot(root)) return null;
   try {
     return Boolean(
-      execFileSync("git", ["-C", packageRoot, "status", "--porcelain", "--untracked-files=no"], {
+      execFileSync("git", ["-C", root, "status", "--porcelain", "--untracked-files=no"], {
         encoding: "utf8",
         stdio: ["ignore", "pipe", "ignore"],
       }).trim()
@@ -113,9 +119,10 @@ function pathCandidates(env) {
 }
 
 export function collectProvenance(options = {}) {
+  const root = options.packageRoot ?? packageRoot;
   const env = options.env ?? process.env;
   const executable = executableInfo(options.executable ?? process.argv[1]);
-  const pkg = readJson(path.join(packageRoot, "package.json")) ?? {};
+  const pkg = readJson(path.join(root, "package.json")) ?? {};
   const configPaths = {};
   try {
     configPaths.user = resolveUserConfigPath({
@@ -130,22 +137,22 @@ export function collectProvenance(options = {}) {
   const binModes = {};
   for (const [name, relative] of Object.entries(pkg.bin ?? {})) {
     try {
-      binModes[name] = fs.statSync(path.join(packageRoot, relative)).mode & 0o777;
+      binModes[name] = fs.statSync(path.join(root, relative)).mode & 0o777;
     } catch {
       binModes[name] = null;
     }
   }
   const candidates = pathCandidates(env);
-  const head = gitHead();
+  const head = gitHead(root);
   const expectedHead = pkg.aiosBuild?.gitHead ?? null;
   return {
     schemaVersion: 1,
     command: "provenance",
     executable,
-    package: { name: pkg.name ?? null, version: pkg.version ?? null, root: packageRoot },
+    package: { name: pkg.name ?? null, version: pkg.version ?? null, root },
     build: { gitHead: head, expectedGitHead: expectedHead },
     installType: classifyInstallType({
-      packageRoot,
+      packageRoot: root,
       packageName: pkg.name,
       executable,
       platform: options.platform,
@@ -160,7 +167,7 @@ export function collectProvenance(options = {}) {
     binModes,
     path: { candidates, shadowed: candidates.length > 1 },
     drift: {
-      workingTreeDirty: gitDirty(),
+      workingTreeDirty: gitDirty(root),
       packageHeadMismatch: expectedHead && head ? expectedHead !== head : null,
     },
   };

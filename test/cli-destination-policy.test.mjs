@@ -52,6 +52,38 @@ test("insecure loopback is literal, explicit, and credential-free", async () => 
   );
 });
 
+test("explicit and inferred credential state rejects insecure loopback", async () => {
+  let fetches = 0;
+  const rejectLoopback = async (options) =>
+    assert.rejects(
+      trustedFetch("http://127.0.0.1", {
+        allowInsecureLoopback: true,
+        fetch: async () => (fetches++, response()),
+        ...options,
+      }),
+      (error) => error.code === "AIOS_E_DESTINATION_UNTRUSTED"
+    );
+
+  await rejectLoopback({ credentialed: true });
+  for (const name of [
+    "X-Auth",
+    "x_CREDENTIALS",
+    "X.Session-ID",
+    "X-Signature",
+    "X-Access_Key",
+    "X-Bearer",
+    "X-Sig",
+    "X-JWT",
+    "X-Custom-Metadata",
+    "Content_Type",
+    "Content--Type",
+    "Content.Type",
+  ]) {
+    await rejectLoopback({ headers: { [name]: "fixture" } });
+  }
+  assert.equal(fetches, 0);
+});
+
 test("redirects are revalidated and credentials never cross origins", async () => {
   const seen = [];
   await assert.rejects(
@@ -74,6 +106,51 @@ test("redirects are revalidated and credentials never cross origins", async () =
     }),
     (error) => error.code === "AIOS_E_DESTINATION_UNTRUSTED"
   );
+});
+
+test("explicit and inferred credential state never crosses origins", async () => {
+  const cases = [
+    ["explicit flag", { credentialed: true }],
+    ...[
+      "X-Auth",
+      "x_CREDENTIALS",
+      "X.Session-ID",
+      "X-Signature",
+      "X-Access_Key",
+      "X-Bearer",
+      "X-Sig",
+      "X-JWT",
+      "X-Custom-Metadata",
+      "Content_Type",
+      "Content--Type",
+      "Content.Type",
+    ].map((name) => [name, { headers: { [name]: "fixture" } }]),
+  ];
+  for (const [name, options] of cases) {
+    let fetches = 0;
+    await assert.rejects(
+      trustedFetch("https://one.invalid/start", {
+        fetch: async () => (fetches++, response(302, "https://two.invalid/end")),
+        ...options,
+      }),
+      (error) => error.code === "AIOS_E_DESTINATION_UNTRUSTED",
+      name
+    );
+    assert.equal(fetches, 1, name);
+  }
+});
+
+test("content-only headers may follow cross-origin redirects", async () => {
+  const seen = [];
+  const result = await trustedFetch("https://one.invalid/start", {
+    headers: { "cOnTeNt-TyPe": "text/plain", "CONTENT-LENGTH": "7" },
+    fetch: async (url) => {
+      seen.push(String(url));
+      return seen.length === 1 ? response(307, "https://two.invalid/end") : response();
+    },
+  });
+  assert.equal(result.status, 200);
+  assert.deepEqual(seen, ["https://one.invalid/start", "https://two.invalid/end"]);
 });
 
 test("redirect method rewriting follows fetch semantics without forwarding content headers", async () => {

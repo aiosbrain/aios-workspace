@@ -49,6 +49,15 @@ test("doctor reports invalid config as independent read-only data", () => {
       "AIOS_E_CONFIG_INVALID"
     );
     assert.equal(report.checks.find((check) => check.id === "runtime").status, "pass");
+
+    const subprocess = run("doctor", home);
+    assert.equal(subprocess.status, 0, subprocess.stderr);
+    const document = JSON.parse(subprocess.stdout);
+    assert.equal(document.ok, false);
+    assert.equal(
+      document.checks.find((check) => check.id === "user-config").detail,
+      "AIOS_E_CONFIG_INVALID"
+    );
   } finally {
     rmSync(home, { recursive: true, force: true });
   }
@@ -141,6 +150,74 @@ test("provenance reports observable drift instead of a constant clean claim", ()
   assert.ok([true, false, null].includes(report.drift.workingTreeDirty));
   assert.ok([true, false, null].includes(report.drift.packageHeadMismatch));
   assert.equal(report.build.expectedGitHead, null);
+});
+
+test("provenance does not inherit Git drift from a registry install's parent checkout", () => {
+  const consumer = mkdtempSync(path.join(tmpdir(), "aios-provenance-consumer-"));
+  const installedRoot = path.join(consumer, "node_modules", "@aiosbrain", "aios");
+  const installedBin = path.join(installedRoot, "scripts", "aios.mjs");
+  try {
+    const git = (...args) => {
+      const result = spawnSync("git", args, { cwd: consumer, encoding: "utf8" });
+      assert.equal(result.status, 0, result.stderr);
+      return result.stdout.trim();
+    };
+    git("init", "--quiet");
+    writeFileSync(path.join(consumer, "tracked.txt"), "committed\n");
+    git("add", "tracked.txt");
+    git(
+      "-c",
+      "user.name=Fixture",
+      "-c",
+      "user.email=fixture@example.invalid",
+      "commit",
+      "-qm",
+      "fixture"
+    );
+    const consumerHead = git("rev-parse", "HEAD");
+    writeFileSync(path.join(consumer, "tracked.txt"), "dirty\n");
+
+    mkdirSync(path.dirname(installedBin), { recursive: true });
+    writeFileSync(
+      path.join(installedRoot, "package.json"),
+      `${JSON.stringify({
+        name: "@aiosbrain/aios",
+        version: "fixture",
+        bin: { aios: "scripts/aios.mjs" },
+        aiosBuild: { gitHead: consumerHead },
+      })}\n`
+    );
+    writeFileSync(installedBin, "#!/usr/bin/env node\n");
+
+    const installed = collectProvenance({
+      packageRoot: installedRoot,
+      executable: installedBin,
+      env: {},
+      home: path.join(consumer, "home"),
+      cwd: consumer,
+    });
+    assert.equal(installed.installType, "registry");
+    assert.equal(installed.build.gitHead, null);
+    assert.equal(installed.drift.workingTreeDirty, null);
+    assert.equal(installed.drift.packageHeadMismatch, null);
+
+    writeFileSync(
+      path.join(consumer, "package.json"),
+      `${JSON.stringify({ name: "@aiosbrain/aios", version: "checkout-fixture" })}\n`
+    );
+    const checkout = collectProvenance({
+      packageRoot: consumer,
+      executable: installedBin,
+      env: {},
+      home: path.join(consumer, "home"),
+      cwd: consumer,
+    });
+    assert.equal(checkout.installType, "checkout");
+    assert.equal(checkout.build.gitHead, consumerHead);
+    assert.equal(checkout.drift.workingTreeDirty, true);
+  } finally {
+    rmSync(consumer, { recursive: true, force: true });
+  }
 });
 
 test("provenance classifies an npm-installed bin symlink as registry", () => {

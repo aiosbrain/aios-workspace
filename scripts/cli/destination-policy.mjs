@@ -15,10 +15,19 @@ function literalLoopback(authority) {
   return Number(parts[0]) === 127;
 }
 
+const SAFE_REQUEST_HEADERS = new Set([
+  "content-disposition",
+  "content-encoding",
+  "content-language",
+  "content-length",
+  "content-location",
+  "content-md5",
+  "content-range",
+  "content-type",
+]);
+
 function hasCredentialHeader(headers = {}) {
-  return Object.keys(headers).some((name) =>
-    /(?:authorization|cookie|api[-_]?key|token|secret)/i.test(name)
-  );
+  return Object.keys(headers).some((name) => !SAFE_REQUEST_HEADERS.has(name.toLowerCase()));
 }
 
 export function validateDestination(input, options = {}) {
@@ -56,7 +65,9 @@ export function validateDestination(input, options = {}) {
 export async function trustedFetch(input, options = {}) {
   const fetchImpl = options.fetch ?? globalThis.fetch;
   const credentialed =
-    typeof options.credentialFactory === "function" || hasCredentialHeader(options.headers);
+    options.credentialed === true ||
+    typeof options.credentialFactory === "function" ||
+    hasCredentialHeader(options.headers);
   let url = validateDestination(input, { ...options, credentialed });
   let headers = { ...(options.headers ?? {}) };
   if (typeof options.credentialFactory === "function") {

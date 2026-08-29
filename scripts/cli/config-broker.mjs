@@ -8,7 +8,28 @@ import { AiosError } from "./errors.mjs";
 const KNOWN_USER_KEYS = new Set(["schemaVersion", "defaultWorkspace", "credentialSources"]);
 const REFERENCE_SUFFIXES = ["sources", "source", "references", "reference", "refs", "ref"];
 const VALUE_SUFFIXES = ["values", "value"];
-const SECRET_SUFFIXES = ["apikey", "token", "password", "secret", "privatekey", "credential"];
+const HEADER_SUFFIXES = ["headers", "header"];
+const SECRET_SUFFIXES = [
+  "apikey",
+  "token",
+  "password",
+  "secret",
+  "privatekey",
+  "credential",
+  "authorization",
+  "authheader",
+  "bearer",
+  "accesskey",
+  "signingkey",
+  "auth",
+  "cookie",
+  "session",
+  "sessionid",
+  "signature",
+  "sig",
+  "clientkey",
+  "jwt",
+];
 const CREDENTIAL_SOURCE_NAME = /^[a-z][a-z0-9._-]{0,63}$/i;
 const ENV_REFERENCE = /^env:[A-Za-z_][A-Za-z0-9_]*$/;
 const KEYCHAIN_REFERENCE = /^keychain:[A-Za-z0-9][A-Za-z0-9._/@:+-]{0,255}$/;
@@ -61,6 +82,10 @@ function stripSuffix(key, suffixes) {
 }
 
 function hasSecretSuffix(key) {
+  const oauthSuffix = stripSuffix(key, ["oauths", "oauth"]);
+  if (oauthSuffix) {
+    return oauthSuffix.stem ? hasSecretSuffix(oauthSuffix.stem) : false;
+  }
   return SECRET_SUFFIXES.some((suffix) => key.endsWith(suffix) || key.endsWith(`${suffix}s`));
 }
 
@@ -86,6 +111,11 @@ function classifySecretKey(key) {
     const valueSuffix = stripSuffix(stem, VALUE_SUFFIXES);
     if (valueSuffix) {
       stem = valueSuffix.stem;
+      continue;
+    }
+    const headerSuffix = stripSuffix(stem, HEADER_SUFFIXES);
+    if (headerSuffix) {
+      stem = headerSuffix.stem;
       continue;
     }
     break;

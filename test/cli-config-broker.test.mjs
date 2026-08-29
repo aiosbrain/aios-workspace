@@ -52,6 +52,10 @@ function assertSecretRejected(document, label) {
   );
 }
 
+function separatedKey(key, separator) {
+  return key.replace(/([a-z0-9])([A-Z])/g, `$1${separator}$2`).toLowerCase();
+}
+
 test("user/workspace config rejects normalized plaintext-secret fields", () => {
   for (const key of [
     "api_key",
@@ -69,6 +73,25 @@ test("user/workspace config rejects normalized plaintext-secret fields", () => {
     "privateKey",
     "private-keys",
     "credentials",
+    "authorization",
+    "auth",
+    "authHeader",
+    "bearer",
+    "access_key",
+    "signingKey",
+    "basicAuth",
+    "proxyAuth",
+    "sessionCookie",
+    "sessionId",
+    "signature",
+    "clientKey",
+    "authorizationHeader",
+    "bearerHeader",
+    "jwt",
+    "tokenOauth",
+    "apiKeyOauth",
+    "passwordOauth",
+    "authOauth",
   ]) {
     assertSecretRejected({ nested: { [key]: "fixture-secret" } }, key);
   }
@@ -80,21 +103,6 @@ test("user/workspace config rejects normalized plaintext-secret fields", () => {
     ["nested secret value", { providers: { example: { auth: { passwordValue: "fixture" } } } }],
     ["non-empty whitespace", { token: " " }],
     ["non-string material value", { secrets: false }],
-    ["literal api-key reference", { apiKeyReference: "literal-plaintext-secret" }],
-    ["literal derived reference", { apiKeyReferenceValue: "literal-plaintext-secret" }],
-    ["literal value-reference", { apiKeyValueReference: "literal-plaintext-secret" }],
-    ["literal value-ref", { tokenValueRef: "literal-plaintext-secret" }],
-    ["literal value-source", { passwordValueSource: "literal-plaintext-secret" }],
-    ["literal plural-value refs", { privateKeyValuesRefs: ["literal-plaintext-secret"] }],
-    ["literal token sources", { tokenSources: ["literal-secret-one"] }],
-    ["nested password reference", { passwordRef: { value: "literal-secret-two" } }],
-    ["mixed reference collection", { tokenRefs: ["env:VALID_TOKEN", "literal-secret"] }],
-    ["nested reference collection", { tokenRefs: [["env:VALID_TOKEN"]] }],
-    ["unknown reference scheme", { apiKeyReference: "vault:secret-name" }],
-    ["malformed environment reference", { tokenRef: "env:NOT-VALID" }],
-    ["malformed keychain reference", { passwordSource: "keychain:contains whitespace" }],
-    ["literal credential-source map", { credentialSources: { default: "literal-secret" } }],
-    ["nested credential-source map", { credentialSources: { default: { ref: "env:TOKEN" } } }],
   ]) {
     assertSecretRejected(document, label);
   }
@@ -103,6 +111,78 @@ test("user/workspace config rejects normalized plaintext-secret fields", () => {
     () => parseWorkspaceConfig("owner: alex\nprovider_token: fixture-value\n"),
     (error) => error.code === "AIOS_E_CONFIG_INVALID"
   );
+});
+
+test("secret policy rejects generated casing, separator, plural, and value variants", () => {
+  for (const stem of [
+    "authorization",
+    "authHeader",
+    "bearer",
+    "accessKey",
+    "signingKey",
+    "basicAuth",
+    "proxyAuth",
+    "sessionCookie",
+    "sessionId",
+    "signature",
+    "sig",
+    "clientKey",
+    "authorizationHeader",
+    "bearerHeader",
+    "jwt",
+  ]) {
+    for (const suffix of ["", "s", "Value", "Values"]) {
+      const candidate = `${stem}${suffix}`;
+      for (const key of [
+        candidate,
+        candidate.toUpperCase(),
+        separatedKey(candidate, "-"),
+        separatedKey(candidate, "_"),
+      ]) {
+        assertSecretRejected({ fuzzed: { [key]: "fixture-secret" } }, `variant ${key}`);
+      }
+    }
+  }
+});
+
+test("secret policy rejects literal or malformed reference-shaped fields", () => {
+  for (const [label, document] of [
+    ["api-key reference", { apiKeyReference: "literal-plaintext-secret" }],
+    ["derived reference", { apiKeyReferenceValue: "literal-plaintext-secret" }],
+    ["value-reference", { apiKeyValueReference: "literal-plaintext-secret" }],
+    ["value-ref", { tokenValueRef: "literal-plaintext-secret" }],
+    ["value-source", { passwordValueSource: "literal-plaintext-secret" }],
+    ["plural-value refs", { privateKeyValuesRefs: ["literal-plaintext-secret"] }],
+    ["authorization reference", { authorizationRef: "literal-plaintext-secret" }],
+    ["auth reference", { authValueReference: "literal-plaintext-secret" }],
+    ["auth-header source", { authHeaderSource: "literal-plaintext-secret" }],
+    ["bearer reference", { bearerValueRef: "literal-plaintext-secret" }],
+    ["access-key reference", { accessKeyReference: "literal-plaintext-secret" }],
+    ["signing-key references", { signingKeyValuesRefs: ["literal-plaintext-secret"] }],
+    ["basic-auth reference", { basicAuthRef: "literal-plaintext-secret" }],
+    ["proxy-auth header reference", { proxyAuthHeaderReference: "literal-plaintext-secret" }],
+    ["session-cookie reference", { sessionCookieRef: "literal-plaintext-secret" }],
+    ["session-id source", { sessionIdValueSource: "literal-plaintext-secret" }],
+    ["signature header reference", { signatureHeaderRef: "literal-plaintext-secret" }],
+    ["sig reference", { sigReference: "literal-plaintext-secret" }],
+    ["client-key references", { clientKeyValuesRefs: ["literal-plaintext-secret"] }],
+    ["JWT header reference", { jwtHeaderReference: "literal-plaintext-secret" }],
+    ["mixed wrapper ordering", { bearerValueHeaderReference: "literal-plaintext-secret" }],
+    ["token OAuth reference", { tokenOauthRef: "literal-plaintext-secret" }],
+    ["API-key OAuth reference", { apiKeyOauthValueReference: "literal-plaintext-secret" }],
+    ["password OAuth source", { passwordOauthHeaderSource: "literal-plaintext-secret" }],
+    ["token sources", { tokenSources: ["literal-secret-one"] }],
+    ["nested password reference", { passwordRef: { value: "literal-secret-two" } }],
+    ["mixed collection", { tokenRefs: ["env:VALID_TOKEN", "literal-secret"] }],
+    ["nested collection", { tokenRefs: [["env:VALID_TOKEN"]] }],
+    ["unknown scheme", { apiKeyReference: "vault:secret-name" }],
+    ["malformed environment reference", { tokenRef: "env:NOT-VALID" }],
+    ["malformed keychain reference", { passwordSource: "keychain:contains whitespace" }],
+    ["literal credential-source map", { credentialSources: { default: "literal-secret" } }],
+    ["nested credential-source map", { credentialSources: { default: { ref: "env:TOKEN" } } }],
+  ]) {
+    assertSecretRejected(document, label);
+  }
 });
 
 test("secret policy permits empty fields, references, and non-secret lookalikes", () => {
@@ -124,12 +204,42 @@ test("secret policy permits empty fields, references, and non-secret lookalikes"
     ["value-ref", { tokenValueRef: "keychain:item" }],
     ["value-source", { passwordValueSource: "env:AIOS_PASSWORD" }],
     ["plural-value refs", { privateKeyValuesRefs: ["keychain:primary", "env:AIOS_PRIVATE_KEY"] }],
+    ["authorization reference", { authorizationRef: "env:AIOS_AUTHORIZATION" }],
+    ["auth reference", { authValueReference: "keychain:auth" }],
+    ["auth-header source", { authHeaderSource: "env:AIOS_AUTH_HEADER" }],
+    ["bearer reference", { bearerValueRef: "keychain:bearer" }],
+    ["access-key reference", { accessKeyReference: "env:AIOS_ACCESS_KEY" }],
+    [
+      "signing-key references",
+      { signingKeyValuesRefs: ["keychain:signing", "env:AIOS_SIGNING_KEY"] },
+    ],
+    ["basic-auth reference", { basicAuthRef: "env:AIOS_BASIC_AUTH" }],
+    ["proxy-auth header reference", { proxyAuthHeaderReference: "keychain:proxy-auth" }],
+    ["session-cookie reference", { sessionCookieRef: "env:AIOS_SESSION_COOKIE" }],
+    ["session-id source", { sessionIdValueSource: "keychain:session-id" }],
+    ["signature header reference", { signatureHeaderRef: "env:AIOS_SIGNATURE" }],
+    ["sig reference", { sigReference: "keychain:signature" }],
+    ["client-key references", { clientKeyValuesRefs: ["env:AIOS_CLIENT_KEY"] }],
+    ["JWT header reference", { jwtHeaderReference: "keychain:jwt" }],
+    ["mixed wrapper ordering", { bearerValueHeaderReference: "env:AIOS_BEARER" }],
     ["plural reference", { apiKeyReferences: ["keychain:one", "env:SECOND_API_KEY"] }],
     ["underscored ref", { access_token_ref: "env:AIOS_TOKEN" }],
     ["dashed source", { "private-key-source": "keychain:item" }],
     ["token source", { tokenSource: "keychain:item" }],
     ["nested refs", { providers: { example: { tokenRef: "keychain:item" } } }],
     ["token lookalike", { tokenizer: "cl100k_base", tokenBudget: 4096 }],
+    ["oauth lookalike", { oauth: "enabled", oauthEndpoint: "https://example.test/oauth" }],
+    ["provider OAuth lookalike", { providerOauth: "enabled" }],
+    ["authorization metadata", { authorizationPolicy: "external-provider" }],
+    ["auth-header metadata", { authHeaderName: "X-Custom-Auth" }],
+    ["bearer metadata", { bearerFormat: "RFC6750" }],
+    ["access-key metadata", { accessKeyLabel: "automation" }],
+    ["signing-key metadata", { signingKeyAlgorithm: "EdDSA" }],
+    ["session metadata", { sessionTimeout: 3600 }],
+    ["cookie metadata", { cookiePolicy: "strict" }],
+    ["signature metadata", { signatureAlgorithm: "EdDSA" }],
+    ["client-key metadata", { clientKeyLabel: "automation" }],
+    ["JWT metadata", { jwtFormat: "compact" }],
     ["password policy", { passwordPolicy: "external-provider" }],
     ["secret rotation", { secretRotation: { enabled: true } }],
   ]) {
