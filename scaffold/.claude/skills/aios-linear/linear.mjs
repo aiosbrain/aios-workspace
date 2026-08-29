@@ -13,7 +13,7 @@
 //
 // Commands:
 //   get <IDENT> [--full]      one issue (add --full for description + comments; url/priority/
-//                             project/labels/parent/children too)
+//                             project/assignee/labels/parent/children too)
 //   export-desc <IDENT> <file>
 //                             write the exact UTF-8 issue description to a file
 //   verify-desc <IDENT> <file>
