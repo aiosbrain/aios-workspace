@@ -41,6 +41,7 @@ const SECRET_SUFFIXES = [
   "otp",
   "pat",
   "subscriptionkey",
+  "passkey",
 ];
 const CREDENTIAL_SOURCE_NAME = /^[a-z][a-z0-9._-]{0,63}$/i;
 const ENV_REFERENCE = /^env:[A-Za-z_][A-Za-z0-9_]*$/;
@@ -89,16 +90,22 @@ export function resolveUserConfigPath(options = {}) {
  * `apiKey_1`, and `db_password10` are the same family as `token`, `apiKey`, and `password`. A
  * purely numeric key has no stem and is never secret-bearing.
  */
-function normalizedKey(key) {
-  return key
-    .replace(/[^a-z0-9]/gi, "")
-    .toLowerCase()
-    .replace(/\d+$/, "");
+function dropOrdinal(key) {
+  return key.replace(/\d+$/, "");
 }
 
+function normalizedKey(key) {
+  return dropOrdinal(key.replace(/[^a-z0-9]/gi, "").toLowerCase());
+}
+
+/**
+ * Strip one terminal marker and the ordinal that may sit between it and the stem, so
+ * `password1Value`, `apiKey1Ref`, and `secret2Key` reduce to the same stems as their unnumbered
+ * forms at every layer, not just the outermost one.
+ */
 function stripSuffix(key, suffixes) {
   const suffix = suffixes.find((candidate) => key.endsWith(candidate));
-  return suffix ? { stem: key.slice(0, -suffix.length), suffix } : null;
+  return suffix ? { stem: dropOrdinal(key.slice(0, -suffix.length)), suffix } : null;
 }
 
 /**

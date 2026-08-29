@@ -136,6 +136,13 @@ test("user/workspace config rejects normalized plaintext-secret fields", () => {
     "tokens2",
     "secretKey3",
     "tokenValue2",
+    "password1Value",
+    "token10Headers",
+    "secret2Key",
+    "token3Oauth",
+    "apiKey1ValueValue",
+    "passkey",
+    "userPasskeys",
     // Abbreviated carriers.
     "pwd",
     "dbPwd",
@@ -205,6 +212,9 @@ test("secret policy rejects generated casing, separator, plural, and value varia
 test("secret policy rejects literal or malformed reference-shaped fields", () => {
   for (const [label, document] of [
     ["api-key reference", { apiKeyReference: "literal-plaintext-secret" }],
+    ["ordinal api-key reference", { apiKey1Ref: "literal-plaintext-secret" }],
+    ["ordinal password source", { password2Source: "literal-plaintext-secret" }],
+    ["ordinal token value-ref", { token1Value2Ref: "literal-plaintext-secret" }],
     ["derived reference", { apiKeyReferenceValue: "literal-plaintext-secret" }],
     ["value-reference", { apiKeyValueReference: "literal-plaintext-secret" }],
     ["value-ref", { tokenValueRef: "literal-plaintext-secret" }],
@@ -283,6 +293,7 @@ test("secret policy permits empty fields, references, and non-secret lookalikes"
     ["connection-string reference", { connectionStringRef: "env:DATABASE_URL" }],
     ["dsn source", { dsnSource: "keychain:db/primary" }],
     ["ordinal reference", { tokenRef2: "env:SECOND_TOKEN", apiKey2Reference: "keychain:two" }],
+    ["inner ordinal reference", { apiKey1Ref: "env:FIRST_API_KEY", password2Source: "keychain:p" }],
     ["underscored ref", { access_token_ref: "env:AIOS_TOKEN" }],
     ["dashed source", { "private-key-source": "keychain:item" }],
     ["token source", { tokenSource: "keychain:item" }],
