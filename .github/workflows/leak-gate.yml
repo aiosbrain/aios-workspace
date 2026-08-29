@@ -5,7 +5,8 @@
 #
 # The gate has two layers and only one of them needs a secret:
 #   • BASELINE  — name-free shape rules shipped in scripts/leak-gate.sh. Always run,
-#                 including on fork PRs, which GitHub never gives secrets to.
+#                 including on fork PRs, which deliberately get nothing else — see the
+#                 fork-PR step below for why that is a decision and not a limitation.
 #   • TERM SET  — the private identifier list, supplied as $AIOS_LEAK_TERMS_B64.
 #
 # A missing term set degrades the gate to baseline-only and still exits 0. That is the
@@ -67,8 +68,12 @@ jobs:
           fi
 
       - name: Assert leak-gate term secret present (fail closed)
-        # Scoped to push + same-repo PRs: fork PRs never receive repo secrets, so requiring
-        # one there would block every outside contribution. Forks still get the baseline.
+        # Scoped to push + same-repo PRs. Note what this is NOT: under pull_request_target
+        # GitHub does hand this workflow the repo secrets on a fork PR — that is precisely what
+        # makes the trigger a footgun — so the older reasoning that "forks never receive
+        # secrets" does not apply here. The assertion is scoped out of the fork path because
+        # that path deliberately runs baseline-only, and a fail-closed assertion guarding a
+        # sweep that never runs is noise. Forks still get the baseline.
         if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
         env:
           # Boolean only. The secret value is never exported or echoed by this step.
@@ -94,6 +99,13 @@ jobs:
           fi
           bash scripts/leak-gate.sh "$scan_root"
 
+      # Baseline-only on forks is a DECISION, not a limitation (AIO-1092). The trusted
+      # base-branch scanner could sweep a fork tree perfectly safely — it is inert scanner
+      # input either way. It does not, because the gate's pass/fail result would then be a
+      # membership oracle for the private term list, readable by anyone who can open a fork
+      # PR against a public repo. Accepted residual: a protected identifier arriving via a
+      # fork PR is caught by the push-to-main run, i.e. after merge. Same-repo PRs — every
+      # contribution to date — still get the full sweep before merge.
       - name: Confidentiality leak gate (fork PR, baseline only)
         if: github.event_name == 'pull_request_target' && github.event.pull_request.head.repo.full_name != github.repository
         env:
