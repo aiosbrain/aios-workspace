@@ -1529,7 +1529,7 @@ function inferOkfType(rel, frontmatter) {
   if (/(?:^|[/\\])decision-log\.md$/.test(rel)) return "Decision Log";
   if (/(?:^|[/\\])tasks\.md$/.test(rel)) return "Task List";
   if (/sprint-\d+-ledger\.md$/.test(rel)) return "Sprint Ledger";
-  if (/scope-baseline\.md$|scope-ledger\.md$|role\.md$|okrs\.md$/.test(rel)) return "Scope";
+  if (/(?:scope-baseline|scope-ledger|role|okrs)\.md$/.test(rel)) return "Scope";
   if (/[/\\]transcripts[/\\]/.test(rel)) return "Transcript";
   if (/^(2-work|02-deliverables)[/\\]|[/\\](2-work|02-deliverables)[/\\]/.test(rel))
     return "Deliverable";
@@ -1738,7 +1738,9 @@ async function cmdExportOkf(repo, cfg, args) {
   }
 
   // Root index.md
-  const spineFound = [...new Set(files.map((f) => f.rel.split(/[/\\]/)[0]))].sort();
+  const spineFound = [...new Set(files.map((f) => f.rel.split(/[/\\]/)[0]))].sort((a, b) =>
+    a.localeCompare(b)
+  );
   writeFileSync(
     path.join(outputDir, "index.md"),
     generateRootIndex(cfg.project, cfg.project_members, tierFilter, spineFound)

@@ -108,6 +108,22 @@ test("user/workspace config rejects normalized plaintext-secret fields", () => {
     "passwordKeyValue",
     "jwtKeyValues",
     "sigKeyKey",
+    // Standalone carriers (AIO-1066 review): connection strings and codes are secrets too.
+    "connectionString",
+    "connection_string",
+    "CONNECTION-STRINGS",
+    "databaseUrl",
+    "database_url",
+    "jdbcUrl",
+    "dsn",
+    "dsns",
+    "primaryDsn",
+    "accessCode",
+    "access_codes",
+    "passcode",
+    "passphrase",
+    "dbConnectionStringValue",
+    "connectionStringKey",
   ]) {
     assertSecretRejected({ nested: { [key]: "fixture-secret" } }, key);
   }
@@ -244,6 +260,8 @@ test("secret policy permits empty fields, references, and non-secret lookalikes"
     ["JWT header reference", { jwtHeaderReference: "keychain:jwt" }],
     ["mixed wrapper ordering", { bearerValueHeaderReference: "env:AIOS_BEARER" }],
     ["plural reference", { apiKeyReferences: ["keychain:one", "env:SECOND_API_KEY"] }],
+    ["connection-string reference", { connectionStringRef: "env:DATABASE_URL" }],
+    ["dsn source", { dsnSource: "keychain:db/primary" }],
     ["underscored ref", { access_token_ref: "env:AIOS_TOKEN" }],
     ["dashed source", { "private-key-source": "keychain:item" }],
     ["token source", { tokenSource: "keychain:item" }],
@@ -269,6 +287,9 @@ test("secret policy permits empty fields, references, and non-secret lookalikes"
     ["primary key", { primaryKey: "id", partitionKey: "tenant", foreignKeys: ["owner"] }],
     ["key metadata", { secretKeyLabel: "automation", tokenKeyFormat: "opaque", keyName: "x" }],
     ["oauth-key metadata", { oauthKeyId: "kid-1" }],
+    ["connection metadata", { connectionTimeout: 30, connectionPool: 8, maxConnections: 4 }],
+    ["database metadata", { databaseName: "aios", databaseHost: "db.internal" }],
+    ["dsn metadata", { dsnLabel: "primary", dsnFormat: "uri" }],
   ]) {
     assert.doesNotThrow(
       () => parseUserConfig(JSON.stringify({ schemaVersion: 2, ...document })),

@@ -30,7 +30,10 @@ export async function resolveCredentialRoot({
     }
     return {
       values,
-      source: Object.freeze({ name: root.name, fields: Object.keys(candidate).sort() }),
+      source: Object.freeze({
+        name: root.name,
+        fields: Object.keys(candidate).sort((a, b) => a.localeCompare(b)),
+      }),
     };
   }
   throw new AiosError(

@@ -29,6 +29,14 @@ const SECRET_SUFFIXES = [
   "sig",
   "clientkey",
   "jwt",
+  // Standalone credential carriers that are not suffix variants of the entries above.
+  "connectionstring",
+  "databaseurl",
+  "jdbcurl",
+  "dsn",
+  "accesscode",
+  "passcode",
+  "passphrase",
 ];
 const CREDENTIAL_SOURCE_NAME = /^[a-z][a-z0-9._-]{0,63}$/i;
 const ENV_REFERENCE = /^env:[A-Za-z_][A-Za-z0-9_]*$/;
