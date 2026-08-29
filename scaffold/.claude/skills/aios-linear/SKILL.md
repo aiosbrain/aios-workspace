@@ -65,7 +65,7 @@ LIN=linear                      # resolves LINEAR_API_KEY itself; use this
 #   LIN="node .claude/skills/aios-linear/linear.mjs"
 
 $LIN get AIO-75                 # one line: identifier, title, state, id
-$LIN get AIO-75 --full         # + url + full metadata + description + comments
+$LIN get AIO-75 --full         # + url + full metadata (incl. assignee) + description + comments
 $LIN export-desc AIO-75 spec.md # exact UTF-8 description + SHA-256
 $LIN verify-desc AIO-75 spec.md # refetch + compare description (content, not bytes)
 $LIN template aios              # print issue scaffold

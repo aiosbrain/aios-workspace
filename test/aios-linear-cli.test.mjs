@@ -98,6 +98,21 @@ test("get --full prints an explicit (none) assignee for an unassigned issue", ()
   assert.doesNotMatch(result.stdout, /undefined|null/);
 });
 
+test("formatAssignee renders partial and empty identities deterministically", async () => {
+  const { formatAssignee } = await import(
+    path.join(ROOT, "scaffold/.claude/skills/aios-linear/linear-core.mjs")
+  );
+  assert.equal(formatAssignee(null), "(none)");
+  assert.equal(formatAssignee(undefined), "(none)");
+  assert.equal(formatAssignee({ name: "", email: "" }), "(unknown)");
+  assert.equal(formatAssignee({ name: " Alice ", email: null }), "Alice");
+  assert.equal(formatAssignee({ email: "alice@example.test" }), "alice@example.test");
+  assert.equal(
+    formatAssignee({ name: "Alice", email: "alice@example.test", id: "u1" }),
+    "Alice <alice@example.test>"
+  );
+});
+
 test("list follows every issue page", () => {
   const result = runCli(["list", "AIO"], "list-pages");
   assert.equal(result.status, 0, result.stderr);
