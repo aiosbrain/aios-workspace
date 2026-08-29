@@ -195,18 +195,19 @@ export function coverageDiffArgs(base) {
   // --default-prefix: a developer's `diff.noprefix=true` git config would strip
   // the a/ b/ prefixes parseChangedLines keys on, degrading the changed-line
   // gate to a vacuous 100% (0/0) locally.
-  // -C --find-copies-harder: code lifted verbatim from one file into another is moved, not
-  // changed. Without copy detection a large extraction (AIO-1066 moved the legacy runtime out
-  // of aios.mjs) counts every moved line as new executable code and fails the changed-line
-  // gate on coverage the lines already had. Only the lines that genuinely differ from their
-  // source are measured; deletions never count.
+  // -C: code lifted verbatim from one file into another is moved, not changed. Without copy
+  // detection a large extraction (AIO-1066 moved the legacy runtime out of aios.mjs) counts
+  // every moved line as new executable code and fails the changed-line gate on coverage the
+  // lines already had. Plain -C only considers files that THEMSELVES changed in the diff as
+  // copy sources, so a new file that merely resembles an untouched one is still measured in
+  // full; --find-copies-harder is deliberately not used because it would let such a file
+  // hide its cloned portion from the gate. Deletions never count.
   return [
     "diff",
     "--default-prefix",
     "--unified=0",
     "--no-color",
     "-C",
-    "--find-copies-harder",
     base,
     "--",
     ...SOURCE_PATHSPECS,

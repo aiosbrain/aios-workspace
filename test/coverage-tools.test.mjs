@@ -144,7 +144,6 @@ test("coverage diff pathspecs include source files at every directory depth", ()
     "--unified=0",
     "--no-color",
     "-C",
-    "--find-copies-harder",
     "merge-base-sha",
     "--",
     ":(glob)scripts/**/*.mjs",
@@ -166,8 +165,10 @@ test("coverage diff detects copies so moved code is not counted as changed", () 
   // not new executable code; only the lines that differ from their source are measured.
   const args = coverageDiffArgs("merge-base-sha");
   assert.ok(args.includes("-C"));
-  assert.ok(args.includes("--find-copies-harder"));
-  assert.ok(args.indexOf("--find-copies-harder") < args.indexOf("merge-base-sha"));
+  assert.ok(args.indexOf("-C") < args.indexOf("merge-base-sha"));
+  // Only files changed in the diff may be copy sources: a new file that resembles an
+  // untouched one must still be measured in full.
+  assert.ok(!args.includes("--find-copies-harder"));
 });
 
 test(".d.ts declaration files are never coverage sources", () => {
