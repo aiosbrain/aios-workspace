@@ -32,8 +32,8 @@
   },
   "evidence": {
     "coreBase": "42c8cba11ade76c2950e41c2cdb6dd24f72cd9c4",
-    "devtoolsSource": "a4b8dcbe424c42a0f492691a6d5411f324bf56ca",
-    "devtoolsPackage": "0.3.0",
+    "devtoolsSource": "4a9ddb41fc4370338ad271301e6babd3d05a3f69",
+    "devtoolsPackage": "0.3.1",
     "openClawSource": "1af9b07e30df15fb5387a5650cc48f7033f8fc2d"
   },
   "implementationProofs": [
