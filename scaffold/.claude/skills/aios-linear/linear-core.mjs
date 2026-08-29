@@ -53,13 +53,24 @@ export async function findIssue(identifier) {
   return data.issue;
 }
 
+// `get --full` is the mandatory independent readback after `assign`; it must always print a
+// deterministic assignee line so an operator (or agent) can verify ownership without a direct
+// API query. Only display identity is shown — never ids or tokens.
+export function formatAssignee(assignee) {
+  if (!assignee) return "(none)";
+  const name = String(assignee.name ?? "").trim();
+  const email = String(assignee.email ?? "").trim();
+  if (name && email) return `${name} <${email}>`;
+  return name || email || "(unknown)";
+}
+
 export async function printFullIssue(issueId) {
   const data = await gql(
     `query($id:String!){
       issue(id:$id){
         identifier title state{ name } priorityLabel url description createdAt updatedAt
         completedAt canceledAt project{ id name } labels{ nodes{ name } }
-        parent{ identifier title } children(first:50){ nodes{ identifier title state{ name } } }
+        assignee{ name email } parent{ identifier title } children(first:50){ nodes{ identifier title state{ name } } }
         comments(first:50){ nodes{ body user{ name } } }
       }
     }`,
@@ -80,6 +91,7 @@ export async function printFullIssue(issueId) {
     `completed: ${issue.completedAt || "(none)"}`,
     `canceled: ${issue.canceledAt || "(none)"}`,
     `project: ${issue.project?.name || "(none)"}`,
+    `assignee: ${formatAssignee(issue.assignee)}`,
     `labels: ${issue.labels.nodes.map((label) => label.name).join(", ") || "(none)"}`,
     `parent: ${parent}`,
     `children:\n${children}`,

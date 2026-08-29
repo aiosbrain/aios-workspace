@@ -26,6 +26,12 @@ globalThis.fetch = async (_url, init) => {
     if (query.includes("issues(first:250")) throw new Error("paginated lookup used");
     const found = variables.id === "AIO-73" ? a : variables.id === "AIO-75" ? b : issue("issue-old", variables.id);
     data = { issue: found };
+  } else if (query.includes("priorityLabel url description")) {
+    const assignee = mode === "full-assigned" ? { name: "Alice Smith", email: "alice@example.test" } : null;
+    data = { issue: { ...a, priorityLabel: "High", url: "https://linear.app/x/AIO-73", description: "body",
+      createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-02T00:00:00.000Z", completedAt: null, canceledAt: null,
+      project: { id: "p1", name: "Proj" }, labels: { nodes: [] }, assignee, parent: null,
+      children: { nodes: [] }, comments: { nodes: [] } } };
   } else if (query.includes("issues(first:250, after:$after")) {
     data = variables.after
       ? { issues: { nodes: [issue("issue-251", "AIO-251")], pageInfo: { hasNextPage: false, endCursor: null } } }
@@ -64,7 +70,7 @@ globalThis.fetch = async (_url, init) => {
   const result = spawnSync(process.execPath, ["--import", preload, CLI, ...args], {
     cwd,
     encoding: "utf8",
-    env: { ...process.env, LINEAR_API_KEY: "test", MOCK_MODE: mode, MOCK_LOG: log },
+    env: { ...process.env, LINEAR_API_KEY: "test-api-key", MOCK_MODE: mode, MOCK_LOG: log },
   });
   const mutations = readFileSync(log, { encoding: "utf8", flag: "a+" });
   rmSync(dir, { recursive: true, force: true });
@@ -75,6 +81,21 @@ test("get resolves old issue identifiers directly", () => {
   const result = runCli(["get", "AIO-1"], "get-old");
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /AIO-1/);
+});
+
+test("get --full prints the assignee identity for an assigned issue", () => {
+  const result = runCli(["get", "AIO-73", "--full"], "full-assigned");
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /^assignee: Alice Smith <alice@example\.test>$/m);
+  assert.match(result.stdout, /^project: Proj$/m);
+  assert.doesNotMatch(result.stdout, /u1|test-api-key|LINEAR_API_KEY/);
+});
+
+test("get --full prints an explicit (none) assignee for an unassigned issue", () => {
+  const result = runCli(["get", "AIO-73", "--full"], "full-unassigned");
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /^assignee: \(none\)$/m);
+  assert.doesNotMatch(result.stdout, /undefined|null/);
 });
 
 test("list follows every issue page", () => {
