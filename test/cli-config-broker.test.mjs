@@ -92,8 +92,29 @@ test("user/workspace config rejects normalized plaintext-secret fields", () => {
     "apiKeyOauth",
     "passwordOauth",
     "authOauth",
+    // `key`/`keys` are iterative wrappers around a recognized secret family (AIO-1066 review).
+    "secretKey",
+    "secret_Key",
+    "SECRET-KEYS",
+    "sessionKey",
+    "authKey",
+    "signatureKey",
+    "tokenKey",
+    "credentialKey",
+    "oauthKey",
+    "providerOauthKey",
+    "secretKeys",
+    "tokenKeys",
+    "passwordKeyValue",
+    "jwtKeyValues",
+    "sigKeyKey",
   ]) {
     assertSecretRejected({ nested: { [key]: "fixture-secret" } }, key);
+  }
+
+  for (const key of ["secretKey", "tokenKeys", "authKey"]) {
+    assertSecretRejected({ [key]: "fixture-secret" }, `top-level ${key}`);
+    assertSecretRejected({ [key]: ["fixture-secret"] }, `array ${key}`);
   }
 
   for (const [label, document] of [
@@ -242,6 +263,12 @@ test("secret policy permits empty fields, references, and non-secret lookalikes"
     ["JWT metadata", { jwtFormat: "compact" }],
     ["password policy", { passwordPolicy: "external-provider" }],
     ["secret rotation", { secretRotation: { enabled: true } }],
+    // Benign `key` fields: the wrapper is only secret-bearing over a secret-family stem.
+    ["bare key", { key: "workspace", keys: ["a", "b"] }],
+    ["sort key", { sortKey: "updatedAt" }],
+    ["primary key", { primaryKey: "id", partitionKey: "tenant", foreignKeys: ["owner"] }],
+    ["key metadata", { secretKeyLabel: "automation", tokenKeyFormat: "opaque", keyName: "x" }],
+    ["oauth-key metadata", { oauthKeyId: "kid-1" }],
   ]) {
     assert.doesNotThrow(
       () => parseUserConfig(JSON.stringify({ schemaVersion: 2, ...document })),

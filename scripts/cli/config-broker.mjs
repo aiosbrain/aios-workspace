@@ -81,12 +81,26 @@ function stripSuffix(key, suffixes) {
   return suffix ? { stem: key.slice(0, -suffix.length), suffix } : null;
 }
 
+/**
+ * A normalized key is secret-bearing when it ends in a secret-family suffix (singular or plural),
+ * or when a terminal `key`/`keys` wrapper exposes such a stem: `secretKey`, `tokenKeys`, `authKey`,
+ * `oauthKey`. A bare `oauth`/`oauths` suffix is metadata (`oauth`, `providerOauth`) unless its own
+ * stem is secret-bearing (`tokenOauth`). The `key` wrapper alone is never secret-bearing, so `key`,
+ * `sortKey`, and `primaryKey` stay allowed; the check is vocabulary-based, not "ends in key".
+ */
 function hasSecretSuffix(key) {
   const oauthSuffix = stripSuffix(key, ["oauths", "oauth"]);
   if (oauthSuffix) {
     return oauthSuffix.stem ? hasSecretSuffix(oauthSuffix.stem) : false;
   }
-  return SECRET_SUFFIXES.some((suffix) => key.endsWith(suffix) || key.endsWith(`${suffix}s`));
+  if (SECRET_SUFFIXES.some((suffix) => key.endsWith(suffix) || key.endsWith(`${suffix}s`))) {
+    return true;
+  }
+  const keySuffix = stripSuffix(key, ["keys", "key"]);
+  if (!keySuffix?.stem) return false;
+  return (
+    stripSuffix(keySuffix.stem, ["oauths", "oauth"]) !== null || hasSecretSuffix(keySuffix.stem)
+  );
 }
 
 /**
