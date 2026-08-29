@@ -1273,7 +1273,7 @@
       "evidence": [
         "scripts/cli/registry.mjs",
         "scripts/cli/devtools-commands.mjs",
-        "@aiosbrain/aios-devtools@a4b8dcbe424c42a0f492691a6d5411f324bf56ca"
+        "@aiosbrain/aios-devtools@4a9ddb41fc4370338ad271301e6babd3d05a3f69"
       ],
       "metadata": {
         "owner": "adapter.devtools",
@@ -1333,7 +1333,7 @@
       "evidence": [
         "scripts/cli/registry.mjs",
         "scripts/cli/devtools-commands.mjs",
-        "@aiosbrain/aios-devtools@a4b8dcbe424c42a0f492691a6d5411f324bf56ca"
+        "@aiosbrain/aios-devtools@4a9ddb41fc4370338ad271301e6babd3d05a3f69"
       ],
       "metadata": {
         "owner": "adapter.devtools",
@@ -1393,7 +1393,7 @@
       "evidence": [
         "scripts/cli/registry.mjs",
         "scripts/cli/devtools-commands.mjs",
-        "@aiosbrain/aios-devtools@a4b8dcbe424c42a0f492691a6d5411f324bf56ca"
+        "@aiosbrain/aios-devtools@4a9ddb41fc4370338ad271301e6babd3d05a3f69"
       ],
       "metadata": {
         "owner": "adapter.devtools",
@@ -1453,7 +1453,7 @@
       "evidence": [
         "scripts/cli/registry.mjs",
         "scripts/cli/devtools-commands.mjs",
-        "@aiosbrain/aios-devtools@a4b8dcbe424c42a0f492691a6d5411f324bf56ca"
+        "@aiosbrain/aios-devtools@4a9ddb41fc4370338ad271301e6babd3d05a3f69"
       ],
       "metadata": {
         "owner": "adapter.devtools",
@@ -1484,7 +1484,7 @@
       "evidence": [
         "scripts/cli/registry.mjs",
         "scripts/cli/devtools-commands.mjs",
-        "@aiosbrain/aios-devtools@a4b8dcbe424c42a0f492691a6d5411f324bf56ca"
+        "@aiosbrain/aios-devtools@4a9ddb41fc4370338ad271301e6babd3d05a3f69"
       ],
       "metadata": {
         "owner": "adapter.devtools",
@@ -1993,7 +1993,7 @@
       "replacement": "aios build|spec|consolidate-findings|ship|roadmap-run …",
       "rollback": "Reinstall the exact pre-v2 @aiosbrain/aios package recorded by update and atomically restore the last-known-good config snapshot.",
       "evidence": [
-        "@aiosbrain/aios-devtools@a4b8dcbe424c42a0f492691a6d5411f324bf56ca",
+        "@aiosbrain/aios-devtools@4a9ddb41fc4370338ad271301e6babd3d05a3f69",
         "scripts/cli/devtools-commands.mjs"
       ],
       "metadata": {
