@@ -143,6 +143,7 @@ test("coverage diff pathspecs include source files at every directory depth", ()
     "--default-prefix",
     "--unified=0",
     "--no-color",
+    "-C",
     "merge-base-sha",
     "--",
     ":(glob)scripts/**/*.mjs",
@@ -157,6 +158,17 @@ test("coverage diff args pin the a/ b/ prefixes against a diff.noprefix git conf
   // parseChangedLines keys on "+++ b/…" headers; a developer's
   // `diff.noprefix=true` would strip them and degrade the gate to 100% (0/0).
   assert.ok(coverageDiffArgs("merge-base-sha").includes("--default-prefix"));
+});
+
+test("coverage diff detects copies so moved code is not counted as changed", () => {
+  // A verbatim extraction (AIO-1066 lifted the legacy runtime out of aios.mjs) is a copy,
+  // not new executable code; only the lines that differ from their source are measured.
+  const args = coverageDiffArgs("merge-base-sha");
+  assert.ok(args.includes("-C"));
+  assert.ok(args.indexOf("-C") < args.indexOf("merge-base-sha"));
+  // Only files changed in the diff may be copy sources: a new file that resembles an
+  // untouched one must still be measured in full.
+  assert.ok(!args.includes("--find-copies-harder"));
 });
 
 test(".d.ts declaration files are never coverage sources", () => {

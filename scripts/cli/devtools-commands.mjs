@@ -20,10 +20,12 @@
 
 import { loadDevtoolsModule } from "../devtools-dispatch.mjs";
 import { USAGE_LINES as U } from "./usage.mjs";
+import { commandMetadata as M } from "./command-contract.mjs";
 
 export const DEVTOOLS_COMMANDS = {
   build: {
     name: "build",
+    metadata: M`build adapter.devtools optional optional optional human-or-json offline`,
     resolution: "offline",
     usesDevtoolsDir: true,
     loader: () => loadDevtoolsModule("build"),
@@ -33,6 +35,7 @@ export const DEVTOOLS_COMMANDS = {
 
   spec: {
     name: "spec",
+    metadata: M`spec adapter.devtools optional optional optional human-or-json offline`,
     resolution: "offline",
     usesDevtoolsDir: true,
     loader: () => loadDevtoolsModule("spec-eval", { command: "spec" }),
@@ -42,6 +45,7 @@ export const DEVTOOLS_COMMANDS = {
 
   "consolidate-findings": {
     name: "consolidate-findings",
+    metadata: M`consolidate-findings adapter.devtools optional optional optional human-or-json offline`,
     resolution: "offline",
     usesDevtoolsDir: true,
     ownsRepoFlag: true, // same GitHub-slug `--repo` as `pr` — dispatch must not consume it
@@ -53,6 +57,7 @@ export const DEVTOOLS_COMMANDS = {
 
   ship: {
     name: "ship",
+    metadata: M`ship adapter.devtools optional optional optional human-or-json offline`,
     // ship/roadmap-run's `--repo` is a WORKSPACE path (slug comes from detectRepo(repo)).
     resolution: "offline",
     usesDevtoolsDir: true,
@@ -64,6 +69,7 @@ export const DEVTOOLS_COMMANDS = {
 
   "roadmap-run": {
     name: "roadmap-run",
+    metadata: M`roadmap-run adapter.devtools optional optional optional human-or-json offline`,
     resolution: "offline",
     usesDevtoolsDir: true,
     loader: () => loadDevtoolsModule("roadmap-run"),

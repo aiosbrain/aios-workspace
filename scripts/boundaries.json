@@ -94,12 +94,6 @@
       "issue": "AIO-597"
     },
     {
-      "from": "scripts/aios.mjs",
-      "to": "scripts/cli/dispatch.mjs",
-      "reason": "R1: scripts/cli/ has no top-level barrel (scripts/cli.mjs) yet \u2014 aios.mjs is the de facto sole dispatch entry into it.",
-      "issue": "AIO-597"
-    },
-    {
       "from": "scripts/cli-common.mjs",
       "to": "scripts/ui/output-context.mjs",
       "reason": "R1: scripts/ui/ has no top-level barrel (scripts/ui.mjs) yet.",

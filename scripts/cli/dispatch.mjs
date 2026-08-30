@@ -20,51 +20,22 @@
  */
 import { existsSync } from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { consumeDevtoolsDirArg } from "../devtools-dispatch.mjs";
 import { findAgentWorkspace } from "./agent-workspace.mjs";
-import { findCommand, nearestCommand, renderUsage } from "./registry.mjs";
-
-const HELP_TOKENS = new Set(["-h", "--help", "help"]);
-
-// `--version` used to fall through to the unknown-command branch: 190 lines of usage on stdout,
-// `error: unknown command: --version` on stderr, exit 1 — so there was no way to ask an installed
-// CLI what version it was. `-v` is free (nothing at this layer parses it as verbose), so both
-// spellings answer. Handled beside help, BEFORE any repo/config resolution, so it works with no
-// workspace anywhere above cwd — the same property `aios --help` has.
-const VERSION_TOKENS = new Set(["-v", "--version", "version"]);
-
-/** The toolkit checkout that owns this file: scripts/cli/dispatch.mjs → <toolkit>. */
-function toolkitRoot() {
-  return path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
-}
+import { COMMANDS, findCommand, nearestCommand, renderUsage } from "./registry.mjs";
 
 /**
  * @param {object} o
  * @param {string[]} o.argv        process.argv.slice(2)
- * @param {object} o.local         inline handlers + helpers still living in scripts/aios.mjs
- * @param {object} o.resolvers     { findRepoRoot, findRepoRootOffline, findUpdateRoot,
+ * @param {() => Promise<{local: object, resolvers: object}>} [o.contextLoader]
+ * @param {object} [o.local]       injected legacy handlers (tests may pass this directly)
+ * @param {object} [o.resolvers]   { findRepoRoot, findRepoRootOffline, findUpdateRoot,
  *                                   isUpdateRoot, loadConfig, loadOfflineConfig,
  *                                   loadSecretPatterns, die }
  */
-export async function dispatch({ argv, local, resolvers }) {
-  const cmd = argv[0];
-  const rest = argv.slice(1);
-  const { die } = resolvers;
-
-  if (!cmd || HELP_TOKENS.has(cmd)) {
-    console.log(renderUsage());
-    process.exit(0);
-  }
-
-  if (VERSION_TOKENS.has(cmd)) {
-    // Lazily imported so the version branch costs nothing on the hot path, matching how every
-    // command module is loaded. toolkit-meta.mjs is the one existing reader of this version —
-    // `aios update` stamps the same string — so there is no second copy of the lookup.
-    const { toolkitMeta } = await import("../toolkit-meta.mjs");
-    console.log(toolkitMeta(toolkitRoot()).label);
-    process.exit(0);
-  }
+export async function dispatch({ argv, local, resolvers, contextLoader }) {
+  const cmd = argv[0] ?? "help";
+  const rest = argv[0] ? argv.slice(1) : [];
 
   const desc = findCommand(cmd);
   if (!desc) {
@@ -78,6 +49,21 @@ export async function dispatch({ argv, local, resolvers }) {
     );
     process.exit(1);
   }
+
+  if (desc.metadata?.startupPolicy === "diagnostic") {
+    const mod = await desc.loader();
+    const catalog = { usage: renderUsage(), commands: COMMANDS };
+    return finish(
+      desc,
+      await desc.adapt({ repo: null, cfg: null, patterns: null, rest, local: null, catalog }, mod)
+    );
+  }
+
+  if (!local || !resolvers) {
+    if (!contextLoader) throw new Error(`aios ${cmd}: runtime context is unavailable`);
+    ({ local, resolvers } = await contextLoader(desc));
+  }
+  const { die } = resolvers;
 
   // The devtools checkout selector chooses which implementation the lazy loader imports; it is
   // not an argument to that implementation. The loader reads the original process argv, while

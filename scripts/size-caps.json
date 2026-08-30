@@ -24,7 +24,7 @@
     ".claude/skills/visual-qa/scripts/visual-qa.mjs": 541,
     ".harness/skills/visual-qa/scripts/visual-qa.mjs": 541,
     "hooks/local-bugbot-gate.mjs": 878,
-    "scripts/aios.mjs": 2354,
+    "scripts/aios-runtime.mjs": 2354,
     "scripts/brain-mcp.mjs": 775,
     "scripts/brain-mcp.test.mjs": 594,
     "scripts/connector.mjs": 694,

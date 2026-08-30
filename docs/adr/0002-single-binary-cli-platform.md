@@ -26,7 +26,8 @@ The evidence frozen for this decision is:
   `42c8cba11ade76c2950e41c2cdb6dd24f72cd9c4`, including the merged CLI-inventory
   pagination correction;
 - `@aiosbrain/aios-devtools` source
-  `a4b8dcbe424c42a0f492691a6d5411f324bf56ca` and package `0.3.0`;
+  `a4b8dcbe424c42a0f492691a6d5411f324bf56ca` and package `0.3.0` at decision time; the shipped
+  pin is release `v0.3.1` (merge `4a9ddb41fc4370338ad271301e6babd3d05a3f69`, package `0.3.1`);
 - the 2026-08-25 adversarial CLI audit named in AIO-1065;
 - OpenClaw `1af9b07e30df15fb5387a5650cc48f7033f8fc2d`, used only for the command-registry,
   lazy-loading, diagnostic, and packed-artifact boundaries described below.
