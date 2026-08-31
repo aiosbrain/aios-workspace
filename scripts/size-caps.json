@@ -27,7 +27,7 @@
     "scripts/aios-runtime.mjs": 2354,
     "scripts/brain-mcp.mjs": 775,
     "scripts/brain-mcp.test.mjs": 594,
-    "scripts/connector.mjs": 694,
+    "scripts/connector.mjs": 640,
     "scripts/context-health.mjs": 712,
     "scripts/decisions.mjs": 509,
     "scripts/inbox.mjs": 852,
