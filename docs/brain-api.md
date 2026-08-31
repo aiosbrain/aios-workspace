@@ -369,6 +369,11 @@ writeback/registration pulls), so a newer client still works against an older br
   narrow, and it fails safe: an unrecognised build reads as a caveat, never as a pass. A
   pre-release is `unknown` rather than `current` on purpose — SemVer orders a pre-release BEFORE
   its release, so `0.2.0-rc1` is not evidence that the build emits everything `0.2.0` promises.
+  **The accepted cost, stated here rather than discovered later:** a genuine pre-release build —
+  if `aios_ingest.__version__` is ever shipped as `0.2.0-rc1` — reports `unknown` rather than
+  `current`, and reads as unidentified until `minScannerVersion` accounts for it. That is the
+  right trade: "I could not read this" is true, whereas "this is current" was a guess. A producer
+  that wants to be identified MUST emit a bare `MAJOR.MINOR.PATCH`.
 
   At the moment 1.24 ships every scanner predates it and sends nothing, so `unknown` will almost
   always *in fact* be an old scanner — but that is a strong prior, not a measurement, and the

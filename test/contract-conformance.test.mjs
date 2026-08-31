@@ -249,6 +249,12 @@ function parseRelease(value) {
 // The truth table from docs/brain-api.md, executable. Reference only — see SCOPE above.
 function classifyScanner(scannerVersion, minScannerVersion) {
   const got = parseRelease(scannerVersion);
+  // Unreadable resolves to `unknown` HERE, before any comparison happens, and must never fall
+  // through to the ordering below. The consumer leg shipped exactly that bug: `0.1.0-rc.1` read
+  // as `stale`, because the leading `0.1.0` was recovered from a string the parser had already
+  // failed on and then ordered against the minimum. That is a verdict derived from a measurement
+  // that was never made — the same defect as reporting `unknown` as `stale`, one layer down.
+  // The `0.1.0-rc.1` vector pins it.
   if (!got) return "unknown";
   const min = parseRelease(minScannerVersion);
   assert.ok(min, "minScannerVersion must itself be a release triple");

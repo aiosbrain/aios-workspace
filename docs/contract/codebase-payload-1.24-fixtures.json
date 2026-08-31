@@ -1437,6 +1437,16 @@
         "state": "unknown"
       },
       {
+        "name": "BELOW-minimum prefix with an unreadable suffix: must NOT fall through to stale - reading 0.1.0 out of a string the parser just failed on is a verdict from a measurement never made",
+        "scanner_version": "0.1.0-rc.1",
+        "state": "unknown"
+      },
+      {
+        "name": "four components: more than three integers is not the published grammar",
+        "scanner_version": "1.0.0.0",
+        "state": "unknown"
+      },
+      {
         "name": "below the declared minimum: the one case that is genuinely STALE",
         "scanner_version": "0.1.0",
         "state": "stale"
