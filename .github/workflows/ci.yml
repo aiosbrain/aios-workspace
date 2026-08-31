@@ -414,6 +414,16 @@ jobs:
     permissions:
       actions: read
       contents: read
+    # This workflow also runs on `pull_request`, where GitHub takes the workflow FILE from the PR
+    # head — so the `if:` below is not a boundary against a same-repo branch PR that rewrites it.
+    # The environment is, but only after the repo-level secrets are deleted: on a `pull_request`
+    # run GITHUB_REF is `refs/pull/<n>/merge`, which does not satisfy this environment's `main`
+    # branch policy, so the job fails outright with zero steps rather than handing over a
+    # credential. (Note this reasoning does NOT carry to a `pull_request_target` job, where the
+    # ref is always the base branch and any author satisfies the policy.) Environment secrets
+    # fall back to repo secrets, so this line changes nothing until AIOS_API_KEY /
+    # AIOS_BRAIN_URL / AIOS_TEAM are re-entered here and the repo-level copies removed.
+    environment: trusted-automation
     if: >-
       always() &&
       github.event_name == 'push' &&
