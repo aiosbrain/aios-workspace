@@ -33,22 +33,22 @@
       "workflow": ".github/workflows/aios-work-sync.yml",
       "job": "notify-brain",
       "rule": "secrets-in-pr-reachable",
-      "owner": "Platform Engineering",
-      "justification": "Brain credentials in a `pull_request: types: [closed]` job. Plan §5.1 requires the credentialed work to move to trusted default-branch logic or the security service; that redesign (push-to-main plus merged-PR resolution) is owned by the same work item as the ci.yml `scan` job and is not a mechanical edit. Delete this entry when the work-event post moves off the pull_request trigger."
+      "owner": "AIOS Security",
+      "justification": "Landed by PR #664 as the plan's sanctioned pull_request_target + `environment: trusted-automation` exception (§5.1, the \"static AST-policy exception reviewed by Security\"). The waiver is still required and still correct: an environment is a BLAST-RADIUS control, not an author-trust control — for pull_request_target the ref is always the base branch, so a fork PR author satisfies a main-only deployment branch policy and receives the secret anyway. This entry suspends ONLY the secrets rule for ONLY this job; pr-target-checkout, pr-target-dynamic-run, pr-target-artifact-download, pr-target-package-install and mutable-action-ref all remain enforced against the same file and are currently clean, which is what makes the shape acceptable. Delete this entry when the credential moves behind the security service."
     },
     {
       "workflow": ".github/workflows/linear-nudge.yml",
       "job": "nudge",
       "rule": "secrets-in-pr-reachable",
-      "owner": "Platform Engineering",
-      "justification": "LINEAR_API_KEY in a pull_request-triggered job. Plan §5.1 is explicit for Workspace: the final CI policy permits no direct LINEAR_API_KEY in a PR-triggered job, and both this workflow and pr-in-review.yml need the same replacement (trusted service or default-branch logic with a scoped token). Delete this entry when the Linear operation moves off the PR trigger."
+      "owner": "AIOS Security",
+      "justification": "Landed by PR #664 as the plan's sanctioned pull_request_target + `environment: trusted-automation` exception (§5.1, the \"static AST-policy exception reviewed by Security\"). The waiver is still required and still correct: an environment is a BLAST-RADIUS control, not an author-trust control — for pull_request_target the ref is always the base branch, so a fork PR author satisfies a main-only deployment branch policy and receives the secret anyway. This entry suspends ONLY the secrets rule for ONLY this job; pr-target-checkout, pr-target-dynamic-run, pr-target-artifact-download, pr-target-package-install and mutable-action-ref all remain enforced against the same file and are currently clean, which is what makes the shape acceptable. Delete this entry when the credential moves behind the security service."
     },
     {
       "workflow": ".github/workflows/pr-in-review.yml",
       "job": "in-review",
       "rule": "secrets-in-pr-reachable",
-      "owner": "Platform Engineering",
-      "justification": "LINEAR_API_KEY in a PR-reachable job — the exact violation named in plan §5.1 and §2.4 as immediately unsafe, and the plan's sanctioned 'static AST-policy exception reviewed by Security'. The remediation is in flight in a parallel worktree and lands this job as pull_request_target with an environment-scoped token; an environment is a blast-radius control, NOT an author-trust control (a fork PR still receives the secret, because pull_request_target always resolves the base ref, so any author satisfies a main-only deployment branch policy). This waiver therefore suspends ONLY the secrets rule for ONLY this job: pr-target-checkout, pr-target-dynamic-run, pr-target-artifact-download, pr-target-package-install and mutable-action-ref all remain enforced against the same file. Delete this entry with that fix; if it lands first, the entry goes stale and the gate says so."
+      "owner": "AIOS Security",
+      "justification": "Landed by PR #664 as the plan's sanctioned pull_request_target + `environment: trusted-automation` exception (§5.1, the \"static AST-policy exception reviewed by Security\"). The waiver is still required and still correct: an environment is a BLAST-RADIUS control, not an author-trust control — for pull_request_target the ref is always the base branch, so a fork PR author satisfies a main-only deployment branch policy and receives the secret anyway. This entry suspends ONLY the secrets rule for ONLY this job; pr-target-checkout, pr-target-dynamic-run, pr-target-artifact-download, pr-target-package-install and mutable-action-ref all remain enforced against the same file and are currently clean, which is what makes the shape acceptable. Delete this entry when the credential moves behind the security service."
     },
     {
       "workflow": ".github/workflows/pr-review-evidence.yml",
@@ -147,13 +147,6 @@
       "rule": "mutable-action-ref",
       "owner": "Platform Engineering",
       "justification": "Pre-existing `@vN` tag ref in the `mutation` job, measured 2026-08-31. This is a real finding, not a false positive: a tag is repointable by the action owner, so review of this file is not evidence about the code that runs. It is waived rather than fixed here because org-wide SHA pinning is a separate workstream (plan §5.2) already in flight across the fleet — aios-design, aios-engineering-harness, aios-marketing and aios-workspace-gui have pinning PRs open, aios-website and aios-devtools were already pinned, and aios-workspace's remaining refs land as one reviewable change. Mass-editing workflows inside the PR that introduces this checker would both hide the checker's diff and collide with that work. Delete this entry when the pinning PR lands."
-    },
-    {
-      "workflow": ".github/workflows/linear-nudge.yml",
-      "job": "nudge",
-      "rule": "mutable-action-ref",
-      "owner": "Platform Engineering",
-      "justification": "Pre-existing `@vN` tag ref in the `nudge` job, measured 2026-08-31. This is a real finding, not a false positive: a tag is repointable by the action owner, so review of this file is not evidence about the code that runs. It is waived rather than fixed here because org-wide SHA pinning is a separate workstream (plan §5.2) already in flight across the fleet — aios-design, aios-engineering-harness, aios-marketing and aios-workspace-gui have pinning PRs open, aios-website and aios-devtools were already pinned, and aios-workspace's remaining refs land as one reviewable change. Mass-editing workflows inside the PR that introduces this checker would both hide the checker's diff and collide with that work. Delete this entry when the pinning PR lands. This job also pulls actions/github-script, which executes JavaScript in the job context, so it is a priority for that PR."
     },
     {
       "workflow": ".github/workflows/pr-review-evidence.yml",
