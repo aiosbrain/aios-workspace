@@ -212,3 +212,66 @@ test("workspace subdirectory invocation resolves the workspace credential and te
     rmSync(cfg, { recursive: true, force: true });
   }
 });
+
+test("nested .env below a workspace never shadows the aios.yaml root (Codex r2)", () => {
+  // A package subdirectory carrying its own .env (decoy key) sits INSIDE the workspace.
+  // Both routes must still resolve the aios.yaml root: the workspace vault key reaches the
+  // provider (mock-asserted, decoy would fail it) and the workspace template still wins.
+  const ws = mkdtempSync(path.join(tmpdir(), "aio-1067-contract-nested-"));
+  const nested = path.join(ws, "packages", "tool");
+  mkdirSync(nested, { recursive: true });
+  writeFileSync(path.join(ws, "aios.yaml"), "project: synthetic\n");
+  writeFileSync(path.join(ws, ".env"), "LINEAR_API_KEY=ws-synthetic-key-not-real\n");
+  writeFileSync(path.join(nested, ".env"), "LINEAR_API_KEY=nested-decoy-key-not-real\n");
+  mkdirSync(path.join(ws, "docs", "agentic-ergonomics"), { recursive: true });
+  writeFileSync(
+    path.join(ws, "docs", "agentic-ergonomics", "aios-issue-template.md"),
+    "# TITLE — synthetic\n\nWORKSPACE-TEMPLATE-MARKER\n"
+  );
+  const cfg = mkdtempSync(path.join(tmpdir(), "aio-1067-contract-nested-cfg-"));
+  const env = freshEnv(cfg, { MOCK_EXPECT_AUTH: "ws-synthetic-key-not-real" });
+  delete env.AIOS_DISABLE_WORKSPACE_CREDENTIALS;
+  const LINEAR_BIN = path.join(ROOT, "scripts", "linear.mjs");
+  try {
+    const invoke = (bin, args) =>
+      spawnSync(process.execPath, ["--import", MOCK, bin, ...args], {
+        cwd: nested,
+        encoding: "utf8",
+        env,
+      });
+    const canonical = invoke(AIOS, ["linear", "get", "AIO-73"]);
+    const delegate = invoke(LINEAR_BIN, ["get", "AIO-73"]);
+    for (const result of [canonical, delegate]) {
+      assert.equal(result.status, 0, result.stderr);
+      assert.doesNotMatch(result.stdout + result.stderr, /decoy|ws-synthetic-key/);
+    }
+    assert.equal(delegate.stdout, canonical.stdout, "route parity from the nested dir");
+    for (const result of [
+      invoke(AIOS, ["linear", "template", "aios"]),
+      invoke(LINEAR_BIN, ["template", "aios"]),
+    ]) {
+      assert.equal(result.status, 0, result.stderr);
+      assert.match(result.stdout, /WORKSPACE-TEMPLATE-MARKER/);
+    }
+  } finally {
+    rmSync(ws, { recursive: true, force: true });
+    rmSync(cfg, { recursive: true, force: true });
+  }
+});
+
+test("with no aios.yaml anywhere, the nearest .env vault is still found (walk-up fallback)", async () => {
+  const { findLinearBase } = await import("../scripts/connectors/linear/credentials.mjs");
+  const root = mkdtempSync(path.join(tmpdir(), "aio-1067-noyaml-"));
+  const deep = path.join(root, "a", "b");
+  mkdirSync(deep, { recursive: true });
+  writeFileSync(path.join(root, ".env"), "LINEAR_API_KEY=vault-only-key-not-real\n");
+  try {
+    assert.equal(findLinearBase(deep), root, "nearest .env wins when no workspace marker exists");
+    const bare = path.join(deep, "no-markers");
+    mkdirSync(bare, { recursive: true });
+    rmSync(path.join(root, ".env"));
+    assert.equal(findLinearBase(bare), bare, "no markers at all → the start directory");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

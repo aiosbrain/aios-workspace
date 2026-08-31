@@ -29,19 +29,33 @@ import {
   resolveUserConfigPath,
 } from "../../cli.mjs";
 
-/**
- * Nearest ancestor that looks like a workspace (aios.yaml or a .env vault), else the start
- * directory. The compat `linear` bin uses this so a subdirectory invocation resolves the
- * SAME workspace root dispatch hands `aios linear` (Bugbot round 1, AIO-1067).
- */
-export function findLinearBase(startDir = process.cwd()) {
+function ancestors(startDir) {
+  const chain = [];
   let dir = path.resolve(startDir);
   for (;;) {
-    if (existsSync(path.join(dir, "aios.yaml")) || existsSync(path.join(dir, ".env"))) return dir;
+    chain.push(dir);
     const parent = path.dirname(dir);
-    if (parent === dir) return path.resolve(startDir);
+    if (parent === dir) return chain;
     dir = parent;
   }
+}
+
+/**
+ * The workspace root the compat `linear` bin should target, matching what dispatch hands
+ * `aios linear` (route-parity contract, AIO-1067). The workspace marker `aios.yaml` wins
+ * from ANY depth — a nested package directory carrying its own `.env` must not shadow the
+ * workspace above it (Codex round 2). Only when no `aios.yaml` exists anywhere up the tree
+ * does the nearest `.env` vault stand in; with neither, the start directory is returned.
+ */
+export function findLinearBase(startDir = process.cwd()) {
+  const chain = ancestors(startDir);
+  for (const dir of chain) {
+    if (existsSync(path.join(dir, "aios.yaml"))) return dir;
+  }
+  for (const dir of chain) {
+    if (existsSync(path.join(dir, ".env"))) return dir;
+  }
+  return chain[0];
 }
 
 export const ENV_REFERENCE = /^env:([A-Za-z_][A-Za-z0-9_]*)$/;
