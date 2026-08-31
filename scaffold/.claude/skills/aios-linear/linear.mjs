@@ -49,11 +49,13 @@
 //                             add a team label without removing existing labels
 //   template [aios|finding]   print an issue scaffold (aios slice spec, or the
 //                             post-merge finding shape — see docs/finding-taxonomy.md)
-//   create "<title>" [--desc <file>] [--template aios] [--label <name>]... [--state <name>]
+//   create "<title>" [--desc <file>] [--force] [--template aios] [--label <name>]... [--state <name>]
 //          [--parent <IDENT>] [--assignee <name-or-email>]
 //                             --label is repeatable; prints the Linear-generated git branch name;
 //                             optionally prepends a configured origin block (see SKILL.md);
-//                             --desc is ignored when --template is set
+//                             --desc is ignored when --template is set; the description runs the
+//                             same indented-table lint + post-write readback as set-desc
+//                             (--force downgrades the lint to a warning)
 //   users <TEAMKEY>           list assignable users
 //   assign <IDENT> <name-or-email>
 import { readFileSync, writeFileSync } from "node:fs";
@@ -61,19 +63,16 @@ import { createHash } from "node:crypto";
 import { applyDescriptionPatch, resolveLinearTemplate } from "./linear-template.mjs";
 import { confirmStored, describeContentDrift, lintDescription } from "./linear-desc-guard.mjs";
 import {
-  DEFAULT_TEAM_KEY,
   findExactRelation,
   findIssue,
   findLabel,
   findTeamId,
-  findTeamState,
   findUser,
   formatIssue,
   getRelations,
   gql,
   hasRelatedRelation,
   listTeamMembers,
-  parseCreateArgs,
   parsePriority,
   printFullIssue,
   relatedIssues,
@@ -82,6 +81,7 @@ import {
 import { findWorkflowState, listIssueComments, listIssueLabels } from "./linear-pagination.mjs";
 import { cmdCreateProject, cmdProjects } from "./linear-projects.mjs";
 import { cmdList } from "./linear-list.mjs";
+import { cmdCreate } from "./linear-create.mjs";
 
 const argv = process.argv.slice(2);
 const cmd = argv[0];
@@ -433,41 +433,7 @@ if (cmd === "get") {
   );
   console.log(`assigned ${n.identifier} → ${u.name}`);
 } else if (cmd === "create") {
-  const { title, description, labels, state, parent, assignee, project, priority } =
-    parseCreateArgs(argv.slice(1));
-  const teamId = await findTeamId(DEFAULT_TEAM_KEY);
-  const st = await findTeamState(teamId, state);
-  if (!st) {
-    console.error(`state "${state}" not found`);
-    process.exit(1);
-  }
-  const input = { teamId, title, description, stateId: st.id };
-  if (parent) {
-    const p = await findIssue(parent);
-    if (p) input.parentId = p.id;
-    else console.error(`warning: parent "${parent}" not found — creating without parent`);
-  }
-  if (labels.length) {
-    const ids = [];
-    for (const name of labels) {
-      const lb = await findLabel(teamId, name);
-      if (lb) ids.push(lb.id);
-      else console.error(`warning: label "${name}" not found — skipping that label`);
-    }
-    if (ids.length) input.labelIds = ids;
-  }
-  if (assignee) {
-    const u = await findUser(DEFAULT_TEAM_KEY, assignee);
-    input.assigneeId = u.id;
-  }
-  if (project) input.projectId = (await resolveProject(project)).id;
-  if (priority !== null) input.priority = priority;
-  const d = await gql(
-    `mutation($input:IssueCreateInput!){ issueCreate(input:$input){ success issue{ identifier title url branchName } } }`,
-    { input }
-  );
-  const i = d.issueCreate.issue;
-  console.log(`created ${i.identifier}  ${i.title}\n${i.url}\nbranch: ${i.branchName}`);
+  await cmdCreate(argv.slice(1));
 } else {
   console.log(
     "usage: linear.mjs get <IDENT> [--full] | export-desc <IDENT> <file> | verify-desc <IDENT> <file> | " +
@@ -482,7 +448,7 @@ if (cmd === "get") {
       'create-project "<name>" [--desc <file>] [--team KEY] | ' +
       "set-parent <IDENT> <PARENT_IDENT> | " +
       "add-label <IDENT> <LABEL> | template [aios|finding] | " +
-      'create "<title>" [--desc <file>] [--template aios|finding] [--label <name>]... [--state Backlog] ' +
+      'create "<title>" [--desc <file>] [--force] [--template aios|finding] [--label <name>]... [--state Backlog] ' +
       "[--parent <IDENT>] [--assignee <name-or-email>] [--project <name>] [--priority <level>] | users <TEAMKEY> | assign <IDENT> <name-or-email>"
   );
 }
