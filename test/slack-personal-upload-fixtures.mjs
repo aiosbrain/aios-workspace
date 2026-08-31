@@ -155,7 +155,11 @@ export function runFileRaw({ base, args, cwd }) {
         encoding: "utf8",
         cwd,
         maxBuffer: 64 * 1024 * 1024,
-        env: { ...process.env, SLACK_USER_TOKEN: MOCK_TOKEN },
+        // AIOS_SLACK_ALLOW_LOOPBACK_HTTP: the CLI refuses ALL plaintext http by default — even
+        // loopback — unless this explicit test flag is set (AIO-1017). The mock is loopback
+        // http with a fake token, which is exactly the case the flag exists for. The flag
+        // relaxes the scheme policy only; it cannot repoint any request.
+        env: { ...process.env, SLACK_USER_TOKEN: MOCK_TOKEN, AIOS_SLACK_ALLOW_LOOPBACK_HTTP: "1" },
       },
       (err, stdout, stderr) => resolve({ status: err ? (err.code ?? 1) : 0, stdout, stderr })
     );
