@@ -202,3 +202,88 @@ test("gen-contract-fixture.mjs reproduces the committed fixture byte-for-byte", 
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// ---------------------------------------------------------------------------------------
+// brain-api 1.24 scanner-identity READING (AIO-1011). The schema pins the wire shape of
+// `metrics.scanner_version`; nothing in JSON Schema can pin what a reader must CONCLUDE from
+// it, so the conclusion is pinned here against the vendored vectors instead of left to prose.
+//
+// The rule these exist to defend: absent / null / unparseable is `unknown`, NEVER `stale`.
+// "The scan did not tell us" is a different statement from "the scan told us it is old".
+// Right now every scanner in the fleet predates 1.24 and sends nothing, so `unknown` will
+// almost always in fact be an old scanner — which is exactly why this is worth a guard. That
+// is a strong prior, not a measurement, and a contract that encodes the prior as a fact
+// reproduces the defect 1.24 exists to remove: absence of evidence rendered as evidence.
+// ---------------------------------------------------------------------------------------
+
+// Ordered comparison of the release triple. Deliberately strict: anything that is not exactly
+// three dotted non-negative integers is UNREADABLE, and unreadable resolves to `unknown` by the
+// table rather than to any position in the ordering.
+function parseRelease(value) {
+  if (typeof value !== "string") return null;
+  const m = /^(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$/.exec(value);
+  return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
+}
+
+// The truth table from docs/brain-api.md, executable.
+function classifyScanner(scannerVersion, minScannerVersion) {
+  const got = parseRelease(scannerVersion);
+  if (!got) return "unknown";
+  const min = parseRelease(minScannerVersion);
+  assert.ok(min, "minScannerVersion must itself be a release triple");
+  for (let i = 0; i < 3; i += 1) {
+    if (got[i] !== min[i]) return got[i] > min[i] ? "current" : "stale";
+  }
+  return "current"; // at the minimum is at-or-above
+}
+
+const scannerVectors = (() => {
+  const c = fixture.codebasePayloadContract;
+  const fx = JSON.parse(readFileSync(path.join(ROOT, "docs/contract", c.fixtures.path), "utf8"));
+  return { vectors: fx.scanner_state?.vectors, min: c.minScannerVersion };
+})();
+
+test("scanner-state vectors cover all three outcomes, including both unknown arms", () => {
+  const { vectors } = scannerVectors;
+  assert.ok(Array.isArray(vectors) && vectors.length > 0, "fixtures must carry scanner_state");
+  const states = new Set(vectors.map((v) => v.state));
+  assert.deepEqual([...states].sort(), ["current", "stale", "unknown"]);
+  // Both ways of saying "we were not told" must be represented, or the guard could pass while
+  // only one of them is handled.
+  assert.ok(
+    vectors.some((v) => !("scanner_version" in v) && v.state === "unknown"),
+    "an ABSENT scanner_version vector must be present"
+  );
+  assert.ok(
+    vectors.some((v) => v.scanner_version === null && v.state === "unknown"),
+    "an explicit-null scanner_version vector must be present"
+  );
+  assert.ok(
+    vectors.some((v) => typeof v.scanner_version === "string" && v.state === "unknown"),
+    "an unparseable scanner_version vector must be present"
+  );
+});
+
+test("every scanner-state vector matches the contract's truth table", () => {
+  const { vectors, min } = scannerVectors;
+  for (const v of vectors) {
+    // Absence is encoded by the key being missing, exactly as it is on the wire.
+    const value = "scanner_version" in v ? v.scanner_version : undefined;
+    assert.equal(classifyScanner(value, min), v.state, v.name);
+  }
+});
+
+test("unknown is never stale: not-told and told-it-is-old stay separate outcomes", () => {
+  const { min } = scannerVectors;
+  for (const notTold of [undefined, null, "", "nightly", "not a version at all"]) {
+    assert.equal(
+      classifyScanner(notTold, min),
+      "unknown",
+      `${JSON.stringify(notTold)} must read as unknown, never stale`
+    );
+  }
+  // And the one case that IS stale still is, so the guard above cannot pass by collapsing
+  // everything to `unknown` instead — the opposite failure, equally wrong.
+  assert.equal(classifyScanner("0.1.0", min), "stale");
+  assert.equal(classifyScanner(min, min), "current");
+});

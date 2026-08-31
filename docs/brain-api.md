@@ -350,8 +350,20 @@ writeback/registration pulls), so a newer client still works against an older br
   **Staleness is defined by a DECLARED MINIMUM, not by commit distance.**
   `docs/contract/brain-contract.json` carries a `codebasePayloadContract.minScannerVersion`
   (`"0.2.0"` at this revision): the oldest scanner build that can emit everything the current
-  contract asks for. A scan is stale when its `scanner_version` is absent, unparseable, or orders
-  below that minimum. Commit distance ("149 commits behind") is the tempting alternative and is
+  contract asks for. **Three outcomes, and `unknown` is never folded into `stale`** — "the scan did
+  not tell us" is a different statement from "the scan told us it is old", and collapsing them is
+  the very error this revision exists to remove:
+
+  | `metrics.scanner_version` | State |
+  |---|---|
+  | absent / `null` / unparseable | `unknown` |
+  | parseable, orders below `minScannerVersion` | `stale` |
+  | parseable, orders at or above `minScannerVersion` | `current` |
+
+  At the moment 1.24 ships every scanner predates it and sends nothing, so `unknown` will almost
+  always *in fact* be an old scanner — but that is a strong prior, not a measurement, and the
+  contract must not encode a prior as a fact. A reader MAY present the prior ("no scanner identity
+  — most likely a build older than 1.24"); it MUST NOT report `unknown` as `stale`. Commit distance ("149 commits behind") is the tempting alternative and is
   the wrong measure: it is undefined across branches and forks, requires the brain to hold a git
   history it does not have at runtime, ceases to exist the moment the scanner ships as a package,
   and — decisively — says nothing about whether anything the contract needs actually changed in
@@ -2002,7 +2014,18 @@ isolation is enforced in app code, with no DB backstop). Rate limit: 60/min per 
     disappears when the scanner ships as a package, and does not say whether anything relevant
     changed. Raising `minScannerVersion` is part of any revision that requires new scanner output.
   - **Derived, not sent:** the brain classifies each scan as `current` / `stale` / `unknown` from
-    `scanner_version` alone. A sender MUST NOT push a staleness verdict.
+    `scanner_version` alone, by the same table as the v1.24 revision entry. A sender MUST NOT push
+    a staleness verdict.
+
+    | `metrics.scanner_version` | State |
+    |---|---|
+    | absent / `null` / unparseable | `unknown` |
+    | parseable, orders below `minScannerVersion` | `stale` |
+    | parseable, orders at or above `minScannerVersion` | `current` |
+
+    `unknown` and `stale` are **distinct outcomes and MUST NOT be collapsed**: absence of evidence
+    is not evidence of staleness, exactly as it is not evidence of currency. The conformance
+    vectors in `codebase-payload-1.24-fixtures.json` (`scanner_state`) pin all three.
 - The scan is keyed by `(team_id, slug)` for the codebase and `(codebase_id, head_sha)` for the
   metrics point (idempotent: re-pushing the same commit updates in place, no duplicate point).
 - **AEM agent-readiness** fields (`readiness_*`) are **optional and scored scanner-side** against
