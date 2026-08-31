@@ -1,0 +1,13 @@
+# VIOLATES mutable-action-ref — a tag ref and a branch ref instead of a 40-hex commit SHA.
+name: violating mutable action
+on:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: some-org/some-action@main
+      - run: echo built

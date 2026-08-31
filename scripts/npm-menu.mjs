@@ -44,6 +44,7 @@ export const CATEGORIES = {
       "check:domains",
       "check:size",
       "check:boundaries",
+      "check:workflow-policy", // leak-gate remediation §5.1.3 — static policy over PR-reachable workflows
       "check:devtools",
       "check:codebase-health", // AIO-605 advisory delta vs the committed baseline
       "check:inbox-audit",

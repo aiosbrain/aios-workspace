@@ -1,7 +1,29 @@
 # CI skeleton seeded by `aios repo-bootstrap` (AIO-602). This repo owns it from here —
 # the bootstrap never overwrites an existing ci.yml. The governance-gates job mirrors
 # the aios-workspace invariants (ENGINEERING-CONSTITUTION.md §8): file-size cap,
-# repo-boundary seams, and the confidentiality leak gate.
+# repo-boundary seams, and the static workflow policy.
+#
+# ── NO SECRET-BEARING PR SCANNER IS GENERATED HERE, ON PURPOSE ────────────────────────
+# Earlier versions of this template seeded a `pull_request`-triggered confidentiality gate
+# that read a term corpus out of an Actions secret. That shape is now prohibited
+# (leak-gate-remediation-plan.md §1 invariant 1 and §5.1 item 4): a job reachable from a pull
+# request must not hold a durable credential, because PR-controlled code, dependencies, and
+# workflow YAML can all exfiltrate it. A newly bootstrapped repo therefore starts with **no**
+# secret in **any** job, and `workflow-policy` below keeps it that way.
+#
+# Confidentiality scanning still exists, in two places that are not this file:
+#   • locally, as the advisory pre-push helper the bootstrap installs
+#     (`scripts/leak-gate.sh` + `hooks/git/pre-push-leak-gate`, no corpus in the repo); and
+#   • authoritatively, as the `AIOS Security Gate` commit status published by the
+#     `aios-security-gate` GitHub App, which scans Git objects directly and never runs in Actions.
+#
+# TODO(leak-gate-remediation-plan.md §4.1 / §5.2, phases 3 → 6 → 7): enroll this repository with
+# the `aios-security-gate` GitHub App and the organization ruleset that requires the
+# `AIOS Security Gate` commit status from that exact App source, with strict current-base checks
+# and no bypass actors. That half is NOT buildable yet — the App does not exist and is blocked on
+# the dedicated AWS Security account (plan phase 1). Do not invent enrollment configuration here:
+# when the App ships, enrollment is a ruleset change plus an installation, not a workflow. Nothing
+# in this file may create, write, or satisfy the `AIOS Security Gate` context.
 name: ci
 
 on:
@@ -9,36 +31,68 @@ on:
   push:
     branches: [main]
 
+# Default-deny at the workflow level. A job that genuinely needs more asks for it itself, which
+# makes the elevation visible in review — and `checks: write` / `statuses: write` stay banned in
+# anything a pull request can reach.
+permissions:
+  contents: read
+
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   gates:
-    name: governance gates (size + boundaries + leak)
+    name: governance gates (size + boundaries)
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
       - name: File-size gate (default-deny, ratchet-only-down)
         run: node scripts/check-file-size.mjs
       - name: Repo-boundary gate
         run: node scripts/check-boundaries.mjs
-      - name: Confidentiality leak gate
-        # Terms come from the AIOS_LEAK_TERMS_B64 secret (never stored in the repo).
-        # Without the secret the gate enforces its always-on baseline shape rules.
-        env:
-          AIOS_LEAK_TERMS_B64: ${{ secrets.AIOS_LEAK_TERMS_B64 }}
-        run: bash scripts/leak-gate.sh .
+
+  workflow-policy:
+    name: workflow policy (PR-reachable workflows)
+    runs-on: ubuntu-latest
+    # Deliberately the least privileged job in this file: read-only, no secret, and no
+    # `checks`/`statuses` scope. It reads workflow YAML as data and never executes a workflow.
+    # It does NOT create the required `AIOS Security Gate` status — only the App may.
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+      # Fails if any workflow reachable from a PR-like event references `secrets.*`, requests
+      # `checks: write` / `statuses: write`, names the `AIOS Security Gate` context, uses an
+      # action not pinned to a full 40-hex commit SHA, or combines `pull_request_target` with
+      # PR checkout, artifact download, package install, or `${{ }}` interpolation of
+      # attacker-controlled expressions into a `run:` body. Reviewed exceptions go in
+      # scripts/workflow-policy-allowlist.json, one (workflow, job, rule) triple at a time.
+      - name: Workflow policy gate
+        run: node scripts/check-workflow-policy.mjs
 
   lint:
     name: lint
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
       - name: Install dependencies
@@ -51,9 +105,13 @@ jobs:
   test:
     name: unit tests
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
       - name: Install dependencies

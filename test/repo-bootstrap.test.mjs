@@ -149,6 +149,32 @@ test("bootstrap stamps every manifest file, records the version stamp, and re-ru
     assert.match(ci, /npm run test --if-present/);
     assert.doesNotMatch(ci, /\{\{[A-Z_]+\}\}/);
 
+    // leak-gate-remediation-plan.md §5.1 item 4: a newly generated repo must never carry a
+    // secret-bearing PR scanner. Not "no leak-gate secret" — NO secret expression at all.
+    assert.doesNotMatch(
+      ci,
+      /\$\{\{[^}]*\bsecrets\s*[.[]/,
+      "the seeded CI must reference no Actions secret"
+    );
+    assert.doesNotMatch(
+      ci,
+      /AIOS_LEAK_TERMS_B64/,
+      "the seeded CI must not reinstate the term-corpus secret"
+    );
+    // ...and it must satisfy the workflow policy it ships, judged by the real gate.
+    const gate = spawnSync(
+      "node",
+      [
+        path.join(TOOLKIT, "scripts/check-workflow-policy.mjs"),
+        "--dir",
+        path.join(target, ".github/workflows"),
+        "--allowlist",
+        path.join(target, "scripts/workflow-policy-allowlist.json"),
+      ],
+      { encoding: "utf8" }
+    );
+    assert.equal(gate.status, 0, `${gate.stdout}${gate.stderr}`);
+
     // Strict transform landed in the stamped guard.
     const guard = readFileSync(
       path.join(target, ".harness/hooks/git/pre-commit-primary-guard"),

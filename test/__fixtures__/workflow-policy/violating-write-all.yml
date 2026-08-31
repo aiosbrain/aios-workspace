@@ -1,0 +1,11 @@
+# VIOLATES elevated-permissions — `write-all` is a superset of checks:write + statuses:write.
+name: violating write-all
+on:
+  issue_comment:
+    types: [created]
+permissions: write-all
+jobs:
+  everything:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo everything

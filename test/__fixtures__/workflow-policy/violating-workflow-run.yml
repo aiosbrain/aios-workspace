@@ -1,0 +1,15 @@
+# VIOLATES secrets-in-pr-reachable — reached transitively: workflow_run of a pull_request workflow.
+name: violating workflow run
+on:
+  workflow_run:
+    workflows: ["upstream pr workflow"]
+    types: [completed]
+permissions:
+  contents: read
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    env:
+      REPORT_TOKEN: ${{ secrets.REPORT_TOKEN }}
+    steps:
+      - run: echo reporting

@@ -1,0 +1,13 @@
+# VIOLATES unparseable-workflow — YAML anchors are not modelled, so the file fails closed.
+name: violating unparseable
+on:
+  pull_request:
+defaults: &shared
+  run:
+    shell: bash
+jobs:
+  build:
+    <<: *shared
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo built

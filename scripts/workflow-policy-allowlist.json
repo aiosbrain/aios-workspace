@@ -1,0 +1,166 @@
+{
+  "$comment": "Reviewed waivers for scripts/check-workflow-policy.mjs (leak-gate-remediation-plan.md §5.1 item 3). One entry suspends ONE rule for ONE (workflow, job) pair — there is no blanket file skip and no wildcard rule, by construction, so waiving `secrets-in-pr-reachable` for a job leaves every other rule enforced against that same job and file. Every entry needs an accountable `owner` and a `justification` of at least 40 characters naming the follow-up that deletes it; an entry missing either is itself a gate failure. Entries are ratchet-only-down: removing one never needs permission, adding one does. Every entry below is a REAL, MEASURED violation in this tree on 2026-08-31, not a projection. An unused entry is reported as a note, not a failure, so that fixing a violation in one PR cannot redden main before its waiver is deleted in another.",
+  "entries": [
+    {
+      "workflow": ".github/workflows/leak-gate.yml",
+      "job": "leak-gate",
+      "rule": "secrets-in-pr-reachable",
+      "owner": "AIOS Security",
+      "justification": "The legacy term-set gate is the subject of the remediation, not a target of it. leak-gate-remediation-plan.md §2.3 keeps AIOS_LEAK_TERMS_B64 in place behind the merge hold until the aios-security-gate App has passed sandbox certification, and §5.1 item 1 deletes this workflow and the secret together in the single phase-7 cutover transaction. Editing it now would either break the only confidentiality control this repo has or fork the removal across two PRs. Delete this entry with the workflow."
+    },
+    {
+      "workflow": ".github/workflows/leak-gate.yml",
+      "job": "leak-gate",
+      "rule": "mutable-action-ref",
+      "owner": "AIOS Security",
+      "justification": "actions/checkout@v4 in a pull_request_target job is a real unpinned-action finding. It is waived only because leak-gate.yml is frozen under the §2.1 two-reviewer security change window and is deleted whole in phase 7; pinning it in the meantime would be a change to a frozen file for a workflow with a scheduled removal date. Delete this entry with the workflow."
+    },
+    {
+      "workflow": ".github/workflows/leak-gate.yml",
+      "job": "leak-gate",
+      "rule": "pr-target-checkout",
+      "owner": "AIOS Security",
+      "justification": "This is the narrow reviewed pull_request_target exception the plan sanctions. The job fetches the PR head as a tarball and treats it strictly as inert scanner input: the scanner, the workflow, and every executed line come from the base branch, and nothing in the candidate tree is built, installed, sourced, or run (plan §4.2 states the same no-execution property for the replacement service). It is waived, not exempt — the App's Git-object scanner removes the download entirely in phase 7. Delete this entry with the workflow. Note that the sibling secrets-in-pr-reachable and mutable-action-ref waivers are listed separately on purpose: each rule is suspended by name, so a NEW class of violation in this same job still fails the gate."
+    },
+    {
+      "workflow": ".github/workflows/ci.yml",
+      "job": "scan",
+      "rule": "secrets-in-pr-reachable",
+      "owner": "Platform Engineering",
+      "justification": "The `scan` job carries AIOS_API_KEY / AIOS_BRAIN_URL / AIOS_TEAM / GITHUB_TOKEN and is guarded by `if: github.event_name == 'push' && github.ref == 'refs/heads/main'`, so it does not execute on a pull request today. That `if:` is not a trust boundary — it lives in a file a same-repo PR can edit — which is exactly why this gate still reports it. The fix is to lift the job out of ci.yml into a push-only trusted workflow (plan §5.1 / §2.4); that is a separate change to the coverage-bundle handoff and is deliberately not bundled with the introduction of this checker. Delete this entry when the scan job moves."
+    },
+    {
+      "workflow": ".github/workflows/aios-work-sync.yml",
+      "job": "notify-brain",
+      "rule": "secrets-in-pr-reachable",
+      "owner": "Platform Engineering",
+      "justification": "Brain credentials in a `pull_request: types: [closed]` job. Plan §5.1 requires the credentialed work to move to trusted default-branch logic or the security service; that redesign (push-to-main plus merged-PR resolution) is owned by the same work item as the ci.yml `scan` job and is not a mechanical edit. Delete this entry when the work-event post moves off the pull_request trigger."
+    },
+    {
+      "workflow": ".github/workflows/linear-nudge.yml",
+      "job": "nudge",
+      "rule": "secrets-in-pr-reachable",
+      "owner": "Platform Engineering",
+      "justification": "LINEAR_API_KEY in a pull_request-triggered job. Plan §5.1 is explicit for Workspace: the final CI policy permits no direct LINEAR_API_KEY in a PR-triggered job, and both this workflow and pr-in-review.yml need the same replacement (trusted service or default-branch logic with a scoped token). Delete this entry when the Linear operation moves off the PR trigger."
+    },
+    {
+      "workflow": ".github/workflows/pr-in-review.yml",
+      "job": "in-review",
+      "rule": "secrets-in-pr-reachable",
+      "owner": "Platform Engineering",
+      "justification": "LINEAR_API_KEY in a PR-reachable job — the exact violation named in plan §5.1 and §2.4 as immediately unsafe, and the plan's sanctioned 'static AST-policy exception reviewed by Security'. The remediation is in flight in a parallel worktree and lands this job as pull_request_target with an environment-scoped token; an environment is a blast-radius control, NOT an author-trust control (a fork PR still receives the secret, because pull_request_target always resolves the base ref, so any author satisfies a main-only deployment branch policy). This waiver therefore suspends ONLY the secrets rule for ONLY this job: pr-target-checkout, pr-target-dynamic-run, pr-target-artifact-download, pr-target-package-install and mutable-action-ref all remain enforced against the same file. Delete this entry with that fix; if it lands first, the entry goes stale and the gate says so."
+    },
+    {
+      "workflow": ".github/workflows/pr-review-evidence.yml",
+      "job": "(workflow)",
+      "rule": "elevated-permissions",
+      "owner": "AIOS Security",
+      "justification": "`statuses: write` is load-bearing here: the AIO-777 review-evidence gate publishes its verdict as the `review-evidence` commit status on the PR head, because issue_comment runs attribute their check runs to the default branch and never appear on the PR. The residual risk this rule names is that the same scope could write any status context — mitigated by the independent `security-gate-context` rule in this checker and by the plan §5.2 requirement that the required context be bound to the aios-security-gate App source, so an Actions-authored status with that name is rejected. Delete this entry when the review-evidence verdict moves onto an App-published status."
+    },
+    {
+      "workflow": ".github/workflows/ci.yml",
+      "job": "changes",
+      "rule": "mutable-action-ref",
+      "owner": "Platform Engineering",
+      "justification": "Pre-existing `@vN` tag ref in the `changes` job, measured 2026-08-31. This is a real finding, not a false positive: a tag is repointable by the action owner, so review of this file is not evidence about the code that runs. It is waived rather than fixed here because org-wide SHA pinning is a separate workstream (plan §5.2) already in flight across the fleet — aios-design, aios-engineering-harness, aios-marketing and aios-workspace-gui have pinning PRs open, aios-website and aios-devtools were already pinned, and aios-workspace's remaining refs land as one reviewable change. Mass-editing workflows inside the PR that introduces this checker would both hide the checker's diff and collide with that work. Delete this entry when the pinning PR lands."
+    },
+    {
+      "workflow": ".github/workflows/ci.yml",
+      "job": "docs-drift",
+      "rule": "mutable-action-ref",
+      "owner": "Platform Engineering",
+      "justification": "Pre-existing `@vN` tag ref in the `docs-drift` job, measured 2026-08-31. This is a real finding, not a false positive: a tag is repointable by the action owner, so review of this file is not evidence about the code that runs. It is waived rather than fixed here because org-wide SHA pinning is a separate workstream (plan §5.2) already in flight across the fleet — aios-design, aios-engineering-harness, aios-marketing and aios-workspace-gui have pinning PRs open, aios-website and aios-devtools were already pinned, and aios-workspace's remaining refs land as one reviewable change. Mass-editing workflows inside the PR that introduces this checker would both hide the checker's diff and collide with that work. Delete this entry when the pinning PR lands."
+    },
+    {
+      "workflow": ".github/workflows/ci.yml",
+      "job": "context-health",
+      "rule": "mutable-action-ref",
+      "owner": "Platform Engineering",
+      "justification": "Pre-existing `@vN` tag ref in the `context-health` job, measured 2026-08-31. This is a real finding, not a false positive: a tag is repointable by the action owner, so review of this file is not evidence about the code that runs. It is waived rather than fixed here because org-wide SHA pinning is a separate workstream (plan §5.2) already in flight across the fleet — aios-design, aios-engineering-harness, aios-marketing and aios-workspace-gui have pinning PRs open, aios-website and aios-devtools were already pinned, and aios-workspace's remaining refs land as one reviewable change. Mass-editing workflows inside the PR that introduces this checker would both hide the checker's diff and collide with that work. Delete this entry when the pinning PR lands."
+    },
+    {
+      "workflow": ".github/workflows/ci.yml",
+      "job": "constitution",
+      "rule": "mutable-action-ref",
+      "owner": "Platform Engineering",
+      "justification": "Pre-existing `@vN` tag ref in the `constitution` job, measured 2026-08-31. This is a real finding, not a false positive: a tag is repointable by the action owner, so review of this file is not evidence about the code that runs. It is waived rather than fixed here because org-wide SHA pinning is a separate workstream (plan §5.2) already in flight across the fleet — aios-design, aios-engineering-harness, aios-marketing and aios-workspace-gui have pinning PRs open, aios-website and aios-devtools were already pinned, and aios-workspace's remaining refs land as one reviewable change. Mass-editing workflows inside the PR that introduces this checker would both hide the checker's diff and collide with that work. Delete this entry when the pinning PR lands."
+    },
+    {
+      "workflow": ".github/workflows/ci.yml",
+      "job": "guard",
+      "rule": "mutable-action-ref",
+      "owner": "Platform Engineering",
+      "justification": "Pre-existing `@vN` tag ref in the `guard` job, measured 2026-08-31. This is a real finding, not a false positive: a tag is repointable by the action owner, so review of this file is not evidence about the code that runs. It is waived rather than fixed here because org-wide SHA pinning is a separate workstream (plan §5.2) already in flight across the fleet — aios-design, aios-engineering-harness, aios-marketing and aios-workspace-gui have pinning PRs open, aios-website and aios-devtools were already pinned, and aios-workspace's remaining refs land as one reviewable change. Mass-editing workflows inside the PR that introduces this checker would both hide the checker's diff and collide with that work. Delete this entry when the pinning PR lands."
+    },
+    {
+      "workflow": ".github/workflows/ci.yml",
+      "job": "clean-container",
+      "rule": "mutable-action-ref",
+      "owner": "Platform Engineering",
+      "justification": "Pre-existing `@vN` tag ref in the `clean-container` job, measured 2026-08-31. This is a real finding, not a false positive: a tag is repointable by the action owner, so review of this file is not evidence about the code that runs. It is waived rather than fixed here because org-wide SHA pinning is a separate workstream (plan §5.2) already in flight across the fleet — aios-design, aios-engineering-harness, aios-marketing and aios-workspace-gui have pinning PRs open, aios-website and aios-devtools were already pinned, and aios-workspace's remaining refs land as one reviewable change. Mass-editing workflows inside the PR that introduces this checker would both hide the checker's diff and collide with that work. Delete this entry when the pinning PR lands."
+    },
+    {
+      "workflow": ".github/workflows/ci.yml",
+      "job": "lint",
+      "rule": "mutable-action-ref",
+      "owner": "Platform Engineering",
+      "justification": "Pre-existing `@vN` tag ref in the `lint` job, measured 2026-08-31. This is a real finding, not a false positive: a tag is repointable by the action owner, so review of this file is not evidence about the code that runs. It is waived rather than fixed here because org-wide SHA pinning is a separate workstream (plan §5.2) already in flight across the fleet — aios-design, aios-engineering-harness, aios-marketing and aios-workspace-gui have pinning PRs open, aios-website and aios-devtools were already pinned, and aios-workspace's remaining refs land as one reviewable change. Mass-editing workflows inside the PR that introduces this checker would both hide the checker's diff and collide with that work. Delete this entry when the pinning PR lands."
+    },
+    {
+      "workflow": ".github/workflows/ci.yml",
+      "job": "node-tests",
+      "rule": "mutable-action-ref",
+      "owner": "Platform Engineering",
+      "justification": "Pre-existing `@vN` tag ref in the `node-tests` job, measured 2026-08-31. This is a real finding, not a false positive: a tag is repointable by the action owner, so review of this file is not evidence about the code that runs. It is waived rather than fixed here because org-wide SHA pinning is a separate workstream (plan §5.2) already in flight across the fleet — aios-design, aios-engineering-harness, aios-marketing and aios-workspace-gui have pinning PRs open, aios-website and aios-devtools were already pinned, and aios-workspace's remaining refs land as one reviewable change. Mass-editing workflows inside the PR that introduces this checker would both hide the checker's diff and collide with that work. Delete this entry when the pinning PR lands."
+    },
+    {
+      "workflow": ".github/workflows/ci.yml",
+      "job": "coverage-shard",
+      "rule": "mutable-action-ref",
+      "owner": "Platform Engineering",
+      "justification": "Pre-existing `@vN` tag ref in the `coverage-shard` job, measured 2026-08-31. This is a real finding, not a false positive: a tag is repointable by the action owner, so review of this file is not evidence about the code that runs. It is waived rather than fixed here because org-wide SHA pinning is a separate workstream (plan §5.2) already in flight across the fleet — aios-design, aios-engineering-harness, aios-marketing and aios-workspace-gui have pinning PRs open, aios-website and aios-devtools were already pinned, and aios-workspace's remaining refs land as one reviewable change. Mass-editing workflows inside the PR that introduces this checker would both hide the checker's diff and collide with that work. Delete this entry when the pinning PR lands."
+    },
+    {
+      "workflow": ".github/workflows/ci.yml",
+      "job": "coverage",
+      "rule": "mutable-action-ref",
+      "owner": "Platform Engineering",
+      "justification": "Pre-existing `@vN` tag ref in the `coverage` job, measured 2026-08-31. This is a real finding, not a false positive: a tag is repointable by the action owner, so review of this file is not evidence about the code that runs. It is waived rather than fixed here because org-wide SHA pinning is a separate workstream (plan §5.2) already in flight across the fleet — aios-design, aios-engineering-harness, aios-marketing and aios-workspace-gui have pinning PRs open, aios-website and aios-devtools were already pinned, and aios-workspace's remaining refs land as one reviewable change. Mass-editing workflows inside the PR that introduces this checker would both hide the checker's diff and collide with that work. Delete this entry when the pinning PR lands."
+    },
+    {
+      "workflow": ".github/workflows/ci.yml",
+      "job": "pack-golden",
+      "rule": "mutable-action-ref",
+      "owner": "Platform Engineering",
+      "justification": "Pre-existing `@vN` tag ref in the `pack-golden` job, measured 2026-08-31. This is a real finding, not a false positive: a tag is repointable by the action owner, so review of this file is not evidence about the code that runs. It is waived rather than fixed here because org-wide SHA pinning is a separate workstream (plan §5.2) already in flight across the fleet — aios-design, aios-engineering-harness, aios-marketing and aios-workspace-gui have pinning PRs open, aios-website and aios-devtools were already pinned, and aios-workspace's remaining refs land as one reviewable change. Mass-editing workflows inside the PR that introduces this checker would both hide the checker's diff and collide with that work. Delete this entry when the pinning PR lands."
+    },
+    {
+      "workflow": ".github/workflows/ci.yml",
+      "job": "publish-npm-parity",
+      "rule": "mutable-action-ref",
+      "owner": "Platform Engineering",
+      "justification": "Pre-existing `@vN` tag ref in the `publish-npm-parity` job, measured 2026-08-31. This is a real finding, not a false positive: a tag is repointable by the action owner, so review of this file is not evidence about the code that runs. It is waived rather than fixed here because org-wide SHA pinning is a separate workstream (plan §5.2) already in flight across the fleet — aios-design, aios-engineering-harness, aios-marketing and aios-workspace-gui have pinning PRs open, aios-website and aios-devtools were already pinned, and aios-workspace's remaining refs land as one reviewable change. Mass-editing workflows inside the PR that introduces this checker would both hide the checker's diff and collide with that work. Delete this entry when the pinning PR lands."
+    },
+    {
+      "workflow": ".github/workflows/ci.yml",
+      "job": "mutation",
+      "rule": "mutable-action-ref",
+      "owner": "Platform Engineering",
+      "justification": "Pre-existing `@vN` tag ref in the `mutation` job, measured 2026-08-31. This is a real finding, not a false positive: a tag is repointable by the action owner, so review of this file is not evidence about the code that runs. It is waived rather than fixed here because org-wide SHA pinning is a separate workstream (plan §5.2) already in flight across the fleet — aios-design, aios-engineering-harness, aios-marketing and aios-workspace-gui have pinning PRs open, aios-website and aios-devtools were already pinned, and aios-workspace's remaining refs land as one reviewable change. Mass-editing workflows inside the PR that introduces this checker would both hide the checker's diff and collide with that work. Delete this entry when the pinning PR lands."
+    },
+    {
+      "workflow": ".github/workflows/linear-nudge.yml",
+      "job": "nudge",
+      "rule": "mutable-action-ref",
+      "owner": "Platform Engineering",
+      "justification": "Pre-existing `@vN` tag ref in the `nudge` job, measured 2026-08-31. This is a real finding, not a false positive: a tag is repointable by the action owner, so review of this file is not evidence about the code that runs. It is waived rather than fixed here because org-wide SHA pinning is a separate workstream (plan §5.2) already in flight across the fleet — aios-design, aios-engineering-harness, aios-marketing and aios-workspace-gui have pinning PRs open, aios-website and aios-devtools were already pinned, and aios-workspace's remaining refs land as one reviewable change. Mass-editing workflows inside the PR that introduces this checker would both hide the checker's diff and collide with that work. Delete this entry when the pinning PR lands. This job also pulls actions/github-script, which executes JavaScript in the job context, so it is a priority for that PR."
+    },
+    {
+      "workflow": ".github/workflows/pr-review-evidence.yml",
+      "job": "evidence",
+      "rule": "mutable-action-ref",
+      "owner": "Platform Engineering",
+      "justification": "Pre-existing `@vN` tag ref in the `evidence` job, measured 2026-08-31. This is a real finding, not a false positive: a tag is repointable by the action owner, so review of this file is not evidence about the code that runs. It is waived rather than fixed here because org-wide SHA pinning is a separate workstream (plan §5.2) already in flight across the fleet — aios-design, aios-engineering-harness, aios-marketing and aios-workspace-gui have pinning PRs open, aios-website and aios-devtools were already pinned, and aios-workspace's remaining refs land as one reviewable change. Mass-editing workflows inside the PR that introduces this checker would both hide the checker's diff and collide with that work. Delete this entry when the pinning PR lands. This job is the blocking review-evidence gate, so an unpinned checkout here is a priority for that PR."
+    }
+  ]
+}

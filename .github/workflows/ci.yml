@@ -87,6 +87,36 @@ jobs:
           node-version: 22
       - run: npm run check:context
 
+  # Static policy over this repo's own workflow YAML (leak-gate-remediation-plan.md §5.1 item 3).
+  #
+  # READ THIS BEFORE ADDING ANYTHING TO THIS JOB. It is deliberately the least privileged job in
+  # the file: `contents: read`, no secret, no `checks`/`statuses` scope, no network. It does NOT
+  # create, write, or satisfy the required `AIOS Security Gate` status — that status may only ever
+  # come from the `aios-security-gate` GitHub App (plan §1 invariant 3), and an Actions job that
+  # could write it would be the forgery primitive the policy exists to remove. Giving this job a
+  # secret or a write scope to "make it more useful" defeats its own rule set.
+  #
+  # Its own two actions are SHA-pinned because they are new here. The 27 pre-existing `@vN` refs
+  # elsewhere in this file are real `mutable-action-ref` findings, waived per job in
+  # scripts/workflow-policy-allowlist.json and owned by the separate org-wide pinning workstream —
+  # deliberately NOT mass-edited here, so that work lands as one reviewable change.
+  #
+  # No `npm ci`: the checker is zero-dependency, like every other guard under scripts/.
+  workflow-policy:
+    name: workflow policy (PR-reachable workflows)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+      - run: npm run check:workflow-policy
+
   constitution:
     name: Constitution guards (domain isolation + boundaries + size)
     runs-on: ubuntu-latest
@@ -787,6 +817,7 @@ jobs:
       - docs-drift
       - context-health
       - constitution
+      - workflow-policy
       - guard
       - lint
       - node-tests
