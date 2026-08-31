@@ -6,7 +6,7 @@ import { spawnSync } from "node:child_process";
 import test from "node:test";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
-const CLI = path.join(ROOT, "scaffold/.claude/skills/aios-linear/linear.mjs");
+const CLI = path.join(ROOT, "scripts/aios.mjs");
 
 function runRemove(mode, type = "blocks") {
   const dir = mkdtempSync(path.join(tmpdir(), "aios-linear-remove-relation-"));
@@ -64,7 +64,7 @@ globalThis.fetch = async (_url, init) => {
   );
   const result = spawnSync(
     process.execPath,
-    ["--import", preload, CLI, "remove-relation", "AIO-73", "AIO-75", type],
+    ["--import", preload, CLI, "linear", "remove-relation", "AIO-73", "AIO-75", type],
     {
       cwd: ROOT,
       encoding: "utf8",

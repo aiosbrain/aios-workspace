@@ -21,6 +21,7 @@ import { DEVTOOLS_COMMANDS as DT } from "./devtools-commands.mjs";
 import { commandMetadata as M } from "./command-contract.mjs";
 import { commandIndex, nearestName, renderCommandUsage } from "./registry-lookup.mjs";
 import { DIAGNOSTIC_COMMANDS } from "./diagnostic-commands.mjs";
+import { LINEAR_COMMANDS as LC } from "./linear-commands.mjs";
 
 /** @type {CommandDescriptor[]} Help order; hidden commands (`usage: []`) stay last. */
 export const COMMANDS = [
@@ -33,14 +34,10 @@ export const COMMANDS = [
     usage: U.status,
   },
   {
-    // AIO-864 follow-up: the OGR validators live in the TOOLKIT, so a scaffolded workspace
-    // cannot run `validation/validate-all.sh .` — its own validation/ holds only
-    // secret-patterns.txt. Offline, because a workspace is validated before it is configured;
-    // cwdFallback so `aios validate <path>` works from anywhere, including outside a
-    // workspace — and so `aios validate --help` does too, since asking a command how to
-    // use it must never depend on standing in a workspace. A bare `aios validate` with no
-    // target and no workspace above cwd still gets dispatch's "could not locate repo root"
-    // rather than silently validating whatever directory you happen to be in.
+    // AIO-864 follow-up: the OGR validators live in the TOOLKIT (a workspace's validation/
+    // holds only secret-patterns.txt). Offline — a workspace is validated before it is
+    // configured; cwdFallback so `aios validate <path>` (and `--help`) works from anywhere.
+    // A bare `aios validate` with no workspace above cwd still gets "could not locate repo root".
     name: "validate",
     metadata: M`validate core.cli optional none never human-or-json offline`,
     resolution: "offline",
@@ -68,9 +65,13 @@ export const COMMANDS = [
     metadata: M`connect core.cli optional none required human offline`,
     resolution: "offline",
     agentWorkspaceFallback: true,
+    // AIO-1067: `aios connect linear` works from ANY directory (user-level reference mode).
+    cwdFallback: (rest) => rest[0] === "linear",
     adapt: (ctx) => ctx.local.cmdConnect(ctx.repo, ctx.rest),
     usage: U.connect,
   },
+  LC.disconnect,
+  LC.linear,
   {
     name: "review",
     metadata: M`review core.cli workspace brain required human requires-workspace`,
@@ -155,10 +156,10 @@ export const COMMANDS = [
     usage: U.loop,
   },
   {
+    // Owns `--repo`: repeatable TARGET repo paths (workspace root = cwd walk-up/--workspace).
     name: "timeline",
     metadata: M`timeline core.cli optional optional optional human-or-json offline`,
     resolution: "offline",
-    // Owns `--repo`: repeatable TARGET repo paths (workspace root = cwd walk-up/--workspace).
     ownsRepoFlag: true,
     loader: () => import("../timeline.mjs"),
     adapt: async (ctx, mod) => (await mod.cmdTimeline(ctx.repo, ctx.cfg, ctx.rest)) ?? 0,
@@ -166,9 +167,8 @@ export const COMMANDS = [
     usage: U.timeline,
   },
   {
-    name: "mcp",
+    name: "mcp", // stdio MCP server for agents that can't shell out; env-first, owns the process
     metadata: M`mcp core.cli none optional optional protocol pre-config`,
-    // Stdio MCP server for agents that can't shell out; env-first, no workspace, owns the process.
     resolution: "pre-config",
     loader: () => import("../brain-mcp.mjs"),
     adapt: async (ctx, mod) => {
@@ -350,10 +350,10 @@ export const COMMANDS = [
   {
     name: "update",
     metadata: M`update core.cli user-or-workspace none required human-or-json offline`,
-    // Resolves a workspace OR the toolkit checkout — never a bare dir; --repo validated same way.
+    // Resolves a workspace OR the toolkit checkout — never a bare dir; --repo validated same
+    // way. cmdUpdate returns a structured result (never exits; callers read .applyAllowed).
     resolution: "update-root",
     loader: () => import("../update.mjs"),
-    // cmdUpdate returns a structured result (never exits, so callers can read .applyAllowed).
     adapt: async (ctx, mod) => (await mod.cmdUpdate(ctx.repo, ctx.cfg, ctx.rest)).exitStatus,
     exit: "exit-status",
     usage: U.update,

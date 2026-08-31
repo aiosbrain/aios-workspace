@@ -75,6 +75,9 @@ const PRE_REFACTOR = {
   mcp: "pre-config",
 };
 
+// AIO-1067: the built-in Linear adapter and its user-level credential lifecycle.
+const V2_ADAPTERS = { linear: "offline", disconnect: "offline" };
+
 const V2_DIAGNOSTICS = {
   help: "diagnostic",
   version: "diagnostic",
@@ -82,7 +85,7 @@ const V2_DIAGNOSTICS = {
   provenance: "diagnostic",
 };
 
-const EXPECTED_RESOLUTIONS = { ...PRE_REFACTOR, ...V2_DIAGNOSTICS };
+const EXPECTED_RESOLUTIONS = { ...PRE_REFACTOR, ...V2_ADAPTERS, ...V2_DIAGNOSTICS };
 
 const PRE_REFACTOR_OWNS_REPO = ["pr", "consolidate-findings", "timeline", "delivery"];
 
@@ -113,7 +116,7 @@ test("registry: every command is registered exactly once", () => {
   );
 });
 
-test("registry: command set preserves the legacy chain and adds only v2 diagnostics", () => {
+test("registry: command set preserves the legacy chain and adds only v2 diagnostics + adapters", () => {
   const registered = COMMANDS.map((d) => d.name).sort();
   const expected = Object.keys(EXPECTED_RESOLUTIONS).sort();
   assert.deepEqual(registered, expected);
@@ -305,6 +308,8 @@ test("registry: every adapt hands its module the EXACT argument signature (table
     "gen-catalog": ["mod", "generate", R],
     catalog: ["mod", "cmdCatalog", R, A],
     connector: ["mod", "cmdConnector", R, A],
+    linear: ["mod", "cmdLinear", R, A],
+    disconnect: ["mod", "cmdDisconnect", R, A],
     transcripts: ["mod", "cmdTranscripts", R, C, A],
     pm: ["mod", "cmdPm", C, A],
     mode: ["mod", "cmdMode", R, C, A],

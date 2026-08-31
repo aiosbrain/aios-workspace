@@ -5,8 +5,8 @@ import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { resolveLinearTemplate } from "./linear-template.mjs";
-import { confirmStored, lintDescription } from "./linear-desc-guard.mjs";
+import { resolveLinearTemplate } from "./template.mjs";
+import { confirmStored, lintDescription } from "./desc-guard.mjs";
 import {
   DEFAULT_TEAM_KEY,
   fail,
@@ -18,7 +18,7 @@ import {
   gql,
   parsePriority,
   resolveProject,
-} from "./linear-core.mjs";
+} from "./core.mjs";
 
 export function parseCreateArgs(args) {
   const title = args[0];

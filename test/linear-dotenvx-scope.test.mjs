@@ -79,7 +79,10 @@ test("scoped Linear wrapper decrypts LINEAR_API_KEY without WRONG_PRIVATE_KEY no
     const combined = `${result.stdout}\n${result.stderr}`;
     assert.equal(result.status, 0, result.stderr);
     assert.match(result.stdout, /What \/ why/);
-    assert.equal(result.stderr, "");
+    // AIO-1067: the bin is a warning-only delegate — exactly one deprecation line on
+    // stderr, and still zero dotenvx key-mismatch noise (the AIO-790 property).
+    assert.match(result.stderr, /deprecated compatibility command/);
+    assert.doesNotMatch(result.stderr, /WRONG_PRIVATE_KEY|DECRYPTION_FAILED/);
     assert.doesNotMatch(combined, new RegExp(LIN_SECRET));
     assert.doesNotMatch(combined, new RegExp(OAI_SECRET));
   } finally {
@@ -93,7 +96,7 @@ test("aios-linear skill copies stay byte-identical and do not recommend dotenvx 
   const managedDir = path.join(ROOT, ".claude/skills/aios-linear");
   const scaffoldDir = path.join(ROOT, "scaffold/.claude/skills/aios-linear");
   const files = [...new Set([...readdirSync(managedDir), ...readdirSync(scaffoldDir)])].sort();
-  assert.ok(files.includes("linear-core.mjs"), "sanity: skill directory listing looks wrong");
+  assert.ok(files.includes("linear.mjs"), "sanity: skill directory listing looks wrong");
   for (const name of files) {
     let managed, scaffold;
     try {

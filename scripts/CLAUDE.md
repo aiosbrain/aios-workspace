@@ -12,6 +12,7 @@ needs vendoring). No shared build step — each script is a standalone entry poi
 |-------|---------|
 | Scaffolding | `scaffold-project.sh` (stamp a workspace), `scaffold-engagement.sh` |
 | Sync CLI | `aios.mjs` (dispatch entry) |
+| Built-in adapters | `connectors.mjs` (lazy barrel — the ONLY import route into `connectors/`) + `connectors/linear/` (the one Linear implementation behind `aios linear`, AIO-1067); `linear.mjs` is the warning-only compat delegate |
 | Toolkit self-update | `toolkit-manifest.mjs` (4 buckets), `toolkit-merge.mjs` (3-way merge), `toolkit-contribute.mjs` (upstream a local fix via a throwaway worktree), `toolkit-meta.mjs` (semver + brain-api version stamping) |
 | Inbox ops | `inbox.mjs`, `inbox-coordinator.mjs`, `inbox-host-verify.mjs`, `inbox-host-restore-drill.mjs`, `inbox-redaction-lint.mjs` |
 | Build/ship pipeline | **Not here — `aiosbrain/aios-devtools`** (AIO-662). `ship`, `build`, `roadmap-run`, `spec-eval`, `spec-publish`, `consolidate-findings` left this repo; core dispatches to them through `devtools-dispatch.mjs`. `loop.mjs` (daily/weekly/writeback CLI) stays. |

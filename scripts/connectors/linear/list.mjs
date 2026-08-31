@@ -1,6 +1,6 @@
 // List command for the aios-linear CLI (AIO-999), extracted from linear.mjs to keep that
 // file under the file-size gate. Dispatch stays in linear.mjs; the behaviour lives here.
-import { filterIssues, hasListFilters, listTeamIssues, parseListArgs } from "./linear-core.mjs";
+import { filterIssues, hasListFilters, listTeamIssues, parseListArgs } from "./core.mjs";
 
 /**
  * One stable stdout row: identifier/state/title always occupy the first three tab-separated

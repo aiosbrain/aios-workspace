@@ -1,7 +1,7 @@
 ---
 name: aios-linear
-description: Manage the AIOS Linear board (the ONLY PM tool — Plane is retired). Use whenever updating, reading, or commenting on AIOS Linear issues (identifiers like AIO-72, AIO-75), the brain→PM projection-tracking epic, or the backlog. Triggers on "update AIO-NN", "the Linear board", "the AIOS board", "projection tracking issue", "/aios-linear". Provides a terse `linear.mjs` CLI so issue edits are one fast command instead of ad-hoc GraphQL one-liners. DO NOT use the Plane MCP for AIOS work — it is retired and its tools return huge irrelevant payloads.
-version: 1.3.0
+description: Manage the AIOS Linear board (the ONLY PM tool — Plane is retired). Use whenever updating, reading, or commenting on AIOS Linear issues (identifiers like AIO-72, AIO-75), the brain→PM projection-tracking epic, or the backlog. Triggers on "update AIO-NN", "the Linear board", "the AIOS board", "projection tracking issue", "/aios-linear". Routes every operation through the canonical `aios linear <verb>` CLI so issue edits are one fast command instead of ad-hoc GraphQL one-liners. DO NOT use the Plane MCP for AIOS work — it is retired and its tools return huge irrelevant payloads.
+version: 2.0.0
 access: team
 triggers:
   - update AIO-
@@ -15,56 +15,48 @@ triggers:
 
 **Linear is the single source of PM truth for AIOS (Plane retired 2026-06-22).** Do not touch Plane (no `mcp__plane__*`, no dual-board updates). The brain `tasks` table projects one-way into Linear.
 
-## Canonical source — read this if you're in a sibling repo
+## This skill is ROUTING DOCUMENTATION (AIO-1067)
 
-This skill's canonical, maintained copy lives in **`aios-workspace`** at
-`.claude/skills/aios-linear/` (and is vendored into every scaffolded AIOS _workspace_ —
-e.g. an individual's personal workspace checkout — via `aios update`, from
-`scaffold/.claude/skills/aios-linear/` in the same repo). If you're working inside a
-sibling AIOS _product_ repo that doesn't carry its own copy (`aios-team-brain`,
-`aios-marketing`, `aios-website`, `aios-design`, `aios-engineering-harness`), reach across
-to the aios-workspace checkout rather than improvising GraphQL calls or reaching for the
-Plane MCP:
+The Linear implementation lives in the **aios CLI's built-in adapter**
+(`aios-workspace/scripts/connectors/linear/`), not in this skill. There is exactly ONE
+provider client; this directory carries only this document plus a thin `linear.mjs`
+delegate that forwards to the canonical command. Never add executable client code here.
+
+**The canonical route — from any repo, any directory:**
 
 ```bash
-AIOS_WS=../aios-workspace   # adjust to this repo's actual relative/absolute path to aios-workspace
-node "$AIOS_WS/scripts/linear.mjs" <command>   # the credential wrapper, present in an aios-workspace checkout
+LIN="aios linear"               # the one canonical invocation (AIO-1067)
+
+aios connect linear             # one-time setup (see below)
+$LIN status                     # report the resolved credential source — never values
+$LIN get AIO-75                 # one line: identifier, title, state, id
 ```
 
-Do not `dotenvx run -f $AIOS_WS/.env` to call Linear. That decrypts every secret in the file
-and prints `[WRONG_PRIVATE_KEY]` / `[DECRYPTION_FAILED]` for unrelated keys the current
-keypair cannot read (AIO-790). `scripts/linear.mjs` — which `linear` on PATH runs — decrypts only `LINEAR_API_KEY`.
+Compatibility routes, all delegating to the SAME adapter (identical stdout + exit status,
+plus a deprecation warning on stderr; removal no earlier than v3.0.0):
 
-**Never hand-maintain a second divergent copy of `linear.mjs`.** If a fix or a new command
-belongs here, make it in the aios-workspace canonical copy and let it propagate (via `aios
-update` to scaffolded workspaces, or a direct pull for other repos) — don't patch a local
-fork in place. That's exactly the failure mode that let three independently-drifted copies
-accumulate here in 2026-08 (an untracked loose copy in `~/.claude/skills`, a stale
-project-committed copy, and the canonical scaffold copy — all with different command sets).
+- `linear <verb> …` — the published compat bin (`scripts/linear.mjs`).
+- `node .claude/skills/aios-linear/linear.mjs <verb> …` — this directory's delegate.
 
-## Use the script, not ad-hoc GraphQL
+## Credentials: `aios connect linear` (never export-and-hope)
 
-**Use the `linear` bin on PATH.** It is the only invocation that resolves your credential:
-`scripts/linear.mjs` calls `resolveConnectorEnv({ apiKeyEnv: "LINEAR_API_KEY" })` and decrypts
-that one key, which is what AIO-790 exists to do. The toolkit installs it as a bin
-(`package.json` → `"linear": "scripts/linear.mjs"`).
+The adapter resolves ONE complete credential source, in order: the `LINEAR_API_KEY`
+environment variable → the workspace `.env` vault (scoped dotenvx decryption of that single
+key, AIO-790) → the user-level config reference written by `aios connect linear`
+(`env:VARIABLE` or `keychain:service` — a REFERENCE, never a stored plaintext secret).
 
-> **Do not name a raw file path as the primary invocation.** There are three, and two of them
-> are traps. `scripts/linear.mjs` is the credential wrapper but is **not vendored into scaffolded
-> workspaces** (`scripts/toolkit-manifest.mjs` ships only `scripts/aios.mjs`), so naming it sends
-> a member to `MODULE_NOT_FOUND`. `.claude/skills/aios-linear/linear.mjs` **is** vendored but
-> performs **no credential resolution at all** — `linear-core.mjs` reads `process.env.LINEAR_API_KEY`
-> and exits if it is absent. Naming that one looks correct on any machine that already exports the
-> key and fails for everyone else (AIO-1027).
+- Missing everywhere → stable error `AIOS_E_CREDENTIAL_MISSING` (exit class 3) whose
+  remediation is exactly the command that fixes it: `aios connect linear`.
+- Inside a workspace, `aios connect linear` runs the guided descriptor flow (dotenvx vault).
+- Anywhere else: `aios connect linear --reference env:LINEAR_API_KEY`,
+  `--reference keychain:aios-linear`, or `--token <api-key>` (macOS keychain-backed).
+- `aios disconnect linear` removes the user-level reference.
+- Do not `dotenvx run -f .env` to call Linear — that decrypts every secret in the file and
+  prints `[WRONG_PRIVATE_KEY]` / `[DECRYPTION_FAILED]` noise for unrelated keys (AIO-790).
+
+## Use the CLI, not ad-hoc GraphQL
 
 ```bash
-LIN=linear                      # resolves LINEAR_API_KEY itself; use this
-
-# Fallback ONLY if `linear` is not on PATH *and* you have already exported LINEAR_API_KEY
-# yourself. This path decrypts nothing:
-#   LIN="node .claude/skills/aios-linear/linear.mjs"
-
-$LIN get AIO-75                 # one line: identifier, title, state, id
 $LIN get AIO-75 --full         # + url + full metadata (incl. assignee) + description + comments
 $LIN export-desc AIO-75 spec.md # exact UTF-8 description + SHA-256
 $LIN verify-desc AIO-75 spec.md # refetch + compare description (content, not bytes)
@@ -230,12 +222,14 @@ reference only the one it should close.
 ## AIOS ops cheatsheet
 
 - **dotenvx noise (AIO-790):** do not `dotenvx run -f .env` to call Linear. That decrypts every
-  secret and emits key-mismatch warnings for unrelated keys. Use `linear` on PATH.
-  `--quiet` only hides the dotenvx banner, not those warnings.
-- **Plane MCP** returns huge, mostly-irrelevant blobs for AIOS-internal work — use this script instead. Plane remains a supported _customer_ integration; that's a different boundary.
+  secret and emits key-mismatch warnings for unrelated keys. Use `aios linear` — the adapter
+  scopes decryption to `LINEAR_API_KEY`. `--quiet` only hides the dotenvx banner, not those warnings.
+- **Plane MCP** returns huge, mostly-irrelevant blobs for AIOS-internal work — use the CLI instead. Plane remains a supported _customer_ integration; that's a different boundary.
 
 ## When this skill is wrong or incomplete
 
-If a command fails or you discover a new gotcha, fix it in the **canonical aios-workspace
-copy** (`.claude/skills/aios-linear/linear.mjs` + this file) in the same session — not in a
-local fork. See "Canonical source" above.
+If a verb fails or you discover a new gotcha, fix it in the **canonical implementation**
+(`aios-workspace/scripts/connectors/linear/` + this routing doc, both skill copies) in the
+same session — not in a local fork. The two skill copies
+(`.claude/skills/aios-linear/` and `scaffold/.claude/skills/aios-linear/`) must stay
+byte-identical (`npm run check:linear-skill-parity`, AIO-927).

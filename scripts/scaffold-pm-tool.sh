@@ -44,9 +44,9 @@ echo "pm_tool: $PM_TOOL" >> "$OUTPUT/aios.yaml"
 cp "$REPO_ROOT/.claude/rubrics/spec-readiness.md" "$OUTPUT/.claude/rubrics/spec-readiness.md"
 
 if [ "$PM_TOOL" = "linear" ]; then
-  # The canonical issue template. This exact path is what resolveLinearTemplate() looks for
-  # (.claude/skills/aios-linear/linear-template.mjs), so `linear.mjs create --template aios`
-  # is inert without it.
+  # The canonical issue template. resolveLinearTemplate() (scripts/connectors/linear/
+  # template.mjs, AIO-1067) resolves this path from the workspace cwd, so
+  # `aios linear create --template aios` is inert without it.
   mkdir -p "$OUTPUT/docs/agentic-ergonomics"
   cp "$REPO_ROOT/docs/agentic-ergonomics/aios-issue-template.md" \
     "$OUTPUT/docs/agentic-ergonomics/aios-issue-template.md"

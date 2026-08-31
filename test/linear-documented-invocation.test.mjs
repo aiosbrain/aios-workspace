@@ -1,18 +1,12 @@
-// AIO-1027 regression: the invocation the docs name must be one that RESOLVES the credential.
+// AIO-1027 regression, updated for AIO-1067: the invocation the docs name must be one that
+// RESOLVES the credential.
 //
-// THE BUG THIS EXISTS FOR. There are three ways to reach the Linear CLI and only one of them
-// resolves LINEAR_API_KEY:
-//
-//   linear <cmd>                                -> scripts/linear.mjs -> resolveConnectorEnv()  ✅
-//   node scripts/linear.mjs <cmd>               -> same wrapper, but NOT vendored to workspaces
-//   node .claude/skills/aios-linear/linear.mjs  -> reads process.env only, resolves NOTHING     ❌
-//
-// PR #639 moved every documented invocation onto the third one. It passed review and CI because
-// every machine that ran it already had LINEAR_API_KEY exported (direnv), so the credential-less
-// path appeared to work. Strip the key and it fails — which is what a member actually experiences.
-//
-// The assertion is therefore about the DOCS, checked against the CODE: whatever the SKILL.md tells
-// a reader to run must not be a file that lacks credential resolution.
+// THE BUG THE ORIGINAL TEST EXISTED FOR: PR #639 documented a Linear entry point that read
+// process.env only and resolved nothing, and it passed review because every machine that ran
+// it already had LINEAR_API_KEY exported. Post-AIO-1067 there is ONE implementation — the
+// built-in adapter behind `aios linear` — and its preflight (ensureLinearCredential) owns
+// resolution. The docs must therefore name `aios linear`, and every remaining alternate
+// entry point must delegate to that same adapter rather than carrying its own client.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -21,59 +15,68 @@ import { fileURLToPath } from "node:url";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const SKILL_MD = path.join(ROOT, "scaffold/.claude/skills/aios-linear/SKILL.md");
-const CORE = path.join(ROOT, "scaffold/.claude/skills/aios-linear/linear-core.mjs");
+const SKILL_DELEGATE = path.join(ROOT, "scaffold/.claude/skills/aios-linear/linear.mjs");
+const CORE = path.join(ROOT, "scripts/connectors/linear/core.mjs");
+const CREDENTIALS = path.join(ROOT, "scripts/connectors/linear/credentials.mjs");
+const ADAPTER = path.join(ROOT, "scripts/connectors/linear/index.mjs");
 const WRAPPER = path.join(ROOT, "scripts/linear.mjs");
 
-test("the credential wrapper is scripts/linear.mjs, and it still resolves the key", () => {
+test("the compat bin delegates to the adapter that resolves the credential", () => {
   const wrapper = readFileSync(WRAPPER, "utf8");
-  assert.match(wrapper, /resolveConnectorEnv\(/, "scripts/linear.mjs must resolve connector env");
+  assert.match(wrapper, /loadLinearAdapter/, "scripts/linear.mjs must route to the adapter");
+  assert.doesNotMatch(wrapper, /api\.linear\.app/, "the bin must not carry its own client");
+  const adapter = readFileSync(ADAPTER, "utf8");
+  assert.match(adapter, /ensureLinearCredential/, "the adapter preflights the credential");
+  const credentials = readFileSync(CREDENTIALS, "utf8");
   assert.match(
-    wrapper,
-    /apiKeyEnv:\s*"LINEAR_API_KEY"/,
+    credentials,
+    /resolveConnectorEnv/,
+    "the adapter must keep the AIO-790 scoped workspace resolution"
+  );
+  assert.match(
+    credentials,
+    /apiKeyEnv: "LINEAR_API_KEY"/,
     "it must resolve LINEAR_API_KEY specifically"
   );
 });
 
-test("the skill CLI does NOT resolve credentials — so it must not be the documented entry point", () => {
+test("the provider core still reads only the resolved environment", () => {
   const core = readFileSync(CORE, "utf8");
   assert.match(
     core,
     /process\.env\.LINEAR_API_KEY/,
-    "linear-core reads the key from the environment"
+    "core reads the key the adapter preflight exported"
   );
   assert.doesNotMatch(
     core,
     /resolveConnectorEnv/,
-    "linear-core does not resolve it — if this changes, revisit the docs"
+    "core does not resolve credentials — index.mjs owns that seam"
   );
 });
 
-test("SKILL.md's primary invocation is the PATH bin, not the credential-less skill file", () => {
+test("SKILL.md's primary invocation is the canonical aios route", () => {
   const md = readFileSync(SKILL_MD, "utf8");
   const assignment = md.match(/^LIN=(.*)$/m);
   assert.ok(assignment, "SKILL.md must define the LIN invocation used by its examples");
   const value = assignment[1].split("#")[0].trim();
-  assert.equal(value, "linear", `LIN must be the PATH bin; got ${value}`);
-  assert.doesNotMatch(
-    value,
-    /skills\/aios-linear\/linear\.mjs/,
-    "the skill file resolves no credential and must not be the primary invocation (AIO-1027)"
-  );
+  assert.equal(value, '"aios linear"', `LIN must be the canonical route; got ${value}`);
+  assert.match(md, /aios connect linear/, "the docs must name the credential bootstrap command");
+});
+
+test("the skill copies are routing delegates, not a second provider client", () => {
+  const delegate = readFileSync(SKILL_DELEGATE, "utf8");
+  assert.doesNotMatch(delegate, /api\.linear\.app|LINEAR_API_KEY/);
+  assert.match(delegate, /\["linear", \.\.\.process\.argv\.slice\(2\)\]/);
 });
 
 test("the missing-key error names a command that can actually succeed", () => {
   const core = readFileSync(CORE, "utf8");
   const msg = core.match(/LINEAR_API_KEY not set[^;]*/s)?.[0] ?? "";
   assert.ok(msg, "the missing-key diagnostic must exist");
-  assert.doesNotMatch(
-    msg,
-    /run via:\s*node \.claude\/skills\/aios-linear\/linear\.mjs/,
-    "the error must not tell the reader to re-run the exact command that just failed"
-  );
-  assert.match(msg, /\blinear\b/, "it should point at the bin that resolves the key");
+  assert.match(msg, /aios connect linear/, "it must point at the bootstrap that resolves the key");
 });
 
-test("package.json still exposes the linear bin the docs depend on", () => {
+test("package.json still exposes the linear bin the compatibility window depends on", () => {
   const pkg = JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf8"));
-  assert.equal(pkg.bin?.linear, "scripts/linear.mjs", "the documented `linear` bin must exist");
+  assert.equal(pkg.bin?.linear, "scripts/linear.mjs", "the compat `linear` bin must exist");
 });

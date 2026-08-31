@@ -49,6 +49,9 @@ function implementationFor(name, owner) {
   if (owner === "adapter.devtools") {
     return `@aiosbrain/aios-devtools/${name === "spec" ? "spec-eval" : name}`;
   }
+  if (owner === "adapter.linear") {
+    return "scripts/connectors/linear/index.mjs";
+  }
   return `scripts/cli/registry.mjs#${name}`;
 }
 

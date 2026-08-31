@@ -15,7 +15,7 @@ import { validateProjectsQuery } from "./helpers/linear-projects-mock.mjs";
 const ROOT = path.resolve(import.meta.dirname, "..");
 // The primary copy is exercised directly; the scaffold copy is proven byte-identical to it
 // by the parity test in linear-dotenvx-scope.test.mjs, so it is covered transitively.
-const CLI = path.join(ROOT, ".claude/skills/aios-linear/linear.mjs");
+const CLI = path.join(ROOT, "scripts/aios.mjs");
 // Schema-derived mock Linear server (see the helper's header): validates every projects
 // query against a checked-in introspection snapshot, then serves `pages` — an array of
 // arrays, one entry per Relay page — passed to the subprocess through MOCK_PAGES.
@@ -24,7 +24,7 @@ const MOCK = path.join(import.meta.dirname, "helpers/linear-projects-mock.mjs");
 function runCli(args, pages = [[]], extraEnv = {}) {
   const dir = mkdtempSync(path.join(tmpdir(), "aios-linear-projects-"));
   const log = path.join(dir, "mutations.log");
-  const result = spawnSync(process.execPath, ["--import", MOCK, CLI, ...args], {
+  const result = spawnSync(process.execPath, ["--import", MOCK, CLI, "linear", ...args], {
     cwd: ROOT,
     encoding: "utf8",
     env: {
@@ -230,7 +230,7 @@ test("create rejects an unknown priority", () => {
 // locale-independent output — this test fails if toLowerCase() ever regresses to
 // toLocaleLowerCase().
 test("canonicalization is locale-independent (Turkish dotless-I safe)", () => {
-  const core = pathToFileURL(path.join(CLI, "../linear-core.mjs")).href;
+  const core = pathToFileURL(path.join(ROOT, "scripts/connectors/linear/core.mjs")).href;
   const script = [
     `import { canonicalizeProjectName as canon } from ${JSON.stringify(core)};`,
     `console.log(JSON.stringify([canon("AIOS Infra"), canon("aios infra"), canon("\\u0130stanbul")]));`,

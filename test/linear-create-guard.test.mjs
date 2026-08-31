@@ -14,7 +14,7 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
-const CLI = path.join(ROOT, "scaffold/.claude/skills/aios-linear/linear.mjs");
+const CLI = path.join(ROOT, "scripts/aios.mjs");
 
 // The corrupting shape (a table indented under a list item) — see linear-desc-roundtrip.
 const SENT = [
@@ -95,7 +95,7 @@ function runCreateCli(
   const mutationLog = path.join(supportDir, "mutations.log");
   const sentBodyLog = path.join(supportDir, "sent-body.md");
   writeFileSync(preload, PRELOAD_SOURCE, "utf8");
-  const result = spawnSync(process.execPath, ["--import", preload, CLI, ...args], {
+  const result = spawnSync(process.execPath, ["--import", preload, CLI, "linear", ...args], {
     cwd,
     encoding: "utf8",
     env: {

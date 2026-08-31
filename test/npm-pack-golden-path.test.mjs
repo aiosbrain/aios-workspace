@@ -44,6 +44,10 @@ const REQUIRED_TARBALL_PATHS = [
   "package/scripts/cli/migration.mjs",
   "package/scripts/cli/doctor.mjs",
   "package/scripts/cli/provenance.mjs",
+  "package/scripts/cli/linear-commands.mjs",
+  "package/scripts/connectors.mjs",
+  "package/scripts/connectors/linear/index.mjs",
+  "package/scripts/linear.mjs",
   "package/scripts/scaffold-project.sh",
   "package/scripts/leak-gate.sh",
   "package/scaffold/aios.yaml.tmpl",
@@ -387,6 +391,52 @@ process.stdout.write(JSON.stringify({
         "golden-secret",
         "installed brain-config must decrypt a workspace .env key without a global dotenvx on PATH"
       );
+
+      // 4f. AIO-1067 fresh-user Linear path from the PACKED install: empty HOME/config,
+      //     no ambient credential, node-only PATH. Missing config must name the exact
+      //     bootstrap; after `aios connect linear --reference` a read completes against a
+      //     mocked provider (synthetic key, zero network); the compat `linear` bin is a
+      //     warning-only delegate with identical stdout.
+      const linearCfg = path.join(base, "linear-config");
+      mkdirSync(linearCfg, { recursive: true });
+      const linearEnv = { PATH: nodeOnlyPath, AIOS_CONFIG_DIR: linearCfg };
+      let missingStatus = 0;
+      let missingOut = "";
+      try {
+        run(bin, ["linear", "get", "AIO-73"], { cwd: prefix, env: linearEnv });
+      } catch (e) {
+        missingStatus = e.status ?? 1;
+        missingOut = `${e.stdout ?? ""}${e.stderr ?? ""}`;
+      }
+      assert.equal(missingStatus, 3, `packed missing-credential exit: ${missingOut}`);
+      assert.match(missingOut, /AIOS_E_CREDENTIAL_MISSING/);
+      assert.match(missingOut, /remediation: aios connect linear/);
+      run(bin, ["connect", "linear", "--reference", "env:AIOS_GOLDEN_LINEAR_KEY"], {
+        cwd: prefix,
+        env: linearEnv,
+      });
+      const mockUrl = pathToFileURL(
+        path.join(ROOT, "test", "helpers", "mock-linear-provider.mjs")
+      ).href;
+      const mockedEnv = {
+        ...linearEnv,
+        AIOS_GOLDEN_LINEAR_KEY: "synthetic-golden-key-not-real",
+        NODE_OPTIONS: `--import ${mockUrl}`,
+      };
+      const canonicalRead = run(bin, ["linear", "get", "AIO-73"], { cwd: prefix, env: mockedEnv });
+      assert.match(canonicalRead, /AIO-73 {2}Alpha {2}\[Backlog\] {2}id=issue-a/);
+      const linearBin = path.join(prefix, "node_modules", ".bin", "linear");
+      const delegateRead = run(linearBin, ["get", "AIO-73"], { cwd: prefix, env: mockedEnv });
+      assert.equal(delegateRead, canonicalRead, "delegate stdout must match `aios linear`");
+      const statusJson = JSON.parse(
+        run(bin, ["linear", "status", "--json"], { cwd: prefix, env: mockedEnv })
+      );
+      assert.deepEqual(statusJson, {
+        provider: "linear",
+        configured: true,
+        source: { name: "user-config", fields: ["apiKey"] },
+      });
+      run(bin, ["disconnect", "linear"], { cwd: prefix, env: linearEnv });
 
       // 5. Scaffold a consultant workspace from the INSTALLED package (synthetic data).
       const ws = path.join(base, "golden-ws");

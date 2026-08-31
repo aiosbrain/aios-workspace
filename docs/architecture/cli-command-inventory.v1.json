@@ -243,6 +243,36 @@
       }
     },
     {
+      "id": "command.aios.disconnect",
+      "kind": "registered-command",
+      "route": "aios disconnect",
+      "status": "current",
+      "registryCommand": "disconnect",
+      "source": "scripts/cli/linear-commands.mjs",
+      "futureOwner": "core.cli",
+      "disposition": "keep",
+      "releaseBoundary": "v2.0.0",
+      "removalBoundary": null,
+      "replacement": null,
+      "rollback": null,
+      "evidence": [
+        "scripts/cli/linear-commands.mjs",
+        "scripts/connectors/linear/setup.mjs"
+      ],
+      "metadata": {
+        "owner": "core.cli",
+        "configurationRequirement": "user",
+        "credentialRequirement": "none",
+        "networkBehavior": "never",
+        "outputMode": "human",
+        "startupPolicy": "offline",
+        "implementation": {
+          "module": "scripts/cli/registry.mjs#disconnect",
+          "lazy": true
+        }
+      }
+    },
+    {
       "id": "command.aios.review",
       "kind": "registered-command",
       "route": "aios review",
@@ -1838,8 +1868,8 @@
       "id": "command.aios.linear",
       "kind": "connector-command",
       "route": "aios linear",
-      "status": "planned-v2",
-      "source": "docs/adr/0002-single-binary-cli-platform.md",
+      "status": "current",
+      "source": "scripts/connectors/linear/index.mjs",
       "futureOwner": "adapter.linear",
       "disposition": "keep",
       "releaseBoundary": "v2.0.0",
@@ -1847,7 +1877,9 @@
       "replacement": null,
       "rollback": null,
       "evidence": [
-        "docs/adr/0002-single-binary-cli-platform.md"
+        "scripts/cli/linear-commands.mjs",
+        "scripts/connectors/linear/index.mjs",
+        "test/linear-command-parity.test.mjs"
       ],
       "metadata": {
         "owner": "adapter.linear",
@@ -1860,7 +1892,8 @@
           "module": "scripts/connectors/linear/index.mjs",
           "lazy": true
         }
-      }
+      },
+      "registryCommand": "linear"
     },
     {
       "id": "command.aios.slack",
@@ -1945,7 +1978,7 @@
         "outputMode": "human-or-json",
         "startupPolicy": "offline",
         "implementation": {
-          "module": "scripts/compat/linear-bin.mjs",
+          "module": "scripts/linear.mjs",
           "lazy": true
         }
       }
@@ -2166,7 +2199,7 @@
       "rollback": "Reinstall the exact pre-v2 @aiosbrain/aios package recorded by update and atomically restore the last-known-good config snapshot.",
       "evidence": [
         "scripts/linear.mjs",
-        "scripts/global-connector-runtime.mjs"
+        "scripts/connectors.mjs"
       ],
       "metadata": {
         "owner": "adapter.linear",
@@ -2176,7 +2209,7 @@
         "outputMode": "human-or-json",
         "startupPolicy": "offline",
         "implementation": {
-          "module": "scripts/compat/linear-bin.mjs",
+          "module": "scripts/linear.mjs",
           "lazy": true
         }
       }
@@ -2188,7 +2221,7 @@
       "status": "current",
       "source": ".claude/skills/aios-linear/",
       "futureOwner": "adapter.linear",
-      "disposition": "migrate",
+      "disposition": "delegate",
       "releaseBoundary": "v2.0.0",
       "removalBoundary": "v2.0.0",
       "replacement": "aios linear …; skill retains routing instructions only",
@@ -2217,7 +2250,7 @@
       "status": "current",
       "source": "scaffold/.claude/skills/aios-linear/",
       "futureOwner": "adapter.linear",
-      "disposition": "migrate",
+      "disposition": "delegate",
       "releaseBoundary": "v2.0.0",
       "removalBoundary": "v2.0.0",
       "replacement": "aios linear …; scaffolded skill retains routing instructions only",

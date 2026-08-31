@@ -161,7 +161,9 @@ export function collectProvenance(options = {}) {
     configPaths,
     adapters: {
       devtools: pkg.dependencies?.["@aiosbrain/aios-devtools"] ?? null,
-      linear: pkg.dependencies?.["@aiosbrain/aios-linear"] ?? null,
+      // AIO-1067: the Linear adapter ships inside this package (scripts/connectors/linear/),
+      // so its version IS the package version — never "unavailable" on a healthy install.
+      linear: pkg.dependencies?.["@aiosbrain/aios-linear"] ?? `builtin@${pkg.version ?? "unknown"}`,
       slack: pkg.dependencies?.["@aiosbrain/aios-slack"] ?? null,
     },
     binModes,

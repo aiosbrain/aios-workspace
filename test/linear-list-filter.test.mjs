@@ -4,13 +4,9 @@ import { test } from "node:test";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 import assert from "node:assert/strict";
-import {
-  filterIssues,
-  hasListFilters,
-  parseListArgs,
-} from "../scaffold/.claude/skills/aios-linear/linear-core.mjs";
-import { parseCreateArgs } from "../scaffold/.claude/skills/aios-linear/linear-create.mjs";
-import { formatListRow } from "../scaffold/.claude/skills/aios-linear/linear-list.mjs";
+import { filterIssues, hasListFilters, parseListArgs } from "../scripts/connectors/linear/core.mjs";
+import { parseCreateArgs } from "../scripts/connectors/linear/create.mjs";
+import { formatListRow } from "../scripts/connectors/linear/list.mjs";
 
 const issue = (identifier, stateType, labels) => ({
   identifier,
@@ -121,10 +117,10 @@ test("parseCreateArgs still stamps the aios template heading", () => {
 
 // ── review hardening (PR #635): parse traps must fail loudly, not return zero rows ──
 
-const CLI = path.resolve(import.meta.dirname, "../scaffold/.claude/skills/aios-linear/linear.mjs");
+const CLI = path.resolve(import.meta.dirname, "../scripts/aios.mjs");
 
 function runList(args) {
-  return spawnSync(process.execPath, [CLI, "list", "AIO", ...args], {
+  return spawnSync(process.execPath, [CLI, "linear", "list", "AIO", ...args], {
     encoding: "utf8",
     env: { ...process.env, LINEAR_API_KEY: "test-key-never-used" },
   });

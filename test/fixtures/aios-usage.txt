@@ -11,6 +11,11 @@ usage:
     --inspect [--json]                  read-only live preflight: workspace/toolkit/git/Brain state
   aios connect [<id>]                   connect an integration (guided + live-validated)
     [--token <v>] [--set ENV=v]         non-interactive credential input
+    [--reference env:VAR|keychain:s]    linear only: store a user-level credential reference
+  aios disconnect linear                remove the user-level Linear credential reference
+  aios linear <verb> …                  Linear board CLI (get/list/create/comment/relations/…)
+                                        `aios linear help` lists every verb; setup: `aios connect linear`
+  aios linear status [--json]           report the resolved credential source class (never values)
   aios review                           interactive: toggle inclusion, then push selected
   aios push [--dry-run] [paths…]
   aios push skill <name> [--dry-run]    share a skill (SKILL.md + references) to the brain
