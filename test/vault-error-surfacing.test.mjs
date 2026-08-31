@@ -26,12 +26,19 @@ test("vaultSet succeeds and vaultGet reads the value back (baseline, real dotenv
   }
 });
 
-test("vaultSet names the real cause when dotenvx isn't on PATH", () => {
+test("vaultSet no longer depends on PATH at all (AIO-1004)", () => {
+  // This test used to assert the actionable "dotenvx isn't on PATH" error when PATH was
+  // emptied. Since AIO-1004 the vault resolves the toolkit's own @dotenvx/dotenvx via Node
+  // module resolution and runs it under process.execPath, so an empty PATH must now
+  // SUCCEED — the stronger property. (The bare-PATH error message still exists, but only
+  // as the final fallback for an install carrying no @dotenvx/dotenvx at all — see
+  // test/connector-dotenvx-resolution.test.mjs for the layout matrix.)
   const dir = ws();
   const savedPath = process.env.PATH;
-  process.env.PATH = ""; // dotenvx (and everything else) unresolvable
+  process.env.PATH = ""; // nothing resolvable from PATH, including any global dotenvx
   try {
-    assert.throws(() => vaultSet(dir, "TEST_TOKEN", "value"), /dotenvx isn't on PATH/);
+    vaultSet(dir, "TEST_TOKEN", "a-real-value");
+    assert.equal(vaultGet(dir, "TEST_TOKEN"), "a-real-value");
   } finally {
     process.env.PATH = savedPath;
     rmSync(dir, { recursive: true, force: true });

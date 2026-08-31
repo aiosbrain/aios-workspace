@@ -13,7 +13,8 @@
  * via dotenvx (.env ciphertext + .env.keys private key). Plaintext secrets are never
  * written to .mcp.json (placeholders only), never to descriptors, never logged.
  *
- * Zero npm deps (Node >= 18: built-in fetch; dotenvx CLI on PATH with .env fallback).
+ * Zero npm deps (Node >= 18: built-in fetch; dotenvx resolved via Node module
+ * resolution against the toolkit's own @dotenvx/dotenvx, PATH only as a last resort).
  */
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync } from "node:fs";
@@ -23,6 +24,7 @@ import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
 import { readDescriptors } from "./gen-catalog.mjs";
 import { fetchBrainOriginLocked, normalizeBrainOriginFromConfig } from "./brain-origin.mjs";
+import { envPath, vaultGet, vaultSet } from "./connector-vault.mjs";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const BUNDLED_SCAFFOLD = path.join(SCRIPT_DIR, "..", "scaffold");
@@ -430,67 +432,11 @@ export async function storeOAuthConnector(repo, descriptor, cfg, { fetchImpl = f
 }
 
 // ── secret vault (dotenvx) ───────────────────────────────────────────────────
+// Lives in connector-vault.mjs (extracted when AIO-1004's deterministic dotenvx
+// resolution pushed this file past its size cap). Re-exported so every existing
+// `from "./connector.mjs"` import keeps working.
+export { resolveDotenvxInvocation, vaultSet, vaultGet } from "./connector-vault.mjs";
 
-function envPath(repo) {
-  return path.join(repo, ".env");
-}
-
-// dotenvx reads DOTENV_PUBLIC_KEY/DOTENV_PRIVATE_KEY from the environment if present,
-// which take priority over the repo's own .env.keys. An ambient shell that already has
-// one set (e.g. from a different project's dotenvx setup, or an env cascade like
-// Tessera's) silently breaks per-workspace key generation — `set` then encrypts against
-// the WRONG key and `get` can never decrypt it back, with no visible error. Strip both
-// so every vaultSet/vaultGet always uses this repo's own .env.keys, regardless of what's
-// ambient in the caller's shell.
-function dotenvxEnv() {
-  const env = { ...process.env };
-  delete env.DOTENV_PUBLIC_KEY;
-  delete env.DOTENV_PRIVATE_KEY;
-  return env;
-}
-
-// Encrypt+store a secret. dotenvx generates .env.keys + DOTENV_PUBLIC_KEY on first use.
-export function vaultSet(repo, env, value) {
-  const ep = envPath(repo);
-  // dotenvx set no-ops (exit 0!) if the .env file is missing — create it first so the
-  // first set bootstraps the keypair and encrypts.
-  if (!existsSync(ep)) writeFileSync(ep, "");
-  // Note: value passes as an execFile arg (no shell); on a shared host this is briefly
-  // visible via `ps`. Acceptable for a single-user local app; hardening tracked for M5.
-  try {
-    execFileSync("dotenvx", ["set", env, value, "-f", ep], {
-      cwd: repo,
-      env: dotenvxEnv(),
-      stdio: ["ignore", "ignore", "pipe"],
-    });
-  } catch (e) {
-    if (e.code === "ENOENT") {
-      throw new Error(
-        `vault: dotenvx isn't on PATH — install it (npm i -g @dotenvx/dotenvx), or run this from the toolkit repo where it's already a dependency`
-      );
-    }
-    const stderr = (e.stderr || "").toString().trim();
-    throw new Error(`vault: dotenvx failed to set ${env}${stderr ? ` — ${stderr}` : ""}`);
-  }
-  // dotenvx returns 0 even on some no-ops; assert the value actually landed encrypted.
-  const back = vaultGet(repo, env);
-  if (back !== value) {
-    throw new Error(`vault: ${env} didn't take — check that .env is writable, then retry`);
-  }
-}
-export function vaultGet(repo, env) {
-  try {
-    return execFileSync("dotenvx", ["get", env, "-f", envPath(repo)], {
-      cwd: repo,
-      env: dotenvxEnv(),
-      stdio: ["ignore", "pipe", "ignore"],
-    })
-      .toString()
-      .trim();
-  } catch {
-    return "";
-  }
-}
 // .env.keys* (not .env.*): a workspace tracks its own .env.example. Why: AIOS PR #628.
 export function ensureGitignore(repo, entries = [".env", ".env.keys*"]) {
   const gi = path.join(repo, ".gitignore");
