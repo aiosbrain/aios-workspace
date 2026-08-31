@@ -122,6 +122,13 @@ So:
   numbers. `--force` after the filename is the explicit escape hatch. They **re-read after
   writing** and exit non-zero on real content drift; at that point the write already happened,
   so repair the description immediately, rerun the write, and then run `verify-desc`.
+* `create` runs the same two guards on its description (`--desc` or `--template`, AIO-1026):
+  the lint fires **before any mutation** — a rejected description means no issue was created —
+  and `--force` downgrades it to a warning. After a successful create it re-reads the stored
+  description of the returned identifier; on drift or a failed readback it exits non-zero,
+  **names the created issue**, and prints the repair command. The create mutation is sent
+  exactly once and never retried — a lost response is reported as "the issue may already
+  exist", with the list command to check before re-running.
 * `verify-desc` compares on a normalised form. A byte difference caused only by Linear's
   re-serialisation now **passes**; genuine content loss **fails**. Before this, it failed on
   essentially every write, which made it noise nobody could act on — and that is how the

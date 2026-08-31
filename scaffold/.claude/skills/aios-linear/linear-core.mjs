@@ -1,18 +1,14 @@
-import { readFileSync } from "node:fs";
-
-import { resolveLinearTemplate } from "./linear-template.mjs";
-
 const API = "https://api.linear.app/graphql";
 const REQUEST_TIMEOUT_MS = 30_000;
 
 export const DEFAULT_TEAM_KEY = process.env.AIOS_LINEAR_TEAM_KEY || "AIO";
 
-function fail(message) {
+export function fail(message) {
   console.error(message);
   process.exit(1);
 }
 
-export async function gql(query, variables) {
+export async function gql(query, variables, { throwOnError = false } = {}) {
   const key = process.env.LINEAR_API_KEY;
   if (!key) {
     fail(
@@ -21,6 +17,8 @@ export async function gql(query, variables) {
         "Do not dotenvx-run the whole toolkit .env; that decrypts unrelated secrets (AIO-790)."
     );
   }
+  // throwOnError lets a caller that MUST report state after a one-shot mutation (e.g. create's
+  // "the issue may already exist" path) handle the failure instead of exiting mid-flight.
   let response;
   try {
     response = await fetch(API, {
@@ -30,14 +28,17 @@ export async function gql(query, variables) {
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
   } catch (error) {
-    fail(`Linear request failed: ${error.message}`);
+    const message = `Linear request failed: ${error.message}`;
+    if (throwOnError) throw new Error(message);
+    fail(message);
   }
   const payload = await response.json().catch(() => null);
   if (!response.ok || !payload || payload.errors) {
-    fail(
+    const message =
       "Linear error: " +
-        (payload?.errors?.map((error) => error.message).join("; ") || `HTTP ${response.status}`)
-    );
+      (payload?.errors?.map((error) => error.message).join("; ") || `HTTP ${response.status}`);
+    if (throwOnError) throw new Error(message);
+    fail(message);
   }
   return payload.data;
 }
@@ -214,64 +215,6 @@ export function filterIssues(issues, filters) {
     }
     return true;
   });
-}
-
-export function parseCreateArgs(args) {
-  const title = args[0];
-  if (!title) fail("create requires a title");
-  let descFile = null;
-  let template = null;
-  const labels = [];
-  let state = "Backlog";
-  let parent = null;
-  let assignee = null;
-  let project = null;
-  let priority = null;
-  for (let index = 1; index < args.length; index++) {
-    const option = args[index];
-    if (
-      [
-        "--desc",
-        "--template",
-        "--label",
-        "--state",
-        "--parent",
-        "--assignee",
-        "--project",
-        "--priority",
-      ].includes(option)
-    ) {
-      const value = args[++index];
-      if (!value) fail(`${option} requires a value`);
-      if (option === "--desc") descFile = value;
-      else if (option === "--template") template = value;
-      else if (option === "--label") labels.push(value);
-      else if (option === "--state") state = value;
-      else if (option === "--parent") parent = value;
-      else if (option === "--project") project = value;
-      else if (option === "--priority") priority = parsePriority(value);
-      else assignee = value;
-    } else {
-      fail(`unknown create option "${option}"`);
-    }
-  }
-  let description = descFile ? readFileSync(descFile, "utf8") : "";
-  if (template) {
-    const body = resolveLinearTemplate(template);
-    if (!body) fail(`unknown template "${template}"`);
-    // Function replacement: a literal-string second argument would expand `$&`/`$$`
-    // sequences in the title and corrupt the stamped heading.
-    description = body.replace(/^# TITLE — .*$/m, () => `# ${title}`);
-    if (descFile) console.error("warning: --desc ignored when --template is set");
-  }
-  const originLabel = process.env.AIOS_LINEAR_ORIGIN_LABEL;
-  if (originLabel && labels.includes(originLabel) && !description.startsWith("**Origin:**")) {
-    const origin = process.env.AIOS_LINEAR_ORIGIN_TEXT;
-    if (!origin)
-      fail("AIOS_LINEAR_ORIGIN_TEXT must be set when the configured origin label is used");
-    description = `**Origin:** ${origin}\n\n${description}`;
-  }
-  return { title, description, labels, state, parent, assignee, project, priority };
 }
 
 export async function findTeamId(teamKey = DEFAULT_TEAM_KEY) {
