@@ -48,6 +48,12 @@ const EXPECTED = [
   ["violating-prt-reusable-callee.yml", "privileged", "pr-target-dynamic-run"],
   ["violating-prt-chain-end.yml", "deep", "pr-target-checkout"],
   ["violating-prt-chain-end.yml", "deep", "pr-target-dynamic-run"],
+  // Endpoint-blocklist hole: five acquisition shapes the old regex missed.
+  ["violating-prt-fetch-variants.yml", "codeload-targz", "pr-target-checkout"],
+  ["violating-prt-fetch-variants.yml", "raw-content", "pr-target-checkout"],
+  ["violating-prt-fetch-variants.yml", "git-fetch-sha", "pr-target-checkout"],
+  ["violating-prt-fetch-variants.yml", "env-indirection", "pr-target-checkout"],
+  ["violating-prt-fetch-variants.yml", "event-path", "pr-target-checkout"],
 ];
 
 test("every rule fires on its violating fixture, naming file, job, and rule", () => {
@@ -84,6 +90,20 @@ test("every rule fires on its violating fixture, naming file, job, and rule", ()
         `would bypass it. Add an indirectly-reached fixture.`
     );
   }
+
+  // `pr-target-checkout` is the rule that shipped an endpoint blocklist, so it carries an extra
+  // obligation: it must be exercised by SEVERAL distinct acquisition shapes, not just the one
+  // narrow endpoint its first version happened to match. Counting distinct (file, job) pairs means
+  // a single fixture — however many endpoints it lists — can never satisfy this on its own.
+  const acquisitionShapes = new Set(
+    found.filter((f) => f.rule === "pr-target-checkout").map((f) => `${f.file}#${f.job}`)
+  );
+  assert.ok(
+    acquisitionShapes.size >= 5,
+    `pr-target-checkout is covered by only ${acquisitionShapes.size} shape(s). It is a ` +
+      `construction-based rule (transport/archive primitive x PR-controlled reference); cover ` +
+      `the variants — a new endpoint must not be able to open a new hole.`
+  );
 });
 
 // ── the reusable-workflow bypass (Codex adversarial review, P1) ──────────────
@@ -166,6 +186,7 @@ test("compliant fixtures produce no finding at all", () => {
     "upstream-plain-pr-caller.yml",
     "upstream-schedule-caller.yml",
     "compliant-unreached-callee.yml",
+    "compliant-prt-trusted-fetch.yml",
   ];
   const found = failures(run().out);
   for (const file of clean) {
@@ -206,6 +227,64 @@ test("reachability follows workflow_run and local reusable-workflow calls", () =
     out,
     /violating-reusable\.yml {2}\(via called by PR-like \S*upstream-reusable-caller\.yml/
   );
+});
+
+// ── PR-content acquisition is judged by construction, not by endpoint ────────
+//
+// The first version enumerated known-bad endpoints and missed `codeload.../tar.gz/refs/pull/N/head`
+// outright. These fixtures are one job per acquisition shape; the rule now requires a transport or
+// archive primitive PLUS a PR-controlled reference, so a new endpoint cannot open a new hole.
+
+for (const [job, shape] of [
+  ["codeload-targz", "codeload `tar.gz/refs/pull/<n>/head` (the exact reported miss)"],
+  ["raw-content", "raw.githubusercontent.com selected by a head.sha expression"],
+  ["git-fetch-sha", "`git fetch origin <sha>` with no `refs/pull/` literal"],
+  ["env-indirection", "`env:` indirection — no `${{ }}` in the run body at all"],
+  ["event-path", "`$GITHUB_EVENT_PATH` read, then fetch"],
+]) {
+  test(`pr-target-checkout catches PR content fetched via ${shape}`, () => {
+    const out = run().out;
+    const hit = failures(out).some(
+      (f) =>
+        f.file === "violating-prt-fetch-variants.yml" &&
+        f.job === job &&
+        f.rule === "pr-target-checkout"
+    );
+    assert.ok(hit, `job \`${job}\` must trip pr-target-checkout\n${out}`);
+  });
+}
+
+test("a pull_request_target job may fetch trusted things without being flagged", () => {
+  const out = run().out;
+  assert.deepEqual(
+    failures(out).filter((f) => f.file === "compliant-prt-trusted-fetch.yml"),
+    [],
+    `curl/tar/git-fetch with no PR-controlled reference, and an explicit base-ref checkout, ` +
+      `must stay silent — otherwise the inverted rule just flags every fetch in the repo\n${out}`
+  );
+});
+
+// The boundary this gate draws, stated as a test rather than left to accident: fetching PR objects
+// "as inert data" (the leak-gate/nda-gate scanner shape) IS flagged. There is no silent exemption
+// for it — the gate cannot tell from YAML that bytes are never executed, so the sanctioned route is
+// a reviewed waiver carrying an owner and a justification, which is exactly what the repo's own
+// allowlist does for .github/workflows/leak-gate.yml.
+test("fetching PR objects as inert scanner data is flagged, not silently permitted", () => {
+  const out = run().out;
+  assert.ok(
+    failures(out).some(
+      (f) => f.file === "violating-prt-fetch-variants.yml" && f.job === "env-indirection"
+    ),
+    "the scanner-input shape must still be reported"
+  );
+  const repoAllowlist = JSON.parse(
+    readFileSync(path.join(ROOT, "scripts/workflow-policy-allowlist.json"), "utf8")
+  );
+  const waiver = repoAllowlist.entries.find(
+    (e) => e.workflow === ".github/workflows/leak-gate.yml" && e.rule === "pr-target-checkout"
+  );
+  assert.ok(waiver, "the real scanner is permitted by an explicit waiver, not by a rule exemption");
+  assert.ok(waiver.owner && waiver.justification.length >= 40);
 });
 
 // ── the gate never writes the required security status ───────────────────────

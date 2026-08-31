@@ -12,65 +12,56 @@
  */
 import path from "node:path";
 import { walkScalars } from "./workflow-yaml.mjs";
+import { MIN_JUSTIFICATION, PR_LIKE_EVENTS, RULES } from "./workflow-policy-catalogue.mjs";
 
-/** Rule catalogue. `why` states the failure this prevents; `fix` is the remediation prompt. */
-export const RULES = {
-  "unparseable-workflow": {
-    why: "A workflow this gate cannot read as data is a workflow it cannot police. Passing it would let any construct the reader does not model become a blind spot.",
-    fix: "Simplify the file to plain block YAML (no anchors, aliases, merge keys, explicit tags, or multiple documents), or extend scripts/workflow-yaml.mjs to model the construct — with a test.",
-  },
-  "secrets-in-pr-reachable": {
-    why: "A job reachable from a pull request must not hold a durable credential: PR-controlled code, dependencies, or workflow YAML can exfiltrate it (leak-gate-remediation-plan.md §1 invariant 1).",
-    fix: "Move the credentialed work to a trusted, default-branch-only workflow or to the security service, and leave the PR-reachable job unprivileged.",
-  },
-  "elevated-permissions": {
-    why: "`checks: write` / `statuses: write` in a PR-reachable job is the forgery primitive for the required `AIOS Security Gate` status. Only the App's installation token may write it (§5.2).",
-    fix: "Drop the scope. If a status genuinely must be published, publish it from a trusted workflow that PR content cannot reach.",
-  },
-  "security-gate-context": {
-    why: "The `AIOS Security Gate` context belongs to the `aios-security-gate` GitHub App alone. A workflow naming it can only be trying to write, shadow, or satisfy it (§1 invariant 3).",
-    fix: "Remove the reference. Actions never produces this context; branch protection binds it to the App's source.",
-  },
-  "mutable-action-ref": {
-    why: "A tag or branch ref is repointable by the action's owner, so a green review is not evidence about the code that will actually run in a job that can see this repository.",
-    fix: "Pin to the full 40-hex commit SHA and keep the human-readable version in a trailing comment, e.g. `uses: actions/checkout@3d3c42e5… # v7.0.1`.",
-  },
-  "pr-target-checkout": {
-    why: "`pull_request_target` runs with the base repository's secrets and a write-capable token. Bringing PR-controlled content into that job is the classic pwn-request.",
-    fix: "Check out the base ref only, or handle PR content as inert bytes fetched by a trusted scanner that never executes it.",
-  },
-  "pr-target-artifact-download": {
-    why: "An artifact from a PR-triggered run is attacker-authored data unpacked inside a privileged job; path traversal and later execution both follow from it.",
-    fix: "Do not download PR artifacts in a `pull_request_target` job. Move the consumer to an unprivileged `pull_request` job, or to a trusted service.",
-  },
-  "pr-target-package-install": {
-    why: "A package manager in a `pull_request_target` job executes attacker-controlled lockfiles, manifests, lifecycle scripts, and build files with the base repository's secrets in scope.",
-    fix: "Remove the install/build from the privileged job. Anything that must run PR code belongs in a `pull_request` job with no secrets.",
-  },
-  "pr-target-dynamic-run": {
-    why: "Interpolating `${{ github.event.* }}` / `${{ github.head_ref }}` straight into a shell or script body is command injection: a PR title or branch name becomes code in a privileged job.",
-    fix: 'Pass the value through `env:` and reference it as a shell/JS variable (`"$PR_TITLE"`, `process.env.PR_TITLE`) so it is never expanded into the program text.',
-  },
-  "allowlist-entry-invalid": {
-    why: "An unaccountable waiver is a silent policy change. Every entry must name one rule, one owner, and a justification a reviewer can judge.",
-    fix: "Give the entry a `rule` from this catalogue, a non-empty `owner`, and a `justification` of at least 40 characters naming the follow-up that removes it.",
-  },
-};
-
-export const PR_LIKE_EVENTS = [
-  "pull_request",
-  "pull_request_target",
-  "pull_request_review",
-  "pull_request_review_comment",
-  "issue_comment",
-];
+export { MIN_JUSTIFICATION, PR_LIKE_EVENTS, RULES } from "./workflow-policy-catalogue.mjs";
 
 const SECRET_REF = /\bsecrets\s*(?:\.\s*([A-Za-z_][\w-]*)|\[)/g;
 // `github.event.` with the trailing dot: `github.event_name` is a fixed trigger name, not input.
 const ATTACKER_EXPR = /\bgithub\s*\.\s*(?:event\s*\.|head_ref\b)/;
 const PR_REF_HINT = /\bgithub\s*\.\s*(?:event\s*\.|head_ref\b)|refs\/pull\//;
-const PR_FETCH_RUN =
-  /\bgh\s+pr\s+checkout\b|\bgit\s+fetch\b[^\n]*refs\/pull\/|(?:api\.github\.com|codeload\.github\.com)[^\s"']*\/(?:tarball|zipball|legacy)\b/;
+
+// ── PR-controlled content acquisition, judged by CONSTRUCTION not by endpoint ────────────────
+//
+// This rule used to enumerate known-bad endpoints: `api.github.com/…/tarball`,
+// `codeload.github.com/…/zipball`, and `git fetch … refs/pull/`. That is the wrong shape for a
+// security boundary and it leaked — `codeload.github.com/o/r/tar.gz/refs/pull/123/head` matched
+// none of them, because the path segment is `tar.gz` rather than `tarball|zipball|legacy`.
+// `raw.githubusercontent.com`, `git archive --remote`, `wget`, a `$GITHUB_SERVER_URL`-built URL and
+// a bare `git fetch <sha>` are all the same attack, and each would have needed its own alternative:
+// one reviewer finds one hole, the next reviewer finds the next.
+//
+// It is now a CONJUNCTION — any transport or archive primitive, together with any PR-controlled
+// reference reaching the same `run:` body. The primitive lists may be incomplete only in the safe
+// direction (a missing primitive is a miss, never a silent pass on a listed one); the REFERENCE
+// side is what carries the guarantee, and it defaults to "flag" whenever the ref cannot be shown
+// to be trusted. A false positive here is waivable with an owner and a justification; a false
+// negative is the bug this whole gate exists to prevent.
+const FETCH_PRIMITIVE =
+  /(?:^|[\s;&|(`$])(?:curl|wget|aria2c|http|https|scp|rsync|ftp|svn|hg|nc|gh\s+api|gh\s+release\s+download|gh\s+repo\s+clone|git\s+(?:fetch|clone|pull|archive|checkout|remote|ls-remote)|npm\s+pack|pip3?\s+download|go\s+get)\b/;
+const ARCHIVE_PRIMITIVE = /(?:^|[\s;&|(`])(?:tar|bsdtar|unzip|gunzip|unxz|zstd|7z|jar|cpio)\b/;
+// Self-contained PR checkouts: the command names the pull request itself, so there is no second
+// reference to correlate and the conjunction does not apply.
+const ALWAYS_PR_FETCH = /\bgh\s+pr\s+(?:checkout|diff)\b/;
+// `$GITHUB_EVENT_PATH` is the entire webhook payload on disk. Reading it is a PR-controlled read
+// even when no `${{ }}` expression appears anywhere in the body.
+const IMPLICITLY_TAINTED_VARS = ["GITHUB_EVENT_PATH"];
+// Only well-formed shell identifiers are turned into a `$NAME` matcher.
+const SHELL_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+// The ONLY expression fields that are provably not attacker-controlled: the base branch's commit
+// and name, and the repository default branch. Everything else under `github.event.*` — including
+// `head.*`, `merge_commit_sha`, and `number` (which composes into `refs/pull/<n>/head`) — stays
+// untrusted. This is an allowlist of proven-safe fields, deliberately not a blocklist of unsafe
+// ones: a field nobody has reasoned about defaults to untrusted, so "check out the base ref only"
+// (this rule's own remediation advice) does not itself get flagged.
+const TRUSTED_REF_FIELD =
+  /github\s*\.\s*event\s*\.\s*(?:pull_request\s*\.\s*base\s*\.\s*(?:sha|ref)\b|repository\s*\.\s*default_branch\b)/g;
+
+/** Blank out provably-trusted field references so only unproven ones remain to be judged. */
+function untrustedResidual(text) {
+  return String(text).replace(TRUSTED_REF_FIELD, "trusted_base_ref");
+}
 const ARTIFACT_RUN = /\bgh\s+run\s+download\b|\/actions\/runs\/[^\s"']*\/artifacts\b/;
 // Deliberately broader than "install": in a pull_request_target job, running the PR's own scripts,
 // lockfile lifecycle hooks, or build files is the exploit primitive, not just fetching packages.
@@ -263,6 +254,42 @@ export function mutableUsesRef(ref) {
   return null;
 }
 
+/**
+ * Env names whose value interpolates an attacker-controlled expression, unioned with whatever the
+ * enclosing scope already tainted. This is what closes the `env:` indirection: leak-gate.yml maps
+ * `HEAD_SHA: ${{ github.event.pull_request.head.sha }}` and then curls `"$HEAD_SHA"`, so the run
+ * body contains no `${{ }}` at all and an expression-only check would see nothing.
+ */
+function taintedVarsFrom(env, inherited = new Set()) {
+  const out = new Set(inherited);
+  if (!isMap(env)) return out;
+  for (const [name, value] of Object.entries(env)) {
+    if (
+      SHELL_NAME.test(name) &&
+      typeof value === "string" &&
+      expressionsIn(untrustedResidual(value)).some((e) => ATTACKER_EXPR.test(e))
+    )
+      out.add(name);
+  }
+  return out;
+}
+
+/**
+ * How a `run:` body references PR-controlled content, or null if it demonstrably does not.
+ * Deliberately generous: an unprovable reference resolves to flagged.
+ */
+function prControlledRef(body, tainted) {
+  const residual = untrustedResidual(body);
+  if (/refs\/pull\//.test(residual)) return "a `refs/pull/` ref";
+  const expression = expressionsIn(residual).find((e) => ATTACKER_EXPR.test(e));
+  if (expression) return `the expression \`\${{${expression.trim()}}}\``;
+  for (const name of [...tainted, ...IMPLICITLY_TAINTED_VARS]) {
+    if (SHELL_NAME.test(name) && new RegExp(`\\$\\{?${name}\\b`).test(body))
+      return `\`$${name}\`, which carries a PR-controlled value`;
+  }
+  return null;
+}
+
 function stepLabel(step, index) {
   const name =
     typeof step?.name === "string" ? step.name : typeof step?.uses === "string" ? step.uses : null;
@@ -286,28 +313,49 @@ function auditScope(jobId, scalars, add) {
   }
 }
 
+/**
+ * Every way this step brings PR-controlled content into a privileged job, as {line, detail}.
+ * Extracted from auditPrTargetStep so each rule family stays independently readable — and so the
+ * acquisition logic, which is the part that has already regressed twice, sits on its own.
+ */
+function prContentAcquisition(step, tainted, stepLine) {
+  const out = [];
+  const uses = typeof step.uses === "string" ? step.uses : "";
+  const withBlock = isMap(step.with) ? step.with : {};
+  const run = typeof step.run === "string" ? step.run : "";
+  const inputs = [withBlock.ref, withBlock.repository].filter((v) => typeof v === "string");
+  const runLine = lineOf(step, "run") || stepLine;
+
+  if (/(^|\/)checkout@/.test(uses) && inputs.some((v) => PR_REF_HINT.test(untrustedResidual(v))))
+    out.push({
+      line: lineOf(withBlock, "ref") || stepLine,
+      detail: "checks out PR-controlled ref",
+    });
+
+  // Fast path: a command that names the pull request itself needs no correlating reference.
+  if (ALWAYS_PR_FETCH.test(run)) {
+    out.push({ line: runLine, detail: "`run:` checks out the pull request" });
+    return out;
+  }
+  const ref = prControlledRef(run, tainted);
+  if (ref && (FETCH_PRIMITIVE.test(run) || ARCHIVE_PRIMITIVE.test(run)))
+    out.push({ line: runLine, detail: `\`run:\` fetches or extracts content selected by ${ref}` });
+  return out;
+}
+
 /** The four facets of the plan's `pull_request_target` rule, for one step. */
-function auditPrTargetStep(jobId, step, label, stepLine, add) {
+function auditPrTargetStep(step, ctx) {
+  const { jobId, label, stepLine, add } = ctx;
   const uses = typeof step.uses === "string" ? step.uses : "";
   const withBlock = isMap(step.with) ? step.with : {};
   const run = typeof step.run === "string" ? step.run : "";
   const script = typeof withBlock.script === "string" ? withBlock.script : "";
-  const checkoutInputs = [withBlock.ref, withBlock.repository].filter((v) => typeof v === "string");
+  const tainted = taintedVarsFrom(step.env, ctx.tainted);
+  const runLine = lineOf(step, "run") || stepLine;
 
-  if (/(^|\/)checkout@/.test(uses) && checkoutInputs.some((v) => PR_REF_HINT.test(v)))
-    add(
-      jobId,
-      "pr-target-checkout",
-      lineOf(withBlock, "ref") || stepLine,
-      `${label}: checks out PR-controlled ref`
-    );
-  if (PR_FETCH_RUN.test(run))
-    add(
-      jobId,
-      "pr-target-checkout",
-      lineOf(step, "run") || stepLine,
-      `${label}: \`run:\` fetches PR-controlled content`
-    );
+  for (const { line, detail } of prContentAcquisition(step, tainted, stepLine))
+    add(jobId, "pr-target-checkout", line, `${label}: ${detail}`);
+
   if (/download-artifact/.test(uses) || ARTIFACT_RUN.test(run))
     add(
       jobId,
@@ -319,7 +367,7 @@ function auditPrTargetStep(jobId, step, label, stepLine, add) {
     add(
       jobId,
       "pr-target-package-install",
-      lineOf(step, "run") || stepLine,
+      runLine,
       `${label}: \`run:\` invokes a package manager or build tool`
     );
   for (const [key, body] of [
@@ -337,7 +385,9 @@ function auditPrTargetStep(jobId, step, label, stepLine, add) {
   }
 }
 
-function auditJob(jobId, job, jobLine, isPrTarget, add) {
+function auditJob(jobId, job, ctx) {
+  const { jobLine, isPrTarget, add } = ctx;
+  const tainted = taintedVarsFrom(job.env, ctx.tainted);
   for (const violation of elevatedPermissions(job.permissions, lineOf(job, "permissions")))
     add(jobId, "elevated-permissions", violation.line, violation.detail);
 
@@ -359,7 +409,7 @@ function auditJob(jobId, job, jobLine, isPrTarget, add) {
         lineOf(step, "uses") || stepLine,
         `${label}: \`uses: ${step.uses}\` — ${problem}`
       );
-    if (isPrTarget) auditPrTargetStep(jobId, step, label, stepLine, add);
+    if (isPrTarget) auditPrTargetStep(step, { jobId, label, stepLine, add, tainted });
   }
 }
 
@@ -385,14 +435,13 @@ export function auditWorkflow(file, prTarget = false) {
   const jobs = isMap(doc.jobs) ? doc.jobs : {};
   // Belt and braces: the file's own trigger can only ADD to the propagated origin, never clear it.
   const isPrTarget = prTarget || triggersOf(doc).includes("pull_request_target");
+  const tainted = taintedVarsFrom(doc.env);
   for (const [jobId, job] of Object.entries(jobs)) {
-    if (isMap(job)) auditJob(jobId, job, lineOf(jobs, jobId), isPrTarget, add);
+    if (isMap(job))
+      auditJob(jobId, job, { jobLine: lineOf(jobs, jobId), isPrTarget, add, tainted });
   }
   return found;
 }
-
-/** A justification shorter than this is a placeholder, not a reviewed decision. */
-export const MIN_JUSTIFICATION = 40;
 
 function entryProblems(entry) {
   const problems = [];
