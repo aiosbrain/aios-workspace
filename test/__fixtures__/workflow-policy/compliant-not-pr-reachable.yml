@@ -1,0 +1,22 @@
+# COMPLIANT BY SCOPE — every rule would fire here, but no PR-like event reaches it: a scheduled,
+# push-only, manually dispatched workflow is out of scope by design. This fixture is the proof
+# that the gate is scoped to PR reachability and is not a blanket workflow linter.
+name: compliant not pr reachable
+on:
+  schedule:
+    - cron: "0 3 * * *"
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+  checks: write
+  statuses: write
+jobs:
+  nightly:
+    runs-on: ubuntu-latest
+    env:
+      NIGHTLY_TOKEN: ${{ secrets.NIGHTLY_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: npm ci

@@ -29,7 +29,7 @@
  */
 
 /** Bootstrap installer semver — bump on any manifest/semantics change. */
-export const BOOTSTRAP_VERSION = "0.1.1";
+export const BOOTSTRAP_VERSION = "0.2.0";
 
 /** The version stamp a bootstrapped repo carries (bootstrap semver + toolkit sha + hashes). */
 export const BOOTSTRAP_VERSION_FILE = ".aios-bootstrap-version";
@@ -99,6 +99,18 @@ export const BOOTSTRAP_MANAGED = [
   //    target owns its own caps/seams/grandfather lists).
   { dest: "scripts/check-file-size.mjs", src: "scripts/check-file-size.mjs" },
   { dest: "scripts/check-boundaries.mjs", src: "scripts/check-boundaries.mjs" },
+  // Static workflow policy over PR-reachable workflows (leak-gate-remediation-plan.md §5.1
+  // items 3-4). Zero-dependency, so it runs in the seeded CI job with no `npm ci`; the target
+  // owns its own waiver list (SEED below). It reads YAML as data and never writes a status.
+  { dest: "scripts/check-workflow-policy.mjs", src: "scripts/check-workflow-policy.mjs" },
+  { dest: "scripts/workflow-policy-rules.mjs", src: "scripts/workflow-policy-rules.mjs" },
+  { dest: "scripts/workflow-policy-catalogue.mjs", src: "scripts/workflow-policy-catalogue.mjs" },
+  { dest: "scripts/workflow-policy-allowlist.mjs", src: "scripts/workflow-policy-allowlist.mjs" },
+  {
+    dest: "scripts/workflow-policy-expressions.mjs",
+    src: "scripts/workflow-policy-expressions.mjs",
+  },
+  { dest: "scripts/workflow-yaml.mjs", src: "scripts/workflow-yaml.mjs" },
   // Both gates import `./git-files.mjs`. Since AIO-601 the toolkit's scripts/git-files.mjs
   // is a relative-path SHIM into packages/foundation — stamping the shim would dangle in a
   // target with no packages/ tree, so stamp the resolved module BODY (self-contained,
@@ -133,6 +145,8 @@ export const BOOTSTRAP_SEED_IF_ABSENT = [
   { dest: "scripts/size-caps.json", asset: "size-caps.json" },
   // Starter seam rules (generic R1–R5), empty grandfather list.
   { dest: "scripts/boundaries.json", asset: "boundaries.json" },
+  // Empty workflow-policy waiver list. A bootstrapped repo starts with zero exceptions.
+  { dest: "scripts/workflow-policy-allowlist.json", asset: "workflow-policy-allowlist.json" },
   // CI skeleton — lint/test npm scripts are parameterized at seed time.
   { dest: ".github/workflows/ci.yml", asset: "ci.yml.tmpl", params: true },
   // Claude Code wiring for the strict worktree guard (edits + commands).

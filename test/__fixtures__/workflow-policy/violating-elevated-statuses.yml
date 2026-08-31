@@ -1,0 +1,13 @@
+# VIOLATES elevated-permissions — `statuses: write` at JOB level, reached via pull_request_review.
+name: violating statuses write
+on:
+  pull_request_review:
+    types: [submitted]
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      statuses: write
+    steps:
+      - run: echo publish

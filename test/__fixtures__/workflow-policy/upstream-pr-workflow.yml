@@ -1,0 +1,11 @@
+# Compliant on its own; exists so violating-workflow-run.yml has a PR-like upstream to resolve.
+name: upstream pr workflow
+on:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  noop:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo upstream

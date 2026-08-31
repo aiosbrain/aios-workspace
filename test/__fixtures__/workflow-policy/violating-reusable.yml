@@ -1,0 +1,14 @@
+# VIOLATES secrets-in-pr-reachable — a workflow_call file inherits its caller's trigger, and its
+# caller is a pull_request workflow. A reusable workflow is not a trust boundary.
+name: violating reusable
+on:
+  workflow_call:
+permissions:
+  contents: read
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      REUSABLE_TOKEN: ${{ secrets.REUSABLE_TOKEN }}
+    steps:
+      - run: echo reusable

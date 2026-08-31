@@ -1,0 +1,24 @@
+# COMPLIANT — the reference pull_request_target shape: attacker-controlled values reach the job
+# ONLY through `env:`, and the run body references shell variables, never `${{ }}` interpolation.
+# It checks out nothing, downloads nothing, and installs nothing.
+name: compliant prt env only
+on:
+  pull_request_target:
+    types: [opened, edited]
+permissions:
+  contents: read
+jobs:
+  label:
+    runs-on: ubuntu-latest
+    env:
+      PR_TITLE: ${{ github.event.pull_request.title }}
+      PR_BRANCH: ${{ github.head_ref }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+    steps:
+      - name: Judge the title without ever expanding it into the program
+        run: |
+          if printf '%s' "$PR_TITLE" | grep -qE '^[a-z]+(\(.+\))?: '; then
+            echo "conventional title on #$PR_NUMBER (branch $PR_BRANCH)"
+          else
+            echo "::warning::title is not conventional"
+          fi

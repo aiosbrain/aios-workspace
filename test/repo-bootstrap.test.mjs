@@ -25,6 +25,7 @@ import { fileURLToPath } from "node:url";
 
 import { applyTransform, renderTemplate, runBootstrap } from "../scripts/repo-bootstrap/engine.mjs";
 import { isSameGitRepo } from "../scripts/repo-bootstrap.mjs";
+import { parseWorkflowYaml } from "../scripts/workflow-yaml.mjs";
 import {
   BOOTSTRAP_MANAGED,
   BOOTSTRAP_SEED_IF_ABSENT,
@@ -120,6 +121,41 @@ test("renderTemplate substitutes params and refuses unresolved placeholders", ()
   assert.throws(() => renderTemplate("{{MISSING}}", {}), /unresolved template placeholder/);
 });
 
+/**
+ * The generated workflow-policy gate must be judged by the BASE revision, never by the pull
+ * request. A bare checkout is the candidate revision on `pull_request`, so a bootstrapped repo
+ * would ship a required gate its own PRs could edit to pass — add a secret-bearing workflow and a
+ * `return success` (or just a waiver) in one commit. Second leg of the same fix applied to
+ * aios-workspace's own ci.yml; asserted so a template edit that reintroduces the bare checkout goes
+ * red. Mirrors the equivalent assertions in test/check-workflow-policy.test.mjs.
+ */
+function assertGateJudgedFromBase(ci) {
+  const steps = parseWorkflowYaml(ci).jobs["workflow-policy"].steps;
+  assert.match(
+    String(steps.find((s) => /checkout@/.test(String(s.uses ?? ""))).with?.ref ?? ""),
+    /github\.event\.pull_request\.base\.sha/,
+    "the FIRST checkout must pin the generated gate to the base revision"
+  );
+  const candidate = steps.find((s) => s.with?.path === "candidate");
+  assert.ok(candidate, "the PR tree must arrive in a separate inert `candidate/` checkout");
+  assert.equal(candidate.with["persist-credentials"], false);
+  const invoke = steps.find((s) =>
+    String(s.run ?? "").includes("$GATE_ROOT/scripts/check-workflow-policy.mjs")
+  );
+  assert.ok(invoke, "the gate must be invoked from the base-revision gate root");
+  assert.equal(invoke["working-directory"], "candidate");
+  assert.match(
+    invoke.run,
+    /--allowlist "\$GATE_ROOT\/scripts\/workflow-policy-allowlist\.json"/,
+    "the allowlist must come from the base too — a PR that can add its own waiver is the same bypass"
+  );
+  assert.match(
+    String(steps.find((s) => s.id === "gate").run),
+    /::warning title=Workflow-policy gate bootstrap/,
+    "the bootstrap fallback must be loud"
+  );
+}
+
 // ── stamp + re-run + drift ───────────────────────────────────────────────────
 
 test("bootstrap stamps every manifest file, records the version stamp, and re-runs idempotently", () => {
@@ -148,6 +184,34 @@ test("bootstrap stamps every manifest file, records the version stamp, and re-ru
     assert.match(ci, /npm run lint --if-present/);
     assert.match(ci, /npm run test --if-present/);
     assert.doesNotMatch(ci, /\{\{[A-Z_]+\}\}/);
+
+    // leak-gate-remediation-plan.md §5.1 item 4: a newly generated repo must never carry a
+    // secret-bearing PR scanner. Not "no leak-gate secret" — NO secret expression at all.
+    assert.doesNotMatch(
+      ci,
+      /\$\{\{[^}]*\bsecrets\s*[.[]/,
+      "the seeded CI must reference no Actions secret"
+    );
+    assert.doesNotMatch(
+      ci,
+      /AIOS_LEAK_TERMS_B64/,
+      "the seeded CI must not reinstate the term-corpus secret"
+    );
+    // ...and it must satisfy the workflow policy it ships, judged by the real gate.
+    const gate = spawnSync(
+      "node",
+      [
+        path.join(TOOLKIT, "scripts/check-workflow-policy.mjs"),
+        "--dir",
+        path.join(target, ".github/workflows"),
+        "--allowlist",
+        path.join(target, "scripts/workflow-policy-allowlist.json"),
+      ],
+      { encoding: "utf8" }
+    );
+    assert.equal(gate.status, 0, `${gate.stdout}${gate.stderr}`);
+
+    assertGateJudgedFromBase(ci);
 
     // Strict transform landed in the stamped guard.
     const guard = readFileSync(

@@ -1,0 +1,19 @@
+# REGRESSION FIXTURE (1 of 3): duplicate workflow `name:` collapsing the reachability map.
+#
+# This file and dup-name-scheduled-upstream.yml share ONE `name:`. `workflow_run` matches upstreams
+# by name, so GitHub runs the downstream for either of them. A last-write-wins index kept only the
+# alphabetically-later file (the scheduled one, which is not PR-reachable) and so judged the
+# downstream unreachable — meaning NO rule ran against it.
+#
+# This is the PR-reachable twin, and a pull_request_target one, so the downstream must also inherit
+# `prTarget: true`.
+name: duplicated upstream name
+on:
+  pull_request_target:
+permissions:
+  contents: read
+jobs:
+  noop:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo prt twin

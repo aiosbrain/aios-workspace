@@ -1,0 +1,9 @@
+# Transitive case, hop 1 of 3: pull_request_target caller → chain A → chain B.
+name: upstream prt chain caller
+on:
+  pull_request_target:
+permissions:
+  contents: read
+jobs:
+  hop:
+    uses: ./.github/workflows/upstream-prt-chain-middle.yml
