@@ -149,6 +149,13 @@
       "justification": "Pre-existing `@vN` tag ref in the `mutation` job, measured 2026-08-31. This is a real finding, not a false positive: a tag is repointable by the action owner, so review of this file is not evidence about the code that runs. It is waived rather than fixed here because org-wide SHA pinning is a separate workstream (plan §5.2) already in flight across the fleet — aios-design, aios-engineering-harness, aios-marketing and aios-workspace-gui have pinning PRs open, aios-website and aios-devtools were already pinned, and aios-workspace's remaining refs land as one reviewable change. Mass-editing workflows inside the PR that introduces this checker would both hide the checker's diff and collide with that work. Delete this entry when the pinning PR lands."
     },
     {
+      "workflow": ".github/workflows/ci.yml",
+      "job": "scrubbed-env-connectors",
+      "rule": "mutable-action-ref",
+      "owner": "Platform Engineering",
+      "justification": "Pre-existing `@vN` tag ref in the `scrubbed-env-connectors` job, which landed in #667 while this branch was open — the gate reported it on the very next run, which is the gate working. Same real finding and same owner as the sibling ci.yml entries: a tag is repointable by the action owner, so review of this file is not evidence about the code that runs. Waived rather than fixed here because org-wide SHA pinning is a separate workstream already in flight, and mass-editing workflows inside the PR that introduces this checker would both hide the checker's diff and collide with that work. Delete this entry when the pinning PR lands."
+    },
+    {
       "workflow": ".github/workflows/pr-review-evidence.yml",
       "job": "evidence",
       "rule": "mutable-action-ref",
