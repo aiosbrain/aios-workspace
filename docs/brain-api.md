@@ -371,9 +371,12 @@ writeback/registration pulls), so a newer client still works against an older br
   its release, so `0.2.0-rc1` is not evidence that the build emits everything `0.2.0` promises.
   **The accepted cost, stated here rather than discovered later:** a genuine pre-release build —
   if `aios_ingest.__version__` is ever shipped as `0.2.0-rc1` — reports `unknown` rather than
-  `current`, and reads as unidentified until `minScannerVersion` accounts for it. That is the
-  right trade: "I could not read this" is true, whereas "this is current" was a guess. A producer
-  that wants to be identified MUST emit a bare `MAJOR.MINOR.PATCH`.
+  `current`, and stays `unknown` until the producer emits a bare `MAJOR.MINOR.PATCH` — normally
+  the final `0.2.0` release. No value of `minScannerVersion` can rescue it: the pre-release is
+  unreadable and resolves to `unknown` BEFORE any comparison happens, and `minScannerVersion` is
+  itself required to be a bare release triple. That is the right trade: "I could not read this"
+  is true, whereas "this is current" was a guess. A producer that wants to be identified MUST
+  emit a bare `MAJOR.MINOR.PATCH`.
 
   At the moment 1.24 ships every scanner predates it and sends nothing, so `unknown` will almost
   always *in fact* be an old scanner — but that is a strong prior, not a measurement, and the
