@@ -1,7 +1,32 @@
 name: AIOS work sync
 
+# ── Credential isolation (why this is pull_request_target) ───────────────────────────────────
+# Under `pull_request` GitHub takes the workflow file itself from the PR head, so a same-repo
+# branch PR could rewrite this file — delete the `merged == true` guard and print
+# AIOS_API_KEY / AIOS_BRAIN_URL / AIOS_TEAM — then simply close its own PR to fire it. No merge,
+# no review. `pull_request_target` runs the base branch's copy instead, so the guard and the
+# inline program below are trusted, reviewed code.
+#
+# What keeps that trigger safe here:
+#   1. Nothing from the PR head is checked out, fetched, installed, built, or executed — there is
+#      no `actions/checkout` at all. The only code that runs is the base-branch Node program below.
+#   2. Every PR-derived value reaches that program through `env:` and is read with `process.env`.
+#      No `${{ github.event.* }}` value is interpolated into a `run:` body, and the program no
+#      longer parses GITHUB_EVENT_PATH — so the exact set of PR fields it trusts is visible in the
+#      YAML rather than implied by a whole-payload read.
+#   3. The job is scoped to same-repository pull requests. Under `pull_request` a fork run got no
+#      secrets and soft-skipped; the guard preserves that instead of newly handing the Brain
+#      credentials to a run an outside contributor can start.
+#   4. `permissions:` is read-only: no `statuses: write`, no `checks: write`.
+#
+# What the `trusted-automation` Environment is NOT: a boundary against forks. Verified
+# empirically — under `pull_request_target` GITHUB_REF is always the base branch, so a fork PR
+# satisfies a `main`-only deployment branch policy and does receive the environment's secrets.
+# It is a blast-radius control over WHICH workflows here may read AIOS_API_KEY / AIOS_BRAIN_URL /
+# AIOS_TEAM, not over who can trigger them. Points 1-3 are the actual protection.
+
 on:
-  pull_request:
+  pull_request_target:
     types: [closed]
     branches: [main]
 
@@ -10,9 +35,12 @@ permissions:
 
 jobs:
   notify-brain:
-    if: github.event.pull_request.merged == true
+    if: >-
+      github.event.pull_request.merged == true &&
+      github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 10 # observed p100 0.2 min
+    environment: trusted-automation
     env:
       AIOS_BRAIN_URL: ${{ secrets.AIOS_BRAIN_URL }}
       AIOS_API_KEY: ${{ secrets.AIOS_API_KEY }}
@@ -20,41 +48,63 @@ jobs:
       AIOS_PROJECT: aios-workspace
     steps:
       - name: Post merged work event
+        env:
+          # Attacker-controlled PR metadata, passed as data. Never inlined into the script body.
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_HTML_URL: ${{ github.event.pull_request.html_url }}
+          PR_MERGE_COMMIT_SHA: ${{ github.event.pull_request.merge_commit_sha }}
+          PR_MERGED_BY: ${{ github.event.pull_request.merged_by.login }}
+          PR_USER: ${{ github.event.pull_request.user.login }}
         run: |
           node <<'NODE'
-          const fs = require("node:fs");
-
           const brain = process.env.AIOS_BRAIN_URL;
           const key = process.env.AIOS_API_KEY;
           const team = process.env.AIOS_TEAM;
           if (!brain || !key || !team) {
+            // Reachable only when the values have not been entered yet. A branch-policy mismatch
+            // fails the job before any step runs, so this cannot mask a misconfigured environment.
             console.log("AIOS work sync skipped: AIOS_BRAIN_URL, AIOS_API_KEY, or AIOS_TEAM is not configured.");
             process.exit(0);
           }
 
-          const event = JSON.parse(fs.readFileSync(process.env.GITHUB_EVENT_PATH, "utf8"));
-          const pr = event.pull_request;
+          // Read only through these env vars — the workflow no longer parses GITHUB_EVENT_PATH,
+          // so the exact set of PR fields this job trusts is visible in the YAML above.
+          const pr = {
+            title: process.env.PR_TITLE || "",
+            body: process.env.PR_BODY || "",
+            headRef: process.env.PR_HEAD_REF || "",
+            headSha: process.env.PR_HEAD_SHA || "",
+            htmlUrl: process.env.PR_HTML_URL || "",
+            mergeCommitSha: process.env.PR_MERGE_COMMIT_SHA || "",
+            mergedBy: process.env.PR_MERGED_BY || "",
+            user: process.env.PR_USER || "",
+          };
           // Strip HTML comments first so PR-template placeholders (e.g. `<!-- e.g. AIO-72 -->`)
           // aren't posted as real work keys.
           const text = [
-            pr.title || "",
-            (pr.body || "").replace(/<!--[\s\S]*?-->/g, " "),
-            pr.head?.ref || "",
+            pr.title,
+            pr.body.replace(/<!--[\s\S]*?-->/g, " "),
+            pr.headRef,
           ].join("\n");
           const re = /\b(?:AIOS-Work:\s*)?([A-Z][A-Z0-9]+-\d+|[A-Z]\d+(?:\.\d+)*)\b/g;
           const workKeys = [...new Set([...text.matchAll(re)].map((m) => m[1]))];
 
           const payload = {
             project: process.env.AIOS_PROJECT,
+            // Runner-provided, not PR-controlled — same value the event payload's
+            // `repository.full_name` carried.
+            repo: process.env.GITHUB_REPOSITORY,
             event_kind: "merged",
-            repo: event.repository.full_name,
-            merged_sha: pr.merge_commit_sha || event.after || pr.head.sha,
-            pr_url: pr.html_url,
+            merged_sha: pr.mergeCommitSha || pr.headSha,
+            pr_url: pr.htmlUrl,
             pr_title: pr.title,
-            pr_body: pr.body || "",
-            branch: pr.head?.ref || "",
+            pr_body: pr.body,
+            branch: pr.headRef,
             work_keys: workKeys,
-            actor: pr.merged_by?.login || pr.user?.login || "",
+            actor: pr.mergedBy || pr.user || "",
           };
 
           const url = `${brain.replace(/\/$/, "")}/api/v1/work-events`;

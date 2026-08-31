@@ -13,9 +13,37 @@ name: PR → Linear In Review
 #
 # Advisory by construction: soft-skips when LINEAR_API_KEY is unset and never fails the PR on a
 # Linear hiccup — it must never block a merge.
+#
+# ── Credential isolation (why this is pull_request_target) ───────────────────────────────────
+# Under `pull_request` GitHub takes the WORKFLOW FILE ITSELF from the pull request's head, so any
+# same-repo branch PR could rewrite this file to print or POST LINEAR_API_KEY before a human ever
+# looked at the diff. `pull_request_target` runs the base branch's copy of this file instead, so
+# every line executed here is trusted, reviewed, merged code.
+#
+# The rules that make that trigger safe, all of which this file obeys:
+#   1. Nothing from the PR head is checked out, fetched, installed, built, or executed. There is
+#      no `actions/checkout`, no `npm install`, no script from the candidate tree. The only code
+#      that runs is the inline Node program below, which lives on the base branch.
+#   2. Every attacker-controlled field (title, body, branch name) is handed to that program
+#      through `env:`, never interpolated with `${{ }}` into a `run:` script body — so a PR title
+#      containing shell or template syntax is inert data, not code.
+#   3. The job is scoped to same-repository pull requests. Under `pull_request` a fork PR received
+#      no secrets and this workflow silently no-op'd; `pull_request_target` would hand a fork run
+#      the key instead. The guard keeps today's behaviour and keeps the credential out of any run
+#      an outside contributor can start.
+#   4. `permissions:` is read-only. No `statuses: write`, no `checks: write`: this workflow must
+#      never be able to author a merge-gating signal.
+#
+# What the `trusted-automation` Environment is NOT: it is not a boundary against forks. Verified
+# empirically — under `pull_request_target` GITHUB_REF is always the base branch, so a fork PR
+# satisfies a `main`-only deployment branch policy and does receive the environment's secrets.
+# The environment is a blast-radius control: it decides WHICH workflows in this repo can reach
+# LINEAR_API_KEY, not WHO can trigger them. Points 1-3 above are the actual protection.
+# There are no third-party actions to pin here; if one is ever added it must be pinned by full
+# commit SHA.
 
 on:
-  pull_request:
+  pull_request_target:
     types: [opened, reopened, ready_for_review]
 
 permissions:
@@ -24,24 +52,47 @@ permissions:
 jobs:
   in-review:
     name: Move referenced Linear issue(s) to In Review
+    # Same-repo PRs only — see point 3 in the header. A fork PR skips the job entirely, so no run
+    # an outside contributor can start ever has the credential in scope.
+    if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    # Enrols this job as one of the few permitted to read LINEAR_API_KEY once the key lives only
+    # on the environment. Environment secrets fall back to repo secrets, so this changes nothing
+    # until the repo-level copy is deleted.
+    environment: trusted-automation
     env:
       LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
     steps:
       - name: Transition referenced issues
+        env:
+          # Attacker-controlled PR metadata, passed as data. Never inlined into the script body.
+          PR_DRAFT: ${{ github.event.pull_request.draft }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          PR_HTML_URL: ${{ github.event.pull_request.html_url }}
         run: |
           node <<'NODE'
-          const fs = require("node:fs");
-
           const key = process.env.LINEAR_API_KEY;
           if (!key) {
-            console.log("::notice title=Linear In Review skipped::LINEAR_API_KEY is not configured — set it (repo secret) to auto-move PR'd issues to In Review.");
+            // Only reachable when the value has genuinely not been entered yet. A mismatched
+            // environment branch policy does NOT land here — it fails the job loudly before any
+            // step runs ("Branch ... is not allowed to deploy to trusted-automation"), so this
+            // soft-skip cannot mask a misconfigured environment.
+            console.log("::notice title=Linear In Review skipped::LINEAR_API_KEY is not configured — set it on the `trusted-automation` environment to auto-move PR'd issues to In Review.");
             process.exit(0);
           }
 
-          const ev = JSON.parse(fs.readFileSync(process.env.GITHUB_EVENT_PATH, "utf8"));
-          const pr = ev.pull_request || {};
+          // The event payload is read only through these env vars — the workflow no longer parses
+          // GITHUB_EVENT_PATH, so the exact set of PR fields this job trusts is visible above.
+          const pr = {
+            draft: process.env.PR_DRAFT === "true",
+            title: process.env.PR_TITLE || "",
+            body: process.env.PR_BODY || "",
+            headRef: process.env.PR_HEAD_REF || "",
+            html_url: process.env.PR_HTML_URL || "",
+          };
           if (pr.draft) {
             console.log("::notice title=Draft PR skipped::Draft PRs are not moved to In Review until ready_for_review fires.");
             process.exit(0);
@@ -53,8 +104,8 @@ jobs:
           // actually tied to its own issue (the documented convention: "put `(AIO-130)` in the
           // title"); the body only counts for an EXPLICIT "Closes/Fixes/Resolves AIO-<n>" link,
           // same convention GitHub itself uses for closing keywords.
-          const titleAndBranch = [pr.title || "", pr.head?.ref || ""].join("\n");
-          const bodyNoComments = (pr.body || "").replace(/<!--[\s\S]*?-->/g, " ");
+          const titleAndBranch = [pr.title, pr.headRef].join("\n");
+          const bodyNoComments = pr.body.replace(/<!--[\s\S]*?-->/g, " ");
           const explicitBodyRefs = [
             ...bodyNoComments.matchAll(/\b(?:closes?|fixes?|resolves?)\s*:?\s*(AIO-\d+)/gi),
           ].map((m) => m[1].toUpperCase());
