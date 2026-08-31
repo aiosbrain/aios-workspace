@@ -17,7 +17,7 @@ import test from "node:test";
 const ROOT = path.resolve(import.meta.dirname, "..");
 // The primary copy is exercised directly; the scaffold copy is proven byte-identical by
 // the parity test in linear-dotenvx-scope.test.mjs.
-const CLI = path.join(ROOT, ".claude/skills/aios-linear/linear.mjs");
+const CLI = path.join(ROOT, "scripts/aios.mjs");
 
 const PRELOAD = `import { appendFileSync } from "node:fs";
 const pageFor = (after, prefix) => (after ? Number(after.replace(prefix, "")) : 0);
@@ -100,7 +100,7 @@ function runCli(args, extraEnv = {}) {
   const preload = path.join(dir, "mock-fetch.mjs");
   const log = path.join(dir, "mutations.log");
   writeFileSync(preload, PRELOAD, "utf8");
-  const result = spawnSync(process.execPath, ["--import", preload, CLI, ...args], {
+  const result = spawnSync(process.execPath, ["--import", preload, CLI, "linear", ...args], {
     cwd: ROOT,
     encoding: "utf8",
     env: { ...process.env, LINEAR_API_KEY: "test-key", MOCK_LOG: log, ...extraEnv },

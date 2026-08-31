@@ -15,10 +15,10 @@ import {
   describeContentDrift,
   findIndentedTables,
   normalizeForCompare,
-} from "../scaffold/.claude/skills/aios-linear/linear-template.mjs";
+} from "../scripts/connectors/linear/template.mjs";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
-const CLI = path.join(ROOT, "scaffold/.claude/skills/aios-linear/linear.mjs");
+const CLI = path.join(ROOT, "scripts/aios.mjs");
 
 function runDescriptionCli(args, cwd, { initialDescription = "", postWriteDescription } = {}) {
   const supportDir = mkdtempSync(path.join(tmpdir(), "linear-desc-roundtrip-"));
@@ -56,7 +56,7 @@ globalThis.fetch = async (_url, init) => {
 `,
     "utf8"
   );
-  const result = spawnSync(process.execPath, ["--import", preload, CLI, ...args], {
+  const result = spawnSync(process.execPath, ["--import", preload, CLI, "linear", ...args], {
     cwd,
     encoding: "utf8",
     env: {

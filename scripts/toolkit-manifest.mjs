@@ -93,8 +93,8 @@ export const MANAGED_PATHS = [
   },
   { dest: ".claude/rubrics", src: "scaffold/.claude/rubrics", kind: "dir" },
   // The issue template `linear-factory.md` tells the agent to author from, and the exact path
-  // resolveLinearTemplate() looks for (.claude/skills/aios-linear/linear-template.mjs). Same
-  // no-duplicate reasoning as the rubric above.
+  // resolveLinearTemplate() (scripts/connectors/linear/template.mjs, AIO-1067) resolves from
+  // the workspace cwd. Same no-duplicate reasoning as the rubric above.
   {
     dest: "docs/agentic-ergonomics/aios-issue-template.md",
     src: "docs/agentic-ergonomics/aios-issue-template.md",

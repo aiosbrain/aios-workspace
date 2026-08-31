@@ -1,4 +1,4 @@
-import { gql, paginate } from "./linear-core.mjs";
+import { gql, paginate } from "./core.mjs";
 
 export async function findWorkflowState(teamKey, name) {
   const states = await paginate(async (after) => {

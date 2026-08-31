@@ -562,13 +562,17 @@ async function cmdConnect(repo, args) {
     console.log(c.dim("\nrun: aios connect <id>"));
     return;
   }
+  // AIO-1067 user-level linear setup (credential REFERENCE mode): setup.mjs returns an
+  // exit code when it handled the request; undefined falls through to the vault flow.
+  const lin = id === "linear" && (await (await import("./connectors.mjs")).loadLinearSetup());
+  const handled = lin ? await lin.cmdConnectLinear(repo, args) : undefined;
+  if (handled !== undefined) return void (handled && (process.exitCode = handled));
   let d;
   try {
     d = getDescriptor(repo, id);
   } catch (e) {
     die(e.message);
   }
-
   // collect secret values: --token sets the primary required secret; --set ENV=VALUE for others.
   const sets = {};
   for (let i = 0; i < args.length; i++)
@@ -578,11 +582,9 @@ async function cmdConnect(repo, args) {
     }
   const tokenFlag = args.includes("--token") ? args[args.indexOf("--token") + 1] : null;
 
-  // Interactively prompted secrets (not covered by --set/--token) get masked input too —
-  // this is the same connectFlow the onboarding wizard drives, and the plaintext-echo
-  // fix applies equally to `aios connect <id>` run standalone.
+  // Interactively prompted secrets (not covered by --set/--token) get masked input too — the
+  // same connectFlow the onboarding wizard drives (plaintext-echo fix applies standalone too).
   const ask = process.stdin.isTTY ? (await import("./onboard-ui.mjs")).askViaClack : undefined;
-
   const ok = await connectFlow(repo, d, { sets, tokenFlag, ask });
   if (!ok) process.exitCode = 1;
 }

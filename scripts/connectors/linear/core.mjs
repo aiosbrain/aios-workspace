@@ -11,9 +11,11 @@ export function fail(message) {
 export async function gql(query, variables, { throwOnError = false } = {}) {
   const key = process.env.LINEAR_API_KEY;
   if (!key) {
+    // Backstop only: `aios linear` resolves the credential in index.mjs before any verb
+    // runs, so reaching this line means a caller bypassed the adapter preflight.
     fail(
-      "LINEAR_API_KEY not set — run via the `linear` bin on PATH, which resolves it: linear <cmd> ... " +
-        "(from a sibling repo: node <path-to-an-aios-workspace>/scripts/linear.mjs ...). " +
+      "LINEAR_API_KEY not set — run `aios connect linear` to configure a credential, then " +
+        "retry via `aios linear <verb> ...`. " +
         "Do not dotenvx-run the whole toolkit .env; that decrypts unrelated secrets (AIO-790)."
     );
   }
@@ -121,7 +123,7 @@ export async function paginate(fetchPage, stallMessage) {
   const nodes = [];
   const seenCursors = new Set();
   let after = null;
-  do {
+  for (;;) {
     const page = await fetchPage(after);
     nodes.push(...page.nodes);
     if (!page.pageInfo?.hasNextPage) break;
@@ -131,7 +133,7 @@ export async function paginate(fetchPage, stallMessage) {
     }
     seenCursors.add(cursor);
     after = cursor;
-  } while (true);
+  }
   return nodes;
 }
 

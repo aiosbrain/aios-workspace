@@ -11,16 +11,16 @@ const TEMPLATE_FILES = {
   finding: "aios-finding-template.md",
 };
 
-/** Resolve an issue template from toolkit docs or workspace copy. */
-export function resolveLinearTemplate(name = "aios") {
+/** Resolve an issue template from the workspace copy or the toolkit docs. */
+export function resolveLinearTemplate(name = "aios", baseDir = process.cwd()) {
   const file = TEMPLATE_FILES[name];
   if (!file) return null;
   const rel = path.join("docs", "agentic-ergonomics", file);
-  const candidates = [
-    path.join(HERE, "..", "..", "..", rel),
-    path.join(HERE, "..", "..", "..", "..", rel),
-    path.join(process.cwd(), rel),
-  ];
+  // The dispatch-resolved workspace root first, so a scaffolded workspace's stamped
+  // template copy wins over the toolkit's — from any subdirectory, not just the root
+  // (the adapter always executes from the toolkit checkout, even when delegated to from a
+  // workspace — AIO-1067); the toolkit's own docs/ copy is the fallback everywhere else.
+  const candidates = [path.join(baseDir, rel), path.join(HERE, "..", "..", "..", rel)];
   for (const p of candidates) {
     if (existsSync(p)) return readFileSync(p, "utf8");
   }
@@ -126,10 +126,10 @@ function mapOutsideCodeSpans(line, transform) {
     chunkStart = cursor;
   }
   masked += line.slice(chunkStart);
-  return transform(masked).replace(
-    /\u0000CODE(\d+)\u0000/g,
-    (_match, index) => spans[Number(index)]
-  );
+  // NUL sentinels cannot occur in markdown input, so the control characters are deliberate.
+  // eslint-disable-next-line no-control-regex
+  const sentinel = /\u0000CODE(\d+)\u0000/g;
+  return transform(masked).replace(sentinel, (_match, index) => spans[Number(index)]);
 }
 
 /** Remove paired asterisk emphasis delimiters while preserving literal stars and underscores. */

@@ -1,18 +1,16 @@
 #!/usr/bin/env node
-/** Global Linear entrypoint; credentials come from env, the current repo, or the toolkit vault. */
-import { spawnSync } from "node:child_process";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-import { resolveConnectorEnv, runGlobalConnector } from "./global-connector-runtime.mjs";
-
-const toolkit = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const cli = path.join(toolkit, "scaffold/.claude/skills/aios-linear/linear.mjs");
-process.exit(
-  runGlobalConnector({
-    name: "linear",
-    cli,
-    env: resolveConnectorEnv({ apiKeyEnv: "LINEAR_API_KEY" }),
-    command: process.execPath,
-    spawn: spawnSync,
-  })
+/**
+ * `linear` — warning-only compatibility delegate (AIO-1067; removal boundary v3.0.0-earliest).
+ *
+ * The canonical route is `aios linear <verb> …`. This bin runs the SAME built-in adapter
+ * in-process (one implementation, one credential resolution), so stdout schema and exit
+ * status are identical to `aios linear`; the only difference is one deprecation warning,
+ * written to stderr so machine consumers of stdout see zero extra bytes.
+ */
+process.stderr.write(
+  "linear: deprecated compatibility command — use `aios linear " +
+    `${process.argv[2] ?? "<verb>"} …\` (this bin will be removed no earlier than v3.0.0)\n`
 );
+const { loadLinearAdapter } = await import("./connectors.mjs");
+const { cmdLinear } = await loadLinearAdapter();
+process.exitCode = await cmdLinear(null, process.argv.slice(2));

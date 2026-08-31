@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import {
   applyDescriptionPatch,
   resolveLinearTemplate,
-} from "../scaffold/.claude/skills/aios-linear/linear-template.mjs";
+} from "../scripts/connectors/linear/template.mjs";
 
 test("resolveLinearTemplate loads aios issue scaffold", () => {
   const body = resolveLinearTemplate("aios");

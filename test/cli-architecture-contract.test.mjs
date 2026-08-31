@@ -203,12 +203,14 @@ test("CLI architecture: aios is canonical and connector implementations are lazy
     slack: "aios slack",
   });
 
+  // linear shipped in AIO-1067 (CLI-RESET-3); slack lands with CLI-RESET-4.
+  const expectedStatus = { linear: "current", slack: "planned-v2" };
   for (const connector of ["linear", "slack"]) {
     const route = inventory.routes.find(
       (candidate) => candidate.id === `command.aios.${connector}`
     );
     assert.equal(route?.route, `aios ${connector}`);
-    assert.equal(route?.status, "planned-v2");
+    assert.equal(route?.status, expectedStatus[connector]);
     assert.equal(route?.futureOwner, `adapter.${connector}`);
     assert.equal(route?.metadata?.implementation?.lazy, true);
   }

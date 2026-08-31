@@ -6,7 +6,7 @@ import { spawnSync } from "node:child_process";
 import test from "node:test";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
-const CLI = path.join(ROOT, "scaffold/.claude/skills/aios-linear/linear.mjs");
+const CLI = path.join(ROOT, "scripts/aios.mjs");
 
 function runCli(args, mode, cwd = ROOT) {
   const dir = mkdtempSync(path.join(tmpdir(), "aios-linear-cli-"));
@@ -67,7 +67,7 @@ globalThis.fetch = async (_url, init) => {
 `,
     "utf8"
   );
-  const result = spawnSync(process.execPath, ["--import", preload, CLI, ...args], {
+  const result = spawnSync(process.execPath, ["--import", preload, CLI, "linear", ...args], {
     cwd,
     encoding: "utf8",
     env: { ...process.env, LINEAR_API_KEY: "test-api-key", MOCK_MODE: mode, MOCK_LOG: log },
@@ -99,9 +99,7 @@ test("get --full prints an explicit (none) assignee for an unassigned issue", ()
 });
 
 test("formatAssignee renders partial and empty identities deterministically", async () => {
-  const { formatAssignee } = await import(
-    path.join(ROOT, "scaffold/.claude/skills/aios-linear/linear-core.mjs")
-  );
+  const { formatAssignee } = await import(path.join(ROOT, "scripts/connectors/linear/core.mjs"));
   assert.equal(formatAssignee(null), "(none)");
   assert.equal(formatAssignee(undefined), "(none)");
   assert.equal(formatAssignee({ name: "", email: "" }), "(unknown)");
@@ -165,7 +163,10 @@ test("set-priority rejects inherited object property names before mutation", () 
 
 test("template resolves from outside the repository", () => {
   const cwd = mkdtempSync(path.join(tmpdir(), "aios-linear-sibling-"));
-  const result = spawnSync(process.execPath, [CLI, "template", "aios"], { cwd, encoding: "utf8" });
+  const result = spawnSync(process.execPath, [CLI, "linear", "template", "aios"], {
+    cwd,
+    encoding: "utf8",
+  });
   rmSync(cwd, { recursive: true, force: true });
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /## What \/ why/);

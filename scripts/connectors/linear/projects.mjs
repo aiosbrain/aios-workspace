@@ -7,7 +7,7 @@ import {
   findProjects,
   findTeamId,
   gql,
-} from "./linear-core.mjs";
+} from "./core.mjs";
 
 export async function cmdProjects(argv) {
   const projects = await findProjects(argv[1] || null);

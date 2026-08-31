@@ -38,6 +38,15 @@ export const USAGE_LINES = {
   connect: [
     "  aios connect [<id>]                   connect an integration (guided + live-validated)",
     "    [--token <v>] [--set ENV=v]         non-interactive credential input",
+    "    [--reference env:VAR|keychain:s]    linear only: store a user-level credential reference",
+  ],
+  disconnect: [
+    "  aios disconnect linear                remove the user-level Linear credential reference",
+  ],
+  linear: [
+    "  aios linear <verb> …                  Linear board CLI (get/list/create/comment/relations/…)",
+    "                                        `aios linear help` lists every verb; setup: `aios connect linear`",
+    "  aios linear status [--json]           report the resolved credential source class (never values)",
   ],
   review: [
     "  aios review                           interactive: toggle inclusion, then push selected",

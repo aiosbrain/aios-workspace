@@ -5,8 +5,8 @@ import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { resolveLinearTemplate } from "./linear-template.mjs";
-import { confirmStored, lintDescription } from "./linear-desc-guard.mjs";
+import { resolveLinearTemplate } from "./template.mjs";
+import { confirmStored, lintDescription } from "./desc-guard.mjs";
 import {
   DEFAULT_TEAM_KEY,
   fail,
@@ -18,9 +18,9 @@ import {
   gql,
   parsePriority,
   resolveProject,
-} from "./linear-core.mjs";
+} from "./core.mjs";
 
-export function parseCreateArgs(args) {
+export function parseCreateArgs(args, baseDir) {
   const title = args[0];
   if (!title) fail("create requires a title");
   let descFile = null;
@@ -61,7 +61,7 @@ export function parseCreateArgs(args) {
   }
   let description = descFile ? readFileSync(descFile, "utf8") : "";
   if (template) {
-    const body = resolveLinearTemplate(template);
+    const body = resolveLinearTemplate(template, baseDir);
     if (!body) fail(`unknown template "${template}"`);
     // Function replacement: a literal-string second argument would expand `$&`/`$$`
     // sequences in the title and corrupt the stamped heading.
@@ -95,7 +95,7 @@ function reportUnconfirmedCreate(title, reason) {
   console.error(`create FAILED: ${reason}`);
   console.error("  The issueCreate mutation was sent once and is NOT retried, but Linear");
   console.error("  may have created the issue anyway. Before re-running create, check:");
-  console.error(`    linear list ${DEFAULT_TEAM_KEY} --open   (look for "${title}")`);
+  console.error(`    aios linear list ${DEFAULT_TEAM_KEY} --open   (look for "${title}")`);
   process.exit(1);
 }
 
@@ -117,14 +117,14 @@ function reportDescriptionNotConfirmed({ identifier, description, force, readbac
     console.error(`  ${identifier} EXISTS — do not re-run create.`);
     console.error(`  The exact description that was sent is saved at: ${sentFile}`);
     console.error("  Verify what Linear stored:");
-    console.error(`    linear verify-desc ${identifier} "${sentFile}"`);
+    console.error(`    aios linear verify-desc ${identifier} "${sentFile}"`);
   } else {
     console.error(
       `${identifier} was created but its stored description drifted from what was sent.`
     );
     console.error(`  The exact description that was sent is saved at: ${sentFile}`);
     console.error("  Repair it, then rewrite the description:");
-    console.error(`    linear set-desc ${identifier} "${sentFile}"${force ? " --force" : ""}`);
+    console.error(`    aios linear set-desc ${identifier} "${sentFile}"${force ? " --force" : ""}`);
   }
   process.exit(1);
 }
@@ -169,8 +169,8 @@ async function resolveCreateInput({
   return input;
 }
 
-export async function cmdCreate(args) {
-  const parsed = parseCreateArgs(args);
+export async function cmdCreate(args, baseDir) {
+  const parsed = parseCreateArgs(args, baseDir);
   const { title, description, force } = parsed;
   // Same pre-write guard as set-desc/patch-desc (AIO-1026): refuse markdown Linear is known
   // to corrupt BEFORE any network traffic, so a rejected description means zero mutations.

@@ -1,8 +1,8 @@
-import { describeContentDrift, findIndentedTables } from "./linear-template.mjs";
+import { describeContentDrift, findIndentedTables } from "./template.mjs";
 
 // Re-exported so callers have ONE import for description integrity, not two.
 export { describeContentDrift };
-import { gql } from "./linear-core.mjs";
+import { gql } from "./core.mjs";
 
 /**
  * Write-path integrity for Linear issue descriptions (AIO-942).
