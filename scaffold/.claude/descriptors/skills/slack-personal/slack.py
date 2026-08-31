@@ -83,7 +83,17 @@ def _assert_request_url(url):
     the URL: upload URLs are signed and single-use, and a brain URL sits next to a bearer key
     in config."""
     parsed = urllib.parse.urlparse(url or "")
-    host = parsed.hostname or ""
+    try:
+        # BOTH accessors parse lazily and raise ValueError on malformed input (a non-numeric
+        # or out-of-range port, a bad IPv6 bracket). The URL can be attacker-influenced data —
+        # a redirect Location — and urllib's own ValueError text quotes the offending value, so
+        # letting it escape would put attacker-controlled bytes in our output. Fail through
+        # die() with the same URL-free policy message class as every other unsafe destination.
+        host = parsed.hostname or ""
+        parsed.port
+    except ValueError:
+        die("refusing to send a request to a URL with a malformed host/port "
+            "(value intentionally not shown)", 5)
     if parsed.scheme == "https" and host:
         return
     if parsed.scheme == "http" and host in _LOOPBACK_HOSTS and _loopback_http_allowed():
@@ -93,7 +103,9 @@ def _assert_request_url(url):
 
 
 def _origin(url):
-    """(scheme, host, effective port) — the boundary credentials must never cross."""
+    """(scheme, host, effective port) — the boundary credentials must never cross. Only ever
+    called on URLs that already passed _assert_request_url(), which rejects a malformed
+    host/port, so the lazy .port parse cannot raise here."""
     p = urllib.parse.urlparse(url)
     return (p.scheme, p.hostname, p.port or {"https": 443, "http": 80}.get(p.scheme))
 

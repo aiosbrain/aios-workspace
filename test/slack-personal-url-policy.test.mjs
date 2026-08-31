@@ -238,6 +238,43 @@ test("a cross-origin redirect is refused — zero requests, zero auth reach the 
   });
 });
 
+test("a malformed port never escapes as a traceback — config or redirect", async () => {
+  // urlparse parses .port LAZILY and raises ValueError on `https://example.com:attacker-data/…`,
+  // and urllib's own ValueError text QUOTES the offending value. Before the fix, a redirect
+  // Location shaped like that crashed origin comparison with attacker-controlled bytes in the
+  // output. Both the config path and the mid-flight redirect path must instead die() with the
+  // fixed, URL-free policy message. (Found by Codex adversarial review of PR #661.)
+  const evil = "https://example.com:attacker-data/steal";
+
+  // config path: the brain base itself carries the malformed port
+  let r = await runCli({ args: ["status"], brainUrl: evil });
+  assert.equal(r.status, 5, r.stderr);
+  assert.match(r.stderr, /malformed host\/port/);
+  assert.doesNotMatch(r.stdout + r.stderr, /attacker-data/, "no attacker bytes in the output");
+  assert.doesNotMatch(r.stdout + r.stderr, /Traceback/, "a policy refusal, not a crash");
+  assertNoCredentialEcho(r);
+
+  // redirect path: an accepted origin answers with the malformed Location
+  await withCapture(
+    {
+      respond(req, res) {
+        res.writeHead(302, { location: evil, "content-length": "0", connection: "close" });
+        res.end();
+        return true;
+      },
+    },
+    async ({ url, seen }) => {
+      r = await runCli({ args: ["status"], brainUrl: url, env: { [FLAG]: "1" } });
+      assert.equal(r.status, 5, r.stderr);
+      assert.match(r.stderr, /malformed host\/port/);
+      assert.doesNotMatch(r.stdout + r.stderr, /attacker-data/, "no attacker bytes in the output");
+      assert.doesNotMatch(r.stdout + r.stderr, /Traceback/, "a policy refusal, not a crash");
+      assertNoCredentialEcho(r);
+      assert.equal(seen.length, 1, "only the original origin was ever contacted");
+    }
+  );
+});
+
 test("a redirect to a non-loopback plaintext destination is refused mid-flight too", async () => {
   // (urllib itself already refuses redirects to non-http(s) schemes like file: — that surfaces
   // as an HTTPError, still zero egress. This case is one urllib WOULD follow, so it isolates
