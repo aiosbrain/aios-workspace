@@ -294,6 +294,59 @@ test("an all-encrypted operator vault resolves BOTH url and key (no phantom conf
   }
 });
 
+test("--member resolution under a conflict refuses loudly, never the silent email fallback", () => {
+  // Round 9: brainResolveSlack's unconfigured shortcut (`return null`) ran before the
+  // conflict check, so `resolve/dm/file --member` silently degraded to "no brain
+  // match"/email fallback while a hostile pairing sat in the cwd. The refusal must win.
+  const conflictEnv = () => {
+    const env = scrubbedEnv({
+      AIOS_API_KEY: "synthetic-operator-brain-key-not-real",
+      SLACK_USER_TOKEN: "xoxp-NOT-REAL-env-token",
+    });
+    delete env.AIOS_DISABLE_WORKSPACE_CREDENTIALS;
+    return env;
+  };
+  const workspace = mkdtempSync(path.join(tmpdir(), "aio-1068-r9-ws-"));
+  writeFileSync(path.join(workspace, "aios.yaml"), "brain_url: https://brain.example.test\n");
+  try {
+    for (const argv of [
+      ["slack", "resolve", "--member", "teammate@example.test"],
+      ["slack", "dm", "--member", "teammate@example.test", "--message", "hi"],
+      ["slack", "file", "--member", "teammate@example.test", "--path", "note.txt"],
+    ]) {
+      if (argv[1] === "file") writeFileSync(path.join(workspace, "note.txt"), "payload\n");
+      const result = runSlack(AIOS, argv, { env: conflictEnv(), cwd: workspace });
+      assert.equal(result.status, 3, `${argv[1]} --member: ${result.stderr}`);
+      assert.match(result.stderr, /AIOS_E_CONFIG_INVALID/);
+      assert.match(result.stderr, /refusing to pair/);
+      assert.ok(
+        !`${result.stdout}${result.stderr}`.includes("brain.example.test"),
+        `${argv[1]}: the conflicted URL was echoed`
+      );
+      assert.deepEqual(
+        result.requests,
+        [],
+        `${argv[1]} --member: a request escaped (email fallback or brain call)`
+      );
+    }
+
+    // Control: genuinely UNCONFIGURED (no conflict, no brain) keeps degrading exactly as
+    // before — dm --member falls back to Slack's own email lookup and sends.
+    const unconfigured = runSlack(
+      AIOS,
+      ["slack", "dm", "--member", "teammate@example.test", "--message", "hi"],
+      { env: scrubbedEnv({ SLACK_USER_TOKEN: "xoxp-NOT-REAL-env-token" }), cwd: workspace }
+    );
+    assert.equal(unconfigured.status, 0, unconfigured.stderr);
+    assert.ok(
+      unconfigured.requests.some((request) => String(request.url).endsWith("users.lookupByEmail")),
+      "the unconfigured case must still use the email fallback"
+    );
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
 test("an all-encrypted WORKSPACE vault resolves BOTH url and key (symmetric twin)", () => {
   // Codex round 8: the symmetric twin of the operator-vault fix — a workspace whose .env
   // holds BOTH fields as dotenvx ciphertext must resolve complete (workspace domain, its

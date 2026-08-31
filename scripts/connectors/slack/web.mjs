@@ -169,6 +169,11 @@ export const brainGetJson = (brain, urlPath, options) =>
  * a forbidden destination fails loudly rather than degrading into "no brain match".
  */
 export async function brainResolveSlack(brain, member, options = {}) {
+  // The conflict check must precede the unconfigured shortcut: a trust-domain conflict
+  // clears url+key, and letting it fall into `return null` silently degrades
+  // `resolve/dm/file --member` into the email fallback instead of the loud value-free
+  // refusal (round-9 — the exact degradation class the confirmation pass flagged).
+  if (brain?.conflict) throw brainDomainConflictError(brain.conflict);
   if (!brain?.url || !brain?.key) return null;
   const query = new URLSearchParams({ provider: "slack" });
   query.set(member.includes("@") ? "email" : "handle", member);
