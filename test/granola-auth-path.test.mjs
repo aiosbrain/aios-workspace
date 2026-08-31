@@ -10,8 +10,14 @@
 import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { execFileSync } from "node:child_process";
 import { granolaAuthPath, listConnectors, vaultSet } from "../scripts/connector.mjs";
+import { resolveDotenvxInvocation } from "../scripts/connector-vault.mjs";
+import { scrubAmbientProcessEnv } from "./helpers/scrubbed-env.mjs";
+
+// AIO-1028: an ambient GRANOLA_API_KEY (the direnv cascade exports a real one) wins inside
+// `dotenvx get`, so granolaAuthPath() reported "api-key" for a repo whose vault is empty.
+// Scrub the ambient environment so only the fixtures written below are visible.
+scrubAmbientProcessEnv();
 
 let failed = 0;
 const RED = "\x1b[0;31m",
@@ -34,12 +40,11 @@ function makeRepo() {
   return repo;
 }
 
-let hasDotenvx = true;
-try {
-  execFileSync("dotenvx", ["--version"], { stdio: "ignore" });
-} catch {
-  hasDotenvx = false;
-}
+// The vault resolves dotenvx via Node module resolution against the toolkit's own
+// @dotenvx/dotenvx (AIO-1004) — a bare `dotenvx` on PATH is only the last-resort fallback,
+// so probe the same resolution the vault uses instead of PATH (the scrubbed-env CI lane
+// runs with a Node-only PATH where a PATH probe would wrongly skip this branch).
+const hasDotenvx = resolveDotenvxInvocation().command !== "dotenvx";
 
 console.log("granola auth-path: no API key set → reports desktop-app session");
 {
@@ -61,7 +66,9 @@ if (hasDotenvx) {
     rmSync(repo, { recursive: true, force: true });
   }
 } else {
-  console.log(`  ${GREEN}✓${NC} (skipped: dotenvx not on PATH — api-key branch covered by CI)`);
+  console.log(
+    `  ${GREEN}✓${NC} (skipped: @dotenvx/dotenvx not resolvable — api-key branch covered by CI)`
+  );
 }
 
 console.log("granola auth-path: surfaced via listConnectors() for granola only");

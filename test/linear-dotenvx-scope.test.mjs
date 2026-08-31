@@ -11,6 +11,13 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { decryptDotenvKey } from "../scripts/brain-config.mjs";
+import { assertSecretEqual, scrubAmbientProcessEnv } from "./helpers/scrubbed-env.mjs";
+
+// AIO-1028: an ambient OPENAI_API_KEY (the Tessera cascade exports a real one) means
+// `dotenvx run` never needs to decrypt the sibling ciphertext below, so the
+// WRONG_PRIVATE_KEY warning the first test asserts on doesn't fire. Scrub the ambient
+// environment so the mixed-key fixture behaves the same on every machine.
+scrubAmbientProcessEnv();
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const DOTENVX_BIN = path.join(ROOT, "node_modules", ".bin", "dotenvx");
@@ -69,7 +76,7 @@ test("dotenvx run on a mixed-key .env warns about the unrelated secret", () => {
 test("scoped Linear wrapper decrypts LINEAR_API_KEY without WRONG_PRIVATE_KEY noise", () => {
   const repo = makeMixedRepo();
   try {
-    assert.equal(decryptDotenvKey(repo, "LINEAR_API_KEY"), LIN_SECRET);
+    assertSecretEqual(decryptDotenvKey(repo, "LINEAR_API_KEY"), LIN_SECRET, "scoped decrypt");
 
     const result = spawnSync(process.execPath, [WRAPPER, "template", "aios"], {
       cwd: repo,
