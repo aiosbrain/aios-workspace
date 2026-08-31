@@ -48,6 +48,7 @@ export async function slackCall(ctx, method, params = {}) {
     if (value !== null && value !== undefined) body.append(key, String(value));
   }
   const encoded = body.toString();
+  const wait = ctx.sleep ?? sleep; // test seam — retries must never real-sleep a suite
   for (let attempt = 0; ; attempt++) {
     let response;
     try {
@@ -63,14 +64,14 @@ export async function slackCall(ctx, method, params = {}) {
     } catch (error) {
       if (error instanceof AiosError) throw error;
       if (attempt < RETRIES) {
-        await sleep(retryDelayMs(null, attempt));
+        await wait(retryDelayMs(null, attempt));
         continue;
       }
       throw networkError(`network error calling ${method}: ${error.message}`);
     }
     if (RETRY_STATUS.has(response.status)) {
       if (attempt < RETRIES) {
-        await sleep(retryDelayMs(response.headers.get("retry-after"), attempt));
+        await wait(retryDelayMs(response.headers.get("retry-after"), attempt));
         continue;
       }
       throw networkError(`HTTP ${response.status} from ${method}`);
@@ -82,7 +83,7 @@ export async function slackCall(ctx, method, params = {}) {
     if (!payload.ok) {
       const err = payload.error ?? "unknown_error";
       if (err === "ratelimited" && attempt < RETRIES) {
-        await sleep(retryDelayMs(null, attempt));
+        await wait(retryDelayMs(null, attempt));
         continue;
       }
       if (AUTH_ERRORS.has(err)) {

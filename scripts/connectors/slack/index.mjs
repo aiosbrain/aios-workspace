@@ -84,6 +84,13 @@ export async function cmdSlack(repo, rest, options = {}) {
     output.diagnostic(`error: unknown slack verb: ${verb}`);
     return 2;
   }
+  // Verb-level help NEVER resolves credentials or touches the network: on an unconfigured
+  // machine `aios slack send --help` must print help and exit 0, not exit 3 after a brain
+  // token fetch (Codex round 1). The handlers keep their own help path as a backstop.
+  if (rest.slice(1).some((arg) => arg === "--help" || arg === "-h")) {
+    console.log(slackUsage());
+    return 0;
+  }
   try {
     const ctx = {
       // Deliberately the PROCESS cwd, not the dispatch-resolved workspace root: slack.py

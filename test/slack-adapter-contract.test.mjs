@@ -144,6 +144,71 @@ test("file upload flow: contained read → upload URL → complete; file-delete 
   }
 });
 
+test("upload retries honor Retry-After through the injected sleep seam (no real sleep)", async () => {
+  const { cmdFile } = await import("../scripts/connectors/slack/files.mjs");
+  const dir = mkdtempSync(path.join(tmpdir(), "aio-1068-retry-"));
+  const delays = [];
+  let uploadAttempts = 0;
+  const fetchMock = async (url) => {
+    const target = new URL(String(url));
+    if (target.pathname === "/api/files.getUploadURLExternal") {
+      return Response.json({
+        ok: true,
+        upload_url: "https://files.slack.example/up/1",
+        file_id: "F1",
+      });
+    }
+    if (target.pathname === "/up/1") {
+      uploadAttempts += 1;
+      if (uploadAttempts === 1) {
+        return new Response("rate limited", { status: 429, headers: { "retry-after": "7" } });
+      }
+      return new Response("OK", { status: 200 });
+    }
+    if (target.pathname === "/api/files.completeUploadExternal") {
+      return Response.json({ ok: true, files: [{ id: "F1" }] });
+    }
+    throw new Error(`unrouted ${target.pathname}`);
+  };
+  const ctx = {
+    token: SYNTHETIC_TOKEN,
+    fetch: fetchMock,
+    sleep: async (ms) => {
+      delays.push(ms);
+    },
+    cwd: dir,
+    env: {},
+    brain: null,
+  };
+  const originalWrite = process.stdout.write.bind(process.stdout);
+  process.stdout.write = () => true; // keep the verb's human output out of the TAP stream
+  try {
+    writeFileSync(path.join(dir, "note.txt"), "retry payload\n");
+    const status = await cmdFile(ctx, ["--target", "C0GENERAL", "--path", "note.txt"]);
+    assert.equal(status, 0);
+  } finally {
+    process.stdout.write = originalWrite;
+    rmSync(dir, { recursive: true, force: true });
+  }
+  assert.equal(uploadAttempts, 2, "the 429 must be retried and succeed");
+  assert.deepEqual(delays, [7000], "the observed delay must honor Retry-After (7s → 7000ms)");
+});
+
+test("verb-level --help never resolves credentials or touches the network", () => {
+  const env = scrubbedEnv(); // zero credentials, zero brain config
+  for (const argv of [
+    ["slack", "send", "--help"],
+    ["slack", "file", "-h"],
+    ["slack", "connect", "--help"],
+  ]) {
+    const result = runSlack(AIOS, argv, { env });
+    assert.equal(result.status, 0, `${argv.join(" ")}: ${result.stderr}`);
+    assert.match(result.stdout, /aios slack send --target/);
+    assert.doesNotMatch(result.stderr, /AIOS_E_CREDENTIAL_MISSING/);
+    assert.deepEqual(result.requests, [], "help must observe zero brain/provider requests");
+  }
+});
+
 test("dm --member falls back from brain to Slack email lookup and fails closed otherwise", () => {
   // No brain configured: email member falls back to users.lookupByEmail.
   const email = runSlack(

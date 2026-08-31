@@ -30,7 +30,7 @@ import * as fs from "node:fs";
 import path from "node:path";
 import { AiosError, trustedFetch } from "../../cli.mjs";
 import { parseVerbArgs } from "./args.mjs";
-import { resolveMemberChannel, resolveTarget, slackCall } from "./web.mjs";
+import { resolveMemberChannel, resolveTarget, retryDelayMs, slackCall } from "./web.mjs";
 
 // Deliberate, documented cap (ported): the whole file is buffered to set Content-Length,
 // so "what Slack allows" is the wrong limit — refuse clearly instead of OOMing.
@@ -155,8 +155,12 @@ export function readUploadCandidate(spelled, options = {}) {
   }
 }
 
-/** Raw-bytes upload to the short-lived URL (NOT a Web API method — no ok:false envelope). */
+/** Raw-bytes upload to the short-lived URL (NOT a Web API method — no ok:false envelope).
+ *  Retries honor Retry-After / backoff via the same retryDelayMs every other retry path
+ *  uses — an immediate re-send inside a rate-limit window would burn all four attempts
+ *  instantly (Codex round 1). `ctx.sleep` is the test seam. */
 async function uploadBytes(ctx, uploadUrl, data) {
+  const wait = ctx.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
   for (let attempt = 0; ; attempt++) {
     let response;
     try {
@@ -172,7 +176,10 @@ async function uploadBytes(ctx, uploadUrl, data) {
       });
     } catch (error) {
       if (error instanceof AiosError) throw error;
-      if (attempt < 3) continue;
+      if (attempt < 3) {
+        await wait(retryDelayMs(null, attempt));
+        continue;
+      }
       throw new AiosError(
         "AIOS_E_NETWORK",
         `Network error uploading file bytes: ${error.message}`,
@@ -180,7 +187,10 @@ async function uploadBytes(ctx, uploadUrl, data) {
       );
     }
     if (response.status < 400) return;
-    if ([429, 500, 502, 503, 504].includes(response.status) && attempt < 3) continue;
+    if ([429, 500, 502, 503, 504].includes(response.status) && attempt < 3) {
+      await wait(retryDelayMs(response.headers.get("retry-after"), attempt));
+      continue;
+    }
     // Deliberately names neither the URL (a credential) nor the body (Slack's, not ours).
     throw new AiosError(
       "AIOS_E_NETWORK",
