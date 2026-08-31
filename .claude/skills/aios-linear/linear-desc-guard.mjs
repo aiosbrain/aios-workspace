@@ -46,8 +46,14 @@ export function lintDescription(md, { force = false } = {}) {
  * A byte-compare cannot do this — it fails on every write, which is why it stopped being
  * a usable gate. Returns true when the stored content matches.
  */
-export async function confirmStored(issue, sent) {
-  const check = await gql(`query($id:String!){ issue(id:$id){ description } }`, { id: issue.id });
+export async function confirmStored(issue, sent, { throwOnError = false } = {}) {
+  // throwOnError propagates to gql so a caller that already performed a non-retriable write
+  // (create) can catch a failed readback and still name the issue that now exists.
+  const check = await gql(
+    `query($id:String!){ issue(id:$id){ description } }`,
+    { id: issue.id },
+    { throwOnError }
+  );
   const stored = check.issue.description || "";
   const drift = describeContentDrift(sent, stored);
   if (!drift) return true;

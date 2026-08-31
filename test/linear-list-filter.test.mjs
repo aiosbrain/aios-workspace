@@ -7,9 +7,9 @@ import assert from "node:assert/strict";
 import {
   filterIssues,
   hasListFilters,
-  parseCreateArgs,
   parseListArgs,
 } from "../scaffold/.claude/skills/aios-linear/linear-core.mjs";
+import { parseCreateArgs } from "../scaffold/.claude/skills/aios-linear/linear-create.mjs";
 import { formatListRow } from "../scaffold/.claude/skills/aios-linear/linear-list.mjs";
 
 const issue = (identifier, stateType, labels) => ({
