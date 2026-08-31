@@ -73,8 +73,20 @@ export function slackUsage() {
 
 /** `aios slack <verb> …`. Returns the exit code (the registry descriptor is exit-code). */
 export async function cmdSlack(repo, rest, options = {}) {
-  const verb = rest[0];
   const output = createOutput(options);
+  // Global flags are accepted BEFORE the verb too — slack.py declared `--json` on both the
+  // top-level parser and the shared per-verb parent, so `slack --json send …` was always
+  // legal (Codex round 2). `--json`/`--help`/`-h` are the ONLY pre-verb globals the Python
+  // CLI had; a hoisted --json is re-appended to the verb argv so one parser owns it. Any
+  // other leading flag falls through and errors as an unknown verb, which names it.
+  let cursor = 0;
+  let hoistedJson = false;
+  while (rest[cursor] === "--json") {
+    hoistedJson = true;
+    cursor += 1;
+  }
+  const verb = rest[cursor];
+  const verbArgs = [...rest.slice(cursor + 1), ...(hoistedJson ? ["--json"] : [])];
   if (!verb || verb === "help" || verb === "--help" || verb === "-h") {
     console.log(slackUsage());
     return 0;
@@ -87,7 +99,7 @@ export async function cmdSlack(repo, rest, options = {}) {
   // Verb-level help NEVER resolves credentials or touches the network: on an unconfigured
   // machine `aios slack send --help` must print help and exit 0, not exit 3 after a brain
   // token fetch (Codex round 1). The handlers keep their own help path as a backstop.
-  if (rest.slice(1).some((arg) => arg === "--help" || arg === "-h")) {
+  if (verbArgs.some((arg) => arg === "--help" || arg === "-h")) {
     console.log(slackUsage());
     return 0;
   }
@@ -109,7 +121,7 @@ export async function cmdSlack(repo, rest, options = {}) {
       ctx.token = (await resolveSlackCredential(ctx)).values.token;
     }
     const handler = await HANDLERS[verb]();
-    const status = await handler(ctx, rest.slice(1));
+    const status = await handler(ctx, verbArgs);
     if (status === null) {
       console.log(slackUsage());
       return 0;

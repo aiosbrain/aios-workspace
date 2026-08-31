@@ -7,7 +7,13 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { AIOS, SYNTHETIC_TOKEN, runSlack, scrubbedEnv } from "./helpers/slack-test-env.mjs";
+import {
+  AIOS,
+  SLACK_BIN,
+  SYNTHETIC_TOKEN,
+  runSlack,
+  scrubbedEnv,
+} from "./helpers/slack-test-env.mjs";
 
 const tokenEnv = (overrides = {}) =>
   scrubbedEnv({ SLACK_USER_TOKEN: SYNTHETIC_TOKEN, ...overrides });
@@ -207,6 +213,37 @@ test("verb-level --help never resolves credentials or touches the network", () =
     assert.doesNotMatch(result.stderr, /AIOS_E_CREDENTIAL_MISSING/);
     assert.deepEqual(result.requests, [], "help must observe zero brain/provider requests");
   }
+});
+
+test("--json is accepted before the verb, exactly like slack.py's global flag", () => {
+  const env = tokenEnv();
+  const before = runSlack(AIOS, ["slack", "--json", "whoami"], { env });
+  const after = runSlack(AIOS, ["slack", "whoami", "--json"], { env });
+  assert.equal(before.status, 0, before.stderr);
+  assert.equal(before.status, after.status);
+  assert.equal(before.stdout, after.stdout, "pre-verb --json must match post-verb --json");
+  assert.equal(JSON.parse(before.stdout).user, "mockuser");
+
+  // Compat route: `slack --json send …` — same adapter, one stderr warning only.
+  const delegate = runSlack(
+    SLACK_BIN,
+    ["--json", "send", "--target", "C0GENERAL", "--message", "hi"],
+    { env }
+  );
+  const canonical = runSlack(
+    AIOS,
+    ["slack", "send", "--target", "C0GENERAL", "--message", "hi", "--json"],
+    { env }
+  );
+  assert.equal(delegate.status, canonical.status, delegate.stderr);
+  assert.equal(delegate.stdout, canonical.stdout);
+  assert.match(delegate.stderr.split("\n")[0], /^slack: deprecated compatibility command/);
+
+  // An unknown flag before the verb still errors usefully (named, exit 2, no request).
+  const unknown = runSlack(AIOS, ["slack", "--verbose", "whoami"], { env });
+  assert.equal(unknown.status, 2, unknown.stderr);
+  assert.match(unknown.stderr, /unknown slack verb: --verbose/);
+  assert.deepEqual(unknown.requests, []);
 });
 
 test("dm --member falls back from brain to Slack email lookup and fails closed otherwise", () => {
