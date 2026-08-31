@@ -68,6 +68,22 @@ export async function cmdConnect(ctx, args) {
 
 export async function cmdStatus(ctx, args) {
   const brain = await resolveBrainConfig(ctx);
+  if (brain.conflict) {
+    // Status REPORTS a trust-domain conflict (its whole job is configuration state);
+    // brain-touching verbs refuse it at attachment time instead (web.mjs brainRequest).
+    const report = await describeSlackCredential(ctx);
+    if (args.json) {
+      print(
+        JSON.stringify({ connected: false, brain: "conflict", conflict: brain.conflict, ...report })
+      );
+    } else {
+      print(
+        `brain config conflict: destination from ${brain.conflict.urlDomain} config, ` +
+          `credential from ${brain.conflict.keyDomain} config — provide both from the same place`
+      );
+    }
+    return 0;
+  }
   if (!brain.url || !brain.key) {
     // No brain: still a useful status — report the local credential source class instead
     // of dying, so `aios slack status` works in an env-token-only setup.

@@ -29,6 +29,8 @@
 import * as fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { parseFlatYaml } from "../../flat-yaml.mjs";
 import { spawnSync } from "node:child_process";
 import {
   AiosError,
@@ -36,7 +38,7 @@ import {
   resolveCredentialRoot,
   resolveUserConfigPath,
 } from "../../cli.mjs";
-import { brainGetJson } from "./web.mjs";
+import { brainDomainConflictError, brainGetJson } from "./web.mjs";
 
 // Deliberately duplicated from scripts/connectors/linear/credentials.mjs rather than
 // imported: a cross-adapter import would let a sabotaged Linear adapter break Slack,
@@ -93,7 +95,9 @@ function agentContext(env, home) {
   return {};
 }
 
-const PACKAGE_ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), "../../..");
+// fileURLToPath, never URL(...).pathname: pathname keeps percent-encoding (a space in the
+// install path → "%20" → nonexistent dir → the operator vault would be silently skipped).
+const PACKAGE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 
 const trim = (value) => String(value ?? "").trim();
 const stripSlash = (value) => (value ? value.replace(/\/+$/, "") : null);
@@ -105,73 +109,127 @@ function toolkitRoot(env) {
     : PACKAGE_ROOT;
 }
 
-/**
- * Resolve the Team Brain endpoint config { url, key, team } WITHOUT validating or using it.
- *
- * TRUST-DOMAIN BINDING (round-5 finding 3): when a credential will be attached, the
- * destination must come from the SAME trust domain as the key. Two domains exist:
- *
- *   - OPERATOR: process env, agent-context.json, and the operator's own toolkit vault
- *     (AIOS_TOOLKIT_DIR → this package checkout's .env; brain key decrypted scoped, never
- *     the whole .env). Complete (url+key) → wins outright; an untrusted cwd is never read.
- *   - WORKSPACE: the cwd's own .env/aios.yaml (the legacy resolveConnectorEnv path).
- *     Used ONLY when it supplies BOTH url and key itself.
- *
- * A cross-domain pairing — e.g. an untrusted clone's .env supplying AIOS_BRAIN_URL while
- * the operator's key would fill in from elsewhere — is REFUSED with a value-free error:
- * that pairing is exactly the "cd into a hostile repo, run aios slack, key exfiltrates to
- * attacker's HTTPS origin" shape. Fields are never assembled across domains.
- */
-export async function resolveBrainConfig(options = {}) {
-  const env = options.env ?? process.env;
-  const home = options.home ?? os.homedir();
-  const brain = agentContext(env, home).brain ?? {};
-  const vaultRoot = toolkitRoot(env);
-  const { loadDotEnv, isDotenvxEncrypted, decryptDotenvKey } =
-    await import("../../brain-config.mjs");
+/** Operator-domain fields: process env, agent-context.json, the operator's toolkit vault. */
+function operatorBrainConfig(env, brain, vaultRoot, foundation) {
+  const { loadDotEnv, isDotenvxEncrypted, decryptDotenvKey } = foundation;
   let vault = {};
   try {
     vault = loadDotEnv(vaultRoot) ?? {};
   } catch {
     vault = {};
   }
-  const opUrl = trim(env.AIOS_BRAIN_URL || brain.url || vault.AIOS_BRAIN_URL);
-  let opKey = trim(
+  let url = trim(env.AIOS_BRAIN_URL || brain.url || vault.AIOS_BRAIN_URL);
+  let key = trim(
     (brain.api_key_ref ? env[brain.api_key_ref] : "") || env.AIOS_API_KEY || vault.AIOS_API_KEY
   );
-  if (!opKey && isDotenvxEncrypted(vaultRoot)) {
-    opKey = trim(decryptDotenvKey(vaultRoot, "AIOS_API_KEY"));
+  try {
+    // loadDotEnv skips dotenvx ciphertext, so an all-encrypted vault needs the scoped
+    // decrypt for BOTH fields — decrypting only the key would strand the vault as
+    // key-without-url and wrongly push resolution into the workspace stage.
+    if ((!url || !key) && isDotenvxEncrypted(vaultRoot)) {
+      if (!url) url = trim(decryptDotenvKey(vaultRoot, "AIOS_BRAIN_URL"));
+      if (!key) key = trim(decryptDotenvKey(vaultRoot, "AIOS_API_KEY"));
+    }
+  } catch {
+    /* an unreadable vault contributes nothing */
   }
-  const opTeam = trim(env.AIOS_TEAM || brain.team || vault.AIOS_TEAM) || null;
-  if (opUrl && opKey) {
-    return { url: stripSlash(opUrl), key: opKey, team: opTeam, source: "operator" };
+  const team = trim(env.AIOS_TEAM || brain.team || vault.AIOS_TEAM) || null;
+  return { url, key, team };
+}
+
+/**
+ * Workspace-domain fields: the cwd's OWN files only (.env plaintext + scoped dotenvx
+ * decrypt, aios.yaml brain_url/team_id). Deliberately NOT resolveConnectorEnv: that merge
+ * folds process.env and the toolkit vault back in, so "the workspace lookup found it"
+ * stops meaning "the workspace owns it" — the exact inference-by-absence that made the
+ * trust-domain binding fail open when the two toolkit-root constructions diverged (D1).
+ * Provenance here is by construction, not by comparing lookups.
+ */
+function workspaceOwnBrainConfig(cwd, foundation) {
+  const { loadDotEnv, isDotenvxEncrypted, decryptDotenvKey } = foundation;
+  let dotenv = {};
+  let yaml = {};
+  try {
+    dotenv = loadDotEnv(cwd) ?? {};
+  } catch {
+    dotenv = {};
+  }
+  try {
+    yaml = parseFlatYaml(fs.readFileSync(path.join(cwd, "aios.yaml"), "utf8")) ?? {};
+  } catch {
+    yaml = {};
+  }
+  let url = trim(dotenv.AIOS_BRAIN_URL || yaml.brain_url);
+  let key = trim(dotenv.AIOS_API_KEY);
+  try {
+    if (!key && isDotenvxEncrypted(cwd)) key = trim(decryptDotenvKey(cwd, "AIOS_API_KEY"));
+  } catch {
+    /* an unreadable workspace vault contributes nothing */
+  }
+  const team = trim(dotenv.AIOS_TEAM || yaml.team_id) || null;
+  return { url, key, team };
+}
+
+/**
+ * Resolve the Team Brain endpoint config WITHOUT validating or using it. Returns
+ * `{ url, key, team, source, conflict }`.
+ *
+ * TRUST-DOMAIN BINDING (round-5 finding 3 + confirmation-pass D1/D2): when a credential
+ * will be attached, the destination must come from the SAME trust domain as the key.
+ *
+ *   - OPERATOR: process env, agent-context.json, and the operator's own toolkit vault
+ *     (AIOS_TOOLKIT_DIR → this package checkout's .env; scoped dotenvx decryption only).
+ *     Complete (url+key) → wins outright; the cwd is never read.
+ *   - WORKSPACE: the cwd's own files, per-field provenance by construction (above).
+ *     Used ONLY when it supplies BOTH url and key itself.
+ *
+ * A cross-domain pairing (an untrusted clone's brain_url + the operator's key, or the
+ * mirror) is returned as `{ url: null, key: null, conflict: { urlDomain, keyDomain } }` —
+ * data, not a throw (D2): verbs that never contact the brain keep working, `aios slack
+ * status` reports it, and web.mjs brainRequest raises the value-free refusal at the
+ * point of credential attachment, before any byte leaves. Fields are never assembled
+ * across domains.
+ */
+export async function resolveBrainConfig(options = {}) {
+  const env = options.env ?? process.env;
+  const home = options.home ?? os.homedir();
+  const brain = agentContext(env, home).brain ?? {};
+  const foundation = await import("../../brain-config.mjs");
+  const op = operatorBrainConfig(env, brain, toolkitRoot(env), foundation);
+  if (op.url && op.key) {
+    return {
+      url: stripSlash(op.url),
+      key: op.key,
+      team: op.team,
+      source: "operator",
+      conflict: null,
+    };
   }
   if (env.AIOS_DISABLE_WORKSPACE_CREDENTIALS === "1") {
     // Disabling a source can only remove credentials, never add or mix them.
-    return { url: null, key: null, team: opTeam, source: null };
+    return { url: null, key: null, team: op.team, source: null, conflict: null };
   }
-  const { resolveConnectorEnv } = await import("../../global-connector-runtime.mjs");
-  const resolved = resolveConnectorEnv({ cwd: options.cwd ?? process.cwd(), env });
-  const wsUrl = trim(resolved.AIOS_BRAIN_URL);
-  const wsKey = trim(resolved.AIOS_API_KEY);
-  if (!wsUrl || !wsKey) return { url: null, key: null, team: opTeam, source: null };
-  const urlDomain = opUrl ? "operator" : "workspace";
-  const keyDomain = opKey ? "operator" : "workspace";
+  const ws = workspaceOwnBrainConfig(options.cwd ?? process.cwd(), foundation);
+  const url = op.url || ws.url;
+  const key = op.key || ws.key;
+  if (!url || !key) return { url: null, key: null, team: op.team, source: null, conflict: null };
+  const urlDomain = op.url ? "operator" : "workspace";
+  const keyDomain = op.key ? "operator" : "workspace";
   if (urlDomain !== keyDomain) {
-    throw new AiosError(
-      "AIOS_E_CONFIG_INVALID",
-      `The Team Brain destination resolves from the ${urlDomain} config while the brain ` +
-        `credential resolves from the ${keyDomain} config — refusing to pair them ` +
-        "(values intentionally not shown).",
-      "Provide AIOS_BRAIN_URL and the brain key from the SAME place: both in your " +
-        "environment/toolkit config, or both in the workspace's own .env."
-    );
+    return {
+      url: null,
+      key: null,
+      team: op.team,
+      source: null,
+      conflict: { urlDomain, keyDomain },
+    };
   }
   return {
-    url: stripSlash(wsUrl),
-    key: wsKey,
-    team: trim(resolved.AIOS_TEAM) || opTeam,
+    url: stripSlash(ws.url),
+    key: ws.key,
+    team: ws.team || op.team,
     source: "workspace",
+    conflict: null,
   };
 }
 
@@ -261,6 +319,10 @@ export async function resolveSlackCredential(options = {}) {
       name: "team-brain",
       load: async () => {
         const brain = await resolveBrainConfig(options);
+        // A trust-domain conflict must fail LOUDLY here, not degrade into "no credential
+        // source": silence would read as missing config while a hostile pairing sits in
+        // the cwd (confirmation-pass D2 — raise at the point of use).
+        if (brain.conflict) throw brainDomainConflictError(brain.conflict);
         if (!brain.url || !brain.key) return null;
         // brainGetJson routes through trustedFetch: the DESTINATION is validated before the
         // bearer key materializes, and redirects are origin-pinned.

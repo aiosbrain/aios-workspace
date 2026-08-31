@@ -114,7 +114,22 @@ const brainHeaders = (brain) => () => ({
   ...(brain.team ? { "X-AIOS-Team": brain.team } : {}),
 });
 
+/** The value-free trust-domain refusal, raised at the point of credential ATTACHMENT. */
+export function brainDomainConflictError(conflict) {
+  return new AiosError(
+    "AIOS_E_CONFIG_INVALID",
+    `The Team Brain destination resolves from the ${conflict.urlDomain} config while the ` +
+      `brain credential resolves from the ${conflict.keyDomain} config — refusing to pair ` +
+      "them (values intentionally not shown).",
+    "Provide AIOS_BRAIN_URL and the brain key from the SAME place: both in your " +
+      "environment/toolkit config, or both in the workspace's own .env."
+  );
+}
+
 export async function brainRequest(brain, method, urlPath, payload, options = {}) {
+  // D2: the resolver returns a conflict as DATA so non-brain verbs keep working; the
+  // refusal fires here, before any credential materializes or any byte leaves.
+  if (brain?.conflict) throw brainDomainConflictError(brain.conflict);
   if (!brain?.url || !brain?.key) {
     throw new AiosError(
       "AIOS_E_CONFIG_MISSING",
@@ -227,7 +242,9 @@ export async function resolveTarget(ctx, target) {
       "Check the channel name (the token's user must be able to see it)."
     );
   }
-  throw usage(`Unrecognized target: ${target}`);
+  // shownArg: a credential pasted into the target slot must not be echoed into logs.
+  const { shownArg } = await import("./args.mjs");
+  throw usage(`Unrecognized target: ${shownArg(target)}`);
 }
 
 /** Shared --member resolution (dm/file): brain first, Slack email lookup as fallback. */

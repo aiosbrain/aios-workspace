@@ -89,11 +89,25 @@ export function parseVerbArgs(argv, spec = {}) {
     const arg = argv[index];
     if (arg === "--help" || arg === "-h") return { help: true };
     if (arg.startsWith("--")) {
-      const name = arg.slice(2);
+      // slack.py's argparse accepted `--flag=value` as well as `--flag value`; split on
+      // the FIRST `=` so the value may itself contain one. An equals-bound value is
+      // explicit, so it may legally start with `--` (unlike the space form, where a
+      // following option means the value was forgotten).
+      let name = arg.slice(2);
+      let inlineValue;
+      const equals = name.indexOf("=");
+      if (equals !== -1) {
+        inlineValue = name.slice(equals + 1);
+        name = name.slice(0, equals);
+      }
       const kind = flags[name];
       if (!kind) throw usageError(`Unknown option --${name}.`);
       if (kind === "boolean") {
+        if (inlineValue !== undefined) throw usageError(`--${name} does not take a value.`);
         parsed[camel(name)] = true;
+      } else if (inlineValue !== undefined) {
+        if (inlineValue === "") throw usageError(`--${name} requires a value.`);
+        parsed[camel(name)] = inlineValue;
       } else {
         const value = argv[++index];
         // A following option means the value was forgotten (the AIO-1026 guard, mirrored

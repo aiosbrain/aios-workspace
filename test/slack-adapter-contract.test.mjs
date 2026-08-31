@@ -243,6 +243,43 @@ test('a flag VALUE spelling "--help" is never a silent help fake-success', () =>
   assert.equal(new URLSearchParams(post.body).get("text"), "--help", "the literal text sends");
 });
 
+test("equals-form flags parse like slack.py's argparse (table-driven over VERB_SPECS)", async () => {
+  const { parseVerbArgs, VERB_SPECS } = await import("../scripts/connectors/slack/args.mjs");
+  const camel = (name) => name.replace(/-([a-z])/g, (_, ch) => ch.toUpperCase());
+  let covered = 0;
+  for (const [verb, spec] of Object.entries(VERB_SPECS)) {
+    for (const [flag, kind] of Object.entries(spec.flags ?? {})) {
+      if (kind !== "value") continue;
+      covered += 1;
+      const value = flag === "limit" ? "5" : "some=value with spaces";
+      const parsed = parseVerbArgs([`--${flag}=${value}`], { flags: spec.flags });
+      assert.equal(parsed[camel(flag)], value, `${verb}: --${flag}=… must bind the value`);
+      // An empty equals value is still a required-value error.
+      assert.throws(
+        () => parseVerbArgs([`--${flag}=`], { flags: spec.flags }),
+        (error) => error.code === "AIOS_E_USAGE" && /requires a value/.test(error.message),
+        `${verb}: --${flag}= must be refused`
+      );
+    }
+  }
+  assert.ok(covered >= 10, `expected the spec table to expose value flags (saw ${covered})`);
+  // A boolean flag with an equals value errors instead of silently ignoring the value.
+  assert.throws(
+    () => parseVerbArgs(["--json=x"], {}),
+    (error) => error.code === "AIOS_E_USAGE" && /--json does not take a value/.test(error.message)
+  );
+
+  // End-to-end: the equals form drives a real (mocked) send.
+  const result = runSlack(
+    AIOS,
+    ["slack", "send", "--target=C0GENERAL", "--message=an equals-form message"],
+    { env: tokenEnv() }
+  );
+  assert.equal(result.status, 0, result.stderr);
+  const post = result.requests.find((request) => String(request.url).endsWith("chat.postMessage"));
+  assert.equal(new URLSearchParams(post.body).get("text"), "an equals-form message");
+});
+
 test("an option in value position is a loud offline usage error for EVERY value flag", async () => {
   // Table-driven over the whole spec surface so the class cannot regress per-verb
   // (Codex round 6, mirroring the AIO-1026 linear-create.mjs guard).
