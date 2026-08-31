@@ -9,9 +9,16 @@
  * see zero extra bytes. The former Python subprocess path is gone: the packed package is
  * the whole runtime.
  */
+// The banner echoes the verb slot, which is exactly the slot a pasted credential lands in
+// (`slack xoxp-… whoami`). Mask token-shaped values the same way the adapter's own
+// shownArg does — inlined (kept in sync with scripts/connectors/slack/args.mjs) so this
+// delegate stays dependency-free and quarantine-safe even when the adapter is broken.
+const SECRET_SHAPED = /^(xox[a-z]-|sk-|ghp_|github_pat_|lin_api_|glpat-|Bearer\s)/i;
+const bannerVerb = process.argv[2] ?? "<verb>";
 process.stderr.write(
   "slack: deprecated compatibility command — use `aios slack " +
-    `${process.argv[2] ?? "<verb>"} …\` (this bin will be removed no earlier than v3.0.0)\n`
+    `${SECRET_SHAPED.test(bannerVerb) ? "<verb>" : bannerVerb} …\` ` +
+    "(this bin will be removed no earlier than v3.0.0)\n"
 );
 try {
   const { loadSlackAdapter } = await import("./connectors.mjs");

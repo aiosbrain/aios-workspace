@@ -91,17 +91,25 @@ export async function cmdSlack(repo, rest, options = {}) {
     console.log(slackUsage());
     return 0;
   }
+  const { parseVerbArgs, VERB_SPECS, shownArg } = await import("./args.mjs");
   if (!VERBS[verb]) {
-    const { shownArg } = await import("./args.mjs");
     console.log(slackUsage());
     // shownArg: a pasted credential in the verb slot must not be echoed into logs.
     output.diagnostic(`error: unknown slack verb: ${shownArg(verb)}`);
     return 2;
   }
-  // Verb-level help NEVER resolves credentials or touches the network: on an unconfigured
-  // machine `aios slack send --help` must print help and exit 0, not exit 3 after a brain
-  // token fetch (Codex round 1). The handlers keep their own help path as a backstop.
-  if (verbArgs.some((arg) => arg === "--help" || arg === "-h")) {
+  // ROUND-5 STRUCTURAL CONTRACT: the invocation is FULLY parsed and validated before any
+  // credential resolves. Help and every usage error are therefore offline by construction
+  // (no credential resolution, no brain fetch, no network) — and help is decided by the
+  // flag/value-aware parser, so a flag VALUE spelling "--help" (`--message "--help"`) is
+  // data that gets sent, never a help request.
+  let args;
+  try {
+    args = parseVerbArgs(verbArgs, VERB_SPECS[verb]);
+  } catch (error) {
+    return output.failure(normalizeError(error));
+  }
+  if (args.help) {
     console.log(slackUsage());
     return 0;
   }
@@ -123,12 +131,7 @@ export async function cmdSlack(repo, rest, options = {}) {
       ctx.token = (await resolveSlackCredential(ctx)).values.token;
     }
     const handler = await HANDLERS[verb]();
-    const status = await handler(ctx, verbArgs);
-    if (status === null) {
-      console.log(slackUsage());
-      return 0;
-    }
-    return status;
+    return await handler(ctx, args);
   } catch (error) {
     return output.failure(normalizeError(error));
   }

@@ -15,8 +15,14 @@
  *                     (env:VARIABLE or keychain:service). Only the reference is stored.
  *   3. team brain   — GET /api/v1/me/slack-token with the brain bearer key. The brain
  *                     DESTINATION is validated (scripts/cli/destination-policy.mjs) before
- *                     the bearer key is materialized: a foreign, file:, malformed, or
- *                     non-loopback-http brain URL receives zero credential bytes.
+ *                     the bearer key is materialized: a file:, malformed, or
+ *                     non-loopback-http brain URL receives zero credential bytes, and
+ *                     credentialed redirects are origin-pinned. There is deliberately no
+ *                     HTTPS origin allowlist; what prevents a planted HTTPS destination is
+ *                     the TRUST-DOMAIN BINDING in resolveBrainConfig — the destination and
+ *                     the key must resolve from the same domain (operator config, or a
+ *                     workspace that supplies BOTH itself), so an untrusted cwd can never
+ *                     point the operator's key (or the xoxp token) at its own origin.
  *
  * Missing everywhere → AIOS_E_CREDENTIAL_MISSING (exit class 3) naming the bootstrap.
  */
@@ -43,7 +49,9 @@ function keychainRead(service, runner = spawnSync) {
     encoding: "utf8",
   });
   if (result.error || result.status !== 0) return null;
-  return String(result.stdout ?? "").replace(/\n$/, "");
+  // Keychain blobs can carry a trailing newline AND trailing NULs — strip both, exactly
+  // like the newline: a surviving NUL would corrupt the Authorization header downstream.
+  return String(result.stdout ?? "").replace(/[\0\r\n]+$/, "");
 }
 
 /** Parse a stored reference to { kind, locator }, or null when it is not a reference.
@@ -85,26 +93,86 @@ function agentContext(env, home) {
   return {};
 }
 
+const PACKAGE_ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), "../../..");
+
+const trim = (value) => String(value ?? "").trim();
+const stripSlash = (value) => (value ? value.replace(/\/+$/, "") : null);
+
+/** The operator's toolkit vault location: AIOS_TOOLKIT_DIR (their own env) or this package. */
+function toolkitRoot(env) {
+  return env.AIOS_TOOLKIT_DIR && path.isAbsolute(env.AIOS_TOOLKIT_DIR)
+    ? env.AIOS_TOOLKIT_DIR
+    : PACKAGE_ROOT;
+}
+
 /**
  * Resolve the Team Brain endpoint config { url, key, team } WITHOUT validating or using it.
- * Sources: env, agent-context.json, then the workspace .env vault (scoped decryption via
- * resolveConnectorEnv — decrypts only the brain keys, never the whole .env).
+ *
+ * TRUST-DOMAIN BINDING (round-5 finding 3): when a credential will be attached, the
+ * destination must come from the SAME trust domain as the key. Two domains exist:
+ *
+ *   - OPERATOR: process env, agent-context.json, and the operator's own toolkit vault
+ *     (AIOS_TOOLKIT_DIR → this package checkout's .env; brain key decrypted scoped, never
+ *     the whole .env). Complete (url+key) → wins outright; an untrusted cwd is never read.
+ *   - WORKSPACE: the cwd's own .env/aios.yaml (the legacy resolveConnectorEnv path).
+ *     Used ONLY when it supplies BOTH url and key itself.
+ *
+ * A cross-domain pairing — e.g. an untrusted clone's .env supplying AIOS_BRAIN_URL while
+ * the operator's key would fill in from elsewhere — is REFUSED with a value-free error:
+ * that pairing is exactly the "cd into a hostile repo, run aios slack, key exfiltrates to
+ * attacker's HTTPS origin" shape. Fields are never assembled across domains.
  */
 export async function resolveBrainConfig(options = {}) {
   const env = options.env ?? process.env;
   const home = options.home ?? os.homedir();
   const brain = agentContext(env, home).brain ?? {};
-  let url = env.AIOS_BRAIN_URL || brain.url || null;
-  let key = (brain.api_key_ref ? env[brain.api_key_ref] : null) || env.AIOS_API_KEY || null;
-  let team = env.AIOS_TEAM || brain.team || null;
-  if ((!url || !key) && env.AIOS_DISABLE_WORKSPACE_CREDENTIALS !== "1") {
-    const { resolveConnectorEnv } = await import("../../global-connector-runtime.mjs");
-    const resolved = resolveConnectorEnv({ cwd: options.cwd ?? process.cwd(), env });
-    url = url || resolved.AIOS_BRAIN_URL || null;
-    key = key || resolved.AIOS_API_KEY || null;
-    team = team || resolved.AIOS_TEAM || null;
+  const vaultRoot = toolkitRoot(env);
+  const { loadDotEnv, isDotenvxEncrypted, decryptDotenvKey } =
+    await import("../../brain-config.mjs");
+  let vault = {};
+  try {
+    vault = loadDotEnv(vaultRoot) ?? {};
+  } catch {
+    vault = {};
   }
-  return { url: url ? url.replace(/\/+$/, "") : null, key, team };
+  const opUrl = trim(env.AIOS_BRAIN_URL || brain.url || vault.AIOS_BRAIN_URL);
+  let opKey = trim(
+    (brain.api_key_ref ? env[brain.api_key_ref] : "") || env.AIOS_API_KEY || vault.AIOS_API_KEY
+  );
+  if (!opKey && isDotenvxEncrypted(vaultRoot)) {
+    opKey = trim(decryptDotenvKey(vaultRoot, "AIOS_API_KEY"));
+  }
+  const opTeam = trim(env.AIOS_TEAM || brain.team || vault.AIOS_TEAM) || null;
+  if (opUrl && opKey) {
+    return { url: stripSlash(opUrl), key: opKey, team: opTeam, source: "operator" };
+  }
+  if (env.AIOS_DISABLE_WORKSPACE_CREDENTIALS === "1") {
+    // Disabling a source can only remove credentials, never add or mix them.
+    return { url: null, key: null, team: opTeam, source: null };
+  }
+  const { resolveConnectorEnv } = await import("../../global-connector-runtime.mjs");
+  const resolved = resolveConnectorEnv({ cwd: options.cwd ?? process.cwd(), env });
+  const wsUrl = trim(resolved.AIOS_BRAIN_URL);
+  const wsKey = trim(resolved.AIOS_API_KEY);
+  if (!wsUrl || !wsKey) return { url: null, key: null, team: opTeam, source: null };
+  const urlDomain = opUrl ? "operator" : "workspace";
+  const keyDomain = opKey ? "operator" : "workspace";
+  if (urlDomain !== keyDomain) {
+    throw new AiosError(
+      "AIOS_E_CONFIG_INVALID",
+      `The Team Brain destination resolves from the ${urlDomain} config while the brain ` +
+        `credential resolves from the ${keyDomain} config — refusing to pair them ` +
+        "(values intentionally not shown).",
+      "Provide AIOS_BRAIN_URL and the brain key from the SAME place: both in your " +
+        "environment/toolkit config, or both in the workspace's own .env."
+    );
+  }
+  return {
+    url: stripSlash(wsUrl),
+    key: wsKey,
+    team: trim(resolved.AIOS_TEAM) || opTeam,
+    source: "workspace",
+  };
 }
 
 const MISSING = () =>
@@ -121,8 +189,12 @@ const MISSING = () =>
  * a fixed, value-free message.
  */
 export function assertTokenShape(token) {
+  // ANY C0 control char, space, or DEL — undici's own header validator rejects a different
+  // subset (NUL/CR/LF) and its TypeError EMBEDS the header value, so anything that would
+  // trip it must be refused here first, with this fixed message (round-5 finding 2).
   const malformed =
-    /[\n\r\t]/.test(token) || !(token.startsWith("xoxp-") || token.startsWith("xoxb-"));
+    // eslint-disable-next-line no-control-regex -- the control range IS the property checked
+    /[\x00-\x20\x7f]/.test(token) || !(token.startsWith("xoxp-") || token.startsWith("xoxb-"));
   if (malformed) {
     throw new AiosError(
       "AIOS_E_CREDENTIAL_INCOMPLETE",

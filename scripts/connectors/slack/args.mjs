@@ -16,10 +16,70 @@ const SECRET_SHAPED = /^(xox[a-z]-|sk-|ghp_|github_pat_|lin_api_|glpat-|Bearer\s
 export const shownArg = (value) =>
   SECRET_SHAPED.test(String(value ?? "")) ? "(token-shaped value not shown)" : value;
 
+const MESSAGE_FLAGS = {
+  target: "value",
+  message: "value",
+  "message-stdin": "boolean",
+  thread: "value",
+};
+
+/**
+ * The full argv contract for every verb, in ONE table, so `cmdSlack` can parse and
+ * validate an invocation COMPLETELY before any credential resolves (round-5 structural
+ * fix: help and usage errors are offline by construction, and a flag VALUE that happens
+ * to spell "--help" is data, not help).
+ */
+export const VERB_SPECS = Object.freeze({
+  whoami: {},
+  resolve: { flags: { member: "value" }, positional: "email", requireOneOf: [["member", "email"]] },
+  channels: { flags: { types: "value" } },
+  read: {
+    flags: { target: "value", limit: "value", thread: "value" },
+    requireOneOf: [["target"]],
+    validate: (args) => {
+      const limit = args.limit ? Number(args.limit) : 20;
+      if (!Number.isInteger(limit) || limit < 1) {
+        throw usageError("--limit must be a positive integer.");
+      }
+    },
+  },
+  send: { flags: MESSAGE_FLAGS, requireOneOf: [["target"], ["message", "message-stdin"]] },
+  dm: {
+    flags: { ...MESSAGE_FLAGS, member: "value" },
+    requireOneOf: [
+      ["target", "member"],
+      ["message", "message-stdin"],
+    ],
+  },
+  react: {
+    flags: { target: "value", ts: "value", emoji: "value" },
+    requireOneOf: [["target"], ["ts"], ["emoji"]],
+  },
+  file: {
+    flags: {
+      target: "value",
+      member: "value",
+      path: "value",
+      message: "value",
+      "allow-outside-workspace": "boolean",
+    },
+    requireOneOf: [["target", "member"], ["path"]],
+  },
+  "file-delete": {
+    positional: "file",
+    validate: (args) => {
+      if (!args.file) throw usageError("file-delete requires a Slack file id (F…).");
+    },
+  },
+  connect: { flags: { stdin: "boolean" }, positional: "token" },
+  status: {},
+  disconnect: {},
+});
+
 /**
  * @param {string[]} argv       argv after the verb
  * @param {object}   spec       { flags: {name: "value"|"boolean"}, positional?: string,
- *                               requireOneOf?: string[][] }
+ *                               requireOneOf?: string[][], validate?: (parsed) => void }
  */
 export function parseVerbArgs(argv, spec = {}) {
   const flags = { json: "boolean", ...(spec.flags ?? {}) };
@@ -55,6 +115,7 @@ export function parseVerbArgs(argv, spec = {}) {
       );
     }
   }
+  spec.validate?.(parsed);
   return parsed;
 }
 

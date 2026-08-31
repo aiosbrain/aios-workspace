@@ -29,7 +29,6 @@
 import * as fs from "node:fs";
 import path from "node:path";
 import { AiosError, trustedFetch } from "../../cli.mjs";
-import { parseVerbArgs } from "./args.mjs";
 import { resolveMemberChannel, resolveTarget, retryDelayMs, slackCall } from "./web.mjs";
 
 // Deliberate, documented cap (ported): the whole file is buffered to set Content-Length,
@@ -180,9 +179,11 @@ async function uploadBytes(ctx, uploadUrl, data) {
         await wait(retryDelayMs(null, attempt));
         continue;
       }
+      // error.name/code only, NEVER error.message: undici header/URL validation errors
+      // embed the offending value (which can be the signed upload URL) in their text.
       throw new AiosError(
         "AIOS_E_NETWORK",
-        `Network error uploading file bytes: ${error.message}`,
+        `Network error uploading file bytes (${error.code ?? error.name ?? "unknown"}).`,
         "Check network connectivity and retry."
       );
     }
@@ -200,18 +201,8 @@ async function uploadBytes(ctx, uploadUrl, data) {
   }
 }
 
-export async function cmdFile(ctx, argv) {
-  const args = parseVerbArgs(argv, {
-    flags: {
-      target: "value",
-      member: "value",
-      path: "value",
-      message: "value",
-      "allow-outside-workspace": "boolean",
-    },
-    requireOneOf: [["target", "member"], ["path"]],
-  });
-  if (args.help) return null;
+/** Args arrive pre-parsed (VERB_SPECS.file in args.mjs — the round-5 contract). */
+export async function cmdFile(ctx, args) {
   // Read and validate FIRST: a refusal must not have spoken to Slack at all.
   const { data, filename } = readUploadCandidate(args.path, {
     allowOutside: args.allowOutsideWorkspace === true,
@@ -250,10 +241,7 @@ export async function cmdFile(ctx, argv) {
 
 /** `aios slack file-delete <FILE_ID>` — remove an uploaded file (the cleanup half of the
  *  upload/delete smoke; slack.py never had it, which left no bounded-cleanup path). */
-export async function cmdFileDelete(ctx, argv) {
-  const args = parseVerbArgs(argv, { positional: "file" });
-  if (args.help) return null;
-  if (!args.file) throw usage("file-delete requires a Slack file id (F…).");
+export async function cmdFileDelete(ctx, args) {
   await slackCall(ctx, "files.delete", { file: args.file });
   if (args.json) process.stdout.write(`${JSON.stringify({ ok: true, file: args.file })}\n`);
   else process.stdout.write(`deleted ${args.file}\n`);

@@ -2,9 +2,13 @@
  * Message-surface verbs for `aios slack …` (AIO-1068): whoami, resolve, channels, read,
  * send, dm, react. Output strings match slack.py so agents and scripts keep parsing the
  * same shapes; `--json` prints the same structured results.
+ *
+ * Handlers receive ALREADY-PARSED args: `cmdSlack` parses + validates the full argv
+ * (args.mjs VERB_SPECS) before any credential resolves, so no handler ever re-parses or
+ * sees a help flag (round-5 structural contract).
  */
 import { AiosError } from "../../cli.mjs";
-import { parseVerbArgs, readMessage } from "./args.mjs";
+import { readMessage } from "./args.mjs";
 import {
   brainResolveSlack,
   openDm,
@@ -17,22 +21,14 @@ import {
 const print = (line) => process.stdout.write(`${line}\n`);
 const json = (value) => print(JSON.stringify(value, null, 2));
 
-export async function cmdWhoami(ctx, argv) {
-  const args = parseVerbArgs(argv);
-  if (args.help) return null;
+export async function cmdWhoami(ctx, args) {
   const result = await slackCall(ctx, "auth.test");
   if (args.json) json(result);
   else print(`${result.user} (${result.user_id}) on team ${result.team} (${result.team_id})`);
   return 0;
 }
 
-export async function cmdResolve(ctx, argv) {
-  const args = parseVerbArgs(argv, {
-    flags: { member: "value" },
-    positional: "email",
-    requireOneOf: [["member", "email"]],
-  });
-  if (args.help) return null;
+export async function cmdResolve(ctx, args) {
   if (args.member) {
     const uid = await brainResolveSlack(ctx.brain, args.member, ctx);
     if (!uid) {
@@ -56,9 +52,7 @@ export async function cmdResolve(ctx, argv) {
   return 0;
 }
 
-export async function cmdChannels(ctx, argv) {
-  const args = parseVerbArgs(argv, { flags: { types: "value" } });
-  if (args.help) return null;
+export async function cmdChannels(ctx, args) {
   const channels = await listConversations(ctx, args.types || "im,public_channel");
   if (args.json) {
     json(channels);
@@ -71,20 +65,8 @@ export async function cmdChannels(ctx, argv) {
   return 0;
 }
 
-export async function cmdRead(ctx, argv) {
-  const args = parseVerbArgs(argv, {
-    flags: { target: "value", limit: "value", thread: "value" },
-    requireOneOf: [["target"]],
-  });
-  if (args.help) return null;
-  const limit = args.limit ? Number(args.limit) : 20;
-  if (!Number.isInteger(limit) || limit < 1) {
-    throw new AiosError(
-      "AIOS_E_USAGE",
-      "--limit must be a positive integer.",
-      "Example: --limit 20"
-    );
-  }
+export async function cmdRead(ctx, args) {
+  const limit = args.limit ? Number(args.limit) : 20; // validated by VERB_SPECS.read
   const channel = await resolveTarget(ctx, args.target);
   const result = args.thread
     ? await slackCall(ctx, "conversations.replies", { channel, ts: args.thread, limit })
@@ -110,38 +92,18 @@ async function post(ctx, channel, text, thread) {
   });
 }
 
-const MESSAGE_FLAGS = {
-  target: "value",
-  message: "value",
-  "message-stdin": "boolean",
-  thread: "value",
-};
-
 function printSent(args, result) {
   if (args.json) print(JSON.stringify({ ok: true, channel: result.channel, ts: result.ts }));
   else print(`sent → ${result.channel} @ ${result.ts}`);
 }
 
-export async function cmdSend(ctx, argv) {
-  const args = parseVerbArgs(argv, {
-    flags: MESSAGE_FLAGS,
-    requireOneOf: [["target"], ["message", "message-stdin"]],
-  });
-  if (args.help) return null;
+export async function cmdSend(ctx, args) {
   const channel = await resolveTarget(ctx, args.target);
   printSent(args, await post(ctx, channel, await readMessage(args, ctx.stdin), args.thread));
   return 0;
 }
 
-export async function cmdDm(ctx, argv) {
-  const args = parseVerbArgs(argv, {
-    flags: { ...MESSAGE_FLAGS, member: "value" },
-    requireOneOf: [
-      ["target", "member"],
-      ["message", "message-stdin"],
-    ],
-  });
-  if (args.help) return null;
+export async function cmdDm(ctx, args) {
   const channel = args.member
     ? await resolveMemberChannel(ctx, args.member)
     : await resolveTarget(ctx, args.target);
@@ -149,12 +111,7 @@ export async function cmdDm(ctx, argv) {
   return 0;
 }
 
-export async function cmdReact(ctx, argv) {
-  const args = parseVerbArgs(argv, {
-    flags: { target: "value", ts: "value", emoji: "value" },
-    requireOneOf: [["target"], ["ts"], ["emoji"]],
-  });
-  if (args.help) return null;
+export async function cmdReact(ctx, args) {
   const channel = await resolveTarget(ctx, args.target);
   await slackCall(ctx, "reactions.add", {
     channel,

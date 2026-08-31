@@ -27,6 +27,10 @@ export function scrubbedEnv(overrides = {}) {
   env.HOME = mkdtempSync(path.join(tmpdir(), "aio-1068-home-"));
   env.AIOS_CONFIG_DIR = mkdtempSync(path.join(tmpdir(), "aio-1068-cfg-"));
   env.AIOS_DISABLE_WORKSPACE_CREDENTIALS = "1";
+  // Pin the operator toolkit vault to an EMPTY dir: without this, the dev checkout's own
+  // .env would leak real brain config into the operator trust domain and make suites
+  // machine-dependent (round-5 trust-domain binding reads the vault).
+  env.AIOS_TOOLKIT_DIR = mkdtempSync(path.join(tmpdir(), "aio-1068-vault-"));
   return { ...env, ...overrides };
 }
 

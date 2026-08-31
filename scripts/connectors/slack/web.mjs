@@ -67,7 +67,11 @@ export async function slackCall(ctx, method, params = {}) {
         await wait(retryDelayMs(null, attempt));
         continue;
       }
-      throw networkError(`network error calling ${method}: ${error.message}`);
+      // error.name/code only, NEVER error.message: undici's header/URL validation
+      // TypeErrors embed the offending header VALUE (the bearer token) in their text.
+      throw networkError(
+        `network error calling ${method} (${error.code ?? error.name ?? "unknown"})`
+      );
     }
     if (RETRY_STATUS.has(response.status)) {
       if (attempt < RETRIES) {
@@ -133,7 +137,8 @@ export async function brainRequest(brain, method, urlPath, payload, options = {}
     if (error instanceof AiosError) throw error;
     throw new AiosError(
       "AIOS_E_NETWORK",
-      `Could not reach the Team Brain: ${error.message}`,
+      // error.name/code only — see the note above about undici embedding header values.
+      `Could not reach the Team Brain (${error.code ?? error.name ?? "unknown"}).`,
       "Check the brain URL and network connectivity, then retry."
     );
   }

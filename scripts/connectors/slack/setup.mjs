@@ -7,7 +7,6 @@
  * token body) is sent — brainRequest routes through trustedFetch.
  */
 import { AiosError } from "../../cli.mjs";
-import { parseVerbArgs } from "./args.mjs";
 import { assertTokenShape, describeSlackCredential, resolveBrainConfig } from "./credentials.mjs";
 import { brainRequest } from "./web.mjs";
 
@@ -26,9 +25,8 @@ async function connectToken(args, ctx) {
   return (ctx.env ?? process.env).SLACK_USER_TOKEN?.trim() ?? "";
 }
 
-export async function cmdConnect(ctx, argv) {
-  const args = parseVerbArgs(argv, { flags: { stdin: "boolean" }, positional: "token" });
-  if (args.help) return null;
+/** Args arrive pre-parsed (VERB_SPECS in args.mjs — the round-5 contract). */
+export async function cmdConnect(ctx, args) {
   const token = await connectToken(args, ctx);
   if (!token) {
     throw new AiosError(
@@ -68,9 +66,7 @@ export async function cmdConnect(ctx, argv) {
   return 0;
 }
 
-export async function cmdStatus(ctx, argv) {
-  const args = parseVerbArgs(argv);
-  if (args.help) return null;
+export async function cmdStatus(ctx, args) {
   const brain = await resolveBrainConfig(ctx);
   if (!brain.url || !brain.key) {
     // No brain: still a useful status — report the local credential source class instead
@@ -101,9 +97,7 @@ export async function cmdStatus(ctx, argv) {
   return 0;
 }
 
-export async function cmdDisconnect(ctx, argv) {
-  const args = parseVerbArgs(argv);
-  if (args.help) return null;
+export async function cmdDisconnect(ctx, _args) {
   const brain = await resolveBrainConfig(ctx);
   await brainRequest(brain, "DELETE", "/api/v1/me/slack-token", undefined, ctx);
   print("disconnected");

@@ -190,7 +190,8 @@ test("upload retries honor Retry-After through the injected sleep seam (no real 
   process.stdout.write = () => true; // keep the verb's human output out of the TAP stream
   try {
     writeFileSync(path.join(dir, "note.txt"), "retry payload\n");
-    const status = await cmdFile(ctx, ["--target", "C0GENERAL", "--path", "note.txt"]);
+    // Handlers receive PRE-PARSED args since the round-5 restructure.
+    const status = await cmdFile(ctx, { target: "C0GENERAL", path: "note.txt", json: false });
     assert.equal(status, 0);
   } finally {
     process.stdout.write = originalWrite;
@@ -212,6 +213,34 @@ test("verb-level --help never resolves credentials or touches the network", () =
     assert.match(result.stdout, /aios slack send --target/);
     assert.doesNotMatch(result.stderr, /AIOS_E_CREDENTIAL_MISSING/);
     assert.deepEqual(result.requests, [], "help must observe zero brain/provider requests");
+  }
+});
+
+test('a flag VALUE spelling "--help" is data that gets sent, never a help request', () => {
+  // Round-5 finding 4: the old position-blind pre-scan swallowed this send fail-open.
+  const result = runSlack(AIOS, ["slack", "send", "--target", "C0GENERAL", "--message", "--help"], {
+    env: tokenEnv(),
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /^sent → C0GENERAL @ /, "the message must actually send");
+  const post = result.requests.find((request) => String(request.url).endsWith("chat.postMessage"));
+  assert.ok(post, "chat.postMessage must have been called");
+  assert.equal(new URLSearchParams(post.body).get("text"), "--help");
+});
+
+test("usage errors are offline: no credential resolution, no request, exit 2", () => {
+  const env = scrubbedEnv(); // ZERO credentials anywhere
+  for (const argv of [
+    ["slack", "send", "--target", "C0GENERAL"], // missing --message
+    ["slack", "read"], // missing --target
+    ["slack", "whoami", "unexpected-positional"],
+    ["slack", "file-delete"],
+  ]) {
+    const result = runSlack(AIOS, argv, { env });
+    assert.equal(result.status, 2, `${argv.join(" ")}: ${result.stderr}`);
+    assert.match(result.stderr, /AIOS_E_USAGE/);
+    assert.doesNotMatch(result.stderr, /AIOS_E_CREDENTIAL_MISSING/);
+    assert.deepEqual(result.requests, [], `${argv.join(" ")}: a request escaped`);
   }
 });
 
