@@ -4,8 +4,10 @@
 // The aios-team-brain repo runs the mirror guard against a vendored copy of the same fixture.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { copyFileSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { createHash } from "node:crypto";
+import { execFileSync } from "node:child_process";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { normalizeTier } from "../scripts/workspace-parse.mjs";
@@ -13,9 +15,8 @@ import { parseSseBlock, splitSseBlocks } from "../scripts/brain-client.mjs";
 import { TOOLS as MEMBER_CLI_TOOLS } from "../scripts/member-cli.mjs";
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
-const fixture = JSON.parse(
-  readFileSync(path.join(ROOT, "docs/contract/brain-contract.json"), "utf8")
-);
+const FIXTURE_PATH = path.join(ROOT, "docs/contract/brain-contract.json");
+const fixture = JSON.parse(readFileSync(FIXTURE_PATH, "utf8"));
 
 // Same canonicalization the generator + brain guard use (recursive key sort → stable JSON).
 const canonical = (v) =>
@@ -168,4 +169,36 @@ test("codebase payload schema, fixtures and doc revision state ONE version", () 
   assert.equal(fx.version, c.version);
   assert.ok(c.schema.path.includes(c.version), "schema filename must carry its revision");
   assert.ok(c.fixtures.path.includes(c.version), "fixtures filename must carry its revision");
+});
+
+// The generator and this suite each carry their OWN copy of the canonicalization and of the
+// hashed field set, and until now nothing asserted the two agree. That is the drift this
+// fixture exists to catch, pointed at itself: add a block to the hashed set in one file and
+// not the other, and the committed fixture regenerates to a hash the guard does not compute
+// — `contentHash is intact` stays green while `node scripts/gen-contract-fixture.mjs` starts
+// producing a different number, so the next contract bump ships a fixture the brain's mirror
+// guard rejects. Run the REAL script against a scratch copy and require byte-identical output.
+test("gen-contract-fixture.mjs reproduces the committed fixture byte-for-byte", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "aios-brain-contract-"));
+  try {
+    const target = path.join(dir, "brain-contract.json");
+    copyFileSync(FIXTURE_PATH, target);
+    const stdout = execFileSync(
+      process.execPath,
+      [path.join(ROOT, "scripts/gen-contract-fixture.mjs"), target],
+      { encoding: "utf8" }
+    );
+    assert.equal(
+      readFileSync(target, "utf8"),
+      readFileSync(FIXTURE_PATH, "utf8"),
+      "regenerating must be a no-op on a committed fixture — hash, formatting and all"
+    );
+    assert.ok(
+      stdout.includes(`v${fixture.version} `),
+      "the generator must name the revision it hashed"
+    );
+    assert.ok(stdout.includes(fixture.contentHash), "the generator must print the hash it wrote");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
