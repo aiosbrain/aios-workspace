@@ -214,18 +214,39 @@ test("gen-contract-fixture.mjs reproduces the committed fixture byte-for-byte", 
 // almost always in fact be an old scanner — which is exactly why this is worth a guard. That
 // is a strong prior, not a measurement, and a contract that encodes the prior as a fact
 // reproduces the defect 1.24 exists to remove: absence of evidence rendered as evidence.
+//
+// SCOPE — READ THIS BEFORE TRUSTING THIS SUITE. `classifyScanner` below is a REFERENCE
+// implementation of the published truth table, and it exists ONLY to validate that the
+// `scanner_state` fixtures are internally self-consistent: that every vector's declared state is
+// the one the table produces, that all three states are covered, and that both "we were not told"
+// arms are present. It executes NO production reader, so **it proves nothing about how any real
+// consumer behaves** — a reader that returned `unknown` for literally every input, including
+// `0.1.0` and `0.2.0`, would leave this whole file green. Do not read a pass here as evidence
+// that the brain classifies anything correctly; this repo cannot make that claim and must not
+// look like it does.
+//
+// Reader conformance is enforced in the CONSUMER leg: aios-team-brain vendors this fixtures file
+// and runs all of the `scanner_state` vectors against its own classifier. That is where a real
+// implementation is held to the table, and where non-vacuity has to be demonstrated by injecting
+// a defect and watching vector tests fail. If you add a vector here, the consumer picks it up on
+// its next re-vendor — which is the point of shipping the vectors as data rather than as prose.
 // ---------------------------------------------------------------------------------------
 
-// Ordered comparison of the release triple. Deliberately strict: anything that is not exactly
-// three dotted non-negative integers is UNREADABLE, and unreadable resolves to `unknown` by the
-// table rather than to any position in the ordering.
+// Ordered comparison of the release triple, matching the grammar docs/brain-api.md publishes
+// beneath each truth table: EXACTLY three dotted non-negative integers, nothing else. A leading
+// `v`, a two-part version, a channel name, and a SemVer pre-release or build suffix are all
+// UNREADABLE, and unreadable resolves to `unknown` by the table rather than to any position in
+// the ordering. The strictness is deliberate and fails safe: `0.2.0-rc1` reads as `unknown`
+// rather than `current`, because SemVer orders a pre-release before its release, so it is not
+// evidence the build emits everything `0.2.0` promises. The `scanner_state` vectors pin this
+// choice rather than leaving it implied.
 function parseRelease(value) {
   if (typeof value !== "string") return null;
-  const m = /^(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$/.exec(value);
+  const m = /^(\d+)\.(\d+)\.(\d+)$/.exec(value);
   return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
 }
 
-// The truth table from docs/brain-api.md, executable.
+// The truth table from docs/brain-api.md, executable. Reference only — see SCOPE above.
 function classifyScanner(scannerVersion, minScannerVersion) {
   const got = parseRelease(scannerVersion);
   if (!got) return "unknown";
@@ -273,7 +294,7 @@ test("every scanner-state vector matches the contract's truth table", () => {
   }
 });
 
-test("unknown is never stale: not-told and told-it-is-old stay separate outcomes", () => {
+test("reference classifier: unknown is never stale, and stale is still reachable", () => {
   const { min } = scannerVectors;
   for (const notTold of [undefined, null, "", "nightly", "not a version at all"]) {
     assert.equal(

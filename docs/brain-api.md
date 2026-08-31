@@ -343,10 +343,13 @@ writeback/registration pulls), so a newer client still works against an older br
     scanner ran from, when knowable. `fetch-brain-scanner.sh` leaves a real detached checkout at
     the pinned SHA, so the scanner can read its own build; a future package install has no git
     history and sends `null`. It is never used to compute staleness — see below.
-  **`null` means UNKNOWN, and specifically means "predates 1.24" — never "current".** Absence of
-  evidence is not evidence of currency. Every scan ever pushed before this revision reports no
+  **`null` means UNKNOWN — absent, `null` and unparseable all read as `unknown`, and a reader MUST
+  NOT treat any of them as `current`.** Absence of evidence is not evidence of currency. It is
+  equally not evidence of staleness, and `unknown` is **not** a synonym for "predates 1.24": a
+  CURRENT scanner that cannot determine its own build also sends `null` (the endpoint section
+  requires exactly that, rather than a guess). Every scan pushed before this revision reports no
   identity at all, so the unknown state is the *common* state and must render as a caveat, not as
-  a pass.
+  a pass — and not as a verdict of staleness either.
   **Staleness is defined by a DECLARED MINIMUM, not by commit distance.**
   `docs/contract/brain-contract.json` carries a `codebasePayloadContract.minScannerVersion`
   (`"0.2.0"` at this revision): the oldest scanner build that can emit everything the current
@@ -359,6 +362,13 @@ writeback/registration pulls), so a newer client still works against an older br
   | absent / `null` / unparseable | `unknown` |
   | parseable, orders below `minScannerVersion` | `stale` |
   | parseable, orders at or above `minScannerVersion` | `current` |
+
+  **Parseable means exactly three dotted non-negative integers** (`MAJOR.MINOR.PATCH`) and nothing
+  else. A leading `v`, a two-part version, a channel name, and a SemVer pre-release or build
+  suffix (`0.2.0-rc1`, `0.2.0+dirty`) are all UNREADABLE, and therefore `unknown`. Deliberately
+  narrow, and it fails safe: an unrecognised build reads as a caveat, never as a pass. A
+  pre-release is `unknown` rather than `current` on purpose — SemVer orders a pre-release BEFORE
+  its release, so `0.2.0-rc1` is not evidence that the build emits everything `0.2.0` promises.
 
   At the moment 1.24 ships every scanner predates it and sends nothing, so `unknown` will almost
   always *in fact* be an old scanner — but that is a strong prior, not a measurement, and the
@@ -2022,6 +2032,13 @@ isolation is enforced in app code, with no DB backstop). Rate limit: 60/min per 
     | absent / `null` / unparseable | `unknown` |
     | parseable, orders below `minScannerVersion` | `stale` |
     | parseable, orders at or above `minScannerVersion` | `current` |
+
+    **Parseable means exactly three dotted non-negative integers** (`MAJOR.MINOR.PATCH`) and nothing
+    else. A leading `v`, a two-part version, a channel name, and a SemVer pre-release or build
+    suffix (`0.2.0-rc1`, `0.2.0+dirty`) are all UNREADABLE, and therefore `unknown`. Deliberately
+    narrow, and it fails safe: an unrecognised build reads as a caveat, never as a pass. A
+    pre-release is `unknown` rather than `current` on purpose — SemVer orders a pre-release BEFORE
+    its release, so `0.2.0-rc1` is not evidence that the build emits everything `0.2.0` promises.
 
     `unknown` and `stale` are **distinct outcomes and MUST NOT be collapsed**: absence of evidence
     is not evidence of staleness, exactly as it is not evidence of currency. The conformance
