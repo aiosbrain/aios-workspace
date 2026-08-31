@@ -83,6 +83,18 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
     runs-on: ubuntu-latest
+    # The three AIOS_* credentials this job reads live in the `trusted-automation`
+    # Environment, whose deployment branch policy allows `main` only. A `schedule` /
+    # `workflow_dispatch` run has GITHUB_REF = refs/heads/main, so the policy is satisfied.
+    # Enrolling this job is what lets the repository-level copies of AIOS_API_KEY /
+    # AIOS_BRAIN_URL / AIOS_TEAM be deleted — it was the last un-enrolled consumer.
+    #
+    # This is a blast-radius control over WHICH workflows can reach the credential, not a
+    # trust boundary against authors: for `pull_request_target` a fork PR satisfies a
+    # `main`-only policy too, because the ref is always the base branch. This workflow is
+    # not PR-triggered at all, so that caveat does not apply here — but do not read the
+    # `environment:` line as author isolation anywhere else.
+    environment: trusted-automation
     timeout-minutes: ${{ matrix.budget_minutes }}
     steps:
       - name: Checkout trusted patrol producer
