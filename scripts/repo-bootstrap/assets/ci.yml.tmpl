@@ -65,23 +65,67 @@ jobs:
     # Deliberately the least privileged job in this file: read-only, no secret, and no
     # `checks`/`statuses` scope. It reads workflow YAML as data and never executes a workflow.
     # It does NOT create the required `AIOS Security Gate` status — only the App may.
+    #
+    # THE JUDGING CODE COMES FROM THE BASE REVISION, NEVER FROM THE PULL REQUEST. A bare checkout
+    # here would be the candidate revision on `pull_request`, so a PR could add a secret-bearing
+    # workflow AND, in the same commit, edit the checker to return success or grant itself an
+    # allowlist waiver — and this required lane would go green. The allowlist is resolved from the
+    # base for the identical reason: a PR that can add its own waiver is the same bypass. Same
+    # shape as aios-workspace's own .github/workflows/ci.yml; keep the two in step.
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Check out the gate from the base revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}
           persist-credentials: false
+
+      - name: Locate the gate
+        id: gate
+        run: |
+          if test -f scripts/check-workflow-policy.mjs; then
+            echo "root=$PWD" >> "$GITHUB_OUTPUT"
+            echo "bootstrap=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "root=$PWD/pr-head" >> "$GITHUB_OUTPUT"
+            echo "bootstrap=true" >> "$GITHUB_OUTPUT"
+            echo "::warning title=Workflow-policy gate bootstrap::The base revision does not carry the gate yet, so this run judges with the pull request's own copy. This path is correct ONLY for the PR that introduces the gate; every later PR is judged by the base-revision checker, because by then the base carries it."
+          fi
+
+      - name: Bootstrap — judge with the PR's own copy (base has no gate yet)
+        if: steps.gate.outputs.bootstrap == 'true' && github.event_name == 'pull_request'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/pull/${{ github.event.pull_request.number }}/head
+          path: pr-head
+          persist-credentials: false
+
+      # The candidate tree is scanner INPUT only. The checker parses YAML as data and never
+      # executes a workflow, a step, an action, or a `run:` body.
+      - name: Check out the candidate tree as inert scanner input
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: candidate
+          persist-credentials: false
+
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
+
       # Fails if any workflow reachable from a PR-like event references `secrets.*`, requests
       # `checks: write` / `statuses: write`, names the `AIOS Security Gate` context, uses an
       # action not pinned to a full 40-hex commit SHA, or combines `pull_request_target` with
       # PR checkout, artifact download, package install, or `${{ }}` interpolation of
       # attacker-controlled expressions into a `run:` body. Reviewed exceptions go in
       # scripts/workflow-policy-allowlist.json, one (workflow, job, rule) triple at a time.
-      - name: Workflow policy gate
-        run: node scripts/check-workflow-policy.mjs
+      - name: Workflow policy (base-revision gate over the candidate workflows)
+        working-directory: candidate
+        env:
+          GATE_ROOT: ${{ steps.gate.outputs.root }}
+        run: |
+          node "$GATE_ROOT/scripts/check-workflow-policy.mjs" \
+            --allowlist "$GATE_ROOT/scripts/workflow-policy-allowlist.json"
 
   lint:
     name: lint
