@@ -13,6 +13,17 @@
 import path from "node:path";
 import { walkScalars } from "./workflow-yaml.mjs";
 import { PR_LIKE_EVENTS } from "./workflow-policy-catalogue.mjs";
+import {
+  ALL_INPUTS_TAINTED,
+  ALWAYS_PR_FETCH,
+  ARCHIVE_PRIMITIVE,
+  FETCH_PRIMITIVE,
+  expressionsIn,
+  prControlledRef,
+  taintedExpression,
+  taintedVarsFrom,
+  untrustedResidual,
+} from "./workflow-policy-expressions.mjs";
 
 // Re-exported so callers keep one import site for the whole policy surface, even though the
 // catalogue and the waiver validator are now their own modules.
@@ -20,51 +31,6 @@ export { MIN_JUSTIFICATION, PR_LIKE_EVENTS, RULES } from "./workflow-policy-cata
 export { validateAllowlist } from "./workflow-policy-allowlist.mjs";
 
 const SECRET_REF = /\bsecrets\s*(?:\.\s*([A-Za-z_][\w-]*)|\[)/g;
-// `github.event.` with the trailing dot: `github.event_name` is a fixed trigger name, not input.
-const ATTACKER_EXPR = /\bgithub\s*\.\s*(?:event\s*\.|head_ref\b)/;
-const PR_REF_HINT = /\bgithub\s*\.\s*(?:event\s*\.|head_ref\b)|refs\/pull\//;
-
-// ── PR-controlled content acquisition, judged by CONSTRUCTION not by endpoint ────────────────
-//
-// This rule used to enumerate known-bad endpoints: `api.github.com/…/tarball`,
-// `codeload.github.com/…/zipball`, and `git fetch … refs/pull/`. That is the wrong shape for a
-// security boundary and it leaked — `codeload.github.com/o/r/tar.gz/refs/pull/123/head` matched
-// none of them, because the path segment is `tar.gz` rather than `tarball|zipball|legacy`.
-// `raw.githubusercontent.com`, `git archive --remote`, `wget`, a `$GITHUB_SERVER_URL`-built URL and
-// a bare `git fetch <sha>` are all the same attack, and each would have needed its own alternative:
-// one reviewer finds one hole, the next reviewer finds the next.
-//
-// It is now a CONJUNCTION — any transport or archive primitive, together with any PR-controlled
-// reference reaching the same `run:` body. The primitive lists may be incomplete only in the safe
-// direction (a missing primitive is a miss, never a silent pass on a listed one); the REFERENCE
-// side is what carries the guarantee, and it defaults to "flag" whenever the ref cannot be shown
-// to be trusted. A false positive here is waivable with an owner and a justification; a false
-// negative is the bug this whole gate exists to prevent.
-const FETCH_PRIMITIVE =
-  /(?:^|[\s;&|(`$])(?:curl|wget|aria2c|http|https|scp|rsync|ftp|svn|hg|nc|gh\s+api|gh\s+release\s+download|gh\s+repo\s+clone|git\s+(?:fetch|clone|pull|archive|checkout|remote|ls-remote)|npm\s+pack|pip3?\s+download|go\s+get)\b/;
-const ARCHIVE_PRIMITIVE = /(?:^|[\s;&|(`])(?:tar|bsdtar|unzip|gunzip|unxz|zstd|7z|jar|cpio)\b/;
-// Self-contained PR checkouts: the command names the pull request itself, so there is no second
-// reference to correlate and the conjunction does not apply.
-const ALWAYS_PR_FETCH = /\bgh\s+pr\s+(?:checkout|diff)\b/;
-// `$GITHUB_EVENT_PATH` is the entire webhook payload on disk. Reading it is a PR-controlled read
-// even when no `${{ }}` expression appears anywhere in the body.
-const IMPLICITLY_TAINTED_VARS = ["GITHUB_EVENT_PATH"];
-// Only well-formed shell identifiers are turned into a `$NAME` matcher.
-const SHELL_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
-
-// The ONLY expression fields that are provably not attacker-controlled: the base branch's commit
-// and name, and the repository default branch. Everything else under `github.event.*` — including
-// `head.*`, `merge_commit_sha`, and `number` (which composes into `refs/pull/<n>/head`) — stays
-// untrusted. This is an allowlist of proven-safe fields, deliberately not a blocklist of unsafe
-// ones: a field nobody has reasoned about defaults to untrusted, so "check out the base ref only"
-// (this rule's own remediation advice) does not itself get flagged.
-const TRUSTED_REF_FIELD =
-  /github\s*\.\s*event\s*\.\s*(?:pull_request\s*\.\s*base\s*\.\s*(?:sha|ref)\b|repository\s*\.\s*default_branch\b)/g;
-
-/** Blank out provably-trusted field references so only unproven ones remain to be judged. */
-function untrustedResidual(text) {
-  return String(text).replace(TRUSTED_REF_FIELD, "trusted_base_ref");
-}
 const ARTIFACT_RUN = /\bgh\s+run\s+download\b|\/actions\/runs\/[^\s"']*\/artifacts\b/;
 // Deliberately broader than "install": in a pull_request_target job, running the PR's own scripts,
 // lockfile lifecycle hooks, or build files is the exploit primitive, not just fetching packages.
@@ -73,11 +39,6 @@ const PACKAGE_INSTALL_RUN =
 
 const isMap = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
 const lineOf = (node, key) => node?.$keyLines?.[key] ?? node?.$line ?? 0;
-
-/** GitHub expressions are the only place `secrets` / `github.*` mean anything. */
-function expressionsIn(value) {
-  return [...String(value).matchAll(/\$\{\{([\s\S]*?)\}\}/g)].map((m) => m[1]);
-}
 
 /** Trigger names of a workflow's `on:`, whatever shape it takes (string, list, or map). */
 export function triggersOf(doc) {
@@ -270,42 +231,6 @@ export function mutableUsesRef(ref) {
   return null;
 }
 
-/**
- * Env names whose value interpolates an attacker-controlled expression, unioned with whatever the
- * enclosing scope already tainted. This is what closes the `env:` indirection: leak-gate.yml maps
- * `HEAD_SHA: ${{ github.event.pull_request.head.sha }}` and then curls `"$HEAD_SHA"`, so the run
- * body contains no `${{ }}` at all and an expression-only check would see nothing.
- */
-function taintedVarsFrom(env, inherited = new Set()) {
-  const out = new Set(inherited);
-  if (!isMap(env)) return out;
-  for (const [name, value] of Object.entries(env)) {
-    if (
-      SHELL_NAME.test(name) &&
-      typeof value === "string" &&
-      expressionsIn(untrustedResidual(value)).some((e) => ATTACKER_EXPR.test(e))
-    )
-      out.add(name);
-  }
-  return out;
-}
-
-/**
- * How a `run:` body references PR-controlled content, or null if it demonstrably does not.
- * Deliberately generous: an unprovable reference resolves to flagged.
- */
-function prControlledRef(body, tainted) {
-  const residual = untrustedResidual(body);
-  if (/refs\/pull\//.test(residual)) return "a `refs/pull/` ref";
-  const expression = expressionsIn(residual).find((e) => ATTACKER_EXPR.test(e));
-  if (expression) return `the expression \`\${{${expression.trim()}}}\``;
-  for (const name of [...tainted, ...IMPLICITLY_TAINTED_VARS]) {
-    if (SHELL_NAME.test(name) && new RegExp(`\\$\\{?${name}\\b`).test(body))
-      return `\`$${name}\`, which carries a PR-controlled value`;
-  }
-  return null;
-}
-
 function stepLabel(step, index) {
   const name =
     typeof step?.name === "string" ? step.name : typeof step?.uses === "string" ? step.uses : null;
@@ -342,7 +267,9 @@ function prContentAcquisition(step, tainted, stepLine) {
   const inputs = [withBlock.ref, withBlock.repository].filter((v) => typeof v === "string");
   const runLine = lineOf(step, "run") || stepLine;
 
-  if (/(^|\/)checkout@/.test(uses) && inputs.some((v) => PR_REF_HINT.test(untrustedResidual(v))))
+  const untrustedInput = (v) =>
+    /refs\/pull\//.test(untrustedResidual(v)) || taintedExpression(v, tainted) !== null;
+  if (/(^|\/)checkout@/.test(uses) && inputs.some(untrustedInput))
     out.push({
       line: lineOf(withBlock, "ref") || stepLine,
       detail: "checks out PR-controlled ref",
@@ -390,13 +317,13 @@ function auditPrTargetStep(step, ctx) {
     ["run", run],
     ["with.script", script],
   ]) {
-    const hit = expressionsIn(body).find((e) => ATTACKER_EXPR.test(e));
+    const hit = taintedExpression(body, tainted);
     if (hit)
       add(
         jobId,
         "pr-target-dynamic-run",
         lineOf(step, key === "run" ? "run" : "with") || stepLine,
-        `${label}: \`${key}:\` interpolates \`\${{${hit.trim()}}}\``
+        `${label}: \`${key}:\` interpolates \`\${{${hit}}}\``
       );
   }
 }
@@ -464,7 +391,12 @@ export function auditWorkflow(file, prTarget = false) {
   const jobs = isMap(doc.jobs) ? doc.jobs : {};
   // Belt and braces: the file's own trigger can only ADD to the propagated origin, never clear it.
   const isPrTarget = prTarget || triggersOf(doc).includes("pull_request_target");
-  const tainted = taintedVarsFrom(doc.env);
+  // A workflow_call callee running under a pull_request_target origin gets its `inputs` from the
+  // caller, and cross-file `with:` dataflow is not modelled here. Seed the taint set so every
+  // `${{ inputs.* }}` counts as PR-controlled rather than silently assumed safe.
+  const seed = new Set();
+  if (isPrTarget && triggersOf(doc).includes("workflow_call")) seed.add(ALL_INPUTS_TAINTED);
+  const tainted = taintedVarsFrom(doc.env, seed);
   for (const [jobId, job] of Object.entries(jobs)) {
     if (isMap(job))
       auditJob(jobId, job, { jobLine: lineOf(jobs, jobId), isPrTarget, add, tainted });

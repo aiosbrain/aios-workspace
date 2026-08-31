@@ -11,6 +11,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
 import { readFileSync } from "node:fs";
+import { auditWorkflow } from "../scripts/check-workflow-policy.mjs";
+import { parseWorkflowYaml } from "../scripts/workflow-yaml.mjs";
 import {
   ORIGIN_DEPENDENT_RULES,
   ROOT,
@@ -18,6 +20,15 @@ import {
   reachedVia,
   run,
 } from "./workflow-policy-test-helpers.mjs";
+
+/** Audit a synthetic document directly, as computeReachability would have classified it. */
+function auditSource(yaml, prTarget) {
+  const text = yaml.trimStart();
+  return auditWorkflow(
+    { rel: "probe.yml", text, doc: parseWorkflowYaml(text), error: null },
+    prTarget
+  );
+}
 
 // ── the reusable-workflow bypass (Codex adversarial review, P1) ──────────────
 //
@@ -142,4 +153,88 @@ test("fetching PR objects as inert scanner data is flagged, not silently permitt
   );
   assert.ok(waiver, "the real scanner is permitted by an explicit waiver, not by a rule exemption");
   assert.ok(waiver.owner && waiver.justification.length >= 40);
+});
+
+// ── `${{ env.X }}` indirection ───────────────────────────────────────────────
+//
+// Taint originally flowed only into the SHELL form (`$HEAD_SHA`). The expression form
+// `${{ env.HEAD_SHA }}` is substituted by the Actions expression evaluator before the shell runs,
+// so it is the more direct injection — and it matched nothing. The `probe` job below is the
+// demonstrated reproducer verbatim; before the fix the whole file produced zero findings.
+
+test("`${{ env.X }}` resolves through the taint set (the reported reproducer)", () => {
+  const out = run().out;
+  const rules = new Set(
+    failures(out)
+      .filter((f) => f.file === "violating-prt-env-expression.yml" && f.job === "probe")
+      .map((f) => f.rule)
+  );
+  assert.ok(rules.has("pr-target-checkout"), `ref: \${{ env.HEAD_SHA }} must flag\n${out}`);
+  assert.ok(rules.has("pr-target-dynamic-run"), `run: \${{ env.TITLE }} must flag\n${out}`);
+});
+
+test("env indirection survives a two-hop chain", () => {
+  const out = run().out;
+  assert.ok(
+    failures(out).some(
+      (f) =>
+        f.file === "violating-prt-env-expression.yml" &&
+        f.job === "two-hop" &&
+        f.rule === "pr-target-checkout"
+    ),
+    `A: head.sha -> B: \${{ env.A }} -> ref: \${{ env.B }} must flag\n${out}`
+  );
+});
+
+for (const [job, why] of [
+  ["trusted-base", "`base.sha` is on the proven-trusted allowlist, so BASE never taints"],
+  ["literal", "a literal env value is not PR-controlled by any route"],
+  ["shadowed", "a step-scope literal overriding a tainted job-scope name untaints it"],
+]) {
+  test(`negative control: job \`${job}\` is not flagged — ${why}`, () => {
+    const out = run().out;
+    assert.deepEqual(
+      failures(out).filter((f) => f.file === "compliant-prt-env-expression.yml" && f.job === job),
+      [],
+      `resolving env.X must not become "flag every workflow that uses an env var"\n${out}`
+    );
+  });
+}
+
+// ── `${{ inputs.X }}` on a workflow_call callee ──────────────────────────────
+//
+// A reusable workflow's `inputs` come from its caller, and this gate does not model cross-file
+// `with:` dataflow. Rather than assume those values are safe, a callee running under a
+// pull_request_target origin treats every `inputs.*` as PR-controlled — the same default-to-flag
+// posture as the rest of the acquisition rule. Asserted directly rather than through a fixture
+// pair, because the property under test is the ORIGIN flag, not the reachability plumbing that
+// produces it (which the fixture-based tests above already cover).
+const CALLEE = `
+name: callee
+on:
+  workflow_call:
+    inputs:
+      pr_ref:
+        type: string
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - run: git fetch origin \${{ inputs.pr_ref }}
+`;
+
+test("a workflow_call callee under a pull_request_target origin distrusts `inputs.*`", () => {
+  const rules = new Set(auditSource(CALLEE, true).map((f) => f.rule));
+  assert.ok(rules.has("pr-target-dynamic-run"), "inputs interpolated into a run body");
+  assert.ok(rules.has("pr-target-checkout"), "a fetch primitive selected by a distrusted input");
+});
+
+test("the same callee reached from a non-pull_request_target origin does not distrust `inputs.*`", () => {
+  assert.deepEqual(
+    auditSource(CALLEE, false).map((f) => f.rule),
+    [],
+    "inputs are only distrusted under a pull_request_target origin"
+  );
 });

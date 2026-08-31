@@ -110,6 +110,17 @@ test("every rule fires on its violating fixture, naming file, job, and rule", ()
       `the variants — a new endpoint must not be able to open a new hole.`
   );
 
+  // `pr-target-checkout` and `pr-target-dynamic-run` must each be exercised through the INDIRECT
+  // `${{ env.X }}` form, not only by fixtures that name `github.event.*` inline. The direct form is
+  // what the first implementation matched, and it is exactly what let the reproducer through.
+  for (const rule of ["pr-target-checkout", "pr-target-dynamic-run"]) {
+    assert.ok(
+      found.some((f) => f.file === "violating-prt-env-expression.yml" && f.rule === rule),
+      `${rule} has no \`\${{ env.X }}\` indirection fixture — the direct-expression fixtures ` +
+        `alone do not cover it, which is how the demonstrated bypass survived`
+    );
+  }
+
   // `secrets-in-pr-reachable` has TWO independent mechanisms: an explicit `secrets.*` expression,
   // and `secrets: inherit`, which contains no such expression at all. Requiring both means deleting
   // the inherit fixture cannot leave the rule looking covered by the expression case alone.
@@ -144,6 +155,7 @@ test("compliant fixtures produce no finding at all", () => {
     "secrets-inherit-callee.yml",
     "dup-name-prt-upstream.yml",
     "dup-name-scheduled-upstream.yml",
+    "compliant-prt-env-expression.yml",
   ];
   const found = failures(run().out);
   for (const file of clean) {
