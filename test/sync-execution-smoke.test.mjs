@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createBrainClient } from "../scripts/brain-client.mjs";
+import { scrubEnv } from "./helpers/scrubbed-env.mjs";
 
 /**
  * Sync EXECUTION smoke test (W2.3a punch #9).
@@ -241,7 +242,12 @@ function runAios(args, cwd) {
       // Pin AIOS_MEMBER explicitly so member resolution is hermetic — otherwise
       // resolveMember() falls back to the *developer's own* toolkit .env / git
       // user.name on a real workstation, making the assertion machine-dependent.
-      env: { ...process.env, AIOS_API_KEY: TEST_KEY, AIOS_MEMBER: "smoke-bot" },
+      // AIO-1028: scrubEnv strips the ambient credentials too — on a direnv machine
+      // `...process.env` carried a real AIOS_BRAIN_URL, which outranks the fixture
+      // aios.yaml and pointed this test's push at the PRODUCTION brain.
+      env: scrubEnv(process.env, {
+        add: { AIOS_API_KEY: TEST_KEY, AIOS_MEMBER: "smoke-bot" },
+      }),
     });
     let stdout = "";
     let stderr = "";

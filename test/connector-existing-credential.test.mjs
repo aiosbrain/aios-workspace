@@ -9,6 +9,12 @@ import {
   storeExistingConnector,
   vaultSet,
 } from "../scripts/connector.mjs";
+import { assertSecretEqual, scrubAmbientProcessEnv } from "./helpers/scrubbed-env.mjs";
+
+// AIO-1028: with a real LINEAR_API_KEY ambient (direnv cascade), `dotenvx get` returns the
+// ambient value instead of the fixture — vaultSet's roundtrip check then fails, and the
+// fail-closed case finds a "credential" that no fixture wrote. Scrub before any fixture.
+scrubAmbientProcessEnv();
 
 function workspace() {
   const repo = mkdtempSync(path.join(tmpdir(), "connector-existing-"));
@@ -43,7 +49,7 @@ test("saved Linear credential can validate and install without entering the brow
     const descriptor = getDescriptor(repo, "linear");
     const result = await storeExistingConnector(repo, descriptor, {
       validate: async (_descriptor, values) => {
-        assert.equal(values.LINEAR_API_KEY, secret);
+        assertSecretEqual(values.LINEAR_API_KEY, secret, "validated LINEAR_API_KEY");
         return {
           ok: true,
           checks: [{ name: "auth", ok: true, detail: "accepted" }],

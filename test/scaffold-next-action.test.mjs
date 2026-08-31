@@ -13,6 +13,12 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { vaultSet } from "../scripts/connector.mjs";
+import { scrubAmbientProcessEnv } from "./helpers/scrubbed-env.mjs";
+
+// AIO-1028: an ambient AIOS_API_KEY (direnv cascade) wins inside `dotenvx get`, so
+// vaultSet's write-then-read-back check compares the fixture against the developer's real
+// key and throws "didn't take". Scrub before any vault fixture is written.
+scrubAmbientProcessEnv();
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const SCAFFOLD_SCRIPT = path.join(ROOT, "scripts", "scaffold-project.sh");
