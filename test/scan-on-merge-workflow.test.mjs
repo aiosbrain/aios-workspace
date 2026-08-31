@@ -32,7 +32,7 @@ const CHECKOUT_SHA = "3d3c42e5aac5ba805825da76410c181273ba90b1";
 const SETUP_NODE_SHA = "820762786026740c76f36085b0efc47a31fe5020";
 const SETUP_PYTHON_SHA = "5fda3b95a4ea91299a34e894583c3862153e4b97";
 const DOWNLOAD_ARTIFACT_SHA = "3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c";
-const BRAIN_SHA = "dc8ebc762c99c27ed5bbb105f2a303e813f5ed6c";
+const BRAIN_SHA = "33625f31dc0cc685b72b6cd5a8a29fa24281aa6b";
 
 function workflowJob(contents, name) {
   const lines = contents.split("\n");

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 readonly BRAIN_REPO_URL="https://github.com/aiosbrain/aios-team-brain.git"
-readonly BRAIN_SHA="dc8ebc762c99c27ed5bbb105f2a303e813f5ed6c"
+readonly BRAIN_SHA="33625f31dc0cc685b72b6cd5a8a29fa24281aa6b"
 readonly TARGET="${1:-.brain-scanner}"
 
 if [[ -e "$TARGET" ]]; then
