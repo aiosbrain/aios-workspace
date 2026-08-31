@@ -114,6 +114,51 @@ test("F2 hostile twin: cwd brain_url + agent-workspace key is a conflict, never 
   }
 });
 
+test("disconnect reports failure when the brain-held token was NOT removed", () => {
+  // Bugbot round 11: the DELETE status was never inspected — a 500 still printed
+  // "disconnected" and exited 0 while the token stayed stored.
+  const brain = {
+    AIOS_BRAIN_URL: "https://brain.example.test",
+    AIOS_API_KEY: "synthetic-brain-key-not-real",
+  };
+  const failed = runSlack(AIOS, ["slack", "disconnect"], {
+    env: scrubbedEnv({ ...brain, MOCK_BRAIN_DELETE_STATUS: "500" }),
+  });
+  assert.notEqual(failed.status, 0, "a failed removal must not exit 0");
+  assert.match(failed.stderr, /NOT removed/);
+  assert.doesNotMatch(failed.stdout, /^disconnected/m, "no false removal claim");
+
+  // 404 = the brain holds no token — the desired end state, reported explicitly.
+  const absent = runSlack(AIOS, ["slack", "disconnect"], {
+    env: scrubbedEnv({ ...brain, MOCK_BRAIN_DELETE_STATUS: "404" }),
+  });
+  assert.equal(absent.status, 0, absent.stderr);
+  assert.equal(absent.stdout, "disconnected (no token was stored)\n");
+
+  // Success path unchanged.
+  const ok = runSlack(AIOS, ["slack", "disconnect"], { env: scrubbedEnv(brain) });
+  assert.equal(ok.status, 0, ok.stderr);
+  assert.equal(ok.stdout, "disconnected\n");
+});
+
+test("inherited-property names are unknown verbs/options, never AIOS_E_INTERNAL", () => {
+  const env = scrubbedEnv(); // zero credentials — everything here must stay offline
+  for (const verb of ["__proto__", "constructor", "toString", "hasOwnProperty"]) {
+    const result = runSlack(AIOS, ["slack", verb], { env });
+    assert.equal(result.status, 2, `${verb}: ${result.stderr}`);
+    assert.match(result.stderr, new RegExp(`unknown slack verb: ${verb}`));
+    assert.doesNotMatch(result.stderr, /AIOS_E_INTERNAL/);
+    assert.deepEqual(result.requests, [], `${verb}: a request escaped`);
+  }
+  for (const flag of ["--__proto__", "--constructor"]) {
+    const result = runSlack(AIOS, ["slack", "whoami", flag, "x"], { env });
+    assert.equal(result.status, 2, `${flag}: ${result.stderr}`);
+    assert.match(result.stderr, /Unknown option/);
+    assert.doesNotMatch(result.stderr, /AIOS_E_INTERNAL/);
+    assert.deepEqual(result.requests, [], `${flag}: a request escaped`);
+  }
+});
+
 test("F3: token-shaped --member values are masked in resolution errors", () => {
   // No brain configured, member is not an email → both resolution paths error; the
   // pasted-token member must appear zero times in the output.

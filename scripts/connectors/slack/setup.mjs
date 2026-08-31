@@ -130,7 +130,29 @@ export async function cmdStatus(ctx, args) {
 
 export async function cmdDisconnect(ctx, _args) {
   const brain = await resolveBrainConfig(ctx);
-  await brainRequest(brain, "DELETE", "/api/v1/me/slack-token", undefined, ctx);
+  const { status, body } = await brainRequest(
+    brain,
+    "DELETE",
+    "/api/v1/me/slack-token",
+    undefined,
+    ctx
+  );
+  // A 404 means the brain holds no token — the desired end state, named explicitly. Any
+  // other non-2xx left the token IN PLACE; reporting "disconnected" would be a false
+  // removal claim (Bugbot round 11). Value-free: status/error class only.
+  if (status === 404) {
+    print("disconnected (no token was stored)");
+    return 0;
+  }
+  if (status >= 300) {
+    const detail =
+      (typeof body?.error === "object" ? body?.error?.message : body?.error) ?? `HTTP ${status}`;
+    throw new AiosError(
+      "AIOS_E_PROVIDER",
+      `Disconnect failed — the brain-held token was NOT removed (${detail}).`,
+      "Check the brain configuration/credentials and retry `aios slack disconnect`."
+    );
+  }
   print("disconnected");
   return 0;
 }

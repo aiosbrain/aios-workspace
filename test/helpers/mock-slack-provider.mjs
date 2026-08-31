@@ -140,6 +140,11 @@ globalThis.fetch = async (url, init = {}) => {
         return json({ ok: true, slack_user_id: "U0MOCK", workspace: "MockCo" });
       }
       if (init.method === "DELETE") {
+        // Failure-injection seam for the disconnect status-handling tests.
+        const forced = Number(process.env.MOCK_BRAIN_DELETE_STATUS || 0);
+        if (forced) {
+          return json({ error: { message: "forced delete failure" } }, { status: forced });
+        }
         state.brainToken = null;
         return json({ ok: true });
       }

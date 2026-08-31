@@ -92,7 +92,10 @@ export async function cmdSlack(repo, rest, options = {}) {
     return 0;
   }
   const { parseVerbArgs, VERB_SPECS, shownArg } = await import("./args.mjs");
-  if (!VERBS[verb]) {
+  // Object.hasOwn, not a truthy bracket lookup: `aios slack __proto__`/`constructor`/
+  // `toString` hit INHERITED properties on a plain object, sail past this check, and
+  // crash as AIOS_E_INTERNAL instead of the usage error (Bugbot round 11).
+  if (!Object.hasOwn(VERBS, verb)) {
     console.log(slackUsage());
     // shownArg: a pasted credential in the verb slot must not be echoed into logs.
     output.diagnostic(`error: unknown slack verb: ${shownArg(verb)}`);

@@ -100,7 +100,9 @@ export function parseVerbArgs(argv, spec = {}) {
         inlineValue = name.slice(equals + 1);
         name = name.slice(0, equals);
       }
-      const kind = flags[name];
+      // Object.hasOwn: `--__proto__`/`--constructor` must be unknown options, not
+      // inherited-property hits (and `parsed[camel("__proto__")] = …` must never run).
+      const kind = Object.hasOwn(flags, name) ? flags[name] : undefined;
       if (!kind) throw usageError(`Unknown option --${name}.`);
       if (kind === "boolean") {
         if (inlineValue !== undefined) throw usageError(`--${name} does not take a value.`);
