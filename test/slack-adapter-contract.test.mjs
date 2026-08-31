@@ -216,16 +216,72 @@ test("verb-level --help never resolves credentials or touches the network", () =
   }
 });
 
-test('a flag VALUE spelling "--help" is data that gets sent, never a help request', () => {
-  // Round-5 finding 4: the old position-blind pre-scan swallowed this send fail-open.
-  const result = runSlack(AIOS, ["slack", "send", "--target", "C0GENERAL", "--message", "--help"], {
+test('a flag VALUE spelling "--help" is never a silent help fake-success', () => {
+  // Round-5 finding 4 removed the position-blind pre-scan that swallowed this send as a
+  // fail-open exit-0 usage print. Round 6 then added the AIO-1026 option-in-value-position
+  // guard, so the invocation is now a LOUD offline usage error (exit 2, zero requests) —
+  // still never a silent success an alerting script would misread. A literal leading-`--`
+  // message goes through --message-stdin, which stays byte-exact.
+  const refused = runSlack(
+    AIOS,
+    ["slack", "send", "--target", "C0GENERAL", "--message", "--help"],
+    { env: tokenEnv() }
+  );
+  assert.equal(refused.status, 2, refused.stderr);
+  assert.match(refused.stderr, /--message requires a value/);
+  assert.deepEqual(refused.requests, [], "no request may leave on the refused form");
+
+  const viaStdin = runSlack(AIOS, ["slack", "send", "--target", "C0GENERAL", "--message-stdin"], {
     env: tokenEnv(),
+    input: "--help",
   });
-  assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stdout, /^sent → C0GENERAL @ /, "the message must actually send");
-  const post = result.requests.find((request) => String(request.url).endsWith("chat.postMessage"));
+  assert.equal(viaStdin.status, 0, viaStdin.stderr);
+  const post = viaStdin.requests.find((request) =>
+    String(request.url).endsWith("chat.postMessage")
+  );
   assert.ok(post, "chat.postMessage must have been called");
-  assert.equal(new URLSearchParams(post.body).get("text"), "--help");
+  assert.equal(new URLSearchParams(post.body).get("text"), "--help", "the literal text sends");
+});
+
+test("an option in value position is a loud offline usage error for EVERY value flag", async () => {
+  // Table-driven over the whole spec surface so the class cannot regress per-verb
+  // (Codex round 6, mirroring the AIO-1026 linear-create.mjs guard).
+  const { parseVerbArgs, VERB_SPECS } = await import("../scripts/connectors/slack/args.mjs");
+  let covered = 0;
+  for (const [verb, spec] of Object.entries(VERB_SPECS)) {
+    for (const [flag, kind] of Object.entries(spec.flags ?? {})) {
+      if (kind !== "value") continue;
+      covered += 1;
+      for (const following of ["--json", "--help"]) {
+        assert.throws(
+          () => parseVerbArgs([`--${flag}`, following], spec),
+          (error) => {
+            assert.equal(error.code, "AIOS_E_USAGE", `${verb} --${flag} ${following}`);
+            assert.match(error.message, new RegExp(`--${flag} requires a value`));
+            return true;
+          },
+          `${verb}: --${flag} followed by ${following} must be refused`
+        );
+      }
+    }
+  }
+  assert.ok(covered >= 10, `expected the spec table to expose value flags (saw ${covered})`);
+
+  // End-to-end spot checks: offline (zero credentials), exit 2, option named, no request,
+  // no credential resolution.
+  const env = scrubbedEnv();
+  for (const [argv, flag] of [
+    [["slack", "read", "--target", "--json"], "--target"],
+    [["slack", "resolve", "--member", "--json"], "--member"],
+    [["slack", "react", "--target", "C0GENERAL", "--ts", "1.0", "--emoji", "--json"], "--emoji"],
+  ]) {
+    const result = runSlack(AIOS, argv, { env });
+    assert.equal(result.status, 2, `${argv.join(" ")}: ${result.stderr}`);
+    assert.match(result.stderr, /AIOS_E_USAGE/);
+    assert.match(result.stderr, new RegExp(`${flag} requires a value`));
+    assert.doesNotMatch(result.stderr, /AIOS_E_CREDENTIAL_MISSING/);
+    assert.deepEqual(result.requests, [], `${argv.join(" ")}: a request escaped`);
+  }
 });
 
 test("usage errors are offline: no credential resolution, no request, exit 2", () => {

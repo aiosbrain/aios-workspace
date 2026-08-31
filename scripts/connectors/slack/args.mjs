@@ -96,7 +96,14 @@ export function parseVerbArgs(argv, spec = {}) {
         parsed[camel(name)] = true;
       } else {
         const value = argv[++index];
-        if (value === undefined) throw usageError(`--${name} requires a value.`);
+        // A following option means the value was forgotten (the AIO-1026 guard, mirrored
+        // from linear-create.mjs): consuming it would silently swallow BOTH flags —
+        // `read --target --json` would resolve credentials and query Slack for a channel
+        // literally named "--json". Fail closed, offline, naming the option. The price is
+        // that a literal leading-`--` value needs another channel (e.g. --message-stdin).
+        if (value === undefined || value.startsWith("--")) {
+          throw usageError(`--${name} requires a value.`);
+        }
         parsed[camel(name)] = value;
       }
     } else {
