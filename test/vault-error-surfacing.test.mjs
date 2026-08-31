@@ -69,6 +69,23 @@ test("vaultGet tolerates dotenvx 2.x's non-zero exit on an unreadable SIBLING ke
   }
 });
 
+test("vaultGet accepts legitimate secrets whose PLAINTEXT is shaped like an error", () => {
+  // Round 2 of the PR #663 review: success must be decided by evidence about the
+  // requested key (ciphertext passthrough), not by scanning the plaintext for
+  // error-shaped substrings — a real secret may legitimately start with "encrypted:"
+  // or contain a string like DECRYPTION_FAILED, and a blocklist would make its
+  // vaultSet roundtrip fail forever.
+  const dir = ws();
+  try {
+    vaultSet(dir, "TRICKY_PREFIX", "encrypted:not-actually-ciphertext");
+    assert.equal(vaultGet(dir, "TRICKY_PREFIX"), "encrypted:not-actually-ciphertext");
+    vaultSet(dir, "TRICKY_SUBSTR", "abc-DECRYPTION_FAILED-xyz");
+    assert.equal(vaultGet(dir, "TRICKY_SUBSTR"), "abc-DECRYPTION_FAILED-xyz");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("vaultGet still fails closed when the REQUESTED key is genuinely unreadable", () => {
   const dir = ws();
   try {

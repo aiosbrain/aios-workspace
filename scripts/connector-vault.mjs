@@ -99,18 +99,40 @@ export function vaultSet(repo, env, value) {
   }
 }
 
+/** The raw stored assignment for `key` in repo/.env (last one wins, quotes stripped),
+ * or null when the key isn't present. Used only to tell "dotenvx echoed the ciphertext
+ * back untouched" apart from "dotenvx decrypted it" — never as a decryption path. */
+function storedRawValue(repo, key) {
+  try {
+    let raw = null;
+    for (const line of readFileSync(envPath(repo), "utf8").split("\n")) {
+      const m = /^(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/.exec(line);
+      if (m && m[1] === key) raw = m[2].trim();
+    }
+    if (raw == null) return null;
+    const q = raw[0];
+    if ((q === '"' || q === "'") && raw.length >= 2 && raw.endsWith(q)) raw = raw.slice(1, -1);
+    return raw;
+  } catch {
+    return null;
+  }
+}
+
 export function vaultGet(repo, env) {
   // Same resolved {command,args} tuple as vaultSet — read and write MUST run the same
   // dotenvx, or the roundtrip check in vaultSet compares across two implementations.
   const dotenvx = resolveDotenvxInvocation();
   // dotenvx 2.x exits non-zero when any SIBLING key in the file fails to decrypt (AIO-790)
   // even though `get KEY` printed the requested value on stdout — and pinning the toolkit's
-  // own 2.x makes that the one behaviour everywhere. Mirror decryptDotenvKey in
-  // packages/foundation/src/brain-config.mjs: read stdout regardless of exit status and
-  // treat a clean value as success. Genuine failures — spawn error, empty stdout, a
-  // still-encrypted value, or a decryption-error message — keep failing closed with "",
-  // which is what makes vaultSet's roundtrip check raise its actionable error. Never
-  // print the value; stderr is dropped so nothing secret-adjacent leaks.
+  // own 2.x makes that the one behaviour everywhere. So success is decided by evidence
+  // about THE REQUESTED KEY, never by the exit code and never by what the plaintext looks
+  // like (a substring blocklist would reject legitimate secrets shaped like an error):
+  //   - empty stdout, or a spawn failure → "" (fail closed; vaultSet's roundtrip check
+  //     then raises its actionable error);
+  //   - stdout identical to the raw `encrypted:` value stored in .env → dotenvx echoed the
+  //     ciphertext back without decrypting it → "" (fail closed);
+  //   - anything else is the decrypted plaintext, whatever it looks like → success.
+  // Never print the value; stderr is dropped so nothing secret-adjacent leaks.
   try {
     const result = spawnSync(dotenvx.command, [...dotenvx.args, "get", env, "-f", envPath(repo)], {
       cwd: repo,
@@ -119,8 +141,9 @@ export function vaultGet(repo, env) {
       stdio: ["ignore", "pipe", "ignore"],
     });
     const value = (result.stdout || "").trim();
-    if (!value || value.startsWith("encrypted:")) return "";
-    if (/DECRYPTION_FAILED|WRONG_PRIVATE_KEY|could not decrypt/i.test(value)) return "";
+    if (!value) return "";
+    const stored = storedRawValue(repo, env);
+    if (stored != null && stored.startsWith("encrypted:") && value === stored) return "";
     return value;
   } catch {
     return "";
