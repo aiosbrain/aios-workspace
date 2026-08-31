@@ -27,7 +27,13 @@ name: Linear merge nudge (advisory)
 
 on:
   pull_request_target:
+    # `branches: [main]` is load-bearing, not tidiness. Without it a PR may target ANY branch,
+    # and under pull_request_target the "base" is that branch — so a collaborator could push
+    # `evil`, open and merge `evil2 -> evil`, and this job would check out THEIR `base.sha` and
+    # run THEIR scripts/linear-merge-nudge.mjs with LINEAR_API_KEY. Restricting the trigger to
+    # PRs into `main` is what makes `base.sha` below a reviewed, protected-branch commit.
     types: [closed]
+    branches: [main]
 
 permissions:
   contents: read
@@ -56,8 +62,10 @@ jobs:
         if: env.LINEAR_API_KEY == ''
         run: echo "LINEAR_API_KEY not configured — skipping Linear merge-nudge."
 
-      # Explicitly the base commit, not the candidate tree: under pull_request_target the default
-      # ref is already the base branch, but naming it makes the trust boundary unmissable.
+      # Explicitly the base commit, not the candidate tree. Trusted because the trigger above is
+      # filtered to `branches: [main]`, so this SHA is always a commit on the protected default
+      # branch. (actions/checkout v7+ additionally refuses to check out fork PR head code under
+      # pull_request_target without `allow-unsafe-pr-checkout`, which is not set here.)
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: env.LINEAR_API_KEY != ''
         with:
