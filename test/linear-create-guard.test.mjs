@@ -145,6 +145,19 @@ function readPrintedRecoveryFile(stderr, command) {
 }
 // --- create --desc runs the same guards as set-desc/patch-desc (AIO-1026) ---
 
+for (const flag of ["--desc", "--label"]) {
+  test(`create ${flag} followed by another flag is a missing value, not a value`, () => {
+    // Without the guard, `--force` would be consumed as the value (e.g. as the desc
+    // filename) instead of being parsed as the lint override. Mirrors parseListArgs.
+    const cwd = mkdtempSync(path.join(tmpdir(), "linear-create-flagvalue-"));
+    const result = runCreateCli(["create", "New slice", flag, "--force"], cwd);
+    rmSync(cwd, { recursive: true, force: true });
+    assert.equal(result.status, 1);
+    assert.equal(result.mutations, "", "a parse error must mean zero create calls");
+    assert.match(result.stderr, new RegExp(`${flag} requires a value`));
+  });
+}
+
 test("create --desc refuses corrupt markdown before any mutation", () => {
   const cwd = mkdtempSync(path.join(tmpdir(), "linear-create-lint-"));
   writeFileSync(path.join(cwd, "spec.md"), SENT, "utf8");

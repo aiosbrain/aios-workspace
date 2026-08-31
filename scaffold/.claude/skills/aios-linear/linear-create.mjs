@@ -50,7 +50,10 @@ export function parseCreateArgs(args) {
       force = true;
     } else if (Object.hasOwn(setters, option)) {
       const value = args[++index];
-      if (!value) fail(`${option} requires a value`);
+      // A following flag means the value was forgotten — consuming it would silently
+      // swallow both this option's value and the next flag (e.g. `--desc --force` would
+      // treat --force as the desc filename). Mirrors parseListArgs.
+      if (!value || value.startsWith("--")) fail(`${option} requires a value`);
       setters[option](value);
     } else {
       fail(`unknown create option "${option}"`);
