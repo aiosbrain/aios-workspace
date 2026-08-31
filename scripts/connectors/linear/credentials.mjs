@@ -20,12 +20,29 @@
  * that report state; describeLinearCredential reduces the result to source class only.
  */
 import { spawnSync } from "node:child_process";
+import { existsSync } from "node:fs";
+import path from "node:path";
 import {
   AiosError,
   readUserConfig,
   resolveCredentialRoot,
   resolveUserConfigPath,
 } from "../../cli.mjs";
+
+/**
+ * Nearest ancestor that looks like a workspace (aios.yaml or a .env vault), else the start
+ * directory. The compat `linear` bin uses this so a subdirectory invocation resolves the
+ * SAME workspace root dispatch hands `aios linear` (Bugbot round 1, AIO-1067).
+ */
+export function findLinearBase(startDir = process.cwd()) {
+  let dir = path.resolve(startDir);
+  for (;;) {
+    if (existsSync(path.join(dir, "aios.yaml")) || existsSync(path.join(dir, ".env"))) return dir;
+    const parent = path.dirname(dir);
+    if (parent === dir) return path.resolve(startDir);
+    dir = parent;
+  }
+}
 
 export const ENV_REFERENCE = /^env:([A-Za-z_][A-Za-z0-9_]*)$/;
 export const KEYCHAIN_REFERENCE = /^keychain:([A-Za-z0-9][A-Za-z0-9._/@:+-]{0,255})$/;

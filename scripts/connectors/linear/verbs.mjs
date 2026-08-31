@@ -102,7 +102,7 @@ export function linearUsage() {
  * verbs print their own diagnostics and process.exit(1) on provider/usage failures; a
  * completed verb returns 0.
  */
-export async function runLinearVerb(argv) {
+export async function runLinearVerb(argv, baseDir = process.cwd()) {
   const cmd = argv[0];
 
   if (cmd === "get") {
@@ -420,7 +420,7 @@ export async function runLinearVerb(argv) {
     console.log(`${n.identifier} + label "${labelName}"`);
   } else if (cmd === "template") {
     const name = argv[1] || "aios";
-    const body = resolveLinearTemplate(name);
+    const body = resolveLinearTemplate(name, baseDir);
     if (!body) {
       console.error(`template "${name}" not found`);
       process.exit(1);
@@ -452,7 +452,7 @@ export async function runLinearVerb(argv) {
     );
     console.log(`assigned ${n.identifier} → ${u.name}`);
   } else if (cmd === "create") {
-    await cmdCreate(argv.slice(1));
+    await cmdCreate(argv.slice(1), baseDir);
   } else {
     console.log(linearUsage());
   }

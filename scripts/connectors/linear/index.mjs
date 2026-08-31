@@ -10,7 +10,7 @@
  * against the legacy CLI surface, so a verb cannot silently drop out of the canonical route.
  */
 import { createOutput, normalizeError } from "../../cli.mjs";
-import { ensureLinearCredential } from "./credentials.mjs";
+import { ensureLinearCredential, findLinearBase } from "./credentials.mjs";
 import { linearUsage, runLinearVerb } from "./verbs.mjs";
 
 /** verb → { module, credential } — the canonical Linear command surface. */
@@ -50,20 +50,25 @@ export const VERBS = Object.freeze({
 export async function cmdLinear(repo, rest, options = {}) {
   const verb = rest[0];
   const output = createOutput(options);
+  // The dispatch-resolved workspace root governs credential AND template resolution, so a
+  // subdirectory invocation behaves exactly like a root one; the compat bin passes no repo
+  // and gets the same walk-up (Bugbot round 1).
+  const base = repo ?? findLinearBase(options.cwd ?? process.cwd());
+  const scoped = { ...options, cwd: base };
   if (!verb || verb === "help" || verb === "--help" || verb === "-h") {
     console.log(linearUsage());
     return 0;
   }
   if (verb === "status") {
     const { cmdLinearStatus } = await import("./setup.mjs");
-    return cmdLinearStatus(rest.slice(1), options);
+    return cmdLinearStatus(rest.slice(1), scoped);
   }
   if (VERBS[verb]?.credential) {
     try {
-      await ensureLinearCredential(options);
+      await ensureLinearCredential(scoped);
     } catch (error) {
       return output.failure(normalizeError(error));
     }
   }
-  return runLinearVerb(rest);
+  return runLinearVerb(rest, base);
 }

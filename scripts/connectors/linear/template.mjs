@@ -11,15 +11,16 @@ const TEMPLATE_FILES = {
   finding: "aios-finding-template.md",
 };
 
-/** Resolve an issue template from toolkit docs or workspace copy. */
-export function resolveLinearTemplate(name = "aios") {
+/** Resolve an issue template from the workspace copy or the toolkit docs. */
+export function resolveLinearTemplate(name = "aios", baseDir = process.cwd()) {
   const file = TEMPLATE_FILES[name];
   if (!file) return null;
   const rel = path.join("docs", "agentic-ergonomics", file);
-  // cwd first so a scaffolded workspace's stamped template copy wins over the toolkit's
+  // The dispatch-resolved workspace root first, so a scaffolded workspace's stamped
+  // template copy wins over the toolkit's — from any subdirectory, not just the root
   // (the adapter always executes from the toolkit checkout, even when delegated to from a
   // workspace — AIO-1067); the toolkit's own docs/ copy is the fallback everywhere else.
-  const candidates = [path.join(process.cwd(), rel), path.join(HERE, "..", "..", "..", rel)];
+  const candidates = [path.join(baseDir, rel), path.join(HERE, "..", "..", "..", rel)];
   for (const p of candidates) {
     if (existsSync(p)) return readFileSync(p, "utf8");
   }

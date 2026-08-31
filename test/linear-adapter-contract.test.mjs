@@ -8,7 +8,7 @@
 //     and complete a read against the mocked provider — the end of the AC-1 path.
 // All credentials are synthetic; fetch is mocked; nothing talks to Linear.
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
@@ -159,6 +159,56 @@ test("keychain-backed --token stores only the reference (injected keychain seam)
     assert.match(config, /"linear": "keychain:aios-linear"/);
     assert.doesNotMatch(config, new RegExp(SYNTHETIC));
   } finally {
+    rmSync(cfg, { recursive: true, force: true });
+  }
+});
+
+test("workspace subdirectory invocation resolves the workspace credential and template (Bugbot r1)", () => {
+  // Synthetic workspace: aios.yaml + plaintext .env vault key + a stamped issue template
+  // that differs from the toolkit's. From a SUBDIRECTORY, every route must behave exactly
+  // as from the root: the workspace key reaches the provider (asserted by the mock, never
+  // printed) and the workspace's template copy wins over the toolkit's.
+  const ws = mkdtempSync(path.join(tmpdir(), "aio-1067-contract-ws-"));
+  const sub = path.join(ws, "2-work", "deep");
+  mkdirSync(sub, { recursive: true });
+  writeFileSync(path.join(ws, "aios.yaml"), "project: synthetic\n");
+  writeFileSync(path.join(ws, ".env"), "LINEAR_API_KEY=ws-synthetic-key-not-real\n");
+  mkdirSync(path.join(ws, "docs", "agentic-ergonomics"), { recursive: true });
+  writeFileSync(
+    path.join(ws, "docs", "agentic-ergonomics", "aios-issue-template.md"),
+    "# TITLE — synthetic\n\nWORKSPACE-TEMPLATE-MARKER\n"
+  );
+  const cfg = mkdtempSync(path.join(tmpdir(), "aio-1067-contract-ws-cfg-"));
+  const env = freshEnv(cfg, { MOCK_EXPECT_AUTH: "ws-synthetic-key-not-real" });
+  delete env.AIOS_DISABLE_WORKSPACE_CREDENTIALS; // the workspace source IS the subject here
+  const LINEAR_BIN = path.join(ROOT, "scripts", "linear.mjs");
+  try {
+    const invoke = (bin, args, cwd) =>
+      spawnSync(process.execPath, ["--import", MOCK, bin, ...args], { cwd, encoding: "utf8", env });
+    // Credential: the workspace vault key is what reaches the provider — root and subdir
+    // identically, canonical route and compat delegate identically.
+    const cases = [
+      invoke(AIOS, ["linear", "get", "AIO-73"], ws),
+      invoke(AIOS, ["linear", "get", "AIO-73"], sub),
+      invoke(LINEAR_BIN, ["get", "AIO-73"], sub),
+    ];
+    for (const result of cases) {
+      assert.equal(result.status, 0, result.stderr);
+      assert.doesNotMatch(result.stdout + result.stderr, /ws-synthetic-key/);
+    }
+    assert.equal(cases[1].stdout, cases[0].stdout, "subdir read must match root read");
+    assert.equal(cases[2].stdout, cases[0].stdout, "delegate subdir read must match");
+    // Template: the workspace's stamped copy wins from root AND subdirectory, both routes.
+    for (const result of [
+      invoke(AIOS, ["linear", "template", "aios"], ws),
+      invoke(AIOS, ["linear", "template", "aios"], sub),
+      invoke(LINEAR_BIN, ["template", "aios"], sub),
+    ]) {
+      assert.equal(result.status, 0, result.stderr);
+      assert.match(result.stdout, /WORKSPACE-TEMPLATE-MARKER/);
+    }
+  } finally {
+    rmSync(ws, { recursive: true, force: true });
     rmSync(cfg, { recursive: true, force: true });
   }
 });

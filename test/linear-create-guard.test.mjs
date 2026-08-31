@@ -127,7 +127,7 @@ function runCreateCli(
 function readPrintedRecoveryFile(stderr, command) {
   // The printed command must quote the path so a TMPDIR containing spaces still
   // copy-pastes as one argv token.
-  const match = stderr.match(new RegExp(`linear ${command} AIO-9 "([^"]+)"`));
+  const match = stderr.match(new RegExp(`aios linear ${command} AIO-9 "([^"]+)"`));
   assert.ok(
     match,
     `stderr must print a "${command}" recovery command with a quoted path:\n${stderr}`

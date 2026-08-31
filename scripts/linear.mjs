@@ -13,4 +13,4 @@ process.stderr.write(
 );
 const { loadLinearAdapter } = await import("./connectors.mjs");
 const { cmdLinear } = await loadLinearAdapter();
-process.exitCode = await cmdLinear(process.cwd(), process.argv.slice(2));
+process.exitCode = await cmdLinear(null, process.argv.slice(2));

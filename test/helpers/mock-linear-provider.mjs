@@ -20,6 +20,12 @@ const page = (nodes) => ({ nodes, pageInfo: { hasNextPage: false, endCursor: nul
 let storedDescription = "body";
 
 globalThis.fetch = async (_url, init) => {
+  // Optional assertion seam: prove WHICH credential the adapter resolved (e.g. the
+  // workspace vault key from a subdirectory invocation) without ever printing it.
+  const expectAuth = process.env.MOCK_EXPECT_AUTH;
+  if (expectAuth && init.headers?.Authorization !== expectAuth) {
+    throw new Error("mock-linear-provider: unexpected Authorization credential");
+  }
   const { query, variables } = JSON.parse(init.body);
   let data;
   if (query.includes("issue(id:$id){ id identifier")) {
