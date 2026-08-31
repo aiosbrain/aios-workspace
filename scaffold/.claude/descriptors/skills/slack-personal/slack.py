@@ -48,6 +48,104 @@ def die(msg, code=2):
 API = "https://slack.com/api/"
 
 
+# ---------- outbound URL policy (Bandit B310 — EVERY request routes through here) ----------
+#
+# urlopen() honours file:, ftp: and anything else urllib has a handler for, and its default
+# redirect handler re-sends the request's headers — Authorization included — to wherever
+# Location points. Every request this CLI makes carries a credential (the Slack user token on
+# the Web API and the upload URL, the brain API key on the brain endpoints), so the DESTINATION
+# is the security boundary: a configurable, tampered or redirected URL is a token-exfiltration
+# primitive. One validator + one opener + one urlopen, shared by every call site, so a new
+# endpoint cannot be added unguarded — that was the gap AIO-1017 closed (four call sites were
+# unaudited purely because the PR that audited the fifth did not touch their lines).
+
+_LOOPBACK_HOSTS = ("127.0.0.1", "localhost", "::1")
+
+
+def _loopback_http_allowed():
+    """http is never acceptable for a credential-bearing request EXCEPT to loopback, and only
+    when asked for explicitly. The credential-free mock suite sets
+    AIOS_SLACK_ALLOW_LOOPBACK_HTTP=1 so it can exercise the real code paths against a local
+    listener with a fake token; nothing in production sets it, so even a config/env value that
+    points at plaintext loopback is refused by default. The flag relaxes the SCHEME policy
+    only — it adds no way to point a request anywhere the constants/config did not already
+    point, which is what made an earlier env-var API-base override a disclosure primitive
+    (see the test fixtures' cliPointedAt() for that history)."""
+    return os.environ.get("AIOS_SLACK_ALLOW_LOOPBACK_HTTP") == "1"
+
+
+def _assert_request_url(url):
+    """Refuse any destination that is not https (or, under the explicit test flag, loopback
+    http). Shared by ALL outbound requests: the Slack Web API (constant `API` base), the brain
+    token fetch / member resolve / token store (base arrives from agent-context.json or env —
+    trusted the way config is trusted, which is not the same as validated), and the file-upload
+    URL (arrives in a Slack API RESPONSE, so it is not ours at all). Names the SCHEME, never
+    the URL: upload URLs are signed and single-use, and a brain URL sits next to a bearer key
+    in config."""
+    parsed = urllib.parse.urlparse(url or "")
+    try:
+        # BOTH accessors parse lazily and raise ValueError on malformed input (a non-numeric
+        # or out-of-range port, a bad IPv6 bracket). The URL can be attacker-influenced data —
+        # a redirect Location — and urllib's own ValueError text quotes the offending value, so
+        # letting it escape would put attacker-controlled bytes in our output. Fail through
+        # die() with the same URL-free policy message class as every other unsafe destination.
+        host = parsed.hostname or ""
+        parsed.port
+    except ValueError:
+        die("refusing to send a request to a URL with a malformed host/port "
+            "(value intentionally not shown)", 5)
+    if parsed.scheme == "https" and host:
+        return
+    if parsed.scheme == "http" and host in _LOOPBACK_HOSTS and _loopback_http_allowed():
+        return
+    scheme = parsed.scheme or "none"
+    die(f"refusing to send a request to a non-https URL (scheme '{scheme}')", 5)
+
+
+def _origin(url):
+    """(scheme, host, effective port) — the boundary credentials must never cross. Only ever
+    called on URLs that already passed _assert_request_url(), which rejects a malformed
+    host/port, so the lazy .port parse cannot raise here."""
+    p = urllib.parse.urlparse(url)
+    return (p.scheme, p.hostname, p.port or {"https": 443, "http": 80}.get(p.scheme))
+
+
+class _SameOriginRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Revalidate every redirect target and refuse to leave the origin.
+
+    Neither Slack nor the brain legitimately redirects these calls across origins, so
+    cross-origin is refused outright rather than retried credential-less: a stripped retry
+    would still forward the request BODY, which carries the Slack token on `connect`. The
+    scheme is revalidated too, because Location is data — a 302 to file: or to a non-loopback
+    http host must fail exactly like a configured one."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        _assert_request_url(newurl)
+        if _origin(newurl) != _origin(req.full_url):
+            # No URL in the message: Location is attacker-influenced data.
+            die("refusing to follow a cross-origin redirect (credentials would leave the "
+                "original host; redirect target intentionally not shown)", 5)
+        return urllib.request.HTTPRedirectHandler.redirect_request(
+            self, req, fp, code, msg, headers, newurl)
+
+
+_OPENER = urllib.request.build_opener(_SameOriginRedirectHandler)
+
+
+def _urlopen_checked(req, timeout):
+    """THE one urlopen in this file. Validates the destination, then opens it through the
+    same-origin redirect handler. Every call site routes through here; do not call
+    urllib.request.urlopen directly anywhere else in this file."""
+    _assert_request_url(req.full_url)
+    # nosec B310 — the scheme/host are validated by _assert_request_url() on the line above
+    # (https only, or loopback http under the explicit test flag), and redirects are
+    # revalidated and origin-pinned by _SameOriginRedirectHandler. B310 is an AUDIT check: it
+    # flags the call so a human confirms the URL cannot be file:/ftp:/custom, and that
+    # confirmation is the guard, in code, with request-capture tests proving zero credential
+    # egress on every refused case (test/slack-personal-url-policy.test.mjs).
+    return _OPENER.open(req, timeout=timeout)  # nosec B310
+
+
 # ---------- agent-context.json (brain config for resolution + token fetch) ----------
 def _agent_context():
     for p in (os.environ.get("AGENT_CONTEXT"),
@@ -68,7 +166,13 @@ def _brain_config():
     url = brain.get("url") or os.environ.get("AIOS_BRAIN_URL")
     key = os.environ.get(brain.get("api_key_ref", "AIOS_API_KEY")) or os.environ.get("AIOS_API_KEY")
     team = brain.get("team") or os.environ.get("AIOS_TEAM")
-    return (url.rstrip("/") if url else None), key, team
+    url = url.rstrip("/") if url else None
+    if url:
+        # Validate the base HERE, before any Request is built from it: a malformed base would
+        # otherwise surface as urllib's own ValueError (generic message) instead of the policy
+        # refusal, and every one of the four brain call sites builds on this value.
+        _assert_request_url(url)
+    return url, key, team
 
 
 def _brain_request(method, path, body=None):
@@ -83,7 +187,7 @@ def _brain_request(method, path, body=None):
         headers["Content-Type"] = "application/json"
     req = urllib.request.Request(url + path, data=data, headers=headers, method=method)
     try:
-        with urllib.request.urlopen(req, timeout=30) as r:
+        with _urlopen_checked(req, timeout=30) as r:
             return r.status, json.load(r)
     except urllib.error.HTTPError as e:
         try:
@@ -104,7 +208,7 @@ def _brain_token():
     req = urllib.request.Request(url + "/api/v1/me/slack-token",
                                  headers={"Authorization": "Bearer " + key, **({"X-AIOS-Team": team} if team else {})})
     try:
-        with urllib.request.urlopen(req, timeout=20) as r:
+        with _urlopen_checked(req, timeout=20) as r:
             return (json.load(r) or {}).get("token") or None
     except urllib.error.HTTPError as e:
         if e.code == 404:
@@ -156,7 +260,7 @@ def call(method, params=None, retries=4):
     for attempt in range(retries + 1):
         try:
             req = urllib.request.Request(API + method, data=body, headers=headers)
-            with urllib.request.urlopen(req, timeout=45) as r:
+            with _urlopen_checked(req, timeout=45) as r:
                 payload = json.load(r)
         except urllib.error.HTTPError as e:
             if e.code in (429, 500, 502, 503, 504) and attempt < retries:
@@ -196,7 +300,10 @@ def brain_resolve_slack(member):
     req = urllib.request.Request(url + "/api/v1/identities/resolve?" + urllib.parse.urlencode(q),
                                  headers={"Authorization": "Bearer " + key, **({"X-AIOS-Team": team} if team else {})})
     try:
-        with urllib.request.urlopen(req, timeout=20) as r:
+        # A URL-policy refusal inside _urlopen_checked exits via die() (SystemExit), which this
+        # bare `except Exception` deliberately does NOT swallow — a forbidden destination must
+        # fail loudly, not degrade into "no brain match".
+        with _urlopen_checked(req, timeout=20) as r:
             data = json.load(r)
     except Exception:
         return None
@@ -340,34 +447,6 @@ def cmd_dm(a):
           else f"sent → {r.get('channel')} @ {r.get('ts')}")
 
 
-def _assert_uploadable_url(url):
-    """Refuse an upload URL that is not https (or http on loopback, for tests).
-
-    This POST carries the FILE CONTENTS, so wherever this URL points is where the file goes.
-    urlopen honours file:, ftp: and anything else urllib has a handler for, and the URL is not
-    ours — it arrives in a Slack API response. A tampered or spoofed response naming
-    `file:///…` or an attacker's host turns "upload this to Slack" into "write/send this
-    somewhere else", with no prompt and no log line, since the URL is deliberately never
-    printed.
-
-    https is the only thing Slack actually returns. http is permitted solely for loopback, so
-    the credential-free mock suite can exercise the real code path — a mock cannot leave the
-    machine.
-    """
-    parsed = urllib.parse.urlparse(url or "")
-    host = parsed.hostname or ""
-    if parsed.scheme == "https":
-        return
-    if parsed.scheme == "http" and host in ("127.0.0.1", "localhost", "::1"):
-        return
-    # Names the SCHEME, never the URL: the URL is single-use and credential-bearing.
-    # Single quotes INSIDE the f-string: nesting the same quote type is PEP 701 (Python 3.12+)
-    # and is a SyntaxError on 3.9/3.11 — which is what `/usr/bin/python3` is on macOS. The CLI
-    # promises plain `python3`, so it has to parse there.
-    scheme = parsed.scheme or "none"
-    die(f"refusing to upload to a non-https URL (scheme '{scheme}')", 5)
-
-
 def _upload_bytes(upload_url, data):
     """PUT/POST the raw file bytes to the short-lived URL from files.getUploadURLExternal.
 
@@ -382,8 +461,15 @@ def _upload_bytes(upload_url, data):
     This URL is NOT a Slack Web API method — no Bearer token, no ok:false envelope — so it does
     not go through call(); failures are network/HTTP only (exit 5). The URL is single-use and
     credential-bearing: it is never logged, not even on error.
+
+    This POST carries the FILE CONTENTS, so wherever this URL points is where the file goes —
+    and the URL is not ours, it arrives in a Slack API response. A tampered or spoofed response
+    naming `file:///…` or an attacker's host turns "upload this to Slack" into "write/send this
+    somewhere else", with no prompt and no log line. Hence the early _assert_request_url():
+    refuse BEFORE constructing the request, on the same shared policy every other call site
+    uses (https only; loopback http solely under the mock suite's explicit test flag).
     """
-    _assert_uploadable_url(upload_url)
+    _assert_request_url(upload_url)
     # Content-Length is set by urllib from `data`; setting it here too sends it twice, which
     # some servers reject and others hang on.
     headers = {"Content-Type": "application/octet-stream"}
@@ -398,12 +484,7 @@ def _upload_bytes(upload_url, data):
 
     for attempt in range(4):
         try:
-            # nosec B310 — the scheme/host are validated by _assert_uploadable_url() above,
-            # which runs before this loop and exits non-zero on anything that is not https (or
-            # loopback http for the mock suite). B310 is an AUDIT check: it flags the call so a
-            # human confirms the URL cannot be file:/ftp:/custom, and that confirmation is the
-            # guard, in code, with tests. Bandit cannot see across the function boundary.
-            with urllib.request.urlopen(req, timeout=120) as r:  # nosec B310
+            with _urlopen_checked(req, timeout=120) as r:
                 r.read()
             return
         except urllib.error.HTTPError as e:
