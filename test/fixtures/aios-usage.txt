@@ -16,6 +16,9 @@ usage:
   aios linear <verb> …                  Linear board CLI (get/list/create/comment/relations/…)
                                         `aios linear help` lists every verb; setup: `aios connect linear`
   aios linear status [--json]           report the resolved credential source class (never values)
+  aios slack <verb> …                   Slack CLI as YOU (whoami/read/send/dm/react/file/…)
+                                        `aios slack help` lists every verb; setup: `aios slack connect`
+  aios slack status [--json]            report connection state (never token values)
   aios review                           interactive: toggle inclusion, then push selected
   aios push [--dry-run] [paths…]
   aios push skill <name> [--dry-run]    share a skill (SKILL.md + references) to the brain

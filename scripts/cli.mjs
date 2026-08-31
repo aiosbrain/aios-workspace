@@ -8,4 +8,5 @@ export { AiosError, normalizeError, exitCodeFor } from "./cli/errors.mjs";
 export { createOutput } from "./cli/output.mjs";
 export { resolveCredentialRoot, redactedCredential } from "./cli/credential-broker.mjs";
 export { readUserConfig, resolveUserConfigPath, writeUserConfig } from "./cli/config-broker.mjs";
+export { validateDestination, trustedFetch } from "./cli/destination-policy.mjs";
 export { run } from "./cli/bootstrap.mjs";

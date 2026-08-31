@@ -1899,8 +1899,8 @@
       "id": "command.aios.slack",
       "kind": "connector-command",
       "route": "aios slack",
-      "status": "planned-v2",
-      "source": "docs/adr/0002-single-binary-cli-platform.md",
+      "status": "current",
+      "source": "scripts/connectors/slack/index.mjs",
       "futureOwner": "adapter.slack",
       "disposition": "keep",
       "releaseBoundary": "v2.0.0",
@@ -1908,7 +1908,9 @@
       "replacement": null,
       "rollback": null,
       "evidence": [
-        "docs/adr/0002-single-binary-cli-platform.md"
+        "scripts/cli/slack-commands.mjs",
+        "scripts/connectors/slack/index.mjs",
+        "test/slack-command-parity.test.mjs"
       ],
       "metadata": {
         "owner": "adapter.slack",
@@ -1921,7 +1923,8 @@
           "module": "scripts/connectors/slack/index.mjs",
           "lazy": true
         }
-      }
+      },
+      "registryCommand": "slack"
     },
     {
       "id": "bin.npm.aios",
@@ -2008,7 +2011,7 @@
         "outputMode": "human-or-json",
         "startupPolicy": "offline",
         "implementation": {
-          "module": "scripts/compat/slack-bin.mjs",
+          "module": "scripts/slack.mjs",
           "lazy": true
         }
       }
@@ -2381,7 +2384,7 @@
         "outputMode": "human-or-json",
         "startupPolicy": "offline",
         "implementation": {
-          "module": "scripts/compat/slack-bin.mjs",
+          "module": "scripts/slack.mjs",
           "lazy": true
         }
       }

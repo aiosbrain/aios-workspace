@@ -10,3 +10,4 @@
 export const loadLinearAdapter = () => import("./connectors/linear/index.mjs");
 export const loadLinearSetup = () => import("./connectors/linear/setup.mjs");
 export const loadLinearCredentials = () => import("./connectors/linear/credentials.mjs");
+export const loadSlackAdapter = () => import("./connectors/slack/index.mjs");
