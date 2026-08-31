@@ -54,6 +54,9 @@ const EXPECTED = [
   ["violating-prt-fetch-variants.yml", "git-fetch-sha", "pr-target-checkout"],
   ["violating-prt-fetch-variants.yml", "env-indirection", "pr-target-checkout"],
   ["violating-prt-fetch-variants.yml", "event-path", "pr-target-checkout"],
+  // Job/step outputs are opaque to static analysis, so they launder taint.
+  ["violating-prt-opaque-outputs.yml", "via-steps", "pr-target-checkout"],
+  ["violating-prt-opaque-outputs.yml", "via-needs", "pr-target-checkout"],
   // A primitive invoked by absolute path is the same primitive (`/usr/bin/npm ci`).
   ["violating-prt-abspath-primitives.yml", "abs-package", "pr-target-package-install"],
   ["violating-prt-abspath-primitives.yml", "abs-pip", "pr-target-package-install"],

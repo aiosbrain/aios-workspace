@@ -109,12 +109,23 @@ export function expressionsIn(value) {
  *
  * `untrustedResidual` runs first, so a name carrying only `pull_request.base.sha` never taints.
  */
+// A job or step OUTPUT is opaque to static analysis: its value is produced at runtime by a
+// `run:` body we cannot evaluate, and in a `pull_request_target` job that body routinely derives
+// from the pull request. `${{ steps.p.outputs.ref }}` and `${{ needs.prepare.outputs.ref }}` are
+// therefore laundering channels for exactly the taint this module tracks, and neither resolves
+// statically. Same conservative default as UNRESOLVABLE_INDEX: cannot prove trusted, so treat as
+// tainted. A privileged job that genuinely needs a computed ref is a waiver with a justification,
+// not a silent pass.
+const OPAQUE_OUTPUT =
+  /\b(?:steps|needs)\s*\.\s*[A-Za-z_][\w-]*\s*\.\s*outputs\s*\.\s*[A-Za-z_][\w-]*/;
+
 export function taintedExpression(text, tainted) {
   for (const raw of expressionsIn(String(text))) {
     // Normalize FIRST, then blank trusted fields: `github['event']['pull_request']['base']['sha']`
     // has to fold to dot notation before the trusted-field allowlist can recognise it.
     const expression = untrustedResidual(normalizeExpression(raw));
     if (UNRESOLVABLE_INDEX.test(expression)) return raw.trim();
+    if (OPAQUE_OUTPUT.test(expression)) return raw.trim();
     if (ATTACKER_EXPR.test(expression)) return raw.trim();
     if (tainted.has(ALL_INPUTS_TAINTED) && /\binputs\s*\./.test(expression)) return raw.trim();
     for (const name of [...tainted, ...IMPLICITLY_TAINTED_VARS]) {
