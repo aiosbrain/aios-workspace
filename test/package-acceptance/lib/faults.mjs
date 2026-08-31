@@ -54,6 +54,10 @@ function mockedLinearEnv(ctx, dir, provider) {
   });
 }
 
+// Every control declares an EXPECTED rejection signature and goes red ONLY when that
+// signature is observed. Any other exception aborts the acceptance run as a harness
+// error (see runFaultControls) — a broken control must never read as a passing one.
+
 function brokenBinControl(ctx, install) {
   const copy = disposableCopy(ctx, install);
   chmodSync(path.join(copy.pkgDir, "scripts", "aios.mjs"), 0o644);
@@ -63,7 +67,11 @@ function brokenBinControl(ctx, install) {
     expectFailure: true,
     label: "fault-broken-bin",
   });
-  return { red: r.status !== 0, observed: `exit ${r.status} (${r.spawnError ?? "run"})` };
+  return {
+    signature: "exec refused with EACCES",
+    red: r.status !== 0 && r.spawnError === "EACCES",
+    observed: `exit ${r.status} (${r.spawnError ?? "ran"})`,
+  };
 }
 
 function missingFileControl(ctx, install) {
@@ -75,7 +83,15 @@ function missingFileControl(ctx, install) {
     expectFailure: true,
     label: "fault-missing-file",
   });
-  return { red: r.status !== 0, observed: `exit ${r.status}` };
+  // The CLI deliberately fails closed with a value-free AIOS_E_INTERNAL document
+  // (exit class 6) rather than leaking the module path — that error class IS the
+  // declared signature for a missing packaged file.
+  const classed = /AIOS_E_INTERNAL/.test(`${r.stdout}${r.stderr}`);
+  return {
+    signature: "nonzero with the AIOS_E_INTERNAL fail-closed class",
+    red: r.status !== 0 && classed,
+    observed: `exit ${r.status}, classed=${classed}`,
+  };
 }
 
 function failedSpecEvalControl(ctx, install) {
@@ -86,13 +102,18 @@ function failedSpecEvalControl(ctx, install) {
   );
   const spec = path.join(copy.prefix, "fault-spec.md");
   writeFileSync(spec, "# Spec\n\nA short spec body.\n");
-  const r = ctx.run(copy.bin, ["spec", "eval", spec, "--no-llm"], {
+  const r = ctx.run(copy.bin, ["spec", "eval", spec, "--no-llm", "--repo", copy.prefix], {
     cwd: copy.prefix,
     env: ctx.cliEnv(),
     expectFailure: true,
     label: "fault-spec-eval",
   });
-  return { red: r.status !== 0, observed: `exit ${r.status}` };
+  const named = /devtools/i.test(`${r.stdout}${r.stderr}`);
+  return {
+    signature: "nonzero naming the unavailable devtools evaluator",
+    red: r.status !== 0 && named,
+    observed: `exit ${r.status}, namedDevtools=${named}`,
+  };
 }
 
 function missingCredentialControl(ctx, install) {
@@ -107,7 +128,11 @@ function missingCredentialControl(ctx, install) {
     label: "fault-missing-credential",
   });
   const classed = /AIOS_E_CREDENTIAL/.test(`${r.stdout}${r.stderr}`);
-  return { red: r.status !== 0 && classed, observed: `exit ${r.status}, classed=${classed}` };
+  return {
+    signature: "exit 3 with AIOS_E_CREDENTIAL class",
+    red: r.status === 3 && classed,
+    observed: `exit ${r.status}, classed=${classed}`,
+  };
 }
 
 async function corruptMigrationControl(ctx, install) {
@@ -126,9 +151,20 @@ async function corruptMigrationControl(ctx, install) {
       stage: async (source) => source,
       validate: async () => {},
     });
-    return { red: false, observed: "corrupt journal was accepted" };
+    return {
+      signature: "AIOS_E_MIGRATION rejection",
+      red: false,
+      observed: "corrupt journal was accepted",
+    };
   } catch (error) {
-    return { red: error.code === "AIOS_E_MIGRATION", observed: `rejected with ${error.code}` };
+    // Only the declared rejection counts as red; anything else is control machinery
+    // breaking and must abort the run (rethrown to the orchestrator).
+    if (error.code !== "AIOS_E_MIGRATION") throw error;
+    return {
+      signature: "AIOS_E_MIGRATION rejection",
+      red: true,
+      observed: `rejected with ${error.code}`,
+    };
   }
 }
 
@@ -144,7 +180,8 @@ function wrongAdapterControl(ctx, install) {
   });
   const semanticMatch = /AIO-73 {2}Alpha {2}\[Backlog\] {2}id=issue-a/.test(r.stdout);
   return {
-    red: !(r.status === 0 && semanticMatch),
+    signature: "exit 0 with a body the semantic assertion rejects",
+    red: r.status === 0 && !semanticMatch,
     observed: `exit ${r.status}, semanticMatch=${semanticMatch}`,
   };
 }
@@ -163,6 +200,7 @@ function unknownErrorControl(ctx, install) {
   });
   const successShaped = /AIO-73 {2}Alpha/.test(r.stdout);
   return {
+    signature: "nonzero with no success-shaped output",
     red: r.status !== 0 && !successShaped,
     observed: `exit ${r.status}, successOutput=${successShaped}`,
   };
@@ -173,6 +211,7 @@ function digestTamperControl(ctx) {
   bytes[Math.floor(bytes.length / 2)] ^= 0xff;
   const tampered = sha256Hex(bytes);
   return {
+    signature: "SHA-256 differs from the manifest digest",
     red: tampered !== ctx.manifest.sha256,
     observed: `tampered digest differs=${tampered !== ctx.manifest.sha256}`,
   };
@@ -180,7 +219,11 @@ function digestTamperControl(ctx) {
 
 function sentinelScanControl() {
   const hits = scanTextForSentinels(`prefix ${SENTINELS.linearKey} suffix`);
-  return { red: hits.includes("linearKey"), observed: `scanner hits: ${hits.join(",")}` };
+  return {
+    signature: "scanner reports the seeded sentinel",
+    red: hits.includes("linearKey"),
+    observed: `scanner hits: ${hits.join(",")}`,
+  };
 }
 
 const CONTROLS = [
@@ -198,16 +241,36 @@ const CONTROLS = [
 export async function runFaultControls(ctx, install) {
   const results = [];
   for (const [id, description, fn] of CONTROLS) {
-    let red = false;
-    let observed = null;
+    let outcome;
     try {
-      ({ red, observed } = await fn(ctx, install));
+      outcome = await fn(ctx, install);
     } catch (error) {
-      red = true;
-      observed = `harness error treated as red: ${error.message.slice(0, 200)}`;
+      // A throw here means the CONTROL MACHINERY broke (bad copy, import failure,
+      // config step) — NOT that the defect was caught. Counting it as red would let
+      // allRed report success without exercising a single intended defect, so the
+      // acceptance run aborts as a named harness failure instead.
+      ctx.record("fault-controls", {
+        aborted: id,
+        machineryError: String(error.message ?? error).slice(0, 300),
+        controls: results,
+        allRed: false,
+      });
+      const wrapped = new Error(
+        `fault-control machinery failed in '${id}' — acceptance aborts as a harness ` +
+          `error, not a red control: ${error.message}`
+      );
+      wrapped.code = "AIOS_ACCEPTANCE_HARNESS_ERROR";
+      wrapped.cause = error;
+      throw wrapped;
     }
-    results.push({ id, description, expected: "nonzero/red", observed, red });
-    assert.equal(red, true, `fault control '${id}' was accepted instead of failing: ${observed}`);
+    const { signature, red, observed } = outcome;
+    results.push({ id, description, signature, observed, red });
+    assert.equal(
+      red,
+      true,
+      `fault control '${id}' did not produce its expected rejection signature ` +
+        `(${signature}): ${observed}`
+    );
   }
   rmSync(path.join(ctx.base, "fault-copies"), { recursive: true, force: true });
   ctx.record("fault-controls", { controls: results, allRed: results.every((r) => r.red) });

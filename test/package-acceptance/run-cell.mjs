@@ -63,7 +63,12 @@ async function main() {
     console.error("usage: run-cell.mjs (--artifact-dir <dir> | --pack) [--evidence <dir>]");
     process.exit(2);
   }
-  const evidenceDir = path.resolve(arg("--evidence") ?? path.join(base, "evidence"));
+  // Evidence must OUTLIVE the temporary work dir: `base` is removed during cleanup
+  // before evidence is written, so a default beneath it would self-destruct. Without
+  // --evidence, evidence lands in its own temp dir that cleanup never touches.
+  const evidenceDir = path.resolve(
+    arg("--evidence") ?? mkdtempSync(path.join(tmpdir(), "aios-package-acceptance-evidence-"))
+  );
 
   const ctx = new CellContext({
     artifactDir: path.resolve(artifactDir),

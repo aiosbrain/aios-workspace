@@ -18,6 +18,7 @@ import {
   scanTextForSentinels,
   sha256Hex,
 } from "./package-acceptance/lib/context.mjs";
+import { runFaultControls } from "./package-acceptance/lib/faults.mjs";
 
 function makeArtifact(base, { tamper = false } = {}) {
   const artifactDir = path.join(base, "artifact");
@@ -117,6 +118,27 @@ test("forbidden-tool probe finds python/jq/dotenvx on PATH and passes a clean di
   assert.deepEqual(probeForbiddenPathTools(clean), []);
   const found = probeForbiddenPathTools([clean, dirty].join(path.delimiter));
   assert.deepEqual(found.sort(), [path.join(dirty, "jq"), path.join(dirty, "python3")]);
+});
+
+test("broken fault-control machinery aborts as a harness error, never as a red control", async (t) => {
+  const base = mkdtempSync(path.join(tmpdir(), "aio1071-unit-"));
+  t.after(() => rmSync(base, { recursive: true, force: true }));
+  const ctx = makeContext(base);
+  // A nonexistent install prefix breaks the disposable-copy machinery of the very first
+  // control. The run must ABORT with the named harness-error code — if this ever reads
+  // as red/allRed, the negative controls have gone fail-open.
+  const ghostInstall = {
+    prefix: path.join(base, "does-not-exist"),
+    pkgDir: path.join(base, "does-not-exist", "node_modules", "@aiosbrain", "aios"),
+    bin: path.join(base, "does-not-exist", "node_modules", ".bin", "aios"),
+  };
+  await assert.rejects(runFaultControls(ctx, ghostInstall), (error) => {
+    assert.equal(error.code, "AIOS_ACCEPTANCE_HARNESS_ERROR");
+    assert.match(error.message, /machinery failed in 'broken-bin'/);
+    return true;
+  });
+  assert.equal(ctx.sections["fault-controls"].aborted, "broken-bin");
+  assert.equal(ctx.sections["fault-controls"].allRed, false);
 });
 
 test("escaping-link probe catches a node_modules symlink that leaves the prefix", (t) => {
