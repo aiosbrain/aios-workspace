@@ -8,7 +8,7 @@
  * sees a help flag (round-5 structural contract).
  */
 import { AiosError } from "../../cli.mjs";
-import { readMessage } from "./args.mjs";
+import { readMessage, shownArg } from "./args.mjs";
 import {
   brainResolveSlack,
   openDm,
@@ -34,7 +34,7 @@ export async function cmdResolve(ctx, args) {
     if (!uid) {
       throw new AiosError(
         "AIOS_E_PROVIDER",
-        `Could not resolve teammate '${args.member}' (no brain match).`,
+        `Could not resolve teammate '${shownArg(args.member)}' (no brain match).`,
         "Try the email form instead."
       );
     }

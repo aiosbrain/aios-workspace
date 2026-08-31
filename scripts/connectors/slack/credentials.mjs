@@ -20,9 +20,13 @@
  *                     credentialed redirects are origin-pinned. There is deliberately no
  *                     HTTPS origin allowlist; what prevents a planted HTTPS destination is
  *                     the TRUST-DOMAIN BINDING in resolveBrainConfig — the destination and
- *                     the key must resolve from the same domain (operator config, or a
- *                     workspace that supplies BOTH itself), so an untrusted cwd can never
- *                     point the operator's key (or the xoxp token) at its own origin.
+ *                     the BRAIN KEY must resolve from the same domain (operator config, or
+ *                     a workspace root that supplies BOTH itself), so an untrusted cwd can
+ *                     never point the operator's brain key at its own origin. The xoxp
+ *                     TOKEN gets the matching guard in the connect flow (setup.mjs): an
+ *                     ambient environment-sourced token is never POSTed to a
+ *                     workspace-domain brain — only a token passed explicitly (argv or
+ *                     --stdin) expresses consent to a workspace destination.
  *
  * Missing everywhere → AIOS_E_CREDENTIAL_MISSING (exit class 3) naming the bootstrap.
  */
@@ -217,28 +221,54 @@ export async function resolveBrainConfig(options = {}) {
     // Disabling a source can only remove credentials, never add or mix them.
     return { url: null, key: null, team: op.team, source: null, conflict: null };
   }
-  const ws = workspaceOwnBrainConfig(options.cwd ?? process.cwd(), foundation);
-  const url = op.url || ws.url;
-  const key = op.key || ws.key;
-  if (!url || !key) return { url: null, key: null, team: op.team, source: null, conflict: null };
-  const urlDomain = op.url ? "operator" : "workspace";
-  const keyDomain = op.key ? "operator" : "workspace";
-  if (urlDomain !== keyDomain) {
+  // Workspace-domain candidate roots, each read in isolation (per-field provenance by
+  // construction). AIOS_AGENT_WORKSPACE is an OPERATOR-SET env var designating a workspace
+  // root for run-from-anywhere layouts (docs/integrations.md) — that operator designation
+  // is what makes accepting it safe; a hostile cwd cannot set it. Both fields must still
+  // come from ONE root: candidates never fill each other's gaps.
+  const cwd = options.cwd ?? process.cwd();
+  const candidates = [{ root: cwd, label: "workspace" }];
+  const agentWorkspace = env.AIOS_AGENT_WORKSPACE;
+  if (
+    agentWorkspace &&
+    path.isAbsolute(agentWorkspace) &&
+    path.resolve(agentWorkspace) !== path.resolve(cwd)
+  ) {
+    candidates.push({ root: agentWorkspace, label: "agent-workspace" });
+  }
+  const reads = candidates.map(({ root, label }) => ({
+    label,
+    ...workspaceOwnBrainConfig(root, foundation),
+  }));
+  for (const candidate of reads) {
+    const url = op.url || candidate.url;
+    const key = op.key || candidate.key;
+    if (!url || !key) continue;
+    const urlDomain = op.url ? "operator" : candidate.label;
+    const keyDomain = op.key ? "operator" : candidate.label;
+    if (urlDomain !== keyDomain) continue; // cross-domain — reported below, never paired
+    return {
+      url: stripSlash(candidate.url),
+      key: candidate.key,
+      team: candidate.team || op.team,
+      source: candidate.label,
+      conflict: null,
+    };
+  }
+  // No single-domain pairing exists. If a destination and a credential DO resolve — just
+  // from different domains/roots — report the conflict (labels only, never values).
+  const urlOwner = op.url ? "operator" : (reads.find((candidate) => candidate.url)?.label ?? null);
+  const keyOwner = op.key ? "operator" : (reads.find((candidate) => candidate.key)?.label ?? null);
+  if (urlOwner && keyOwner && urlOwner !== keyOwner) {
     return {
       url: null,
       key: null,
       team: op.team,
       source: null,
-      conflict: { urlDomain, keyDomain },
+      conflict: { urlDomain: urlOwner, keyDomain: keyOwner },
     };
   }
-  return {
-    url: stripSlash(ws.url),
-    key: ws.key,
-    team: ws.team || op.team,
-    source: "workspace",
-    conflict: null,
-  };
+  return { url: null, key: null, team: op.team, source: null, conflict: null };
 }
 
 const MISSING = () =>

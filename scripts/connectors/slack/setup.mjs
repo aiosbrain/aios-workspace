@@ -18,16 +18,16 @@ async function readStdin(stdin = process.stdin) {
   return Buffer.concat(chunks).toString("utf8").trim();
 }
 
-/** Resolve a connect token without leaving it in argv when --stdin or env is used. */
+/** Resolve a connect token + its source without leaving it in argv when --stdin/env is used. */
 async function connectToken(args, ctx) {
-  if (args.stdin) return readStdin(ctx.stdin);
-  if (args.token) return args.token.trim();
-  return (ctx.env ?? process.env).SLACK_USER_TOKEN?.trim() ?? "";
+  if (args.stdin) return { token: await readStdin(ctx.stdin), source: "stdin" };
+  if (args.token) return { token: args.token.trim(), source: "argv" };
+  return { token: (ctx.env ?? process.env).SLACK_USER_TOKEN?.trim() ?? "", source: "environment" };
 }
 
 /** Args arrive pre-parsed (VERB_SPECS in args.mjs — the round-5 contract). */
 export async function cmdConnect(ctx, args) {
-  const token = await connectToken(args, ctx);
+  const { token, source: tokenSource } = await connectToken(args, ctx);
   if (!token) {
     throw new AiosError(
       "AIOS_E_USAGE",
@@ -45,6 +45,21 @@ export async function cmdConnect(ctx, args) {
     );
   }
   const brain = await resolveBrainConfig(ctx);
+  // F1 (final confirmation pass): the credential being ATTACHED must share a trust domain
+  // with the destination. A workspace that supplies BOTH brain fields is same-domain for
+  // the BRAIN key — but the ambient environment-sourced Slack token is operator-domain,
+  // and silently POSTing it to a workspace-designated brain is the hostile-cwd
+  // token-exfiltration shape. Only an explicitly passed token (argv/--stdin) expresses
+  // consent to a workspace destination.
+  if (tokenSource === "environment" && brain.source && brain.source !== "operator") {
+    throw new AiosError(
+      "AIOS_E_CONFIG_INVALID",
+      "Refusing to send the environment-sourced Slack token to a " +
+        `${brain.source}-configured Team Brain (values intentionally not shown).`,
+      "Pass the token explicitly (`aios slack connect --stdin`) to consent to this " +
+        "workspace's brain, or configure the brain in your environment/toolkit config."
+    );
+  }
   const { status, body } = await brainRequest(
     brain,
     "POST",

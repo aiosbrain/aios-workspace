@@ -16,6 +16,7 @@
  * (slack.py used exit 5 for network; the v2 CLI error taxonomy pins network at class 4.)
  */
 import { AiosError, trustedFetch } from "../../cli.mjs";
+import { shownArg } from "./args.mjs";
 
 export const API = "https://slack.com/api/";
 const RETRIES = 4;
@@ -243,12 +244,11 @@ export async function resolveTarget(ctx, target) {
     if (match) return match.id;
     throw new AiosError(
       "AIOS_E_PROVIDER",
-      `Channel #${name} not found.`,
+      `Channel #${shownArg(name)} not found.`,
       "Check the channel name (the token's user must be able to see it)."
     );
   }
   // shownArg: a credential pasted into the target slot must not be echoed into logs.
-  const { shownArg } = await import("./args.mjs");
   throw usage(`Unrecognized target: ${shownArg(target)}`);
 }
 
@@ -259,7 +259,7 @@ export async function resolveMemberChannel(ctx, member) {
   if (member.includes("@")) return resolveTarget(ctx, member);
   throw new AiosError(
     "AIOS_E_PROVIDER",
-    `Could not resolve teammate '${member}' (no brain match and not an email).`,
+    `Could not resolve teammate '${shownArg(member)}' (no brain match and not an email).`,
     "Use the teammate's email, or connect the Team Brain for handle resolution."
   );
 }
