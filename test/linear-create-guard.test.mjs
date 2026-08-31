@@ -28,18 +28,9 @@ const SENT = [
 
 // Mock for the `create` write path (AIO-1026): team + state lookups, ONE issueCreate
 // mutation (logged, optionally with a lost response), and the post-create readback.
-function runCreateCli(
-  args,
-  cwd,
-  { postWriteDescription, loseCreateResponse = false, loseReadbackResponse = false, env = {} } = {}
-) {
-  const supportDir = mkdtempSync(path.join(tmpdir(), "linear-create-guard-"));
-  const preload = path.join(supportDir, "mock-fetch.mjs");
-  const mutationLog = path.join(supportDir, "mutations.log");
-  const sentBodyLog = path.join(supportDir, "sent-body.md");
-  writeFileSync(
-    preload,
-    `import { appendFileSync, writeFileSync } from "node:fs";
+// Static mock-fetch preload: all behavior is driven by env vars, so it lives at module
+// scope (it closes over nothing).
+const PRELOAD_SOURCE = `import { appendFileSync, writeFileSync } from "node:fs";
 let stored = "";
 let created = false;
 globalThis.fetch = async (_url, init) => {
@@ -60,6 +51,14 @@ globalThis.fetch = async (_url, init) => {
   } else if (query.includes("issueCreate")) {
     appendFileSync(process.env.MUTATION_LOG, "issueCreate\\n");
     if (process.env.LOSE_CREATE_RESPONSE) throw new Error("socket hang up");
+    if (process.env.CREATE_RESPONSE_DATA !== undefined) {
+      // HTTP-success payload whose data is missing/null/empty: the mutation was ACCEPTED
+      // (already logged above) but nothing about it is confirmed.
+      return new Response(
+        JSON.stringify({ data: JSON.parse(process.env.CREATE_RESPONSE_DATA) }),
+        { status: 200 }
+      );
+    }
     stored = variables.input.description || "";
     writeFileSync(process.env.SENT_BODY_LOG, stored);
     created = true;
@@ -78,9 +77,24 @@ globalThis.fetch = async (_url, init) => {
   }
   return new Response(JSON.stringify({ data }), { status: 200 });
 };
-`,
-    "utf8"
-  );
+`;
+
+function runCreateCli(
+  args,
+  cwd,
+  {
+    postWriteDescription,
+    loseCreateResponse = false,
+    loseReadbackResponse = false,
+    createResponseData,
+    env = {},
+  } = {}
+) {
+  const supportDir = mkdtempSync(path.join(tmpdir(), "linear-create-guard-"));
+  const preload = path.join(supportDir, "mock-fetch.mjs");
+  const mutationLog = path.join(supportDir, "mutations.log");
+  const sentBodyLog = path.join(supportDir, "sent-body.md");
+  writeFileSync(preload, PRELOAD_SOURCE, "utf8");
   const result = spawnSync(process.execPath, ["--import", preload, CLI, ...args], {
     cwd,
     encoding: "utf8",
@@ -92,6 +106,9 @@ globalThis.fetch = async (_url, init) => {
       AIOS_LINEAR_TEAM_KEY: "",
       AIOS_LINEAR_ORIGIN_LABEL: "",
       ...(loseCreateResponse ? { LOSE_CREATE_RESPONSE: "1" } : {}),
+      ...(createResponseData === undefined
+        ? {}
+        : { CREATE_RESPONSE_DATA: JSON.stringify(createResponseData) }),
       ...(loseReadbackResponse ? { LOSE_READBACK_RESPONSE: "1" } : {}),
       ...(postWriteDescription === undefined
         ? {}
@@ -215,6 +232,28 @@ test("a failed readback prints verify-desc against the sent template body", () =
   assert.match(recovered, /^# My slice$/m, "the saved body is the stamped template");
   assert.equal(recovered, result.sentBody, "the verify-desc file holds exactly the sent body");
 });
+
+for (const [label, createResponseData] of [
+  ["null data", null],
+  ["missing issueCreate", {}],
+]) {
+  test(`an HTTP-success create response with ${label} routes to the unconfirmed path`, () => {
+    // The mutation was accepted on the wire but nothing confirms the result — this must
+    // print the duplicate-prevention warning, never a raw TypeError from d.issueCreate.
+    const cwd = mkdtempSync(path.join(tmpdir(), "linear-create-nulldata-"));
+    writeFileSync(path.join(cwd, "spec.md"), "CircleSlash", "utf8");
+    const result = runCreateCli(["create", "New slice", "--desc", "spec.md"], cwd, {
+      createResponseData,
+    });
+    rmSync(cwd, { recursive: true, force: true });
+    assert.equal(result.status, 1);
+    assert.equal(result.mutations, "issueCreate\n", "the create mutation is sent exactly once");
+    assert.match(result.stderr, /create FAILED/);
+    assert.match(result.stderr, /NOT retried/);
+    assert.match(result.stderr, /may have created the issue/);
+    assert.doesNotMatch(result.stderr, /TypeError|Cannot read properties/);
+  });
+}
 
 test("a lost create response is reported without retrying the mutation", () => {
   const cwd = mkdtempSync(path.join(tmpdir(), "linear-create-lost-"));

@@ -126,12 +126,16 @@ function reportDescriptionNotConfirmed({ identifier, description, force, readbac
   process.exit(1);
 }
 
-export async function cmdCreate(args) {
-  const { title, description, labels, state, parent, assignee, project, priority, force } =
-    parseCreateArgs(args);
-  // Same pre-write guard as set-desc/patch-desc (AIO-1026): refuse markdown Linear is known
-  // to corrupt BEFORE any network traffic, so a rejected description means zero mutations.
-  lintDescription(description, { force });
+async function resolveCreateInput({
+  title,
+  description,
+  labels,
+  state,
+  parent,
+  assignee,
+  project,
+  priority,
+}) {
   const teamId = await findTeamId(DEFAULT_TEAM_KEY);
   const st = await findTeamState(teamId, state);
   if (!st) {
@@ -159,6 +163,16 @@ export async function cmdCreate(args) {
   }
   if (project) input.projectId = (await resolveProject(project)).id;
   if (priority !== null) input.priority = priority;
+  return input;
+}
+
+export async function cmdCreate(args) {
+  const parsed = parseCreateArgs(args);
+  const { title, description, force } = parsed;
+  // Same pre-write guard as set-desc/patch-desc (AIO-1026): refuse markdown Linear is known
+  // to corrupt BEFORE any network traffic, so a rejected description means zero mutations.
+  lintDescription(description, { force });
+  const input = await resolveCreateInput(parsed);
   let d;
   try {
     d = await gql(
@@ -169,9 +183,13 @@ export async function cmdCreate(args) {
   } catch (error) {
     reportUnconfirmedCreate(title, error.message);
   }
-  const i = d.issueCreate?.issue;
-  if (!d.issueCreate?.success || !i)
-    reportUnconfirmedCreate(title, "issueCreate returned no issue.");
+  // An HTTP-success payload with missing/null data (Linear or an intermediary accepting the
+  // mutation but returning no result) makes gql return undefined — that is just as
+  // unconfirmed as a lost response, and must never surface as a raw TypeError instead of
+  // the duplicate-prevention warning.
+  const i = d?.issueCreate?.issue;
+  if (!d?.issueCreate?.success || !i)
+    reportUnconfirmedCreate(title, "issueCreate returned no confirmation (missing or null data).");
   console.log(`created ${i.identifier}  ${i.title}\n${i.url}\nbranch: ${i.branchName}`);
   if (description) {
     // Post-write readback bound to the issue the mutation just returned, mirroring set-desc.
