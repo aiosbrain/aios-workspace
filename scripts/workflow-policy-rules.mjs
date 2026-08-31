@@ -12,9 +12,12 @@
  */
 import path from "node:path";
 import { walkScalars } from "./workflow-yaml.mjs";
-import { MIN_JUSTIFICATION, PR_LIKE_EVENTS, RULES } from "./workflow-policy-catalogue.mjs";
+import { PR_LIKE_EVENTS } from "./workflow-policy-catalogue.mjs";
 
+// Re-exported so callers keep one import site for the whole policy surface, even though the
+// catalogue and the waiver validator are now their own modules.
 export { MIN_JUSTIFICATION, PR_LIKE_EVENTS, RULES } from "./workflow-policy-catalogue.mjs";
+export { validateAllowlist } from "./workflow-policy-allowlist.mjs";
 
 const SECRET_REF = /\bsecrets\s*(?:\.\s*([A-Za-z_][\w-]*)|\[)/g;
 // `github.event.` with the trailing dot: `github.event_name` is a fixed trigger name, not input.
@@ -100,18 +103,25 @@ function workflowRunReach(on, byName, reach) {
     };
   let found = null;
   for (const name of upstream) {
-    const src = byName.get(String(name));
-    if (!src)
+    // `workflows:` matches by NAME, and nothing stops two files sharing one `name:`. GitHub runs
+    // the downstream for EITHER of them, so every candidate has to be considered and the strongest
+    // reachability wins. A last-write-wins lookup here silently misclassified the downstream as
+    // unreachable whenever the discarded twin was the PR-reachable one — and an unreachable file is
+    // one no rule runs against at all.
+    const candidates = byName.get(String(name)) ?? [];
+    if (candidates.length === 0)
       return {
         reason: `workflow_run of unresolved workflow "${name}" (fail-closed)`,
         prTarget: true,
       };
-    const up = reach.get(src.rel);
-    if (!up) continue;
-    // Keep looking for a pull_request_target origin: "any path" is what decides the audit.
-    if (up.prTarget)
-      return { reason: `workflow_run of pull_request_target "${name}"`, prTarget: true };
-    found ??= { reason: `workflow_run of PR-like "${name}"`, prTarget: false };
+    for (const src of candidates) {
+      const up = reach.get(src.rel);
+      if (!up) continue;
+      // Keep looking for a pull_request_target origin: "any path" is what decides the audit.
+      if (up.prTarget)
+        return { reason: `workflow_run of pull_request_target "${name}"`, prTarget: true };
+      found ??= { reason: `workflow_run of PR-like "${name}"`, prTarget: false };
+    }
   }
   return found;
 }
@@ -166,8 +176,14 @@ function workflowCallReach(file, files, reach) {
  */
 export function computeReachability(files) {
   const reach = new Map();
+  // Every file per name, never the last one wins — see workflowRunReach.
   const byName = new Map();
-  for (const f of files) if (f.doc?.name) byName.set(String(f.doc.name), f);
+  for (const f of files) {
+    if (!f.doc?.name) continue;
+    const key = String(f.doc.name);
+    if (!byName.has(key)) byName.set(key, []);
+    byName.get(key).push(f);
+  }
 
   // An origin may be discovered AFTER a file is first marked reachable (caller A is `pull_request`,
   // caller B is `pull_request_target`, and B is only reached on a later pass). A false→true upgrade
@@ -395,6 +411,19 @@ function auditJob(jobId, job, ctx) {
   if (jobUses)
     add(jobId, "mutable-action-ref", lineOf(job, "uses"), `\`uses: ${job.uses}\` — ${jobUses}`);
 
+  // `secrets: inherit` hands the callee EVERY secret the caller holds while containing no
+  // `secrets.*` expression anywhere, so the scalar walk below sees nothing. A caller job that
+  // passes it typically has no `steps` either, so without this the whole caller/callee pair
+  // vanishes from the report. The map form (`secrets: {NAME: ${{ secrets.NAME }}}`) needs no
+  // special case — those ARE expressions, and auditScope catches them.
+  if (typeof job.secrets === "string" && job.secrets.trim() === "inherit")
+    add(
+      jobId,
+      "secrets-in-pr-reachable",
+      lineOf(job, "secrets"),
+      "`secrets: inherit` passes every caller secret to this job"
+    );
+
   auditScope(jobId, walkScalars(job, `jobs.${jobId}`, jobLine), add);
 
   for (const [index, step] of (Array.isArray(job.steps) ? job.steps : []).entries()) {
@@ -441,45 +470,4 @@ export function auditWorkflow(file, prTarget = false) {
       auditJob(jobId, job, { jobLine: lineOf(jobs, jobId), isPrTarget, add, tainted });
   }
   return found;
-}
-
-function entryProblems(entry) {
-  const problems = [];
-  if (typeof entry?.workflow !== "string" || entry.workflow.trim() === "")
-    problems.push("`workflow` must be a repo-relative path");
-  if (typeof entry?.job !== "string" || entry.job.trim() === "")
-    problems.push('`job` must be a job id, or "*" for every job in that one file');
-  if (typeof entry?.rule !== "string" || !Object.hasOwn(RULES, entry.rule))
-    problems.push(
-      `\`rule\` must be one of: ${Object.keys(RULES).join(", ")} (a blanket waiver is not expressible)`
-    );
-  if (typeof entry?.owner !== "string" || entry.owner.trim() === "")
-    problems.push("`owner` must name an accountable person or team");
-  if (
-    typeof entry?.justification !== "string" ||
-    entry.justification.trim().length < MIN_JUSTIFICATION
-  )
-    problems.push(
-      `\`justification\` must be at least ${MIN_JUSTIFICATION} characters and name the follow-up that removes this waiver`
-    );
-  return problems;
-}
-
-/** Validate the waiver file. Returns { entries, findings } — a bad entry is itself a violation. */
-export function validateAllowlist(raw, file) {
-  const findings = [];
-  const entries = [];
-  const invalid = (detail) =>
-    findings.push({ file, job: "(allowlist)", rule: "allowlist-entry-invalid", line: 0, detail });
-  const list = Array.isArray(raw?.entries) ? raw.entries : null;
-  if (!list) {
-    invalid("the allowlist must be an object with an `entries` array");
-    return { entries, findings };
-  }
-  for (const [index, entry] of list.entries()) {
-    const problems = entryProblems(entry);
-    if (problems.length) invalid(`entry #${index + 1}: ${problems.join("; ")}`);
-    else entries.push({ ...entry, used: false });
-  }
-  return { entries, findings };
 }

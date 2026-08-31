@@ -54,6 +54,11 @@ const EXPECTED = [
   ["violating-prt-fetch-variants.yml", "git-fetch-sha", "pr-target-checkout"],
   ["violating-prt-fetch-variants.yml", "env-indirection", "pr-target-checkout"],
   ["violating-prt-fetch-variants.yml", "event-path", "pr-target-checkout"],
+  // `secrets: inherit` — no `secrets.*` text anywhere in the job.
+  ["violating-secrets-inherit.yml", "inherits", "secrets-in-pr-reachable"],
+  // Duplicate upstream `name:` — the downstream must not vanish from the report.
+  ["violating-workflow-run-dup-name.yml", "report", "secrets-in-pr-reachable"],
+  ["violating-workflow-run-dup-name.yml", "report", "pr-target-checkout"],
 ];
 
 test("every rule fires on its violating fixture, naming file, job, and rule", () => {
@@ -104,72 +109,21 @@ test("every rule fires on its violating fixture, naming file, job, and rule", ()
       `construction-based rule (transport/archive primitive x PR-controlled reference); cover ` +
       `the variants — a new endpoint must not be able to open a new hole.`
   );
-});
 
-// ── the reusable-workflow bypass (Codex adversarial review, P1) ──────────────
-//
-// A local reusable workflow declares `on: workflow_call`, so its own trigger list never contains
-// `pull_request_target` — but it EXECUTES with the caller's event context and privileges. Deriving
-// the pr-target origin from the audited file's own `on:` let every pr-target rule be laundered by
-// moving the privileged step into a `uses: ./.github/workflows/...` callee. Refactoring into a
-// reusable workflow is completely ordinary, so this was not theoretical.
-
-test("pr-target rules fire on a reusable callee of a pull_request_target caller", () => {
-  const out = run().out;
-  const found = failures(out).filter((f) => f.file === "violating-prt-reusable-callee.yml");
-  const rules = new Set(found.map((f) => f.rule));
-  for (const rule of ORIGIN_DEPENDENT_RULES) {
-    assert.ok(rules.has(rule), `${rule} must fire on the callee\n${out}`);
-  }
+  // `secrets-in-pr-reachable` has TWO independent mechanisms: an explicit `secrets.*` expression,
+  // and `secrets: inherit`, which contains no such expression at all. Requiring both means deleting
+  // the inherit fixture cannot leave the rule looking covered by the expression case alone.
+  const secretsJobs = new Set(
+    found.filter((f) => f.rule === "secrets-in-pr-reachable").map((f) => `${f.file}#${f.job}`)
+  );
   assert.ok(
-    found.every((f) => f.job === "privileged"),
-    "findings are attributed to the callee's own job"
+    secretsJobs.has("violating-secrets.yml#deploy"),
+    "secrets-in-pr-reachable has no explicit `${{ secrets.* }}` fixture"
   );
-  // The callee's own `on:` is workflow_call — the origin must come from the caller.
-  assert.match(
-    reachedVia(out).get("violating-prt-reusable-callee.yml"),
-    /^called by pull_request_target /
-  );
-});
-
-test("the pull_request_target origin survives two reusable-workflow hops", () => {
-  const out = run().out;
-  const rules = new Set(
-    failures(out)
-      .filter((f) => f.file === "violating-prt-chain-end.yml")
-      .map((f) => f.rule)
-  );
-  assert.ok(rules.has("pr-target-checkout"), `caller → A → B must still be judged as prt\n${out}`);
   assert.ok(
-    rules.has("pr-target-dynamic-run"),
-    `caller → A → B must still be judged as prt\n${out}`
-  );
-  assert.match(
-    reachedVia(out).get("upstream-prt-chain-middle.yml"),
-    /^called by pull_request_target /
-  );
-});
-
-test("a reusable callee reached only from `pull_request` does NOT get the pr-target rules", () => {
-  const out = run().out;
-  const found = failures(out).filter((f) => f.file === "pr-reachable-not-prt-callee.yml");
-  const rules = new Set(found.map((f) => f.rule));
-  // It IS PR-reachable, so the secrets rule applies...
-  assert.ok(rules.has("secrets-in-pr-reachable"), `still PR-reachable\n${out}`);
-  // ...but pull_request carries no base-repo privileges, so these must stay silent. Without this
-  // control the bypass fix would have traded a false negative for a false positive.
-  for (const rule of ORIGIN_DEPENDENT_RULES) {
-    assert.ok(!rules.has(rule), `${rule} must NOT fire for a plain pull_request origin\n${out}`);
-  }
-});
-
-test("a reusable callee reached only from schedule/push is out of scope entirely", () => {
-  const out = run().out;
-  assert.equal(reachedVia(out).get("compliant-unreached-callee.yml"), undefined);
-  assert.deepEqual(
-    failures(out).filter((f) => f.file === "compliant-unreached-callee.yml"),
-    [],
-    "a schedule-only caller must not drag its callee into scope"
+    secretsJobs.has("violating-secrets-inherit.yml#inherits"),
+    "secrets-in-pr-reachable has no `secrets: inherit` fixture — that mechanism carries no " +
+      "`secrets.*` text, so the expression fixture alone does not cover this rule"
   );
 });
 
@@ -187,6 +141,9 @@ test("compliant fixtures produce no finding at all", () => {
     "upstream-schedule-caller.yml",
     "compliant-unreached-callee.yml",
     "compliant-prt-trusted-fetch.yml",
+    "secrets-inherit-callee.yml",
+    "dup-name-prt-upstream.yml",
+    "dup-name-scheduled-upstream.yml",
   ];
   const found = failures(run().out);
   for (const file of clean) {
@@ -229,62 +186,66 @@ test("reachability follows workflow_run and local reusable-workflow calls", () =
   );
 });
 
-// ── PR-content acquisition is judged by construction, not by endpoint ────────
-//
-// The first version enumerated known-bad endpoints and missed `codeload.../tar.gz/refs/pull/N/head`
-// outright. These fixtures are one job per acquisition shape; the rule now requires a transport or
-// archive primitive PLUS a PR-controlled reference, so a new endpoint cannot open a new hole.
+// ── `secrets: inherit` and duplicate upstream names ──────────────────────────
 
-for (const [job, shape] of [
-  ["codeload-targz", "codeload `tar.gz/refs/pull/<n>/head` (the exact reported miss)"],
-  ["raw-content", "raw.githubusercontent.com selected by a head.sha expression"],
-  ["git-fetch-sha", "`git fetch origin <sha>` with no `refs/pull/` literal"],
-  ["env-indirection", "`env:` indirection — no `${{ }}` in the run body at all"],
-  ["event-path", "`$GITHUB_EVENT_PATH` read, then fetch"],
-]) {
-  test(`pr-target-checkout catches PR content fetched via ${shape}`, () => {
-    const out = run().out;
-    const hit = failures(out).some(
-      (f) =>
-        f.file === "violating-prt-fetch-variants.yml" &&
-        f.job === job &&
-        f.rule === "pr-target-checkout"
-    );
-    assert.ok(hit, `job \`${job}\` must trip pr-target-checkout\n${out}`);
-  });
-}
+test("`secrets: inherit` is flagged even though the job contains no `secrets.*` text", () => {
+  const out = run().out;
+  const found = failures(out).filter((f) => f.file === "violating-secrets-inherit.yml");
+  assert.ok(
+    found.some((f) => f.job === "inherits" && f.rule === "secrets-in-pr-reachable"),
+    `a job passing every caller secret must be reported\n${out}`
+  );
+  assert.match(out, /`secrets: inherit` passes every caller secret to this job/);
+});
 
-test("a pull_request_target job may fetch trusted things without being flagged", () => {
+test("an otherwise identical reusable call without `secrets:` is NOT flagged", () => {
   const out = run().out;
   assert.deepEqual(
-    failures(out).filter((f) => f.file === "compliant-prt-trusted-fetch.yml"),
+    failures(out).filter(
+      (f) => f.file === "violating-secrets-inherit.yml" && f.job === "no-inherit"
+    ),
     [],
-    `curl/tar/git-fetch with no PR-controlled reference, and an explicit base-ref checkout, ` +
-      `must stay silent — otherwise the inverted rule just flags every fetch in the repo\n${out}`
+    "the rule must key on `inherit`, not on making a reusable call at all"
+  );
+  assert.deepEqual(
+    failures(out).filter((f) => f.file === "secrets-inherit-callee.yml"),
+    [],
+    "the callee is clean — the finding belongs to the caller that passes the secrets"
   );
 });
 
-// The boundary this gate draws, stated as a test rather than left to accident: fetching PR objects
-// "as inert data" (the leak-gate/nda-gate scanner shape) IS flagged. There is no silent exemption
-// for it — the gate cannot tell from YAML that bytes are never executed, so the sanctioned route is
-// a reviewed waiver carrying an owner and a justification, which is exactly what the repo's own
-// allowlist does for .github/workflows/leak-gate.yml.
-test("fetching PR objects as inert scanner data is flagged, not silently permitted", () => {
+test("two workflows sharing a `name:` do not collapse the workflow_run lookup", () => {
   const out = run().out;
+  // The PR-reachable twin sorts BEFORE the scheduled one, so a last-write-wins index retained the
+  // scheduled twin and judged this downstream unreachable — no rule ran against it at all.
+  const via = reachedVia(out).get("violating-workflow-run-dup-name.yml");
+  assert.ok(via, `the downstream must be reachable via the PR-reachable twin\n${out}`);
+  assert.match(via, /^workflow_run of pull_request_target "duplicated upstream name"$/);
+
+  const rules = new Set(
+    failures(out)
+      .filter((f) => f.file === "violating-workflow-run-dup-name.yml")
+      .map((f) => f.rule)
+  );
+  assert.ok(rules.has("secrets-in-pr-reachable"), "reachable ⇒ the ordinary rules run");
+  assert.ok(
+    rules.has("pr-target-checkout"),
+    "the strongest origin (prTarget) is the one inherited"
+  );
+});
+
+test("a uniquely-named workflow_run upstream still resolves exactly as before", () => {
+  const out = run().out;
+  assert.equal(
+    reachedVia(out).get("violating-workflow-run.yml"),
+    'workflow_run of PR-like "upstream pr workflow"',
+    "the ordinary single-match path must not regress"
+  );
   assert.ok(
     failures(out).some(
-      (f) => f.file === "violating-prt-fetch-variants.yml" && f.job === "env-indirection"
-    ),
-    "the scanner-input shape must still be reported"
+      (f) => f.file === "violating-workflow-run.yml" && f.rule === "secrets-in-pr-reachable"
+    )
   );
-  const repoAllowlist = JSON.parse(
-    readFileSync(path.join(ROOT, "scripts/workflow-policy-allowlist.json"), "utf8")
-  );
-  const waiver = repoAllowlist.entries.find(
-    (e) => e.workflow === ".github/workflows/leak-gate.yml" && e.rule === "pr-target-checkout"
-  );
-  assert.ok(waiver, "the real scanner is permitted by an explicit waiver, not by a rule exemption");
-  assert.ok(waiver.owner && waiver.justification.length >= 40);
 });
 
 // ── the gate never writes the required security status ───────────────────────

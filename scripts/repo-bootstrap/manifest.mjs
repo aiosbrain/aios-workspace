@@ -105,6 +105,7 @@ export const BOOTSTRAP_MANAGED = [
   { dest: "scripts/check-workflow-policy.mjs", src: "scripts/check-workflow-policy.mjs" },
   { dest: "scripts/workflow-policy-rules.mjs", src: "scripts/workflow-policy-rules.mjs" },
   { dest: "scripts/workflow-policy-catalogue.mjs", src: "scripts/workflow-policy-catalogue.mjs" },
+  { dest: "scripts/workflow-policy-allowlist.mjs", src: "scripts/workflow-policy-allowlist.mjs" },
   { dest: "scripts/workflow-yaml.mjs", src: "scripts/workflow-yaml.mjs" },
   // Both gates import `./git-files.mjs`. Since AIO-601 the toolkit's scripts/git-files.mjs
   // is a relative-path SHIM into packages/foundation — stamping the shim would dangle in a
