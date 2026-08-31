@@ -92,8 +92,10 @@ export async function cmdSlack(repo, rest, options = {}) {
     return 0;
   }
   if (!VERBS[verb]) {
+    const { shownArg } = await import("./args.mjs");
     console.log(slackUsage());
-    output.diagnostic(`error: unknown slack verb: ${verb}`);
+    // shownArg: a pasted credential in the verb slot must not be echoed into logs.
+    output.diagnostic(`error: unknown slack verb: ${shownArg(verb)}`);
     return 2;
   }
   // Verb-level help NEVER resolves credentials or touches the network: on an unconfigured

@@ -46,15 +46,25 @@ function keychainRead(service, runner = spawnSync) {
   return String(result.stdout ?? "").replace(/\n$/, "");
 }
 
+/** Parse a stored reference to { kind, locator }, or null when it is not a reference.
+ *  A parsed locator matched the reference grammar, so it is safe to name in an error —
+ *  a raw secret can never round-trip through this into any message. */
+export function parseSlackCredentialReference(reference) {
+  const envMatch = ENV_REFERENCE.exec(String(reference ?? ""));
+  if (envMatch) return { kind: "env", locator: envMatch[1] };
+  const keychainMatch = KEYCHAIN_REFERENCE.exec(String(reference ?? ""));
+  if (keychainMatch) return { kind: "keychain", locator: keychainMatch[1] };
+  return null;
+}
+
 export function resolveSlackReferenceValue(
   reference,
   { env = process.env, keychain = keychainRead } = {}
 ) {
-  const envMatch = ENV_REFERENCE.exec(String(reference ?? ""));
-  if (envMatch) return env[envMatch[1]] || null;
-  const keychainMatch = KEYCHAIN_REFERENCE.exec(String(reference ?? ""));
-  if (keychainMatch) return keychain(keychainMatch[1]) || null;
-  return null;
+  const parsed = parseSlackCredentialReference(reference);
+  if (!parsed) return null;
+  if (parsed.kind === "env") return env[parsed.locator] || null;
+  return keychain(parsed.locator) || null;
 }
 
 /** agent-context.json (Hermes/Mac agent config): AGENT_CONTEXT → HERMES_HOME → ~/.claude. */
@@ -147,11 +157,27 @@ export async function resolveSlackCredential(options = {}) {
       load: async () => {
         const reference = await readSlackReference(options);
         if (!reference) return null;
+        // NEVER interpolate the stored value into a message before it has parsed as a
+        // reference: if config carries a raw token instead of env:/keychain:, echoing it
+        // would put the secret on stderr and in CI logs (Codex round 4). The config
+        // broker's rejectSecrets fires first on the read path; this is the belt for any
+        // caller that reaches this root with an unvalidated document.
+        const parsed = parseSlackCredentialReference(reference);
+        if (!parsed) {
+          throw new AiosError(
+            "AIOS_E_CONFIG_INVALID",
+            "credentialSources.slack is not a valid credential reference " +
+              "(value intentionally not shown).",
+            "Store env:VARIABLE_NAME or keychain:service — never the secret itself."
+          );
+        }
         const value = resolveSlackReferenceValue(reference, options);
         if (!value) {
+          // Safe to name: kind:locator matched the reference grammar above.
           throw new AiosError(
             "AIOS_E_CREDENTIAL_INCOMPLETE",
-            `The configured Slack credential reference (${reference}) did not resolve to a value.`,
+            `The configured Slack credential reference (${parsed.kind}:${parsed.locator}) ` +
+              "did not resolve to a value.",
             "Make the referenced secret available, or store a working reference under " +
               "credentialSources.slack."
           );

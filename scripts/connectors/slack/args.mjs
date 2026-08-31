@@ -8,6 +8,14 @@ import { AiosError } from "../../cli.mjs";
 const usageError = (message) =>
   new AiosError("AIOS_E_USAGE", message, "Run `aios slack help` for the verb reference.");
 
+// A misplaced argv value can be a pasted credential (`aios slack xoxp-… whoami`,
+// `aios slack whoami xoxp-…`). Usage errors echo the offending argument so the user can
+// find their typo — but never when it is token-shaped, or the echo itself becomes the
+// leak in a CI/agent log (AIO-1068 round-4 egress audit).
+const SECRET_SHAPED = /^(xox[a-z]-|sk-|ghp_|github_pat_|lin_api_|glpat-|Bearer\s)/i;
+export const shownArg = (value) =>
+  SECRET_SHAPED.test(String(value ?? "")) ? "(token-shaped value not shown)" : value;
+
 /**
  * @param {string[]} argv       argv after the verb
  * @param {object}   spec       { flags: {name: "value"|"boolean"}, positional?: string,
@@ -36,7 +44,7 @@ export function parseVerbArgs(argv, spec = {}) {
     }
   }
   if (positionals.length > (spec.positional ? 1 : 0)) {
-    throw usageError(`Unexpected argument: ${positionals[spec.positional ? 1 : 0]}`);
+    throw usageError(`Unexpected argument: ${shownArg(positionals[spec.positional ? 1 : 0])}`);
   }
   if (spec.positional && positionals.length) parsed[spec.positional] = positionals[0];
   for (const group of spec.requireOneOf ?? []) {
