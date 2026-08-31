@@ -5,7 +5,7 @@
  * validate → offline status) — all driven from the INSTALLED tarball only.
  */
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { isScrubbedName } from "../../helpers/scrubbed-env.mjs";
@@ -47,6 +47,32 @@ export function freshInstallJourney(ctx) {
   return { prefix, pkgDir, bin };
 }
 
+/**
+ * Evaluate an import trace with a POSITIVE control before the negative assertion: an
+ * empty trace (preload ignored, hook failure, wrong path) or one missing the installed
+ * CLI's own entry module means the tracer never observed the process — that is a
+ * harness failure (AIOS_ACCEPTANCE_HARNESS_ERROR), never a pass. Pure for unit tests.
+ */
+export function evaluateImportTrace({ traceText, checkoutUrl, artifactUrl, markerUrl }) {
+  const urls = String(traceText).split("\n").filter(Boolean);
+  const harnessError = (why) => {
+    const error = new Error(
+      `import-trace probe produced no usable trace (${why}) — the tracer preload did ` +
+        "not observe the CLI, so checkout isolation was NOT verified; failing as a " +
+        "harness error, not a pass"
+    );
+    error.code = "AIOS_ACCEPTANCE_HARNESS_ERROR";
+    return error;
+  };
+  if (urls.length === 0) throw harnessError("empty trace");
+  if (!urls.includes(markerUrl)) {
+    throw harnessError(`expected entry-module marker missing: ${markerUrl}`);
+  }
+  return urls.filter(
+    (url) => url.startsWith(`${checkoutUrl}/`) && !url.startsWith(`${artifactUrl}/`)
+  );
+}
+
 /** Probes that fail the cell if any developer-environment leakage can participate. */
 export function isolationProbes(ctx, install) {
   const cliEnv = ctx.cliEnv();
@@ -72,12 +98,18 @@ export function isolationProbes(ctx, install) {
     }),
     label: "import-trace-doctor",
   });
-  const checkoutUrl = pathToFileURL(ctx.checkoutRoot).href;
-  const artifactUrl = pathToFileURL(ctx.artifactDir).href;
-  const offenders = readFileSync(trace, "utf8")
-    .split("\n")
-    .filter(Boolean)
-    .filter((url) => url.startsWith(`${checkoutUrl}/`) && !url.startsWith(`${artifactUrl}/`));
+  // Positive control first: the trace must contain the installed CLI's own entry module
+  // (realpath'd — the .bin symlink resolves before Node records the URL) or the tracer
+  // never ran and the negative assertion below would pass vacuously.
+  const markerUrl = pathToFileURL(
+    realpathSync(path.join(install.pkgDir, "scripts", "aios.mjs"))
+  ).href;
+  const offenders = evaluateImportTrace({
+    traceText: readFileSync(trace, "utf8"),
+    checkoutUrl: pathToFileURL(ctx.checkoutRoot).href,
+    artifactUrl: pathToFileURL(ctx.artifactDir).href,
+    markerUrl,
+  });
   assert.deepEqual(offenders, [], `installed CLI imported from the checkout: ${offenders[0]}`);
 
   ctx.record("isolation-probes", {
@@ -85,6 +117,7 @@ export function isolationProbes(ctx, install) {
     forbiddenTools: "none reachable",
     ambientCredentials: "none",
     escapingLinks: "none",
+    importTraceMarker: "entry module observed",
     checkoutImports: "none",
   });
 }

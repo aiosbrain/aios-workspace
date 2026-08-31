@@ -19,8 +19,13 @@ import {
   sha256Hex,
 } from "./package-acceptance/lib/context.mjs";
 import { runFaultControls } from "./package-acceptance/lib/faults.mjs";
+import { evaluateImportTrace } from "./package-acceptance/lib/journeys-core.mjs";
 import { runNpmInstall } from "./package-acceptance/lib/journeys-lifecycle.mjs";
-import { assertCleanPackSurface, findDirtyPackagedPaths } from "./package-acceptance/pack.mjs";
+import {
+  assertCleanPackSurface,
+  findDirtyPackagedPaths,
+  withCleanSurfaceBarrier,
+} from "./package-acceptance/pack.mjs";
 
 function makeArtifact(base, { tamper = false } = {}) {
   const artifactDir = path.join(base, "artifact");
@@ -197,6 +202,84 @@ test("pack refuses a dirty packaged surface and passes a clean one", () => {
     /refusing to pack.*scripts\/aios\.mjs/s
   );
   assertCleanPackSurface(root, execFor("?? test/only-test-churn.mjs\n"));
+});
+
+test("a pack step that mutates the packaged surface mid-pack is refused after the fact", () => {
+  const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
+  // Simulated prepack/build hook: the surface is clean going in, but the pack step
+  // regenerates a shipped file — the post-pack barrier must refuse, naming the path.
+  let dirty = false;
+  const exec = () => (dirty ? " M scripts/aios.mjs\n" : "");
+  let packRan = false;
+  assert.throws(
+    () =>
+      withCleanSurfaceBarrier(
+        root,
+        () => {
+          packRan = true;
+          dirty = true; // the "pack" mutated a packaged file
+        },
+        exec
+      ),
+    /refusing to pack.*scripts\/aios\.mjs/s
+  );
+  assert.equal(packRan, true, "the refusal must come from the POST-pack assertion");
+  // Clean before and after → the barrier passes the pack result through.
+  assert.equal(
+    withCleanSurfaceBarrier(
+      root,
+      () => "tarball",
+      () => ""
+    ),
+    "tarball"
+  );
+});
+
+test("import-trace probe requires a positive marker — an empty trace is a harness error", () => {
+  const args = {
+    checkoutUrl: "file:///checkout",
+    artifactUrl: "file:///artifact",
+    markerUrl: "file:///prefix/node_modules/@aiosbrain/aios/scripts/aios.mjs",
+  };
+  // Suppressed/ignored preload → empty trace: must FAIL as harness-error, never pass.
+  assert.throws(
+    () => evaluateImportTrace({ ...args, traceText: "" }),
+    (error) => {
+      assert.equal(error.code, "AIOS_ACCEPTANCE_HARNESS_ERROR");
+      assert.match(error.message, /empty trace/);
+      return true;
+    }
+  );
+  // A trace that never observed the CLI entry module is equally unusable.
+  assert.throws(
+    () => evaluateImportTrace({ ...args, traceText: "file:///somewhere/else.mjs\n" }),
+    (error) => {
+      assert.equal(error.code, "AIOS_ACCEPTANCE_HARNESS_ERROR");
+      assert.match(error.message, /marker missing/);
+      return true;
+    }
+  );
+  // Normal run: marker present, no checkout URL → no offenders.
+  assert.deepEqual(
+    evaluateImportTrace({
+      ...args,
+      traceText: `${args.markerUrl}\nfile:///prefix/node_modules/dep/index.mjs\n`,
+    }),
+    []
+  );
+  // Marker present AND a checkout import → the offender is surfaced (probe goes red),
+  // while the deliberate artifact-dir preload stays exempt.
+  assert.deepEqual(
+    evaluateImportTrace({
+      ...args,
+      traceText: [
+        args.markerUrl,
+        "file:///artifact/helpers/import-probe.mjs",
+        "file:///checkout/scripts/cli/doctor.mjs",
+      ].join("\n"),
+    }),
+    ["file:///checkout/scripts/cli/doctor.mjs"]
+  );
 });
 
 test("broken fault-control machinery aborts as a harness error, never as a red control", async (t) => {

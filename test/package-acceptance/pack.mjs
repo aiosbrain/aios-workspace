@@ -74,16 +74,32 @@ export function assertCleanPackSurface(root, exec = run) {
   }
 }
 
+/**
+ * Assert a clean packaged surface BEFORE and AFTER `fn` (the build+pack sequence):
+ * prepack/prepare/build hooks can regenerate packaged bytes DURING the pack, and a
+ * post-pack delta means uncommitted bytes were just attributed to candidateSha=HEAD.
+ * Both violations refuse loudly, naming paths only.
+ */
+export function withCleanSurfaceBarrier(root, fn, exec = run) {
+  assertCleanPackSurface(root, exec);
+  const result = fn();
+  assertCleanPackSurface(root, exec);
+  return result;
+}
+
 export function packCandidate(outDir) {
   mkdirSync(outDir, { recursive: true });
-  assertCleanPackSurface(ROOT);
 
-  // dist/ ships prebuilt in the tarball; self-heal exactly like the golden-path test so a
-  // partial checkout fails with the build error rather than a confusing inventory assert.
-  run(process.execPath, [path.join(ROOT, "scripts/ensure-loop-built.mjs"), "--quiet"]);
-
-  const candidateSha = run("git", ["rev-parse", "HEAD"]).trim();
-  const packOut = run("npm", ["pack", "--pack-destination", outDir]);
+  const { candidateSha, packOut } = withCleanSurfaceBarrier(ROOT, () => {
+    // dist/ ships prebuilt in the tarball; self-heal exactly like the golden-path test so
+    // a partial checkout fails with the build error rather than a confusing inventory
+    // assert.
+    run(process.execPath, [path.join(ROOT, "scripts/ensure-loop-built.mjs"), "--quiet"]);
+    return {
+      candidateSha: run("git", ["rev-parse", "HEAD"]).trim(),
+      packOut: run("npm", ["pack", "--pack-destination", outDir]),
+    };
+  });
   const tarballName = packOut.trim().split("\n").at(-1);
   const tarball = path.join(outDir, tarballName);
   const bytes = readFileSync(tarball);
