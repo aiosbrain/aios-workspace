@@ -1,0 +1,134 @@
+# Package acceptance — the release authority for CLI correctness (AIO-1071, CLI-RESET-5).
+#
+# Topology:
+#   exact candidate SHA → ONE pack job (tarball + SHA-256 + inventory + npm metadata +
+#   provenance tuple, uploaded as a workflow artifact)
+#     → Linux Node 22/24/26 and macOS Node 22/24/26 acceptance cells, each of which
+#       downloads that exact artifact, re-verifies the SHA-256 before install, and runs
+#       the full lane (fresh install, isolation probes, diagnostics semantics, configured
+#       use, mocked Linear/Slack journeys, migration interruption/repeat, registry-0.12.0
+#       upgrade with stage-and-verify, rollback, fault-injection negative controls,
+#       sentinel/evidence scan). No cell ever packs its own tarball.
+#
+# Secrets: this workflow carries NO provider secrets by design. Every connector journey
+# is mocked with synthetic sentinel credentials; if a sentinel ever appears in output or
+# evidence the lane goes red. The G1-gated LIVE smokes (Linear sandbox, Slack self-DM)
+# are operator-run manually against the SAME tarball digest recorded here — they are
+# deliberately not part of this workflow.
+#
+# Local single-cell equivalent (Linux-shaped, same journeys + fault controls):
+#   npm run test:package-acceptance
+name: Package acceptance
+
+on:
+  pull_request:
+    paths:
+      - "package.json"
+      - "package-lock.json"
+      - ".npm-version"
+      - ".npmignore"
+      - "scripts/**"
+      - "packages/foundation/**"
+      - "validation/**"
+      - "hooks/**"
+      - "scaffold/**"
+      - "src/**"
+      - "tsconfig.json"
+      - "docs/brain-api.md"
+      - "test/package-acceptance/**"
+      - "test/helpers/mock-linear-provider.mjs"
+      - "test/helpers/mock-slack-provider.mjs"
+      - "test/helpers/import-probe.mjs"
+      - "test/helpers/import-probe-hooks.mjs"
+      - "test/helpers/scrubbed-env.mjs"
+      - ".github/workflows/package-acceptance.yml"
+      - ".github/workflows/publish-npm.yml"
+  workflow_dispatch:
+    inputs:
+      candidate_sha:
+        description: "Exact 40-hex candidate commit SHA to pack and accept"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  pack:
+    # The ONE pack step: every acceptance cell consumes this job's artifact and digest.
+    name: pack candidate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      candidate_sha: ${{ steps.resolve.outputs.sha }}
+    steps:
+      - name: Resolve the exact candidate SHA
+        id: resolve
+        env:
+          DISPATCH_SHA: ${{ inputs.candidate_sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          SHA="${DISPATCH_SHA:-$PR_HEAD_SHA}"
+          if ! printf '%s' "$SHA" | grep -Eq '^[0-9a-f]{40}$'; then
+            echo "::error::candidate SHA must be exactly 40 hex chars (got '$SHA')"
+            exit 1
+          fi
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ steps.resolve.outputs.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Pack once (tarball + SHA-256 + inventory + metadata + provenance)
+        run: node test/package-acceptance/pack.mjs --out "$RUNNER_TEMP/package-candidate"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.0
+        with:
+          name: package-candidate
+          path: ${{ runner.temp }}/package-candidate
+          if-no-files-found: error
+          retention-days: 30
+
+  accept:
+    name: accept (${{ matrix.os }}, Node ${{ matrix.node }})
+    needs: pack
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        node: [22, 24, 26]
+    env:
+      npm_config_engine_strict: "true"
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.pack.outputs.candidate_sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ matrix.node }}
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.0
+        with:
+          name: package-candidate
+          path: ${{ runner.temp }}/package-candidate
+      # Deliberately NO `npm ci`: the cell runner uses Node builtins only, so the
+      # checkout's node_modules cannot exist to participate — the installed tarball is
+      # the whole runtime under test (run-cell re-verifies the digest + candidate SHA).
+      - name: Run the acceptance cell against the downloaded artifact
+        run: >
+          node test/package-acceptance/run-cell.mjs
+          --artifact-dir "$RUNNER_TEMP/package-candidate"
+          --evidence "$RUNNER_TEMP/acceptance-evidence"
+      - name: Retain evidence (digest, versions, commands, schema + fault results)
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.0
+        with:
+          name: acceptance-evidence-${{ matrix.os }}-node${{ matrix.node }}
+          path: ${{ runner.temp }}/acceptance-evidence
+          if-no-files-found: warn
+          retention-days: 30

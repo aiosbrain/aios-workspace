@@ -30,6 +30,7 @@ export const CATEGORIES = {
       "test",
       "test:coverage",
       "test:pack-golden",
+      "test:package-acceptance", // AIO-1071 local single-cell packaged-artifact acceptance lane
       "test:mutation",
     ],
   },
