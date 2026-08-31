@@ -7,7 +7,7 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { appendFileSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { vaultSet, vaultGet } from "../scripts/connector.mjs";
@@ -41,6 +41,43 @@ test("vaultSet no longer depends on PATH at all (AIO-1004)", () => {
     assert.equal(vaultGet(dir, "TEST_TOKEN"), "a-real-value");
   } finally {
     process.env.PATH = savedPath;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("vaultGet tolerates dotenvx 2.x's non-zero exit on an unreadable SIBLING key (AIO-790 shape)", () => {
+  // dotenvx 2.x exits non-zero on `get KEY` when any OTHER key in the .env fails to
+  // decrypt, even though it printed the requested value on stdout. With the resolver
+  // pinning 2.x everywhere (AIO-1004), vaultGet must read stdout regardless of exit
+  // status — otherwise a mixed-key .env (the exact shape of this repo's own .env) makes
+  // every stored secret read back as "" and vaultSet's roundtrip reports it didn't take.
+  const dir = ws();
+  try {
+    vaultSet(dir, "GOOD_TOKEN", "good-value");
+    // Sibling ciphertext the workspace keypair cannot read — same synthetic recipe as
+    // test/linear-dotenvx-scope.test.mjs; not a production secret.
+    appendFileSync(
+      path.join(dir, ".env"),
+      "UNRELATED_API_KEY=encrypted:BNotARealCiphertextForAIO1004==\n"
+    );
+    assert.equal(vaultGet(dir, "GOOD_TOKEN"), "good-value");
+    // A fresh write to the now-mixed file must still roundtrip-verify successfully.
+    vaultSet(dir, "OTHER_TOKEN", "other-value");
+    assert.equal(vaultGet(dir, "OTHER_TOKEN"), "other-value");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("vaultGet still fails closed when the REQUESTED key is genuinely unreadable", () => {
+  const dir = ws();
+  try {
+    vaultSet(dir, "GOOD_TOKEN", "good-value"); // establishes the workspace keypair
+    appendFileSync(path.join(dir, ".env"), "BAD_TOKEN=encrypted:BNotARealCiphertextForAIO1004==\n");
+    // The requested key itself can't decrypt → "" (fail closed), never the ciphertext
+    // and never a decryption-error string surfaced as if it were the secret.
+    assert.equal(vaultGet(dir, "BAD_TOKEN"), "");
+  } finally {
     rmSync(dir, { recursive: true, force: true });
   }
 });

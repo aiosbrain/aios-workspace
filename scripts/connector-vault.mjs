@@ -10,7 +10,7 @@
  */
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -103,14 +103,25 @@ export function vaultGet(repo, env) {
   // Same resolved {command,args} tuple as vaultSet — read and write MUST run the same
   // dotenvx, or the roundtrip check in vaultSet compares across two implementations.
   const dotenvx = resolveDotenvxInvocation();
+  // dotenvx 2.x exits non-zero when any SIBLING key in the file fails to decrypt (AIO-790)
+  // even though `get KEY` printed the requested value on stdout — and pinning the toolkit's
+  // own 2.x makes that the one behaviour everywhere. Mirror decryptDotenvKey in
+  // packages/foundation/src/brain-config.mjs: read stdout regardless of exit status and
+  // treat a clean value as success. Genuine failures — spawn error, empty stdout, a
+  // still-encrypted value, or a decryption-error message — keep failing closed with "",
+  // which is what makes vaultSet's roundtrip check raise its actionable error. Never
+  // print the value; stderr is dropped so nothing secret-adjacent leaks.
   try {
-    return execFileSync(dotenvx.command, [...dotenvx.args, "get", env, "-f", envPath(repo)], {
+    const result = spawnSync(dotenvx.command, [...dotenvx.args, "get", env, "-f", envPath(repo)], {
       cwd: repo,
       env: dotenvxEnv(),
+      encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
-    })
-      .toString()
-      .trim();
+    });
+    const value = (result.stdout || "").trim();
+    if (!value || value.startsWith("encrypted:")) return "";
+    if (/DECRYPTION_FAILED|WRONG_PRIVATE_KEY|could not decrypt/i.test(value)) return "";
+    return value;
   } catch {
     return "";
   }
