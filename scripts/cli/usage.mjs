@@ -48,6 +48,11 @@ export const USAGE_LINES = {
     "                                        `aios linear help` lists every verb; setup: `aios connect linear`",
     "  aios linear status [--json]           report the resolved credential source class (never values)",
   ],
+  slack: [
+    "  aios slack <verb> …                   Slack CLI as YOU (whoami/read/send/dm/react/file/…)",
+    "                                        `aios slack help` lists every verb; setup: `aios slack connect`",
+    "  aios slack status [--json]            report connection state (never token values)",
+  ],
   review: [
     "  aios review                           interactive: toggle inclusion, then push selected",
   ],

@@ -164,7 +164,8 @@ export function collectProvenance(options = {}) {
       // AIO-1067: the Linear adapter ships inside this package (scripts/connectors/linear/),
       // so its version IS the package version — never "unavailable" on a healthy install.
       linear: pkg.dependencies?.["@aiosbrain/aios-linear"] ?? `builtin@${pkg.version ?? "unknown"}`,
-      slack: pkg.dependencies?.["@aiosbrain/aios-slack"] ?? null,
+      // AIO-1068: the Slack adapter ships inside this package too (scripts/connectors/slack/).
+      slack: pkg.dependencies?.["@aiosbrain/aios-slack"] ?? `builtin@${pkg.version ?? "unknown"}`,
     },
     binModes,
     path: { candidates, shadowed: candidates.length > 1 },
