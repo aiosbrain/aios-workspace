@@ -8,7 +8,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
@@ -108,10 +108,22 @@ globalThis.fetch = async (_url, init) => {
 // Pull the recovery-file path a failed create printed, read the saved body, and delete the
 // file (it lives in the OS tmpdir). Proves the printed command round-trips the SENT body.
 function readPrintedRecoveryFile(stderr, command) {
-  const match = stderr.match(new RegExp(`linear ${command} AIO-9 (\\S+)`));
-  assert.ok(match, `stderr must print a "${command}" recovery command:\n${stderr}`);
-  const body = readFileSync(match[1], "utf8");
-  rmSync(match[1], { force: true });
+  // The printed command must quote the path so a TMPDIR containing spaces still
+  // copy-pastes as one argv token.
+  const match = stderr.match(new RegExp(`linear ${command} AIO-9 "([^"]+)"`));
+  assert.ok(
+    match,
+    `stderr must print a "${command}" recovery command with a quoted path:\n${stderr}`
+  );
+  const file = match[1];
+  const dir = path.dirname(file);
+  // The sent body can be sensitive spec content: owner-only file (0600, created
+  // exclusively) inside an unpredictable owner-only mkdtemp dir (0700).
+  assert.equal(statSync(file).mode & 0o777, 0o600, "recovery file must be owner-only");
+  assert.equal(statSync(dir).mode & 0o777, 0o700, "recovery dir must be owner-only");
+  assert.match(path.basename(dir), /^linear-create-/, "recovery file lives in its own mkdtemp dir");
+  const body = readFileSync(file, "utf8");
+  rmSync(dir, { recursive: true, force: true });
   return body;
 }
 // --- create --desc runs the same guards as set-desc/patch-desc (AIO-1026) ---

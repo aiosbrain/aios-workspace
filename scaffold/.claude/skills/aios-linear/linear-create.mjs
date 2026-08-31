@@ -1,7 +1,7 @@
 // `create` command: argument parsing plus the guarded one-shot issueCreate write (AIO-1026).
 // The description runs the SAME two guards as set-desc/patch-desc: lintDescription before
 // any network traffic, confirmStored (bound to the returned identifier) after the write.
-import { readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -100,22 +100,28 @@ function reportUnconfirmedCreate(title, reason) {
 // and a stamped --template are prepended/substituted after --desc is read, so pointing at
 // the original --desc file would false-report drift (verify-desc) or overwrite the
 // origin/template content (set-desc). Save the exact sent body and name that file.
+// The body can be sensitive spec content, so it never lands world-readable in the shared
+// tmpdir: mkdtemp gives an unpredictable owner-only (0700) directory, and the file itself
+// is created exclusively (wx) with 0600.
 function reportDescriptionNotConfirmed({ identifier, description, force, readbackError }) {
-  const sentFile = path.join(tmpdir(), `linear-create-${identifier}-sent-${process.pid}.md`);
-  writeFileSync(sentFile, description, "utf8");
+  const sentDir = mkdtempSync(path.join(tmpdir(), "linear-create-"));
+  const sentFile = path.join(sentDir, `${identifier}-sent.md`);
+  writeFileSync(sentFile, description, { encoding: "utf8", mode: 0o600, flag: "wx" });
+  // The path is quoted in the printed commands so a TMPDIR containing spaces still
+  // copy-pastes as one argv token.
   if (readbackError) {
     console.error(`readback FAILED for created issue ${identifier}: ${readbackError.message}`);
     console.error(`  ${identifier} EXISTS — do not re-run create.`);
     console.error(`  The exact description that was sent is saved at: ${sentFile}`);
     console.error("  Verify what Linear stored:");
-    console.error(`    linear verify-desc ${identifier} ${sentFile}`);
+    console.error(`    linear verify-desc ${identifier} "${sentFile}"`);
   } else {
     console.error(
       `${identifier} was created but its stored description drifted from what was sent.`
     );
     console.error(`  The exact description that was sent is saved at: ${sentFile}`);
     console.error("  Repair it, then rewrite the description:");
-    console.error(`    linear set-desc ${identifier} ${sentFile}${force ? " --force" : ""}`);
+    console.error(`    linear set-desc ${identifier} "${sentFile}"${force ? " --force" : ""}`);
   }
   process.exit(1);
 }
