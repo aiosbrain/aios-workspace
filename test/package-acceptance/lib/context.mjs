@@ -145,6 +145,12 @@ export class CellContext {
   /**
    * Run a command, record it as evidence (redacted), and scan RAW output for sentinels.
    * Non-zero exits throw unless `expectFailure` is set — unknown errors fail closed.
+   *
+   * DEFAULT environment is the ISOLATED node-only-PATH cliEnv(): a caller that omits
+   * `env` gets the environment the isolation probes actually verified, so the installed
+   * CLI can never quietly reach ambient python/jq/dotenvx/checkout tooling. Steps that
+   * genuinely need the runner's toolchain (npm, bash, git) must say so by calling
+   * runWithAmbientEnv().
    */
   run(cmd, args, opts = {}) {
     const { expectFailure = false, label = null, ...execOpts } = opts;
@@ -157,7 +163,7 @@ export class CellContext {
       stdout = execFileSync(cmd, args, {
         encoding: "utf8",
         ...execOpts,
-        env: execOpts.env ?? this.env(),
+        env: execOpts.env ?? this.cliEnv(),
       });
     } catch (error) {
       status = error.status ?? 1;
@@ -174,6 +180,16 @@ export class CellContext {
     }
     this.recordCommand({ cmd, args, status, stdout, stderr, label, started, spawnError });
     return { stdout, stderr, status, spawnError };
+  }
+
+  /**
+   * Explicit opt-in for harness plumbing that needs the runner's full (allowlisted)
+   * toolchain PATH — npm installs, bash scaffold/validators. Never for the installed
+   * CLI itself. `envExtra` merges on top of the allowlisted ambient environment.
+   */
+  runWithAmbientEnv(cmd, args, opts = {}) {
+    const { envExtra = {}, ...rest } = opts;
+    return this.run(cmd, args, { ...rest, env: this.env(envExtra) });
   }
 
   recordCommand({ cmd, args, status, stdout, stderr, label, started, spawnError }) {

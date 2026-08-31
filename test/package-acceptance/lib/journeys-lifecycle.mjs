@@ -16,6 +16,27 @@ import { sha256Hex } from "./context.mjs";
 
 export const UPGRADE_BASELINE = "@aiosbrain/aios@0.12.0";
 
+// A permanent fact of the registry: published 0.12.0 pins @aiosbrain/aios-devtools
+// EXACTLY 0.3.0, whose engines are ">=22 <23" — so 0.12.0 was never installable
+// engine-strict on Node 24/26. The legacy-baseline installs (and only those) relax
+// engine-strict for that one npm invocation; every candidate install stays strict.
+export const LEGACY_ENGINE_RELAXATION =
+  "legacy 0.12.0 installed with engine-strict relaxed: published 0.3.0 devtools pin " +
+  '(engines ">=22 <23") predates the Node 24/26 support matrix';
+
+/**
+ * The single npm-install chokepoint of the lifecycle journeys, so the engine-strict
+ * scope is auditable and unit-testable: `legacy: true` (the published 0.12.0 baseline
+ * only) is the ONE path allowed to relax `npm_config_engine_strict`.
+ */
+export function runNpmInstall(ctx, { spec, cwd, label, legacy = false }) {
+  ctx.runWithAmbientEnv("npm", ["install", spec, "--omit=optional", "--no-audit", "--no-fund"], {
+    cwd,
+    label,
+    envExtra: legacy ? { npm_config_engine_strict: "false" } : {},
+  });
+}
+
 const INTERRUPTIBLE_STATES = ["discovered", "snapshotted", "staged", "validated"];
 
 async function importInstalled(install, rel) {
@@ -81,9 +102,11 @@ export function upgradeJourney(ctx) {
     path.join(livePrefix, "package.json"),
     `${JSON.stringify({ name: "aios-upgrade-fixture", private: true }, null, 2)}\n`
   );
-  ctx.run("npm", ["install", UPGRADE_BASELINE, "--omit=optional", "--no-audit", "--no-fund"], {
+  runNpmInstall(ctx, {
+    spec: UPGRADE_BASELINE,
     cwd: livePrefix,
-    label: "install-0.12.0",
+    label: "install-0.12.0-legacy-relaxed",
+    legacy: true,
   });
   const livePkg = path.join(livePrefix, "node_modules", "@aiosbrain", "aios", "package.json");
   assert.equal(JSON.parse(readFileSync(livePkg, "utf8")).version, "0.12.0");
@@ -110,10 +133,7 @@ export function upgradeJourney(ctx) {
     path.join(stagingPrefix, "package.json"),
     `${JSON.stringify({ name: "aios-staging-fixture", private: true }, null, 2)}\n`
   );
-  ctx.run("npm", ["install", ctx.tarball, "--omit=optional", "--no-audit", "--no-fund"], {
-    cwd: stagingPrefix,
-    label: "stage-candidate",
-  });
+  runNpmInstall(ctx, { spec: ctx.tarball, cwd: stagingPrefix, label: "stage-candidate" });
   const stagedBin = path.join(stagingPrefix, "node_modules", ".bin", "aios");
   const stagedVersion = JSON.parse(
     ctx.run(stagedBin, ["version", "--json"], {
@@ -127,10 +147,7 @@ export function upgradeJourney(ctx) {
 
   // Only after staged verification does the live install get replaced — with the exact
   // digest-verified tarball, not a registry range.
-  ctx.run("npm", ["install", ctx.tarball, "--omit=optional", "--no-audit", "--no-fund"], {
-    cwd: livePrefix,
-    label: "upgrade-live",
-  });
+  runNpmInstall(ctx, { spec: ctx.tarball, cwd: livePrefix, label: "upgrade-live" });
   const upgraded = JSON.parse(readFileSync(livePkg, "utf8"));
   assert.equal(upgraded.version, ctx.manifest.packageVersion, "live install runs the candidate");
   const liveBin = path.join(livePrefix, "node_modules", ".bin", "aios");
@@ -146,6 +163,8 @@ export function upgradeJourney(ctx) {
 
   ctx.record("upgrade-journey", {
     baseline: UPGRADE_BASELINE,
+    legacyInstall: LEGACY_ENGINE_RELAXATION,
+    candidateEngineStrict: true,
     stagedVerification: "version semantics verified in staging prefix before replacement",
     upgradedVersion: upgraded.version,
     postUpgradeDoctorOk: liveDoctor.ok,
@@ -158,11 +177,15 @@ export async function rollbackJourney(ctx, install, upgrade) {
   const { rollbackMigration } = await importInstalled(install, "scripts/cli/migration.mjs");
   // Simulate post-upgrade config drift the user wants to abandon.
   writeFileSync(upgrade.snapshot.configPath, '{"schemaVersion":2,"drifted":true}\n');
+  // Reinstalling the recorded 0.12.0 baseline hits the same registry fact as the
+  // upgrade journey's legacy install, so it gets the identical scoped relaxation.
   const result = await rollbackMigration(upgrade.snapshot, {
     installPackage: async (spec) => {
-      ctx.run("npm", ["install", spec, "--omit=optional", "--no-audit", "--no-fund"], {
+      runNpmInstall(ctx, {
+        spec,
         cwd: upgrade.livePrefix,
-        label: "rollback-install",
+        label: "rollback-install-legacy-relaxed",
+        legacy: true,
       });
     },
   });
@@ -178,5 +201,6 @@ export async function rollbackJourney(ctx, install, upgrade) {
   ctx.record("rollback-journey", {
     restoredPackage: result.package,
     restoredConfigSha256: result.configSha256,
+    legacyReinstall: LEGACY_ENGINE_RELAXATION,
   });
 }

@@ -19,6 +19,8 @@ import {
   sha256Hex,
 } from "./package-acceptance/lib/context.mjs";
 import { runFaultControls } from "./package-acceptance/lib/faults.mjs";
+import { runNpmInstall } from "./package-acceptance/lib/journeys-lifecycle.mjs";
+import { assertCleanPackSurface, findDirtyPackagedPaths } from "./package-acceptance/pack.mjs";
 
 function makeArtifact(base, { tamper = false } = {}) {
   const artifactDir = path.join(base, "artifact");
@@ -118,6 +120,83 @@ test("forbidden-tool probe finds python/jq/dotenvx on PATH and passes a clean di
   assert.deepEqual(probeForbiddenPathTools(clean), []);
   const found = probeForbiddenPathTools([clean, dirty].join(path.delimiter));
   assert.deepEqual(found.sort(), [path.join(dirty, "jq"), path.join(dirty, "python3")]);
+});
+
+test("run() defaults to the isolated node-only PATH — a planted ambient jq is unreachable", (t) => {
+  const base = mkdtempSync(path.join(tmpdir(), "aio1071-unit-"));
+  t.after(() => rmSync(base, { recursive: true, force: true }));
+  const planted = path.join(base, "ambient-tools");
+  mkdirSync(planted, { recursive: true });
+  writeFileSync(path.join(planted, "jq"), "#!/bin/sh\n", { mode: 0o755 });
+  const originalPath = process.env.PATH;
+  process.env.PATH = `${planted}${path.delimiter}${originalPath}`;
+  t.after(() => {
+    process.env.PATH = originalPath;
+  });
+  const ctx = makeContext(base);
+  // Default (no env passed): the CLI-execution environment the isolation probe verified.
+  const seen = ctx
+    .run(process.execPath, ["-p", "process.env.PATH"], { label: "default-env" })
+    .stdout.trim();
+  assert.equal(seen, path.dirname(process.execPath), "default run() env must be node-only");
+  assert.deepEqual(probeForbiddenPathTools(seen), [], "planted jq must be unreachable");
+  // Ambient toolchain access is an explicit, named opt-in — and still allowlisted.
+  const ambient = ctx
+    .runWithAmbientEnv(process.execPath, ["-p", "process.env.PATH"], { label: "ambient-env" })
+    .stdout.trim();
+  assert.ok(ambient.includes(planted), "runWithAmbientEnv exposes the runner PATH");
+});
+
+test("engine-strict relaxation is scoped to exactly the legacy 0.12.0 install step", () => {
+  const calls = [];
+  const stub = {
+    runWithAmbientEnv(cmd, args, opts) {
+      calls.push({ cmd, spec: args[1], envExtra: opts.envExtra });
+    },
+  };
+  runNpmInstall(stub, { spec: "@aiosbrain/aios@0.12.0", cwd: "/x", label: "legacy", legacy: true });
+  runNpmInstall(stub, { spec: "/tmp/candidate.tgz", cwd: "/x", label: "candidate" });
+  assert.equal(calls.length, 2);
+  assert.deepEqual(
+    calls[0].envExtra,
+    { npm_config_engine_strict: "false" },
+    "ONLY the legacy 0.12.0 baseline may relax engine-strict"
+  );
+  assert.deepEqual(
+    calls[1].envExtra,
+    {},
+    "candidate installs must keep the allowlist default npm_config_engine_strict=true"
+  );
+});
+
+test("pack refuses a dirty packaged surface and passes a clean one", () => {
+  const pkg = { files: ["scripts", "scaffold", "docs/devtools-*.md"] };
+  // Dirty paths inside the packaged surface are caught; test/CI-only churn is not.
+  assert.deepEqual(
+    findDirtyPackagedPaths(
+      [
+        " M scripts/aios.mjs",
+        "?? scaffold/new-file.tmpl",
+        " M docs/devtools-migration.md",
+        " M package.json",
+        "?? test/package-acceptance/x.mjs",
+        " M .github/workflows/ci.yml",
+        " M docs/roadmap.md",
+      ].join("\n"),
+      pkg
+    ),
+    ["scripts/aios.mjs", "scaffold/new-file.tmpl", "docs/devtools-migration.md", "package.json"]
+  );
+  const execFor = (porcelain) => (cmd, args) => {
+    assert.deepEqual([cmd, args[0]], ["git", "status"]);
+    return porcelain;
+  };
+  const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
+  assert.throws(
+    () => assertCleanPackSurface(root, execFor(" M scripts/aios.mjs\n")),
+    /refusing to pack.*scripts\/aios\.mjs/s
+  );
+  assertCleanPackSurface(root, execFor("?? test/only-test-churn.mjs\n"));
 });
 
 test("broken fault-control machinery aborts as a harness error, never as a red control", async (t) => {

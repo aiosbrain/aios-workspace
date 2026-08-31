@@ -25,8 +25,58 @@ function arg(name) {
 const run = (cmd, args, opts = {}) =>
   execFileSync(cmd, args, { encoding: "utf8", cwd: ROOT, ...opts });
 
+/** Files npm always packs regardless of the `files` allowlist. */
+const ALWAYS_PACKED = /^(package\.json|README(\..+)?|LICEN[CS]E.*|NOTICE.*|CHANGELOG(\..+)?)$/i;
+
+/**
+ * Paths from `git status --porcelain` output that fall inside the packaged surface
+ * (package.json `files` globs reduced to their static prefixes, plus npm's
+ * always-included root files). Pure so it is unit-testable.
+ */
+export function findDirtyPackagedPaths(porcelain, pkg) {
+  const globPrefixes = [];
+  const staticEntries = [];
+  for (const entry of pkg.files ?? []) {
+    if (entry.includes("*")) globPrefixes.push(entry.split("*")[0]);
+    else staticEntries.push(entry.replace(/\/$/, ""));
+  }
+  const dirty = [];
+  for (const line of String(porcelain).split("\n")) {
+    if (!line.trim()) continue;
+    // Porcelain v1: XY <path> (renames: XY <old> -> <new>); strip the 3-char prefix.
+    const raw = line.slice(3);
+    for (const p of raw.split(" -> ")) {
+      const rel = p.replace(/^"|"$/g, "");
+      const packed =
+        staticEntries.some((d) => rel === d || rel.startsWith(`${d}/`)) ||
+        globPrefixes.some((g) => rel.startsWith(g)) ||
+        ALWAYS_PACKED.test(rel);
+      if (packed) dirty.push(rel);
+    }
+  }
+  return [...new Set(dirty)];
+}
+
+/**
+ * The manifest attributes the tarball bytes to candidateSha=HEAD, but `npm pack` packs
+ * the WORKING TREE — a dirty packaged surface would let evidence falsely attribute
+ * uncommitted bytes to a commit. Refuse loudly (paths only, never contents).
+ */
+export function assertCleanPackSurface(root, exec = run) {
+  const porcelain = exec("git", ["status", "--porcelain"], { cwd: root });
+  const pkg = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8"));
+  const dirty = findDirtyPackagedPaths(porcelain, pkg);
+  if (dirty.length > 0) {
+    throw new Error(
+      "refusing to pack: the packaged surface has uncommitted changes, so the tarball " +
+        `bytes would not correspond to candidateSha=HEAD. Dirty paths: ${dirty.join(", ")}`
+    );
+  }
+}
+
 export function packCandidate(outDir) {
   mkdirSync(outDir, { recursive: true });
+  assertCleanPackSurface(ROOT);
 
   // dist/ ships prebuilt in the tarball; self-heal exactly like the golden-path test so a
   // partial checkout fails with the build error rather than a confusing inventory assert.

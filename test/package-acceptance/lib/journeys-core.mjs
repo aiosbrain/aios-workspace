@@ -20,10 +20,15 @@ export function freshInstallJourney(ctx) {
     path.join(prefix, "package.json"),
     `${JSON.stringify({ name: "aios-acceptance-fixture", private: true }, null, 2)}\n`
   );
-  ctx.run("npm", ["install", ctx.tarball, "--omit=optional", "--no-audit", "--no-fund"], {
-    cwd: prefix,
-    label: "fresh-install",
-  });
+  // npm needs the runner toolchain (sh for lifecycle scripts) — explicit ambient opt-in.
+  ctx.runWithAmbientEnv(
+    "npm",
+    ["install", ctx.tarball, "--omit=optional", "--no-audit", "--no-fund"],
+    {
+      cwd: prefix,
+      label: "fresh-install",
+    }
+  );
   const pkgDir = path.join(prefix, "node_modules", "@aiosbrain", "aios");
   const bin = path.join(prefix, "node_modules", ".bin", "aios");
   const installed = JSON.parse(readFileSync(path.join(pkgDir, "package.json"), "utf8"));
@@ -169,7 +174,9 @@ export function diagnosticsJourney(ctx, install) {
 /** Configured use: scaffold a synthetic workspace, validate, run offline status/push. */
 export function configuredUseJourney(ctx, install) {
   const ws = path.join(ctx.base, "acceptance-ws");
-  ctx.run(
+  // The scaffolder/validators are bash tooling — explicit ambient opt-in; the CLI runs
+  // below stay on the isolated node-only default.
+  ctx.runWithAmbientEnv(
     "bash",
     [
       path.join(install.pkgDir, "scripts", "scaffold-project.sh"),
@@ -180,9 +187,11 @@ export function configuredUseJourney(ctx, install) {
     { label: "scaffold" }
   );
   assert.ok(existsSync(path.join(ws, "aios.yaml")), "scaffold produced aios.yaml");
-  ctx.run("bash", [path.join(install.pkgDir, "validation", "validate-all.sh"), ws, "--quick"], {
-    label: "validate-quick",
-  });
+  ctx.runWithAmbientEnv(
+    "bash",
+    [path.join(install.pkgDir, "validation", "validate-all.sh"), ws, "--quick"],
+    { label: "validate-quick" }
+  );
   const status = ctx.run(install.bin, ["status", "--repo", ws], { cwd: ws, label: "status" });
   assert.ok(status.stdout.length > 0, "aios status printed a report");
   ctx.run(install.bin, ["push", "--dry-run", "--repo", ws], { cwd: ws, label: "push-dry-run" });
