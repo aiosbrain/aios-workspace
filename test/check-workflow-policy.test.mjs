@@ -54,6 +54,8 @@ const EXPECTED = [
   ["violating-prt-fetch-variants.yml", "git-fetch-sha", "pr-target-checkout"],
   ["violating-prt-fetch-variants.yml", "env-indirection", "pr-target-checkout"],
   ["violating-prt-fetch-variants.yml", "event-path", "pr-target-checkout"],
+  // The whole `secrets` context, not just a named read — `toJSON(secrets)`.
+  ["violating-whole-secrets-context.yml", "dump", "secrets-in-pr-reachable"],
   // Job/step outputs are opaque to static analysis, so they launder taint.
   ["violating-prt-opaque-outputs.yml", "via-steps", "pr-target-checkout"],
   ["violating-prt-opaque-outputs.yml", "via-needs", "pr-target-checkout"],

@@ -31,7 +31,12 @@ import {
 export { MIN_JUSTIFICATION, PR_LIKE_EVENTS, RULES } from "./workflow-policy-catalogue.mjs";
 export { validateAllowlist } from "./workflow-policy-allowlist.mjs";
 
-const SECRET_REF = /\bsecrets\s*(?:\.\s*([A-Za-z_][\w-]*)|\[)/g;
+// `secrets.NAME`, `secrets['NAME']`, and — the one that matters most — a reference to the WHOLE
+// context. `${{ toJSON(secrets) }}` is the canonical Actions secret-dump primitive: it serialises
+// every secret at once, and a step can then re-encode the result to defeat log masking. Matching
+// only a named or indexed read let that through while catching the far less dangerous
+// `secrets.FOO`. The bare-context alternative is last so a named read still reports its name.
+const SECRET_REF = /\bsecrets\s*(?:\.\s*([A-Za-z_][\w-]*)|\[|(?![\s]*[.[\w]))/g;
 const ARTIFACT_RUN = /\bgh\s+run\s+download\b|\/actions\/runs\/[^\s"']*\/artifacts\b/;
 // Deliberately broader than "install": in a pull_request_target job, running the PR's own scripts,
 // lockfile lifecycle hooks, or build files is the exploit primitive, not just fetching packages.
