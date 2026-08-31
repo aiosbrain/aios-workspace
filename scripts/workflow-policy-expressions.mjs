@@ -35,9 +35,9 @@ export const ATTACKER_EXPR = /\bgithub\s*\.\s*(?:event\s*\.|head_ref\b)/;
 // to be trusted. A false positive here is waivable with an owner and a justification; a false
 // negative is the bug this whole gate exists to prevent.
 export const FETCH_PRIMITIVE =
-  /(?:^|[\s;&|(`$])(?:curl|wget|aria2c|http|https|scp|rsync|ftp|svn|hg|nc|gh\s+api|gh\s+release\s+download|gh\s+repo\s+clone|git\s+(?:fetch|clone|pull|archive|checkout|remote|ls-remote)|npm\s+pack|pip3?\s+download|go\s+get)\b/;
+  /(?:^|[\s;&|(`$\/])(?:curl|wget|aria2c|http|https|scp|rsync|ftp|svn|hg|nc|gh\s+api|gh\s+release\s+download|gh\s+repo\s+clone|git\s+(?:fetch|clone|pull|archive|checkout|remote|ls-remote)|npm\s+pack|pip3?\s+download|go\s+get)\b/;
 export const ARCHIVE_PRIMITIVE =
-  /(?:^|[\s;&|(`])(?:tar|bsdtar|unzip|gunzip|unxz|zstd|7z|jar|cpio)\b/;
+  /(?:^|[\s;&|(`\/])(?:tar|bsdtar|unzip|gunzip|unxz|zstd|7z|jar|cpio)\b/;
 // Self-contained PR checkouts: the command names the pull request itself, so there is no second
 // reference to correlate and the conjunction does not apply.
 export const ALWAYS_PR_FETCH = /\bgh\s+pr\s+(?:checkout|diff)\b/;

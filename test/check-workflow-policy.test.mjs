@@ -54,6 +54,11 @@ const EXPECTED = [
   ["violating-prt-fetch-variants.yml", "git-fetch-sha", "pr-target-checkout"],
   ["violating-prt-fetch-variants.yml", "env-indirection", "pr-target-checkout"],
   ["violating-prt-fetch-variants.yml", "event-path", "pr-target-checkout"],
+  // A primitive invoked by absolute path is the same primitive (`/usr/bin/npm ci`).
+  ["violating-prt-abspath-primitives.yml", "abs-package", "pr-target-package-install"],
+  ["violating-prt-abspath-primitives.yml", "abs-pip", "pr-target-package-install"],
+  ["violating-prt-abspath-primitives.yml", "abs-fetch", "pr-target-checkout"],
+  ["violating-prt-abspath-primitives.yml", "abs-archive", "pr-target-checkout"],
   // `secrets: inherit` — no `secrets.*` text anywhere in the job.
   ["violating-secrets-inherit.yml", "inherits", "secrets-in-pr-reachable"],
   // Duplicate upstream `name:` — the downstream must not vanish from the report.

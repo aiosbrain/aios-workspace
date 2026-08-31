@@ -36,7 +36,7 @@ const ARTIFACT_RUN = /\bgh\s+run\s+download\b|\/actions\/runs\/[^\s"']*\/artifac
 // Deliberately broader than "install": in a pull_request_target job, running the PR's own scripts,
 // lockfile lifecycle hooks, or build files is the exploit primitive, not just fetching packages.
 const PACKAGE_INSTALL_RUN =
-  /(?:^|[\s;&|(`])(?:npm\s+(?:ci|install|i|exec|run)|npx\s|yarn(?:\s|$)|pnpm(?:\s|$)|bun\s+(?:install|run)|pip3?\s+install|poetry\s+install|bundle\s+install|composer\s+install|go\s+(?:mod\s+download|get)|cargo\s+(?:build|test|run|install)|mvn(?:\s|$)|\.?\/?gradlew?(?:\s|$)|make(?:\s|$))/;
+  /(?:^|[\s;&|(`\/])(?:npm\s+(?:ci|install|i|exec|run)|npx\s|yarn(?:\s|$)|pnpm(?:\s|$)|bun\s+(?:install|run)|pip3?\s+install|poetry\s+install|bundle\s+install|composer\s+install|go\s+(?:mod\s+download|get)|cargo\s+(?:build|test|run|install)|mvn(?:\s|$)|\.?\/?gradlew?(?:\s|$)|make(?:\s|$))/;
 
 const isMap = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
 const lineOf = (node, key) => node?.$keyLines?.[key] ?? node?.$line ?? 0;
