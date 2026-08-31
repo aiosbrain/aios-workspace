@@ -96,10 +96,18 @@ jobs:
   # could write it would be the forgery primitive the policy exists to remove. Giving this job a
   # secret or a write scope to "make it more useful" defeats its own rule set.
   #
-  # Its own two actions are SHA-pinned because they are new here. The 27 pre-existing `@vN` refs
-  # elsewhere in this file are real `mutable-action-ref` findings, waived per job in
-  # scripts/workflow-policy-allowlist.json and owned by the separate org-wide pinning workstream —
-  # deliberately NOT mass-edited here, so that work lands as one reviewable change.
+  # THE JUDGING CODE COMES FROM THE BASE REVISION, NEVER FROM THE PULL REQUEST. This job first
+  # checked out the merge revision and ran the PR's own copy of the checker, which meant a PR could
+  # add a secret-exfiltrating workflow AND, in the same PR, edit the checker to return success or
+  # grant itself an allowlist waiver — and this required lane would go green. Same reasoning and
+  # same shape as `.github/workflows/pr-review-evidence.yml`. The allowlist is resolved from the
+  # base revision for the identical reason: a PR that can add its own waiver is the same bypass.
+  # The PR's workflow files are read as DATA from a separate `candidate/` checkout; nothing in that
+  # tree is executed, which is the property the checker already guarantees for YAML.
+  #
+  # Its own actions are SHA-pinned because they are new here. The pre-existing `@vN` refs elsewhere
+  # in this file are real `mutable-action-ref` findings, waived per job in
+  # scripts/workflow-policy-allowlist.json and owned by the separate org-wide pinning workstream.
   #
   # No `npm ci`: the checker is zero-dependency, like every other guard under scripts/.
   workflow-policy:
@@ -109,13 +117,51 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Check out the gate from the base revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}
           persist-credentials: false
+
+      - name: Locate the gate
+        id: gate
+        run: |
+          if test -f scripts/check-workflow-policy.mjs; then
+            echo "root=$PWD" >> "$GITHUB_OUTPUT"
+            echo "bootstrap=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "root=$PWD/pr-head" >> "$GITHUB_OUTPUT"
+            echo "bootstrap=true" >> "$GITHUB_OUTPUT"
+            echo "::warning title=Workflow-policy gate bootstrap::The base revision does not carry the gate yet, so this run judges with the pull request's own copy. This path is correct ONLY for the PR that introduces the gate; every later PR is judged by the base-revision checker, because by then the base carries it."
+          fi
+
+      - name: Bootstrap — judge with the PR's own copy (base has no gate yet)
+        if: steps.gate.outputs.bootstrap == 'true' && github.event_name == 'pull_request'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/pull/${{ github.event.pull_request.number }}/head
+          path: pr-head
+          persist-credentials: false
+
+      # The candidate tree is scanner INPUT only. The checker parses YAML as data and never
+      # executes a workflow, a step, an action, or a `run:` body.
+      - name: Check out the candidate tree as inert scanner input
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: candidate
+          persist-credentials: false
+
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
-      - run: npm run check:workflow-policy
+
+      - name: Workflow policy (base-revision gate over the candidate workflows)
+        working-directory: candidate
+        env:
+          GATE_ROOT: ${{ steps.gate.outputs.root }}
+        run: |
+          node "$GATE_ROOT/scripts/check-workflow-policy.mjs" \
+            --allowlist "$GATE_ROOT/scripts/workflow-policy-allowlist.json"
 
   constitution:
     name: Constitution guards (domain isolation + boundaries + size)

@@ -19,6 +19,7 @@ import {
   ARCHIVE_PRIMITIVE,
   FETCH_PRIMITIVE,
   expressionsIn,
+  normalizeExpression,
   prControlledRef,
   taintedExpression,
   taintedVarsFrom,
@@ -242,7 +243,9 @@ function auditScope(jobId, scalars, add) {
   const seenSecrets = new Set();
   for (const { value, line } of scalars) {
     for (const expression of expressionsIn(value)) {
-      for (const m of expression.matchAll(SECRET_REF)) {
+      // Normalized so `secrets['NAME']` reports the NAME rather than the opaque `<computed>`
+      // fallback; the raw `secrets[` alternative in SECRET_REF still fail-closes either way.
+      for (const m of normalizeExpression(expression).matchAll(SECRET_REF)) {
         const name = m[1] ?? "<computed>";
         if (seenSecrets.has(name)) continue;
         seenSecrets.add(name);

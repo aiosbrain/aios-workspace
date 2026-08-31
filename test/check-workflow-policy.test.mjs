@@ -59,6 +59,10 @@ const EXPECTED = [
   // Duplicate upstream `name:` — the downstream must not vanish from the report.
   ["violating-workflow-run-dup-name.yml", "report", "secrets-in-pr-reachable"],
   ["violating-workflow-run-dup-name.yml", "report", "pr-target-checkout"],
+  // Bracket index syntax — `env['X']` is `env.X`, and every context accepts it.
+  ["violating-prt-bracket-notation.yml", "bracket-ref", "pr-target-checkout"],
+  ["violating-prt-bracket-notation.yml", "bracket-context", "pr-target-dynamic-run"],
+  ["violating-prt-bracket-notation.yml", "unresolvable-index", "pr-target-dynamic-run"],
 ];
 
 test("every rule fires on its violating fixture, naming file, job, and rule", () => {
@@ -119,6 +123,12 @@ test("every rule fires on its violating fixture, naming file, job, and rule", ()
       `${rule} has no \`\${{ env.X }}\` indirection fixture — the direct-expression fixtures ` +
         `alone do not cover it, which is how the demonstrated bypass survived`
     );
+    // ...and the same again for the bracket syntax, which bypassed the env fix one round later.
+    assert.ok(
+      found.some((f) => f.file === "violating-prt-bracket-notation.yml" && f.rule === rule),
+      `${rule} has no bracket-index fixture — \`env['X']\` is \`env.X\`, and matching only the ` +
+        `dot form is exactly how the second indirection bypass survived`
+    );
   }
 
   // `secrets-in-pr-reachable` has TWO independent mechanisms: an explicit `secrets.*` expression,
@@ -156,6 +166,7 @@ test("compliant fixtures produce no finding at all", () => {
     "dup-name-prt-upstream.yml",
     "dup-name-scheduled-upstream.yml",
     "compliant-prt-env-expression.yml",
+    "compliant-prt-bracket-notation.yml",
   ];
   const found = failures(run().out);
   for (const file of clean) {
@@ -287,6 +298,43 @@ test("the checker itself neither writes nor can write the AIOS Security Gate sta
   assert.ok(
     ci.jobs["test-gate"].needs.includes("workflow-policy"),
     "the gate must be a mandatory lane, not advisory"
+  );
+});
+
+// The gate must not be judged by the code under review. Before this, the job checked out the merge
+// revision and ran the PR's own checker, so a PR could add a secret-exfiltrating workflow AND edit
+// the checker (or grant itself a waiver) in the same PR, and this required lane went green. Same
+// shape and same reasoning as .github/workflows/pr-review-evidence.yml. Asserted against the real
+// ci.yml so a future edit that reintroduces a PR-revision checkout goes red here.
+test("the CI job judges with the BASE revision's checker and allowlist, never the PR's", () => {
+  const ci = parseWorkflowYaml(readFileSync(path.join(ROOT, ".github/workflows/ci.yml"), "utf8"));
+  const steps = ci.jobs["workflow-policy"].steps;
+
+  const gateCheckout = steps.find((s) => /checkout@/.test(String(s.uses ?? "")));
+  assert.match(
+    String(gateCheckout.with?.ref ?? ""),
+    /github\.event\.pull_request\.base\.sha/,
+    "the FIRST checkout must pin the gate to the base revision"
+  );
+
+  const candidate = steps.find((s) => s.with?.path === "candidate");
+  assert.ok(candidate, "the PR's own tree must arrive in a separate `candidate/` checkout");
+  assert.equal(candidate.with["persist-credentials"], false);
+
+  // Match the INVOCATION, not the locate step — whose `test -f` names the same path.
+  const invoke = steps.find((s) =>
+    String(s.run ?? "").includes("$GATE_ROOT/scripts/check-workflow-policy.mjs")
+  );
+  assert.ok(invoke, "the gate must be invoked from the base-revision gate root");
+  assert.equal(invoke["working-directory"], "candidate", "scan the candidate tree");
+  // Both the checker AND the allowlist come from the gate root: a PR that can add its own waiver
+  // is the same bypass wearing a different hat.
+  assert.match(invoke.run, /\$GATE_ROOT\/scripts\/check-workflow-policy\.mjs/);
+  assert.match(invoke.run, /--allowlist "\$GATE_ROOT\/scripts\/workflow-policy-allowlist\.json"/);
+  assert.match(
+    String(ci.jobs["workflow-policy"].steps.find((s) => s.id === "gate").run),
+    /::warning title=Workflow-policy gate bootstrap/,
+    "the bootstrap fallback must be loud, and conditioned on the base lacking the checker"
   );
 });
 

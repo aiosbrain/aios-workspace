@@ -238,3 +238,45 @@ test("the same callee reached from a non-pull_request_target origin does not dis
     "inputs are only distrusted under a pull_request_target origin"
   );
 });
+
+// ── bracket index syntax ─────────────────────────────────────────────────────
+//
+// `env['NAME']` is exactly `env.NAME`, and every context accepts it. The resolver matched only the
+// dot form, so one character of syntax produced zero findings. Normalizing the literal-string index
+// into dot notation before any pattern runs means one set of patterns covers both, and a future
+// rule cannot forget the bracket case.
+
+for (const [job, rule, shape] of [
+  ["bracket-ref", "pr-target-checkout", "`ref: ${{ env['HEAD_SHA'] }}` (the reported reproducer)"],
+  ["bracket-context", "pr-target-dynamic-run", "`${{ github['event'].pull_request.title }}`"],
+  ["bracket-two-hop", "pr-target-checkout", "a two-hop chain whose second hop is bracketed"],
+  [
+    "unresolvable-index",
+    "pr-target-dynamic-run",
+    "`env[format(...)]` — unresolvable, so fail closed",
+  ],
+]) {
+  test(`bracket index: ${shape} is flagged`, () => {
+    const out = run().out;
+    assert.ok(
+      failures(out).some(
+        (f) => f.file === "violating-prt-bracket-notation.yml" && f.job === job && f.rule === rule
+      ),
+      `job \`${job}\` must trip ${rule}\n${out}`
+    );
+  });
+}
+
+for (const [job, why] of [
+  ["trusted-base-bracket", "`base.sha` stays trusted through the bracket form too"],
+  ["literal-bracket", "a literal value indexed with a literal key is not PR-controlled"],
+]) {
+  test(`bracket index negative control: \`${job}\` is not flagged — ${why}`, () => {
+    const out = run().out;
+    assert.deepEqual(
+      failures(out).filter((f) => f.file === "compliant-prt-bracket-notation.yml" && f.job === job),
+      [],
+      `normalizing an index must not make "uses a bracket" a violation\n${out}`
+    );
+  });
+}

@@ -28,6 +28,17 @@
  * where it is the only place the word means anything to Actions — `check-secrets.sh` in a `run:`
  * body is a filename, not a credential read.
  *
+ * DELIBERATELY NOT A RULE: "a PR-reachable job that executes repository code from a PR checkout".
+ * That is what caught this gate itself judging PRs with their own copy of the checker — but it does
+ * not generalise. Every ordinary test lane (lint, unit tests, build, pack) executes PR code from a
+ * PR checkout, and that is correct and necessary; the property that makes it dangerous is "and this
+ * job is a REQUIRED status", which lives in branch-protection configuration and is not visible in
+ * the YAML. A rule without that qualifier would flag essentially every job in this repository, so
+ * it would be turned off or blanket-waived within a day. The narrow, durable guard is instead a
+ * test asserting THIS repo's gate job resolves its checker and allowlist from the base revision
+ * (see test/check-workflow-policy.test.mjs) — which goes red if a future edit reintroduces the
+ * PR-revision checkout. If branch-protection state ever becomes an input to this checker, revisit.
+ *
  * "PR-like" means `pull_request`, `pull_request_target`, `pull_request_review`,
  * `pull_request_review_comment`, `issue_comment`, and `workflow_run` whose upstream workflow is
  * itself PR-like. Reachability also follows local reusable-workflow calls

@@ -62,6 +62,32 @@ export const ALL_INPUTS_TAINTED = "*inputs*";
 export const TRUSTED_REF_FIELD =
   /github\s*\.\s*event\s*\.\s*(?:pull_request\s*\.\s*base\s*\.\s*(?:sha|ref)\b|repository\s*\.\s*default_branch\b)/g;
 
+// GitHub expressions index a context two ways: `env.NAME` and `env['NAME']` (double quotes and
+// interior whitespace are equally legal). Every context supports both — `github['event']`,
+// `inputs["x"]`, `secrets['x']` — so matching only the dot form leaves the identical hole one
+// context over. Normalizing the literal-string form into dot notation means ONE set of patterns
+// covers both syntaxes and no future rule can forget the bracket case.
+const BRACKET_LITERAL_INDEX = /\[\s*(?:'([^']*)'|"([^"]*)")\s*\]/g;
+
+/** `a['b']["c"]` -> `a.b.c`, so the dot-notation patterns below see one canonical form. */
+export function normalizeExpression(text) {
+  let out = String(text);
+  // Repeat to fold chains: `github['event']['pull_request']` needs more than one pass only when a
+  // replacement creates a newly adjacent bracket, which it does not — but the loop is cheap and
+  // makes the property "no bracket literal survives" true by construction rather than by argument.
+  for (let pass = 0; pass < 8; pass++) {
+    const next = out.replace(BRACKET_LITERAL_INDEX, (_, single, double) => `.${single ?? double}`);
+    if (next === out) break;
+    out = next;
+  }
+  return out;
+}
+
+// A bracket index that is NOT a plain string literal — `env[format(...)]`, `env[matrix.key]` — is
+// unresolvable by static analysis. It cannot be proven safe, so it is treated as attacker-
+// controlled, consistent with the default-to-flag posture everywhere else in this module.
+const UNRESOLVABLE_INDEX = /\b(?:env|github|inputs|secrets|needs|steps|vars|matrix)\s*\[/;
+
 /** Blank out provably-trusted field references so only unproven ones remain to be judged. */
 export function untrustedResidual(text) {
   return String(text).replace(TRUSTED_REF_FIELD, "trusted_base_ref");
@@ -84,14 +110,16 @@ export function expressionsIn(value) {
  * `untrustedResidual` runs first, so a name carrying only `pull_request.base.sha` never taints.
  */
 export function taintedExpression(text, tainted) {
-  const residual = untrustedResidual(text);
-  for (const expression of expressionsIn(residual)) {
-    if (ATTACKER_EXPR.test(expression)) return expression.trim();
-    if (tainted.has(ALL_INPUTS_TAINTED) && /\binputs\s*\./.test(expression))
-      return expression.trim();
+  for (const raw of expressionsIn(String(text))) {
+    // Normalize FIRST, then blank trusted fields: `github['event']['pull_request']['base']['sha']`
+    // has to fold to dot notation before the trusted-field allowlist can recognise it.
+    const expression = untrustedResidual(normalizeExpression(raw));
+    if (UNRESOLVABLE_INDEX.test(expression)) return raw.trim();
+    if (ATTACKER_EXPR.test(expression)) return raw.trim();
+    if (tainted.has(ALL_INPUTS_TAINTED) && /\binputs\s*\./.test(expression)) return raw.trim();
     for (const name of [...tainted, ...IMPLICITLY_TAINTED_VARS]) {
       if (SHELL_NAME.test(name) && new RegExp(`\\benv\\s*\\.\\s*${name}\\b`).test(expression))
-        return expression.trim();
+        return raw.trim();
     }
   }
   return null;
@@ -132,7 +160,8 @@ export function taintedVarsFrom(env, inherited = new Set()) {
  * Deliberately generous: an unprovable reference resolves to flagged.
  */
 export function prControlledRef(body, tainted) {
-  if (/refs\/pull\//.test(untrustedResidual(body))) return "a `refs/pull/` ref";
+  if (/refs\/pull\//.test(untrustedResidual(normalizeExpression(body))))
+    return "a `refs/pull/` ref";
   const expression = taintedExpression(body, tainted);
   if (expression) return `the expression \`\${{${expression}}}\``;
   for (const name of [...tainted, ...IMPLICITLY_TAINTED_VARS]) {
