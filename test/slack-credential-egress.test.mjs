@@ -294,6 +294,44 @@ test("an all-encrypted operator vault resolves BOTH url and key (no phantom conf
   }
 });
 
+test("an all-encrypted WORKSPACE vault resolves BOTH url and key (symmetric twin)", () => {
+  // Codex round 8: the symmetric twin of the operator-vault fix — a workspace whose .env
+  // holds BOTH fields as dotenvx ciphertext must resolve complete (workspace domain, its
+  // own decrypted url+key pair), not misreport as key-without-url / missing / conflict.
+  const workspace = mkdtempSync(path.join(tmpdir(), "aio-1068-enc-ws-"));
+  const dotenvx = path.join(ROOT, "node_modules", ".bin", "dotenvx");
+  const setEnv = { ...process.env };
+  delete setEnv.DOTENV_PUBLIC_KEY;
+  delete setEnv.DOTENV_PRIVATE_KEY;
+  writeFileSync(path.join(workspace, ".env"), "");
+  for (const [key, value] of [
+    ["AIOS_BRAIN_URL", "https://brain.example.test"],
+    ["AIOS_API_KEY", "synthetic-encrypted-workspace-key-not-real"],
+  ]) {
+    execFileSync(dotenvx, ["set", key, value, "-f", ".env"], { cwd: workspace, env: setEnv });
+  }
+  try {
+    const env = scrubbedEnv({ MOCK_BRAIN_SLACK_TOKEN: "xoxp-NOT-REAL-brain-held-token" });
+    delete env.AIOS_DISABLE_WORKSPACE_CREDENTIALS;
+    const result = runSlack(AIOS, ["slack", "whoami"], { env, cwd: workspace });
+    assert.equal(result.status, 0, result.stderr);
+    assert.doesNotMatch(result.stderr, /refusing to pair/, "phantom cross-domain conflict");
+    assert.doesNotMatch(result.stderr, /AIOS_E_CREDENTIAL_MISSING/, "vault misread as missing");
+    const tokenFetch = result.requests.find((request) =>
+      String(request.url).includes("/api/v1/me/slack-token")
+    );
+    assert.ok(tokenFetch, "the workspace-domain brain was consulted");
+    assert.match(String(tokenFetch.url), /^https:\/\/brain\.example\.test\//);
+    assert.equal(
+      tokenFetch.headers.Authorization,
+      "Bearer synthetic-encrypted-workspace-key-not-real",
+      "the decrypted workspace key must be the bearer"
+    );
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
 test("the compat bin's SECRET_SHAPED mask is pinned byte-identical to args.mjs", () => {
   const extract = (file) => {
     const match = /const SECRET_SHAPED = (\/.+\/i);/.exec(

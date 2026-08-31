@@ -162,7 +162,15 @@ function workspaceOwnBrainConfig(cwd, foundation) {
   let url = trim(dotenv.AIOS_BRAIN_URL || yaml.brain_url);
   let key = trim(dotenv.AIOS_API_KEY);
   try {
-    if (!key && isDotenvxEncrypted(cwd)) key = trim(decryptDotenvKey(cwd, "AIOS_API_KEY"));
+    // Mirror of the operator vault: loadDotEnv skips dotenvx ciphertext, so an
+    // all-encrypted workspace vault needs the scoped decrypt for BOTH fields — decrypting
+    // only the key would strand it as key-without-url and misreport a complete workspace
+    // as missing/conflicting. Provenance is unchanged: a decrypted value is still the
+    // cwd's own, so the pairing rules apply exactly as for plaintext.
+    if ((!url || !key) && isDotenvxEncrypted(cwd)) {
+      if (!url) url = trim(decryptDotenvKey(cwd, "AIOS_BRAIN_URL"));
+      if (!key) key = trim(decryptDotenvKey(cwd, "AIOS_API_KEY"));
+    }
   } catch {
     /* an unreadable workspace vault contributes nothing */
   }
