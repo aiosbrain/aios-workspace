@@ -242,6 +242,80 @@ jobs:
           docker run --rm -v /tmp/pack:/pack:ro -v "$PWD/.github/scripts":/ci:ro \
             node:22 bash -c 'apt-get update -qq && apt-get install -y -qq jq >/dev/null && bash /ci/clean-container-check.sh'
 
+  scrubbed-env-connectors:
+    name: scrubbed-env connectors
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # AIO-1028: the connector/credential suites must hold in BOTH environments the unit
+    # shards can never provide:
+    #   1. a fully scrubbed one (`env -i`, throwaway HOME, Node-only PATH) — catches code
+    #      that only works because direnv exported the keys or Homebrew put dotenvx/jq-like
+    #      tools on PATH (the AIO-1029 devDependency escape was invisible everywhere else);
+    #   2. a decoy-loaded one (synthetic LINEAR/AIOS/SLACK/GRANOLA/OPENAI/DOTENV values
+    #      exported, the shape of every direnv developer machine) — catches fixture
+    #      assertions that lose to the ambient environment. CI has no real credentials,
+    #      so WITHOUT this step a regression of the AIO-1028 class is invisible in CI by
+    #      construction and lands on every developer machine as "baseline noise".
+    # Deliberately a separate lane, like `clean-container install (no jq)`: the point is
+    # the environment, and the unit shards inherit the runner's.
+    env:
+      # Pure-Node connector/credential suites — runnable under a Node-only PATH.
+      # test/scaffold-next-action.test.mjs is credential-coupled too but shells out to
+      # bash, so it joins only the decoy step (full PATH).
+      SCRUBBED_SUITES: >-
+        test/brain-config-dotenvx.test.mjs
+        test/brain-config.test.mjs
+        test/brain-client-auth.test.mjs
+        test/connector-cli.test.mjs
+        test/connector-dotenvx-resolution.test.mjs
+        test/connector-existing-credential.test.mjs
+        test/connector-oauth.test.mjs
+        test/connector-routing-guard.test.mjs
+        test/ensure-env.test.mjs
+        test/global-connector-cli.test.mjs
+        test/granola-auth-path.test.mjs
+        test/granola-never-clobber.test.mjs
+        test/linear-dotenvx-scope.test.mjs
+        test/scrubbed-env-helper.test.mjs
+        test/suggest-connectors.test.mjs
+        test/sync-execution-smoke.test.mjs
+        test/vault-error-surfacing.test.mjs
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      # These suites never touch the native better-sqlite3 binding; skip lifecycle scripts
+      # so the lane stays fast and builds nothing it does not run.
+      - run: npm ci --ignore-scripts
+      - name: Connector suites under env -i (throwaway HOME, Node-only PATH)
+        run: |
+          SCRUB_HOME="$(mktemp -d)"
+          NODE_DIR="$(dirname "$(command -v node)")"
+          # the list is a deliberate word-split
+          # shellcheck disable=SC2086
+          env -i HOME="$SCRUB_HOME" PATH="$NODE_DIR" \
+            node --test $SCRUBBED_SUITES
+      - name: Same suites with decoy ambient credentials (the direnv-machine shape)
+        # Decoys are synthetic and generated here, never committed as key-shaped literals.
+        # If a fixture assertion can lose to the ambient environment, it loses to these
+        # decoys right here instead of on a developer machine with real keys.
+        run: |
+          export LINEAR_API_KEY="lin_api_fake_decoy_ci_1028"
+          export AIOS_API_KEY="aios_k_fake_decoy_ci_1028"
+          export AIOS_BRAIN_URL="https://decoy-brain.invalid"
+          export AIOS_TEAM="decoy-team"
+          export SLACK_USER_TOKEN="xoxp-fake-decoy-ci-1028"
+          export GRANOLA_API_KEY="grn_fake_decoy_ci_1028"
+          export OPENAI_API_KEY="sk-fake-decoy-ci-1028"
+          DOTENV_PUBLIC_KEY="0$(printf '1%.0s' $(seq 65))"
+          DOTENV_PRIVATE_KEY="$(printf 'd%.0s' $(seq 64))"
+          export DOTENV_PUBLIC_KEY DOTENV_PRIVATE_KEY
+          # the list is a deliberate word-split
+          # shellcheck disable=SC2086
+          node --test $SCRUBBED_SUITES test/scaffold-next-action.test.mjs
+
   lint:
     name: lint + format
     runs-on: ubuntu-latest
@@ -716,6 +790,7 @@ jobs:
       - guard
       - lint
       - node-tests
+      - scrubbed-env-connectors
       - publish-npm-parity
       - coverage-shard
       - coverage

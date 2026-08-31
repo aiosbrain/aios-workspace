@@ -5,22 +5,34 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
 import { resolveConnectorEnv, runGlobalConnector } from "../scripts/global-connector-runtime.mjs";
+import { scrubAmbientProcessEnv } from "./helpers/scrubbed-env.mjs";
+
+// AIO-1028: the spawned entrypoints inherit process.env — scrub the ambient credentials so
+// they exercise the no-credential path on every machine, not just in CI.
+scrubAmbientProcessEnv();
 
 const ROOT = path.resolve(import.meta.dirname, "..");
+
+// scripts/slack.mjs shells out to python3. The scrubbed-env CI lane runs on a Node-only
+// PATH (that's the point of the lane), so the Slack half is skipped there — the Linear
+// half, which is pure Node, still runs everywhere.
+const hasPython3 = spawnSync("python3", ["--version"], { stdio: "ignore" }).status === 0;
 
 test("global Slack and Linear entrypoints work outside an AIOS repository", () => {
   const cwd = mkdtempSync(path.join(tmpdir(), "aios-global-connectors-"));
   try {
-    const slack = spawnSync(
-      process.execPath,
-      [path.join(ROOT, "scripts/slack.mjs"), "dm", "--help"],
-      {
-        cwd,
-        encoding: "utf8",
-      }
-    );
-    assert.equal(slack.status, 0, slack.stderr);
-    assert.match(slack.stdout, /message-stdin/);
+    if (hasPython3) {
+      const slack = spawnSync(
+        process.execPath,
+        [path.join(ROOT, "scripts/slack.mjs"), "dm", "--help"],
+        {
+          cwd,
+          encoding: "utf8",
+        }
+      );
+      assert.equal(slack.status, 0, slack.stderr);
+      assert.match(slack.stdout, /message-stdin/);
+    }
 
     const linear = spawnSync(
       process.execPath,
@@ -39,12 +51,14 @@ test("global entrypoints consult an explicit agent workspace outside the repo", 
   const agentWorkspace = mkdtempSync(path.join(tmpdir(), "aios-global-connectors-agent-"));
   const env = { ...process.env, AIOS_AGENT_WORKSPACE: agentWorkspace };
   try {
-    const slack = spawnSync(
-      process.execPath,
-      [path.join(ROOT, "scripts/slack.mjs"), "dm", "--help"],
-      { cwd, env, encoding: "utf8" }
-    );
-    assert.equal(slack.status, 0, slack.stderr);
+    if (hasPython3) {
+      const slack = spawnSync(
+        process.execPath,
+        [path.join(ROOT, "scripts/slack.mjs"), "dm", "--help"],
+        { cwd, env, encoding: "utf8" }
+      );
+      assert.equal(slack.status, 0, slack.stderr);
+    }
 
     const linear = spawnSync(
       process.execPath,
