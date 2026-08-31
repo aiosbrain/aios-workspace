@@ -1,7 +1,9 @@
 // `create` command: argument parsing plus the guarded one-shot issueCreate write (AIO-1026).
 // The description runs the SAME two guards as set-desc/patch-desc: lintDescription before
 // any network traffic, confirmStored (bound to the returned identifier) after the write.
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 
 import { resolveLinearTemplate } from "./linear-template.mjs";
 import { confirmStored, lintDescription } from "./linear-desc-guard.mjs";
@@ -30,34 +32,26 @@ export function parseCreateArgs(args) {
   let project = null;
   let priority = null;
   let force = false;
+  const setters = {
+    "--desc": (value) => (descFile = value),
+    "--template": (value) => (template = value),
+    "--label": (value) => labels.push(value),
+    "--state": (value) => (state = value),
+    "--parent": (value) => (parent = value),
+    "--assignee": (value) => (assignee = value),
+    "--project": (value) => (project = value),
+    "--priority": (value) => (priority = parsePriority(value)),
+  };
   for (let index = 1; index < args.length; index++) {
     const option = args[index];
     if (option === "--force") {
       // Boolean flag: downgrades the description lint (indented-table refusal) to a warning,
       // mirroring set-desc/patch-desc. It takes no value.
       force = true;
-    } else if (
-      [
-        "--desc",
-        "--template",
-        "--label",
-        "--state",
-        "--parent",
-        "--assignee",
-        "--project",
-        "--priority",
-      ].includes(option)
-    ) {
+    } else if (Object.hasOwn(setters, option)) {
       const value = args[++index];
       if (!value) fail(`${option} requires a value`);
-      if (option === "--desc") descFile = value;
-      else if (option === "--template") template = value;
-      else if (option === "--label") labels.push(value);
-      else if (option === "--state") state = value;
-      else if (option === "--parent") parent = value;
-      else if (option === "--project") project = value;
-      else if (option === "--priority") priority = parsePriority(value);
-      else assignee = value;
+      setters[option](value);
     } else {
       fail(`unknown create option "${option}"`);
     }
@@ -92,19 +86,43 @@ export function parseCreateArgs(args) {
   };
 }
 
+// The issueCreate mutation is sent exactly once and never retried: a lost or malformed
+// response does not prove the issue was not created, and a retry could file duplicates.
+function reportUnconfirmedCreate(title, reason) {
+  console.error(`create FAILED: ${reason}`);
+  console.error("  The issueCreate mutation was sent once and is NOT retried, but Linear");
+  console.error("  may have created the issue anyway. Before re-running create, check:");
+  console.error(`    linear list ${DEFAULT_TEAM_KEY} --open   (look for "${title}")`);
+  process.exit(1);
+}
+
+// The recovery commands must reference the body that was actually SENT — the origin block
+// and a stamped --template are prepended/substituted after --desc is read, so pointing at
+// the original --desc file would false-report drift (verify-desc) or overwrite the
+// origin/template content (set-desc). Save the exact sent body and name that file.
+function reportDescriptionNotConfirmed({ identifier, description, force, readbackError }) {
+  const sentFile = path.join(tmpdir(), `linear-create-${identifier}-sent-${process.pid}.md`);
+  writeFileSync(sentFile, description, "utf8");
+  if (readbackError) {
+    console.error(`readback FAILED for created issue ${identifier}: ${readbackError.message}`);
+    console.error(`  ${identifier} EXISTS — do not re-run create.`);
+    console.error(`  The exact description that was sent is saved at: ${sentFile}`);
+    console.error("  Verify what Linear stored:");
+    console.error(`    linear verify-desc ${identifier} ${sentFile}`);
+  } else {
+    console.error(
+      `${identifier} was created but its stored description drifted from what was sent.`
+    );
+    console.error(`  The exact description that was sent is saved at: ${sentFile}`);
+    console.error("  Repair it, then rewrite the description:");
+    console.error(`    linear set-desc ${identifier} ${sentFile}${force ? " --force" : ""}`);
+  }
+  process.exit(1);
+}
+
 export async function cmdCreate(args) {
-  const {
-    title,
-    description,
-    descFile,
-    labels,
-    state,
-    parent,
-    assignee,
-    project,
-    priority,
-    force,
-  } = parseCreateArgs(args);
+  const { title, description, labels, state, parent, assignee, project, priority, force } =
+    parseCreateArgs(args);
   // Same pre-write guard as set-desc/patch-desc (AIO-1026): refuse markdown Linear is known
   // to corrupt BEFORE any network traffic, so a rejected description means zero mutations.
   lintDescription(description, { force });
@@ -135,8 +153,6 @@ export async function cmdCreate(args) {
   }
   if (project) input.projectId = (await resolveProject(project)).id;
   if (priority !== null) input.priority = priority;
-  // The create mutation is sent exactly ONCE and never retried: a lost response does not
-  // prove the issue was not created, so a retry could file duplicates. On failure, say so.
   let d;
   try {
     d = await gql(
@@ -145,23 +161,11 @@ export async function cmdCreate(args) {
       { throwOnError: true }
     );
   } catch (error) {
-    console.error(`create FAILED: ${error.message}`);
-    console.error(
-      "  The issueCreate mutation was sent once and is NOT retried — the response was lost, so"
-    );
-    console.error("  Linear may have created the issue anyway. Before re-running create, check:");
-    console.error(`    linear list ${DEFAULT_TEAM_KEY} --open   (look for "${title}")`);
-    process.exit(1);
+    reportUnconfirmedCreate(title, error.message);
   }
   const i = d.issueCreate?.issue;
-  if (!d.issueCreate?.success || !i) {
-    console.error("create FAILED: issueCreate returned no issue.");
-    console.error(
-      "  The mutation was sent once and is NOT retried — the issue may still exist. Check:"
-    );
-    console.error(`    linear list ${DEFAULT_TEAM_KEY} --open   (look for "${title}")`);
-    process.exit(1);
-  }
+  if (!d.issueCreate?.success || !i)
+    reportUnconfirmedCreate(title, "issueCreate returned no issue.");
   console.log(`created ${i.identifier}  ${i.title}\n${i.url}\nbranch: ${i.branchName}`);
   if (description) {
     // Post-write readback bound to the issue the mutation just returned, mirroring set-desc.
@@ -174,18 +178,13 @@ export async function cmdCreate(args) {
     } catch (error) {
       readbackError = error;
     }
-    if (readbackError) {
-      console.error(`readback FAILED for created issue ${i.identifier}: ${readbackError.message}`);
-      console.error(`  ${i.identifier} EXISTS — do not re-run create. Verify what it stored:`);
-      console.error(`    linear verify-desc ${i.identifier} ${descFile || "<description.md>"}`);
-      process.exit(1);
-    }
-    if (!storedOk) {
-      console.error(`${i.identifier} was created but its stored description drifted. Repair it:`);
-      console.error(
-        `    linear set-desc ${i.identifier} ${descFile || "<fixed-description.md>"}${force ? " --force" : ""}`
-      );
-      process.exit(1);
+    if (readbackError || !storedOk) {
+      reportDescriptionNotConfirmed({
+        identifier: i.identifier,
+        description,
+        force,
+        readbackError,
+      });
     }
   }
 }
