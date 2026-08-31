@@ -110,7 +110,7 @@ test("the brain token root feeds provider verbs; connect/status/disconnect round
   assert.equal(connect.status, 0, connect.stderr);
   assert.equal(connect.stdout, "connected as U0MOCK in workspace MockCo\n");
 
-  const rejected = runSlack(AIOS, ["slack", "connect", "xoxb-bot-token-not-a-user-token"], {
+  const rejected = runSlack(AIOS, ["slack", "connect", "xoxb-NOT-REAL-bot-token"], {
     env: brainEnv(),
   });
   assert.equal(rejected.status, 2, rejected.stderr);
