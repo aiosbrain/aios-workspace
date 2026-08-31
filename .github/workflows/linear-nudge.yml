@@ -17,21 +17,24 @@ name: Linear merge nudge (advisory)
 #
 # ── Credential isolation (why this is pull_request_target) ───────────────────────────────────
 # Under `pull_request` the workflow file is taken from the PR head, so a same-repo branch PR could
-# rewrite this file — drop the `merged == true` guard, drop the checkout `ref`, print the key —
-# and just close its own PR to fire it. `pull_request_target` runs the base branch's copy, so the
-# guard, the checkout ref, and the script path below are all trusted code. The checkout is pinned
-# to the BASE commit and `persist-credentials: false`, so `scripts/linear-merge-nudge.mjs` is the
-# reviewed base-branch copy and never the candidate tree's. PR title and branch reach that script
-# only through `env:`, never interpolated into a `run:` body. All actions are pinned by full
-# commit SHA.
+# rewrite this file — drop the `merged == true` guard, repoint the checkout at its own tree, print
+# the key — and just close its own PR to fire it. `pull_request_target` runs the base branch's
+# copy, so the guard, the checkout, and the script path below are all trusted code.
+#
+# Two things make the checkout below trustworthy rather than merely trusted-looking: the trigger
+# is filtered to `branches: [main]` (see the note on it), and the step names no ref at all, so it
+# takes the default — the tip of the PR's base branch, which that filter pins to `main`.
+# `scripts/linear-merge-nudge.mjs` is therefore always the reviewed copy on the protected default
+# branch, never the candidate tree's. PR title and branch reach that script only through `env:`,
+# never interpolated into a `run:` body. All actions are pinned by full commit SHA.
 
 on:
   pull_request_target:
     # `branches: [main]` is load-bearing, not tidiness. Without it a PR may target ANY branch,
     # and under pull_request_target the "base" is that branch — so a collaborator could push
-    # `evil`, open and merge `evil2 -> evil`, and this job would check out THEIR `base.sha` and
-    # run THEIR scripts/linear-merge-nudge.mjs with LINEAR_API_KEY. Restricting the trigger to
-    # PRs into `main` is what makes `base.sha` below a reviewed, protected-branch commit.
+    # `evil`, open and merge `evil2 -> evil`, and this job would check out THEIR branch and run
+    # THEIR scripts/linear-merge-nudge.mjs with LINEAR_API_KEY. Restricting the trigger to PRs
+    # into `main` is what makes the checked-out tree a reviewed, protected-branch commit.
     types: [closed]
     branches: [main]
 
@@ -62,14 +65,15 @@ jobs:
         if: env.LINEAR_API_KEY == ''
         run: echo "LINEAR_API_KEY not configured — skipping Linear merge-nudge."
 
-      # Explicitly the base commit, not the candidate tree. Trusted because the trigger above is
-      # filtered to `branches: [main]`, so this SHA is always a commit on the protected default
-      # branch. (actions/checkout v7+ additionally refuses to check out fork PR head code under
+      # No `ref:` on purpose. Under pull_request_target the default checkout ref is GITHUB_SHA,
+      # which is the tip of the PR's BASE branch — and `branches: [main]` above pins that to the
+      # protected default branch. So the script run below is always the reviewed copy on `main`,
+      # and no `github.event.pull_request.*` expression selects what gets checked out at all.
+      # (actions/checkout v7+ additionally refuses to check out fork PR head content under
       # pull_request_target without `allow-unsafe-pr-checkout`, which is not set here.)
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: env.LINEAR_API_KEY != ''
         with:
-          ref: ${{ github.event.pull_request.base.sha }}
           persist-credentials: false
           sparse-checkout: |
             scripts/linear-merge-nudge.mjs
