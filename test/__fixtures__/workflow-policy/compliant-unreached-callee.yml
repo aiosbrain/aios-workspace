@@ -1,0 +1,17 @@
+# NEGATIVE CONTROL (b), callee. Same risky shapes again, reached only from a schedule/push caller.
+# Expected: zero findings, and the file never appears as PR-reachable.
+name: compliant unreached callee
+on:
+  workflow_call:
+permissions:
+  contents: read
+jobs:
+  nightly:
+    runs-on: ubuntu-latest
+    env:
+      NIGHTLY_TOKEN: ${{ secrets.NIGHTLY_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - run: npm ci && echo "${{ github.event.pull_request.title }}"

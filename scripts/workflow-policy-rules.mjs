@@ -94,73 +94,131 @@ export function triggersOf(doc) {
   return [];
 }
 
-/** `workflow_run` edge: reachable when any named upstream is PR-like or cannot be resolved. */
-function workflowRunReason(on, byName, reasons) {
+/**
+ * `workflow_run` edge: reachable when any named upstream is PR-like or cannot be resolved.
+ * Returns the reach record to INHERIT, so a `pull_request_target` origin propagates downstream.
+ */
+function workflowRunReach(on, byName, reach) {
   const upstream = isMap(on.workflow_run) ? on.workflow_run.workflows : null;
+  // No `workflows:` filter means every workflow in the repo is an upstream, including a
+  // pull_request_target one — fail closed on BOTH reachability and the PR-target origin.
   if (!Array.isArray(upstream) || upstream.length === 0)
-    return "workflow_run with no `workflows:` filter — any upstream, treated as PR-like";
+    return {
+      reason: "workflow_run with no `workflows:` filter — any upstream, treated as PR-target",
+      prTarget: true,
+    };
+  let found = null;
   for (const name of upstream) {
     const src = byName.get(String(name));
-    if (!src) return `workflow_run of unresolved workflow "${name}" (fail-closed)`;
-    if (reasons.has(src.rel)) return `workflow_run of PR-like "${name}"`;
+    if (!src)
+      return {
+        reason: `workflow_run of unresolved workflow "${name}" (fail-closed)`,
+        prTarget: true,
+      };
+    const up = reach.get(src.rel);
+    if (!up) continue;
+    // Keep looking for a pull_request_target origin: "any path" is what decides the audit.
+    if (up.prTarget)
+      return { reason: `workflow_run of pull_request_target "${name}"`, prTarget: true };
+    found ??= { reason: `workflow_run of PR-like "${name}"`, prTarget: false };
   }
-  return null;
-}
-
-/** `workflow_call` edge: a reusable workflow inherits its caller's trigger, so it inherits risk. */
-function workflowCallReason(file, files, reasons) {
-  const basename = path.basename(file.rel);
-  for (const caller of files) {
-    if (caller.error || !reasons.has(caller.rel)) continue;
-    for (const [jobId, job] of Object.entries(caller.doc.jobs ?? {})) {
-      const ref = isMap(job) ? job.uses : null;
-      if (
-        typeof ref === "string" &&
-        ref.replace(/^\.\//, "").startsWith(`.github/workflows/${basename}`)
-      )
-        return `called by PR-like ${caller.rel} (job \`${jobId}\`)`;
-    }
-  }
-  return null;
+  return found;
 }
 
 /**
- * Which workflows a PR-like event can reach. Fail-closed at every unknown edge: an unparseable
- * file, a `workflow_run` with no resolvable upstream, and a `workflow_call` file called by a
- * reachable caller all count as reachable.
- * @returns {Map<string, string>} relative path → the reason it is reachable
+ * `workflow_call` edge: a local reusable workflow declares `on: workflow_call`, but it EXECUTES
+ * with the caller's event context and privileges. Its own `on:` block therefore says nothing about
+ * whether the PR-target rules apply — the caller's origin does. Deriving that from the callee is
+ * the bypass this function exists to close: move a privileged step into a reusable workflow called
+ * from a `pull_request_target` workflow and every pr-target rule would otherwise go unchecked.
+ *
+ * Returns the reach record to INHERIT, preferring a `pull_request_target` caller when several
+ * callers reach the same file.
+ */
+function workflowCallReach(file, files, reach) {
+  const basename = path.basename(file.rel);
+  let found = null;
+  for (const caller of files) {
+    if (caller.error) continue;
+    const via = reach.get(caller.rel);
+    if (!via) continue;
+    for (const [jobId, job] of Object.entries(caller.doc.jobs ?? {})) {
+      const ref = isMap(job) ? job.uses : null;
+      if (
+        typeof ref !== "string" ||
+        !ref.replace(/^\.\//, "").startsWith(`.github/workflows/${basename}`)
+      )
+        continue;
+      const origin = via.prTarget ? "pull_request_target" : "PR-like";
+      const record = {
+        reason: `called by ${origin} ${caller.rel} (job \`${jobId}\`)`,
+        prTarget: via.prTarget,
+      };
+      if (via.prTarget) return record; // strongest origin wins immediately
+      found ??= record;
+    }
+  }
+  return found;
+}
+
+/**
+ * Which workflows a PR-like event can reach, and — separately — whether any path that reaches each
+ * one ORIGINATES from `pull_request_target`. The second half is load-bearing: the pr-target rules
+ * must be judged on the originating trigger, never on the audited file's own `on:` block, or a
+ * local reusable workflow launders every one of them.
+ *
+ * Fail-closed at every unknown edge: an unparseable file, a `workflow_run` with no resolvable
+ * upstream, and a `workflow_call` file called by a reachable caller all count as reachable, and the
+ * unresolvable ones count as `pull_request_target` too.
+ *
+ * @returns {Map<string, {reason: string, prTarget: boolean}>} relative path → how it is reached
  */
 export function computeReachability(files) {
-  const reasons = new Map();
+  const reach = new Map();
   const byName = new Map();
   for (const f of files) if (f.doc?.name) byName.set(String(f.doc.name), f);
 
+  // An origin may be discovered AFTER a file is first marked reachable (caller A is `pull_request`,
+  // caller B is `pull_request_target`, and B is only reached on a later pass). A false→true upgrade
+  // therefore counts as progress, or the strongest origin could be missed.
+  const record = (rel, next) => {
+    const current = reach.get(rel);
+    if (!current) {
+      reach.set(rel, next);
+      return true;
+    }
+    if (next.prTarget && !current.prTarget) {
+      reach.set(rel, next);
+      return true;
+    }
+    return false;
+  };
+
   for (const f of files) {
     if (f.error) {
-      reasons.set(f.rel, "could not be parsed — treated as reachable");
+      record(f.rel, { reason: "could not be parsed — treated as reachable", prTarget: true });
       continue;
     }
     const hit = triggersOf(f.doc).filter((t) => PR_LIKE_EVENTS.includes(t));
-    if (hit.length) reasons.set(f.rel, hit.join(", "));
+    if (hit.length)
+      record(f.rel, { reason: hit.join(", "), prTarget: hit.includes("pull_request_target") });
   }
 
-  // Transitive edges need a fixpoint: a workflow_run of a workflow_call of a pull_request job.
-  for (let pass = 0; pass <= files.length; pass++) {
+  // Fixpoint over the transitive edges. Each file can be added once and upgraded once, so the
+  // number of productive passes is bounded by 2n; the loop exits as soon as a pass changes nothing.
+  for (let pass = 0; pass <= 2 * files.length + 1; pass++) {
     let grew = false;
     for (const f of files) {
-      if (f.error || reasons.has(f.rel)) continue;
+      if (f.error) continue;
       const on = isMap(f.doc.on) ? f.doc.on : {};
-      const reason =
-        ("workflow_run" in on ? workflowRunReason(on, byName, reasons) : null) ??
-        ("workflow_call" in on ? workflowCallReason(f, files, reasons) : null);
-      if (reason) {
-        reasons.set(f.rel, reason);
-        grew = true;
-      }
+      const next =
+        ("workflow_run" in on ? workflowRunReach(on, byName, reach) : null) ??
+        ("workflow_call" in on ? workflowCallReach(f, files, reach) : null);
+      if (next && record(f.rel, next)) grew = true;
     }
     if (!grew) break;
   }
-  return reasons;
+  return reach;
 }
 
 /** Scalars belonging to the workflow scope (everything above `jobs:`). */
@@ -307,9 +365,15 @@ function auditJob(jobId, job, jobLine, isPrTarget, add) {
 
 /**
  * Every rule that applies to one PR-reachable workflow.
+ *
+ * `prTarget` is the ORIGIN of the path that reaches this file (from computeReachability), not the
+ * file's own trigger. A local reusable workflow declares `on: workflow_call` yet runs with its
+ * caller's `pull_request_target` privileges, so deriving this from `doc.on` here would let any
+ * privileged step be laundered through a `uses: ./.github/workflows/...` call.
+ *
  * @returns {Array<{file: string, job: string, rule: string, line: number, detail: string}>}
  */
-export function auditWorkflow(file) {
+export function auditWorkflow(file, prTarget = false) {
   const found = [];
   const doc = file.doc;
   const add = (job, rule, line, detail) => found.push({ file: file.rel, job, rule, line, detail });
@@ -319,7 +383,8 @@ export function auditWorkflow(file) {
     add("(workflow)", "elevated-permissions", violation.line, violation.detail);
 
   const jobs = isMap(doc.jobs) ? doc.jobs : {};
-  const isPrTarget = triggersOf(doc).includes("pull_request_target");
+  // Belt and braces: the file's own trigger can only ADD to the propagated origin, never clear it.
+  const isPrTarget = prTarget || triggersOf(doc).includes("pull_request_target");
   for (const [jobId, job] of Object.entries(jobs)) {
     if (isMap(job)) auditJob(jobId, job, lineOf(jobs, jobId), isPrTarget, add);
   }

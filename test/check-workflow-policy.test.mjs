@@ -4,56 +4,26 @@
 // test/__fixtures__/workflow-policy/, so what the test proves is what CI runs. Every rule has a
 // violating fixture AND a compliant counterpart; the compliant assertions are the load-bearing
 // half, because a gate that flags everything is as useless as one that flags nothing.
+//
+// Allowlist/waiver semantics live in test/check-workflow-policy-allowlist.test.mjs.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readFileSync } from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
-import {
-  RULES,
-  mutableUsesRef,
-  triggersOf,
-  validateAllowlist,
-} from "../scripts/check-workflow-policy.mjs";
+import { RULES, mutableUsesRef, triggersOf } from "../scripts/check-workflow-policy.mjs";
 import { parseWorkflowYaml, walkScalars, YamlError } from "../scripts/workflow-yaml.mjs";
-
-const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
-const SCRIPT = path.join(ROOT, "scripts", "check-workflow-policy.mjs");
-const FIXTURES = "test/__fixtures__/workflow-policy";
-const NO_ALLOWLIST = path.join(tmpdir(), "workflow-policy-absent-allowlist.json");
-
-/** Run the gate and return { code, out } with stdout and stderr merged. */
-function run({ dir = FIXTURES, allowlist = NO_ALLOWLIST, cwd = ROOT } = {}) {
-  try {
-    const stdout = execFileSync("node", [SCRIPT, "--dir", dir, "--allowlist", allowlist], {
-      cwd,
-      encoding: "utf8",
-    });
-    return { code: 0, out: stdout };
-  } catch (e) {
-    return { code: e.status ?? 1, out: `${e.stdout ?? ""}${e.stderr ?? ""}` };
-  }
-}
-
-/** Every `FAIL <file> job \`<job>\` [<rule>]` line, as {file, job, rule}. */
-function failures(out) {
-  return [...out.matchAll(/^FAIL {2}(\S+?)(?::\d+)? {2}job `([^`]+)` {2}\[([a-z-]+)\]$/gm)].map(
-    ([, file, job, rule]) => ({ file: path.basename(file), job, rule })
-  );
-}
-
-const withAllowlist = (entries, body) => {
-  const dir = mkdtempSync(path.join(tmpdir(), "wf-policy-"));
-  const file = path.join(dir, "allowlist.json");
-  writeFileSync(file, JSON.stringify({ entries }, null, 2));
-  try {
-    return body(file);
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
-};
+import {
+  FIXTURES,
+  INDIRECT,
+  ORIGIN_DEPENDENT_RULES,
+  ROOT,
+  SCRIPT,
+  VALID_JUSTIFICATION,
+  failures,
+  reachedVia,
+  run,
+  withAllowlist,
+} from "./workflow-policy-test-helpers.mjs";
 
 // ── every rule fires on its own fixture ──────────────────────────────────────
 
@@ -71,6 +41,13 @@ const EXPECTED = [
   ["violating-workflow-run.yml", "report", "secrets-in-pr-reachable"],
   ["violating-reusable.yml", "publish", "secrets-in-pr-reachable"],
   ["violating-unparseable.yml", "(file)", "unparseable-workflow"],
+  // The reusable-workflow bypass: judged under the CALLER's pull_request_target origin.
+  ["violating-prt-reusable-callee.yml", "privileged", "pr-target-checkout"],
+  ["violating-prt-reusable-callee.yml", "privileged", "pr-target-artifact-download"],
+  ["violating-prt-reusable-callee.yml", "privileged", "pr-target-package-install"],
+  ["violating-prt-reusable-callee.yml", "privileged", "pr-target-dynamic-run"],
+  ["violating-prt-chain-end.yml", "deep", "pr-target-checkout"],
+  ["violating-prt-chain-end.yml", "deep", "pr-target-dynamic-run"],
 ];
 
 test("every rule fires on its violating fixture, naming file, job, and rule", () => {
@@ -89,6 +66,91 @@ test("every rule fires on its violating fixture, naming file, job, and rule", ()
     if (rule === "allowlist-entry-invalid") continue; // exercised by the allowlist tests below
     assert.ok(exercised.has(rule), `rule ${rule} has no violating fixture`);
   }
+
+  // Stronger oracle for the origin-dependent rules. Firing only on a DIRECTLY triggered
+  // `pull_request_target` workflow is not coverage — that is precisely the state the gate was in
+  // when it shipped the reusable-workflow bypass. Each of these rules must also have fired on a
+  // workflow reached only through a workflow_call / workflow_run edge.
+  const via = reachedVia(out);
+  for (const rule of ORIGIN_DEPENDENT_RULES) {
+    const hits = found.filter((f) => f.rule === rule);
+    assert.ok(
+      hits.some((f) => !INDIRECT.test(via.get(f.file) ?? "")),
+      `${rule} has no directly-triggered violating fixture`
+    );
+    assert.ok(
+      hits.some((f) => INDIRECT.test(via.get(f.file) ?? "")),
+      `${rule} only ever fires on a directly-triggered workflow — a reusable-workflow callee ` +
+        `would bypass it. Add an indirectly-reached fixture.`
+    );
+  }
+});
+
+// ── the reusable-workflow bypass (Codex adversarial review, P1) ──────────────
+//
+// A local reusable workflow declares `on: workflow_call`, so its own trigger list never contains
+// `pull_request_target` — but it EXECUTES with the caller's event context and privileges. Deriving
+// the pr-target origin from the audited file's own `on:` let every pr-target rule be laundered by
+// moving the privileged step into a `uses: ./.github/workflows/...` callee. Refactoring into a
+// reusable workflow is completely ordinary, so this was not theoretical.
+
+test("pr-target rules fire on a reusable callee of a pull_request_target caller", () => {
+  const out = run().out;
+  const found = failures(out).filter((f) => f.file === "violating-prt-reusable-callee.yml");
+  const rules = new Set(found.map((f) => f.rule));
+  for (const rule of ORIGIN_DEPENDENT_RULES) {
+    assert.ok(rules.has(rule), `${rule} must fire on the callee\n${out}`);
+  }
+  assert.ok(
+    found.every((f) => f.job === "privileged"),
+    "findings are attributed to the callee's own job"
+  );
+  // The callee's own `on:` is workflow_call — the origin must come from the caller.
+  assert.match(
+    reachedVia(out).get("violating-prt-reusable-callee.yml"),
+    /^called by pull_request_target /
+  );
+});
+
+test("the pull_request_target origin survives two reusable-workflow hops", () => {
+  const out = run().out;
+  const rules = new Set(
+    failures(out)
+      .filter((f) => f.file === "violating-prt-chain-end.yml")
+      .map((f) => f.rule)
+  );
+  assert.ok(rules.has("pr-target-checkout"), `caller → A → B must still be judged as prt\n${out}`);
+  assert.ok(
+    rules.has("pr-target-dynamic-run"),
+    `caller → A → B must still be judged as prt\n${out}`
+  );
+  assert.match(
+    reachedVia(out).get("upstream-prt-chain-middle.yml"),
+    /^called by pull_request_target /
+  );
+});
+
+test("a reusable callee reached only from `pull_request` does NOT get the pr-target rules", () => {
+  const out = run().out;
+  const found = failures(out).filter((f) => f.file === "pr-reachable-not-prt-callee.yml");
+  const rules = new Set(found.map((f) => f.rule));
+  // It IS PR-reachable, so the secrets rule applies...
+  assert.ok(rules.has("secrets-in-pr-reachable"), `still PR-reachable\n${out}`);
+  // ...but pull_request carries no base-repo privileges, so these must stay silent. Without this
+  // control the bypass fix would have traded a false negative for a false positive.
+  for (const rule of ORIGIN_DEPENDENT_RULES) {
+    assert.ok(!rules.has(rule), `${rule} must NOT fire for a plain pull_request origin\n${out}`);
+  }
+});
+
+test("a reusable callee reached only from schedule/push is out of scope entirely", () => {
+  const out = run().out;
+  assert.equal(reachedVia(out).get("compliant-unreached-callee.yml"), undefined);
+  assert.deepEqual(
+    failures(out).filter((f) => f.file === "compliant-unreached-callee.yml"),
+    [],
+    "a schedule-only caller must not drag its callee into scope"
+  );
 });
 
 test("compliant fixtures produce no finding at all", () => {
@@ -98,6 +160,12 @@ test("compliant fixtures produce no finding at all", () => {
     "compliant-not-pr-reachable.yml",
     "upstream-pr-workflow.yml",
     "upstream-reusable-caller.yml",
+    "upstream-prt-reusable-caller.yml",
+    "upstream-prt-chain-caller.yml",
+    "upstream-prt-chain-middle.yml",
+    "upstream-plain-pr-caller.yml",
+    "upstream-schedule-caller.yml",
+    "compliant-unreached-callee.yml",
   ];
   const found = failures(run().out);
   for (const file of clean) {
@@ -170,37 +238,6 @@ test("the checker itself neither writes nor can write the AIOS Security Gate sta
   );
 });
 
-// ── allowlist semantics ──────────────────────────────────────────────────────
-
-const VALID_JUSTIFICATION =
-  "Waived pending the phase-7 cutover that deletes the workflow; owner tracked in the plan.";
-
-test("a matching (workflow, job, rule) waiver suppresses exactly that finding", () => {
-  withAllowlist(
-    [
-      {
-        workflow: `${FIXTURES}/violating-secrets.yml`,
-        job: "deploy",
-        rule: "secrets-in-pr-reachable",
-        owner: "AIOS Security",
-        justification: VALID_JUSTIFICATION,
-      },
-    ],
-    (file) => {
-      const { code, out } = run({ allowlist: file });
-      assert.equal(code, 1, "other fixtures still fail");
-      assert.match(
-        out,
-        /waived {2}\S*violating-secrets\.yml {2}job `deploy` {2}\[secrets-in-pr-reachable\] {2}owner: AIOS Security/
-      );
-      assert.deepEqual(
-        failures(out).filter((f) => f.file === "violating-secrets.yml"),
-        []
-      );
-    }
-  );
-});
-
 // leak-gate-remediation-plan.md §5.1 / §2.4: pr-task-link.yml and pr-in-review.yml land as
 // pull_request_target jobs that legitimately hold a credential via an `environment:`. That is the
 // plan's sanctioned "static AST-policy exception reviewed by Security" — and it is the ONE rule the
@@ -243,116 +280,6 @@ test("waiving only the secrets rule leaves every other rule enforced on the same
       );
     }
   );
-});
-
-test("a waiver is scoped to its rule — it does not silence the file's other rules", () => {
-  withAllowlist(
-    [
-      {
-        workflow: `${FIXTURES}/violating-mutable-action.yml`,
-        job: "build",
-        rule: "secrets-in-pr-reachable",
-        owner: "AIOS Security",
-        justification: VALID_JUSTIFICATION,
-      },
-    ],
-    (file) => {
-      const out = run({ allowlist: file }).out;
-      assert.ok(
-        failures(out).some(
-          (f) => f.file === "violating-mutable-action.yml" && f.rule === "mutable-action-ref"
-        ),
-        "the unwaived rule still fails"
-      );
-    }
-  );
-});
-
-test('job "*" waives one rule across a file\'s jobs, and is still rule-scoped', () => {
-  const entries = [
-    {
-      workflow: `${FIXTURES}/violating-prt-dynamic-run.yml`,
-      job: "*",
-      rule: "pr-target-dynamic-run",
-      owner: "Platform Engineering",
-      justification: VALID_JUSTIFICATION,
-    },
-  ];
-  withAllowlist(entries, (file) => {
-    const out = run({ allowlist: file }).out;
-    assert.deepEqual(
-      failures(out).filter((f) => f.file === "violating-prt-dynamic-run.yml"),
-      []
-    );
-  });
-});
-
-test("an unused waiver is a note, never a failure — so a fix in another PR cannot redden main", () => {
-  withAllowlist(
-    [
-      {
-        workflow: ".github/workflows/does-not-exist.yml",
-        job: "ghost",
-        rule: "mutable-action-ref",
-        owner: "AIOS Security",
-        justification: VALID_JUSTIFICATION,
-      },
-    ],
-    (file) => {
-      const out = run({ allowlist: file, dir: `${FIXTURES}/../workflow-policy-none` }).out;
-      assert.match(out, /stale {3}\.github\/workflows\/does-not-exist\.yml/);
-      assert.equal(run({ allowlist: file, dir: `${FIXTURES}/../workflow-policy-none` }).code, 0);
-    }
-  );
-});
-
-for (const [label, entry] of [
-  ["no justification", { justification: undefined }],
-  ["a too-short justification", { justification: "TODO" }],
-  ["no owner", { owner: "" }],
-  ["an unknown rule", { rule: "everything" }],
-  ["a wildcard rule", { rule: "*" }],
-  ["no workflow", { workflow: "" }],
-]) {
-  test(`an allowlist entry with ${label} is itself a failure`, () => {
-    const base = {
-      workflow: `${FIXTURES}/violating-secrets.yml`,
-      job: "deploy",
-      rule: "secrets-in-pr-reachable",
-      owner: "AIOS Security",
-      justification: VALID_JUSTIFICATION,
-    };
-    withAllowlist([{ ...base, ...entry }], (file) => {
-      const { code, out } = run({ allowlist: file });
-      assert.equal(code, 1);
-      assert.match(out, /\[allowlist-entry-invalid\]/, out);
-    });
-  });
-}
-
-test("validateAllowlist rejects a non-array entries field", () => {
-  const { findings } = validateAllowlist({ entries: "everything" }, "a.json");
-  assert.equal(findings.length, 1);
-  assert.equal(findings[0].rule, "allowlist-entry-invalid");
-});
-
-test("the repo's own allowlist is valid and every entry justifies itself", () => {
-  const raw = JSON.parse(
-    execFileSync("cat", [path.join(ROOT, "scripts/workflow-policy-allowlist.json")], {
-      encoding: "utf8",
-    })
-  );
-  const { findings, entries } = validateAllowlist(raw, "scripts/workflow-policy-allowlist.json");
-  assert.deepEqual(findings, []);
-  for (const e of entries) assert.notEqual(e.rule, "*");
-});
-
-test("the repo's own workflows pass the gate with its committed allowlist", () => {
-  const result = run({
-    dir: ".github/workflows",
-    allowlist: path.join(ROOT, "scripts/workflow-policy-allowlist.json"),
-  });
-  assert.equal(result.code, 0, result.out);
 });
 
 // ── unit-level pieces ────────────────────────────────────────────────────────

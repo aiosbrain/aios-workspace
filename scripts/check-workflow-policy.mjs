@@ -121,7 +121,8 @@ function loadAllowlist(allowlistPath, cwd) {
 function collectFindings(files, reachable) {
   const findings = [];
   for (const file of files) {
-    if (!reachable.has(file.rel)) continue;
+    const via = reachable.get(file.rel);
+    if (!via) continue;
     if (file.error)
       findings.push({
         file: file.rel,
@@ -130,7 +131,9 @@ function collectFindings(files, reachable) {
         line: file.error.line ?? 0,
         detail: file.error.message,
       });
-    else findings.push(...auditWorkflow(file));
+    // `via.prTarget` is the ORIGIN of the reaching path, not this file's own trigger — see
+    // auditWorkflow. A reusable workflow called from pull_request_target is audited as one.
+    else findings.push(...auditWorkflow(file, via.prTarget));
   }
   return findings;
 }
@@ -160,7 +163,7 @@ function reportFailures(failures, { byRel, reachable, err }) {
     const file = byRel.get(f.file);
     const rule = RULES[f.rule];
     err(`FAIL  ${f.file}${f.line ? `:${f.line}` : ""}  job \`${f.job}\`  [${f.rule}]`);
-    if (reachable.has(f.file)) err(`      reachable from: ${reachable.get(f.file)}`);
+    if (reachable.has(f.file)) err(`      reachable from: ${reachable.get(f.file).reason}`);
     err(`      ${f.detail}`);
     if (file && f.line) err(`      source: ${sourceLine(file, f.line)}`);
     err(`      why:  ${rule.why}`);
@@ -215,7 +218,8 @@ export function main(
     `workflow policy — ${files.length} workflow file(s) in ${path.relative(cwd, dir) || dir}, ` +
       `${reachable.size} reachable from PR-like events`
   );
-  for (const [rel, reason] of [...reachable].sort()) log(`  PR-reachable  ${rel}  (via ${reason})`);
+  for (const [rel, via] of [...reachable].sort(([a], [b]) => a.localeCompare(b)))
+    log(`  PR-reachable  ${rel}  (via ${via.reason})`);
 
   if (waived.length) {
     log(`\n${waived.length} waived finding(s) — scripts/workflow-policy-allowlist.json:`);
