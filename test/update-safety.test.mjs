@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { execFileSync, spawnSync } from "node:child_process";
+import { writeToolkitMarkers } from "./toolkit-test-fixtures.mjs";
 
 // Safety guarantees for `aios update`, each exercised through a spawned CLI/module because
 // they end in process.exit: (1) re-exec the freshly-pulled code before vendoring, (2) resolve
@@ -66,6 +67,7 @@ test("update run from a toolkit subdir (gui/) resolves UP to the toolkit, not th
   try {
     mkdirSync(path.join(tk, "scaffold"), { recursive: true });
     mkdirSync(path.join(tk, "scripts"), { recursive: true });
+    writeToolkitMarkers(tk);
     mkdirSync(path.join(tk, "gui"), { recursive: true });
     writeFileSync(path.join(tk, "scripts", "aios.mjs"), "// entry\n");
     // A toolkit source must be a real git checkout (non-git copies are refused up front) —
@@ -118,6 +120,7 @@ test("update re-execs the freshly-pulled CLI (vendor runs pulled code, not stale
     // A toolkit-shaped source whose scripts/aios.mjs is a STUB that just proves it ran.
     mkdirSync(path.join(origin, "scaffold"), { recursive: true });
     mkdirSync(path.join(origin, "scripts"), { recursive: true });
+    writeToolkitMarkers(origin);
     writeFileSync(path.join(origin, "scaffold", ".keep"), ""); // git won't track an empty dir
     writeFileSync(
       path.join(origin, "scripts", "aios.mjs"),
@@ -193,6 +196,7 @@ function makeConflictedToolkit(root) {
   initRepo(origin);
   mkdirSync(path.join(origin, "scaffold"), { recursive: true });
   mkdirSync(path.join(origin, "scripts"), { recursive: true });
+  writeToolkitMarkers(origin);
   writeFileSync(path.join(origin, "scaffold", ".keep"), "");
   writeFileSync(path.join(origin, "scripts", "aios.mjs"), "// entry\n");
   writeFileSync(path.join(origin, "f.txt"), "base\n");
@@ -256,6 +260,7 @@ test("update --check never reports green 'up to date' while the toolkit is behin
     initRepo(origin);
     mkdirSync(path.join(origin, "scaffold"), { recursive: true });
     mkdirSync(path.join(origin, "scripts"), { recursive: true });
+    writeToolkitMarkers(origin);
     writeFileSync(path.join(origin, "scaffold", ".keep"), "");
     writeFileSync(path.join(origin, "scripts", "aios.mjs"), "// entry\n");
     git(origin, "add", "-A");
@@ -303,6 +308,7 @@ function makeBehindToolkit(root) {
   initRepo(origin);
   mkdirSync(path.join(origin, "scaffold"), { recursive: true });
   mkdirSync(path.join(origin, "scripts"), { recursive: true });
+  writeToolkitMarkers(origin);
   writeFileSync(path.join(origin, "scaffold", ".keep"), "");
   writeFileSync(
     path.join(origin, "scripts", "aios.mjs"),

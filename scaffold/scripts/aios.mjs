@@ -1,19 +1,28 @@
 #!/usr/bin/env node
 /**
- * Thin CLI shim — forwards to the aios-workspace toolkit with --repo set to this workspace.
- * Resolves the toolkit CHECKOUT in this order: $AIOS_TOOLKIT_DIR (the canonical var, shared
- * with the CLI; the entrypoint derives as <dir>/TOOLKIT_CLI), the deprecated $AIOS_TOOLKIT_CLI,
- * the `source` line this workspace's own version stamp records, then common relative
- * ~/Projects layouts. Explicit configuration beats recorded state; recorded state beats
- * guessing at the directory layout.
+ * Thin CLI shim — forwards to the aios toolkit with --repo set to this workspace.
  *
- * The stamp step is what makes a scaffolded workspace work with no setup at all: without it,
- * the shim only resolved when someone exported the env var or happened to lay their
- * directories out to match one of the guesses below.
+ * v2 resolution order (AIO-635 Decision 2):
+ *   1. $AIOS_TOOLKIT_DIR — explicit config. Set-but-invalid is a HARD error, never a
+ *      silent fall-through (the explicit-source rule of the toolkit locator).
+ *   2. $AIOS_TOOLKIT_CLI — deprecated alias (stderr warning; deleted at v3.0.0).
+ *   3. The `source` line this workspace's own version stamp records, when it is an
+ *      absolute path that still resolves. Recorded state beats ambient PATH, so every
+ *      checkout-stamped workspace behaves identically; a workspace last synced from a
+ *      registry root has a `pkg:` source line that falls through to PATH by construction.
+ *   4. A PATH-installed `aios` (a `command -v`-equivalent walk of $PATH). The hit is
+ *      realpath'd and rejected when it is this shim itself or lies under the workspace
+ *      root — npm bin stubs are wrappers whose realpath differs from the shim file, so
+ *      the old equality-only self-exec guard is extended to directory containment. The
+ *      surviving hit is spawned directly by absolute path (never through a shell).
+ *   5. Relative ~/Projects layout guesses — legacy last resort (deleted at v3.0.0).
+ *
+ * Streams: every notice here goes to stderr; stdout carries only the delegated
+ * command's stdout. The child's exit status is preserved.
  */
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync, realpathSync } from "node:fs";
-import { dirname, isAbsolute, resolve } from "node:path";
+import { accessSync, constants, existsSync, readFileSync, realpathSync } from "node:fs";
+import { delimiter, dirname, isAbsolute, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const TOOLKIT_CLI = "scripts/aios.mjs"; // the entrypoint within a toolkit checkout
@@ -31,15 +40,8 @@ if (process.env.AIOS_TOOLKIT_CLI && !process.env.AIOS_TOOLKIT_DIR) {
 
 // The checkout this workspace was stamped from is already on disk: scaffold-project.sh
 // writes `source <path>` into .aios-toolkit-version, and every `aios update` rewrites the
-// same line (scripts/update/stamp.mjs). Reading it means a workspace resolves its CLI with
-// no env var and no directory-layout luck. Workspaces scaffolded before this behavior gain it
-// once an update installs this shim. `source` holds a clone URL instead of a path when update
-// fell back to an ephemeral clone; only absolute filesystem paths are accepted, so that falls
-// through.
-//
-// This execs a path named by a file inside the workspace, which is the same trust level the
-// relative guesses below already carry — and `aios update` already treats this exact file as
-// its 3-way merge base.
+// same line (scripts/update/stamp.mjs). Only absolute filesystem paths are accepted — a
+// clone URL or a `pkg:@aiosbrain/aios@<version>` registry source falls through (to PATH).
 const fromStamp = () => {
   try {
     const stamp = readFileSync(resolve(workspaceRoot, ".aios-toolkit-version"), "utf8");
@@ -51,23 +53,69 @@ const fromStamp = () => {
   }
 };
 
-const candidates = [
-  process.env.AIOS_TOOLKIT_DIR && fromDir(process.env.AIOS_TOOLKIT_DIR),
-  process.env.AIOS_TOOLKIT_CLI, // deprecated alias: already a direct path to the entrypoint
-  fromStamp(),
-  fromDir(resolve(workspaceRoot, "../aios-workspace")),
-  fromDir(resolve(workspaceRoot, "../aios/aios-workspace")),
-  fromDir(resolve(workspaceRoot, "../../aios-workspace")),
-].filter(Boolean);
+// A usable toolkit-entrypoint file: exists, and is not this shim re-resolving itself.
+const usableEntry = (p) => {
+  try {
+    return !!p && existsSync(p) && realpathSync(p) !== currentScript;
+  } catch {
+    return false;
+  }
+};
 
-const toolkit = candidates.find((p) => existsSync(p) && realpathSync(p) !== currentScript);
-if (!toolkit) {
+// PATH-installed `aios` — the directory-containment extension of the self-exec guard.
+const fromPath = () => {
+  for (const dir of (process.env.PATH ?? "").split(delimiter).filter(Boolean)) {
+    const candidate = resolve(dir, "aios");
+    try {
+      accessSync(candidate, constants.X_OK);
+      const real = realpathSync(candidate);
+      if (real === currentScript) continue; // this shim on PATH — never self-exec
+      if (real === workspaceRoot || real.startsWith(workspaceRoot + sep)) continue;
+      return candidate; // spawned by ABSOLUTE path, never through a shell
+    } catch {
+      continue; // not executable / dangling — keep walking
+    }
+  }
+  return undefined;
+};
+
+function resolveDelegate() {
+  // 1. Explicit config: set-but-invalid is a hard error, never a fall-through.
+  if (process.env.AIOS_TOOLKIT_DIR) {
+    const entry = fromDir(process.env.AIOS_TOOLKIT_DIR);
+    if (usableEntry(entry)) return { entry };
+    process.stderr.write(
+      `aios: AIOS_TOOLKIT_DIR=${process.env.AIOS_TOOLKIT_DIR} does not contain ${TOOLKIT_CLI} — ` +
+        "fix or unset it (an explicit source never silently falls through).\n"
+    );
+    process.exit(1);
+  }
+  // 2. Deprecated alias; 3. the stamp's recorded source.
+  for (const entry of [process.env.AIOS_TOOLKIT_CLI, fromStamp()]) {
+    if (usableEntry(entry)) return { entry };
+  }
+  // 4. PATH-installed aios.
+  const bin = fromPath();
+  if (bin) return { bin };
+  // 5. Legacy relative-layout guesses (v2 only; deleted at v3.0.0).
+  for (const entry of [
+    fromDir(resolve(workspaceRoot, "../aios-workspace")),
+    fromDir(resolve(workspaceRoot, "../aios/aios-workspace")),
+    fromDir(resolve(workspaceRoot, "../../aios-workspace")),
+  ]) {
+    if (usableEntry(entry)) return { entry };
+  }
+  return null;
+}
+
+const delegate = resolveDelegate();
+if (!delegate) {
   console.error(
-    "aios: aios-workspace checkout not found.\n" +
-      "  Neither AIOS_TOOLKIT_DIR nor this workspace's .aios-toolkit-version\n" +
-      "  points at a checkout that still exists.\n" +
-      "  Clone github.com/aiosbrain/aios-workspace nearby, or set:\n" +
-      "  export AIOS_TOOLKIT_DIR=/path/to/aios-workspace"
+    "aios: no AIOS CLI found.\n" +
+      "  Neither AIOS_TOOLKIT_DIR, this workspace's .aios-toolkit-version, a PATH-installed\n" +
+      "  `aios`, nor a nearby checkout resolves.\n" +
+      "  Install the CLI:  npm i -g @aiosbrain/aios\n" +
+      "  or clone github.com/aiosbrain/aios-workspace and set AIOS_TOOLKIT_DIR=/path/to/it"
   );
   process.exit(1);
 }
@@ -76,10 +124,12 @@ const args = process.argv.slice(2);
 const hasRepo = args.some((a) => a === "--repo" || a.startsWith("--repo="));
 const forwarded = hasRepo ? args : [...args, "--repo", workspaceRoot];
 
-const result = spawnSync(process.execPath, [toolkit, ...forwarded], {
-  stdio: "inherit",
-  cwd: workspaceRoot,
-  env: process.env,
-});
+const result = delegate.bin
+  ? spawnSync(delegate.bin, forwarded, { stdio: "inherit", cwd: workspaceRoot, env: process.env })
+  : spawnSync(process.execPath, [delegate.entry, ...forwarded], {
+      stdio: "inherit",
+      cwd: workspaceRoot,
+      env: process.env,
+    });
 
 process.exit(result.status ?? 1);

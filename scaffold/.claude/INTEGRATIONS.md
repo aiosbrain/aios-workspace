@@ -27,7 +27,7 @@
 
 | Tool | Status | How | What you get |
 |---|---|---|---|
-| **Linear** | ○ available | SKILL | Query issues/projects/cycles through the direct GraphQL skill; Team Brain can sync linked tasks to completed states. |
+| **Linear** | ○ available | SKILL | Query issues/projects/cycles through the built-in `aios linear` adapter (raw GraphQL via `aios linear query`); Team Brain can sync linked tasks to completed states. |
 
 ## Knowledge Base
 

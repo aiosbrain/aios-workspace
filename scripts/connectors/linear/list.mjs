@@ -1,5 +1,6 @@
-// List command for the aios-linear CLI (AIO-999), extracted from linear.mjs to keep that
-// file under the file-size gate. Dispatch stays in linear.mjs; the behaviour lives here.
+// List command for the built-in Linear adapter (AIO-999), extracted to keep the dispatch
+// file under the file-size gate. Dispatch stays in connectors/linear/index.mjs; the
+// behaviour lives here.
 import { filterIssues, hasListFilters, listTeamIssues, parseListArgs } from "./core.mjs";
 
 /**

@@ -74,13 +74,19 @@ function positiveMs(value: string | undefined): number | null {
   return Number.isSafeInteger(n) && n > 0 ? n : null;
 }
 
-/** The shipped manual adapters, expressed as the automatic daily command set. */
+/**
+ * The shipped manual adapters, expressed as the automatic daily command set.
+ *
+ * Slack and Linear route through the workspace's own `scripts/aios.mjs` (the delegating
+ * shim in a stamped workspace, the real CLI in the toolkit checkout) into the built-in
+ * connector activity verbs — the descriptor-vendored activity clients are retired
+ * (AIO-1072). Granola and gog remain descriptor-skill adapters.
+ */
 export function dailyConnectorCommands(root: string, now = new Date()): ConnectorCommand[] {
   const skillRoot = path.join(root, ".claude", "descriptors", "skills");
   const granola = path.join(skillRoot, "granola-direct", "granola-pull.mjs");
   const gog = path.join(skillRoot, "gog-activity", "gog-activity-pull.mjs");
-  const slack = path.join(skillRoot, "slack-personal", "slack-activity-pull.mjs");
-  const linear = path.join(skillRoot, "linear-direct", "linear-activity-pull.mjs");
+  const aios = path.join(root, "scripts", "aios.mjs");
   return [
     {
       name: "granola",
@@ -96,15 +102,15 @@ export function dailyConnectorCommands(root: string, now = new Date()): Connecto
     },
     {
       name: "slack",
-      file: slack,
+      file: aios,
       command: process.execPath,
-      args: [slack, "--repo", root],
+      args: [aios, "slack", "activity", "pull", "--repo", root],
     },
     {
       name: "linear",
-      file: linear,
+      file: aios,
       command: process.execPath,
-      args: [linear, "--repo", root],
+      args: [aios, "linear", "activity", "pull", "--repo", root],
     },
   ];
 }

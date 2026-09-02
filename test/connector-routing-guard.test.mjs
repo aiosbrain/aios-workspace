@@ -49,13 +49,72 @@ function runHook(payload, { env = {}, cwd } = {}) {
 const bash = (command, cwd) => ({ tool_name: "Bash", tool_input: { command }, cwd });
 const mcp = (tool_name, tool_input, cwd) => ({ tool_name, tool_input, cwd });
 
+// ── AIO-1072: target classifier v2 — field-scoped, versioned, order/nesting-independent ─────
+
+test("v2: a NESTED AIOS-targeted payload classifies (identifier fields at depth)", () => {
+  const r = classifyMcp("mcp__plugin_linear_linear__update_issue", {
+    update: { relations: { parent: { issueId: "aio-1072" } } },
+    title: "unrelated",
+  });
+  assert.equal(r.decision, "block");
+  assert.match(r.reason, /classifier v2/);
+});
+
+test("v2: field ORDER is irrelevant — reordered payloads classify identically", () => {
+  const a = classifyMcp("mcp__linear__get", { id: "AIO-7", title: "x" });
+  const b = classifyMcp("mcp__linear__get", { title: "x", id: "AIO-7" });
+  assert.equal(a.decision, "block");
+  assert.deepEqual(a, b);
+});
+
+test('v2: identifier ARRAYS classify (issueIds: ["AIO-9"])', () => {
+  const r = classifyMcp("mcp__linear__batch", { issueIds: ["ACME-1", "AIO-9"] });
+  assert.equal(r.decision, "block");
+});
+
+test("v2: customer prose that merely MENTIONS an AIO issue stays allowed (advisory warn)", async () => {
+  const r = await runHook(
+    mcp("mcp__plugin_linear_linear__create_issue", {
+      teamId: "acme-corp",
+      title: "port the exporter",
+      description: "Similar shape to AIO-976 in the AIOS repo — see their approach.",
+    })
+  );
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stderr, /advisory/);
+  assert.doesNotMatch(r.stderr, /BLOCKED/);
+});
+
+test("v2: `classifier: 1` in config restores the legacy full-payload scan", async () => {
+  const ws = mkdtempSync(path.join(tmpdir(), "crg-v1-"));
+  mkdirSync(path.join(ws, ".aios"), { recursive: true });
+  writeFileSync(path.join(ws, ".aios", "connector-routing.json"), '{ "classifier": 1 }\n');
+  const r = await runHook(
+    mcp(
+      "mcp__plugin_linear_linear__create_issue",
+      { teamId: "acme-corp", title: "x", description: "mentions AIO-976 only in prose" },
+      ws
+    )
+  );
+  assert.equal(r.status, 2, "classifier v1 blocks on any payload mention, by request");
+  assert.match(r.stderr, /classifier v1/);
+});
+
+test("v2: an OVERSIZED identifiably-Linear-MCP payload still classifies (fails closed)", async () => {
+  const filler = "x".repeat(1_100_000);
+  const raw = `{"tool_name":"mcp__plugin_linear_linear__update_issue","tool_input":{"id":"AIO-3","description":"${filler}"}}`;
+  const r = await runHook(raw);
+  assert.equal(r.status, 2, r.stderr);
+  assert.match(r.stderr, /could not be classified/);
+});
+
 // ── blocks: provably AIOS work on a non-AIOS surface ────────────────────────────────────────
 
 test("a generic Linear MCP call naming an AIO issue is blocked with the right command", async () => {
   const r = await runHook(mcp("mcp__plugin_linear_linear__get_issue", { id: "AIO-976" }));
   assert.equal(r.status, 2, r.stderr);
   assert.match(r.stderr, /BLOCKED/);
-  assert.match(r.stderr, /aios-linear/, "a refusal must name the tool to use instead");
+  assert.match(r.stderr, /aios linear/, "a refusal must name the canonical command to use instead");
 });
 
 test("a stale connector copy is flagged, advisory like every other Bash verdict", async () => {

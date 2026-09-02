@@ -31,18 +31,24 @@
 import { existsSync, realpathSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { DISTRIBUTION_MARKERS, missingDistributionMarkers, isDistributionRoot } from "./cli.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
-/** A directory qualifies as a toolkit root only if it has ALL of these (same triad as the GUI). */
-export const TOOLKIT_MARKERS = ["scripts/aios.mjs", "scaffold", "package.json"];
+/**
+ * Toolkit detection is the ONE classifier in `scripts/cli/distribution-root.mjs`
+ * (AIO-635 Decision 3) — this module re-exports the marker set and boolean under their
+ * historical names so the devtools copy and the GUI's sibling keep a stable surface.
+ * A `checkout` OR `registry` (npm-installed / unpacked tarball) root both qualify.
+ */
+export const TOOLKIT_MARKERS = DISTRIBUTION_MARKERS;
 
 function missingMarkers(dir) {
-  return TOOLKIT_MARKERS.filter((m) => !existsSync(path.join(dir, m)));
+  return missingDistributionMarkers(dir);
 }
 
 export function looksLikeToolkit(dir) {
-  return missingMarkers(dir).length === 0;
+  return isDistributionRoot(dir);
 }
 
 /**

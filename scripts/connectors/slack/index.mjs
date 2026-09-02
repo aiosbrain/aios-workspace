@@ -25,6 +25,7 @@ export const VERBS = Object.freeze({
   react: { module: "scripts/connectors/slack/verbs.mjs", credential: "provider" },
   file: { module: "scripts/connectors/slack/files.mjs", credential: "provider" },
   "file-delete": { module: "scripts/connectors/slack/files.mjs", credential: "provider" },
+  activity: { module: "scripts/connectors/slack/activity.mjs", credential: "provider" },
   connect: { module: "scripts/connectors/slack/setup.mjs", credential: "brain" },
   status: { module: "scripts/connectors/slack/setup.mjs", credential: "brain" },
   disconnect: { module: "scripts/connectors/slack/setup.mjs", credential: "brain" },
@@ -40,6 +41,7 @@ const HANDLERS = {
   react: async () => (await import("./verbs.mjs")).cmdReact,
   file: async () => (await import("./files.mjs")).cmdFile,
   "file-delete": async () => (await import("./files.mjs")).cmdFileDelete,
+  activity: async () => (await import("./activity.mjs")).cmdActivity,
   connect: async () => (await import("./setup.mjs")).cmdConnect,
   status: async () => (await import("./setup.mjs")).cmdStatus,
   disconnect: async () => (await import("./setup.mjs")).cmdDisconnect,
@@ -50,7 +52,7 @@ export function slackUsage() {
   return [
     "aios slack — send/read Slack as the authenticated user (xoxp user token)",
     "",
-    "verbs: {whoami,resolve,channels,read,send,dm,react,file,file-delete,connect,status,disconnect}",
+    "verbs: {whoami,resolve,channels,read,send,dm,react,file,file-delete,activity,connect,status,disconnect}",
     "",
     "  aios slack whoami [--json]                    auth.test → your user id / name / team",
     "  aios slack resolve <email> | --member <m>     users.lookupByEmail / brain handle → U-id",
@@ -62,6 +64,9 @@ export function slackUsage() {
     "  aios slack file (--target T | --member E) --path P [--message M]",
     "    [--allow-outside-workspace]                 upload a workspace-contained local file",
     "  aios slack file-delete <FILE_ID>              delete an uploaded file (cleanup)",
+    "  aios slack activity pull [--repo PATH] [--tier admin|team|external]",
+    "    [--max-channels N] [--max-messages N] [--activity-path PATH] [--dry-run]",
+    "                                                unread scan → 1-inbox/comms/activity.jsonl",
     "  aios slack connect [xoxp-…|--stdin]           store YOUR user token in the Team Brain",
     "  aios slack status [--json]                    connection state (never token values)",
     "  aios slack disconnect                         remove the brain-held token",
@@ -122,6 +127,10 @@ export async function cmdSlack(repo, rest, options = {}) {
       // anchored workspace containment and brain-config lookup on the working directory,
       // and the compat bin (repo = null) must behave identically from any subdirectory.
       cwd: options.cwd ?? process.cwd(),
+      // The dispatch-resolved workspace root, when the canonical route consumed an
+      // explicit `--repo` (dispatch owns that flag; the compat bin leaves it in argv, so
+      // `activity` reads args.repo there). Only `activity` anchors on it (AIO-1072).
+      repo,
       env: options.env ?? process.env,
       stdin: options.stdin,
       fetch: options.fetch,

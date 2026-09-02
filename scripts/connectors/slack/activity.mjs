@@ -1,40 +1,34 @@
-#!/usr/bin/env node
 /**
- * slack-activity-pull.mjs — unread Slack → operator-loop comms activity (AIO-366).
+ * `aios slack activity [pull]` — unread Slack → operator-loop comms activity
+ * (AIO-1072, ported from the retired slack-personal descriptor adapter, AIO-366).
  *
- * Manual use:
- *   node slack-activity-pull.mjs [--repo PATH] [--tier admin|team|external]
- *                                [--max-channels N] [--max-messages N]
- *                                [--activity-path PATH] [--dry-run]
+ * The token is resolved by the adapter preflight (index.mjs → credentials.mjs), never
+ * here, and every Slack call routes through web.mjs `slackCall` (trustedFetch,
+ * destination policy, 429/5xx retries). Slack exposes last_read/unread state only on
+ * some conversation objects; only objects with an authoritative last_read marker AND
+ * evidence of newer/unread content are scanned — missing state is skipped, never
+ * guessed. Records are owner-private (`admin`) by default and idempotent by stable
+ * Slack ref. Flags and the output line keep the descriptor adapter's shape:
  *
- * Authentication is the same personal connector boundary as slack.py: SLACK_USER_TOKEN first,
- * otherwise GET /api/v1/me/slack-token using AIOS_BRAIN_URL + AIOS_API_KEY (+ AIOS_TEAM). Secrets
- * are held in memory only and never printed, written, or passed in argv.
- *
- * Slack exposes last_read/unread state only on some conversation objects. We scan only objects with
- * an authoritative last_read marker and evidence of newer/unread content; missing state is skipped,
- * never guessed. Records are owner-private (admin) by default and idempotent by stable Slack ref.
+ *   aios slack activity pull [--repo PATH] [--tier admin|team|external]
+ *                            [--max-channels N] [--max-messages N]
+ *                            [--activity-path PATH] [--dry-run]
  */
-
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
+import { slackCall } from "./web.mjs";
 
 export const DEFAULT_TIER = "admin";
-export const ACTIVITY_BASENAME = "comms/activity.jsonl";
-export const SLACK_API = "https://slack.com/api";
-const TIERS = new Set(["admin", "team", "external"]);
+export const ACTIVITY_BASENAME = path.join("comms", "activity.jsonl");
+// Tier membership is validated offline in args.mjs VERB_SPECS.activity (round-5 contract).
+
+const print = (line) => process.stdout.write(`${line}\n`);
 
 function oneLine(value, max = 300) {
   const text = String(value ?? "")
     .replace(/\s+/g, " ")
     .trim();
   return text.length > max ? `${text.slice(0, max - 1)}…` : text;
-}
-
-function positiveInt(value, fallback) {
-  const n = Number(value);
-  return Number.isInteger(n) && n > 0 ? n : fallback;
 }
 
 function slackIso(ts) {
@@ -176,88 +170,31 @@ export function appendActivity(activityPath, records, { dryRun = false } = {}) {
   return { written: fresh.length, skipped };
 }
 
-export async function resolveSlackToken({ env = process.env, fetchImpl = fetch } = {}) {
-  const direct = String(env.SLACK_USER_TOKEN || "").trim();
-  if (direct) return direct;
-  const brainUrl = String(env.AIOS_BRAIN_URL || "").replace(/\/$/, "");
-  const apiKey = String(env.AIOS_API_KEY || "").trim();
-  if (!brainUrl || !apiKey) throw new Error("Slack is not connected");
-  const response = await fetchImpl(`${brainUrl}/api/v1/me/slack-token`, {
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      ...(env.AIOS_TEAM ? { "X-AIOS-Team": env.AIOS_TEAM } : {}),
-    },
-  });
-  if (!response.ok) throw new Error(`Slack token fetch failed (HTTP ${response.status})`);
-  const body = await response.json().catch(() => null);
-  const token = typeof body?.token === "string" ? body.token.trim() : "";
-  if (!token) throw new Error("Slack is not connected");
-  return token;
-}
-
-export function makeSlackCall(token, { fetchImpl = fetch, apiBase = SLACK_API } = {}) {
-  return async (method, params = {}) => {
-    const body = new URLSearchParams();
-    for (const [key, value] of Object.entries(params)) {
-      if (value !== undefined && value !== null) body.set(key, String(value));
-    }
-    const response = await fetchImpl(`${apiBase}/${method}`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/x-www-form-urlencoded",
-      },
-      body,
-    });
-    if (!response.ok) throw new Error(`Slack HTTP ${response.status} on ${method}`);
-    const payload = await response.json().catch(() => null);
-    if (!payload?.ok) throw new Error(`Slack API rejected ${method}`);
-    return payload;
-  };
-}
-
-function parseArgs(argv) {
-  const value = (name, fallback = null) => {
-    const index = argv.indexOf(name);
-    return index >= 0 ? argv[index + 1] : fallback;
-  };
-  return {
-    repo: path.resolve(value("--repo", process.cwd())),
-    tier: value("--tier", DEFAULT_TIER),
-    maxChannels: positiveInt(value("--max-channels"), 100),
-    maxMessages: positiveInt(value("--max-messages"), 50),
-    activityPath: value("--activity-path"),
-    dryRun: argv.includes("--dry-run"),
-  };
-}
-
-export async function main(argv = process.argv.slice(2)) {
-  const opts = parseArgs(argv);
-  if (!TIERS.has(opts.tier)) throw new Error("--tier must be admin|team|external");
-  const inbox = existsSync(path.join(opts.repo, "1-inbox")) ? "1-inbox" : "01-intake";
-  const activityPath = opts.activityPath
-    ? path.resolve(opts.activityPath)
-    : path.join(opts.repo, inbox, ACTIVITY_BASENAME);
-  const token = await resolveSlackToken();
+/**
+ * `aios slack activity [pull] …` — args pre-parsed by VERB_SPECS.activity; ctx carries the
+ * resolved token (preflight) and the trustedFetch seams.
+ */
+export async function cmdActivity(ctx, args) {
+  // Flags are already validated offline by VERB_SPECS.activity (args.mjs) before any
+  // credential resolved — tier membership and the positive-integer bounds included.
+  // Repo precedence: an explicit --repo that survived to the verb argv (compat bin),
+  // the dispatch-resolved workspace root (canonical route, which consumes --repo),
+  // then the working directory — the descriptor adapter's old default.
+  const repo = path.resolve(args.repo ?? ctx.repo ?? ctx.cwd ?? process.cwd());
+  const tier = args.tier ?? DEFAULT_TIER;
+  const inbox = existsSync(path.join(repo, "1-inbox")) ? "1-inbox" : "01-intake";
+  const activityPath = args.activityPath
+    ? path.resolve(args.activityPath)
+    : path.join(repo, inbox, ACTIVITY_BASENAME);
   const result = await collectSlackUnread({
-    call: makeSlackCall(token),
-    tier: opts.tier,
-    maxChannels: opts.maxChannels,
-    maxMessages: opts.maxMessages,
+    call: (method, params) => slackCall(ctx, method, params),
+    tier,
+    maxChannels: args.maxChannels ? Number(args.maxChannels) : 100,
+    maxMessages: args.maxMessages ? Number(args.maxMessages) : 50,
   });
-  const append = appendActivity(activityPath, result.records, { dryRun: opts.dryRun });
-  console.log(
-    `slack-activity-pull: ${opts.dryRun ? "would write" : "wrote"} ${append.written}, skipped ${append.skipped} (${result.scanned}/${result.conversations} conversations had unread markers) -> ${path.relative(opts.repo, activityPath)}`
+  const append = appendActivity(activityPath, result.records, { dryRun: args.dryRun === true });
+  print(
+    `slack-activity-pull: ${args.dryRun ? "would write" : "wrote"} ${append.written}, skipped ${append.skipped} (${result.scanned}/${result.conversations} conversations had unread markers) -> ${path.relative(repo, activityPath)}`
   );
-  return { ...result, ...append, activityPath };
-}
-
-const isMain = process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href;
-if (isMain) {
-  main().catch((error) => {
-    // The orchestrator suppresses child output; this is for the retained manual command. Messages
-    // are deliberately fixed/sanitized by helpers above and never contain tokens or response bodies.
-    console.error(`slack-activity-pull: ${error instanceof Error ? error.message : "failed"}`);
-    process.exitCode = 1;
-  });
+  return 0;
 }

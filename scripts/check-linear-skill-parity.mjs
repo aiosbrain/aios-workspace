@@ -4,9 +4,10 @@
  * copies must stay byte-identical.
  *
  *   scaffold/.claude/skills/aios-linear/  — the operative source of truth
- *                                           (toolkit-manifest src; scripts/linear.mjs
- *                                           execs this copy; vendored into every
- *                                           scaffolded workspace via `aios update`)
+ *                                           (toolkit-manifest src; vendored into every
+ *                                           scaffolded workspace via `aios update`;
+ *                                           routing documentation only since AIO-1072 —
+ *                                           the implementation is `aios linear`)
  *   .claude/skills/aios-linear/           — the toolkit's own working copy
  *
  * AIO-810 consolidated the diverged copies into one; before this gate, parity was
@@ -50,7 +51,7 @@ if (missing.length > 0) {
   console.error(
     "\n  edit both copies; they must stay byte-identical — see RESOLVER.md.\n" +
       "  scaffold/.claude/skills/aios-linear/ is the operative source of truth\n" +
-      "  (toolkit-manifest src; scripts/linear.mjs execs it) — when resolving a real\n" +
+      "  (toolkit-manifest src; routing docs for `aios linear`) — when resolving a real\n" +
       "  divergence, trust the scaffold/ side.\n" +
       "  Deliberate divergence requires editing scripts/check-linear-skill-parity.mjs\n" +
       "  and validation/check-skill-sync.mjs (OGR17) themselves."

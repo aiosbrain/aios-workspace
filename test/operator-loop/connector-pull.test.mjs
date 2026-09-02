@@ -8,11 +8,7 @@ import { fileURLToPath } from "node:url";
 import { mkdtempSync } from "node:fs";
 
 import { dailyConnectorCommands, pullDailyConnectors } from "../../dist/operator-loop/index.js";
-import {
-  appendActivity,
-  collectSlackUnread,
-  resolveSlackToken,
-} from "../../scaffold/.claude/descriptors/skills/slack-personal/slack-activity-pull.mjs";
+import { appendActivity, collectSlackUnread } from "../../scripts/connectors/slack/activity.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 
@@ -47,8 +43,12 @@ test("daily connector definitions retain all four manual adapters and today's Gr
   assert.match(commands[0].file, /granola-direct\/granola-pull\.mjs$/);
   assert.deepEqual(commands[0].args.slice(-2), ["--since", "2026-07-13"]);
   assert.match(commands[1].file, /gog-activity\/gog-activity-pull\.mjs$/);
-  assert.match(commands[2].file, /slack-personal\/slack-activity-pull\.mjs$/);
-  assert.match(commands[3].file, /linear-direct\/linear-activity-pull\.mjs$/);
+  // Slack and Linear route through the workspace CLI shim into the built-in connector
+  // activity verbs (AIO-1072) — the descriptor-vendored activity clients are retired.
+  assert.match(commands[2].file, /scripts\/aios\.mjs$/);
+  assert.deepEqual(commands[2].args.slice(1), ["slack", "activity", "pull", "--repo", root]);
+  assert.match(commands[3].file, /scripts\/aios\.mjs$/);
+  assert.deepEqual(commands[3].args.slice(1), ["linear", "activity", "pull", "--repo", root]);
 });
 
 test("the automatic Linear activity adapter ships in the scaffold", () => {
@@ -65,11 +65,13 @@ test("connector phase starts all adapters concurrently and settles each failure/
   const credentialMarker = ["fixture", "credential", "marker"].join("-");
   const spawn = (_command, args, options) => {
     const file = args[0];
+    // Slack/Linear now run `<root>/scripts/aios.mjs <connector> activity pull …` (AIO-1072),
+    // so the connector name is the first CLI argument there; granola/gog stay file-named.
     const name = file.includes("granola-")
       ? "granola"
       : file.includes("gog-")
         ? "gog"
-        : file.includes("slack-")
+        : args[1] === "slack"
           ? "slack"
           : "linear";
     started.push(name);
@@ -206,16 +208,6 @@ test("Slack activity append is idempotent by stable ref and tolerates a fresh st
   assert.deepEqual(appendActivity(activityPath, [record]), { written: 0, skipped: 1 });
   assert.ok(existsSync(activityPath));
   assert.equal(readFileSync(activityPath, "utf8").trim().split("\n").length, 1);
-
-  let fetched = false;
-  const directToken = ["fixture", "slack", "token"].join("-");
-  const token = await resolveSlackToken({
-    env: { SLACK_USER_TOKEN: directToken },
-    fetchImpl() {
-      fetched = true;
-      throw new Error("must not fetch");
-    },
-  });
-  assert.equal(token, directToken);
-  assert.equal(fetched, false);
+  // Token resolution moved to the adapter preflight (scripts/connectors/slack/credentials.mjs)
+  // and is pinned by the slack adapter suites — no client-side resolver remains here.
 });

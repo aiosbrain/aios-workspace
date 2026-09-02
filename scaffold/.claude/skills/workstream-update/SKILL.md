@@ -17,17 +17,18 @@ Produces a **workstream update** document: 3–5 agent prompts from the current 
 ## Run
 
 ```bash
-WS="dotenvx run --quiet -f .env -- node .claude/skills/workstream-update/workstream-update.mjs"
+WS="node .claude/skills/workstream-update/workstream-update.mjs"
 
 $WS              # markdown batch plan to stdout
 $WS --json       # machine-readable workstream list
 ```
 
-Requires `LINEAR_API_KEY` and the `aios-linear` skill's `linear.mjs` on the path above.
+Board reads route through the canonical `aios linear …` adapter, which resolves the
+credential itself (`aios connect linear`) — no dotenvx wrapper needed (AIO-790).
 
 ## What it does
 
-1. Lists AIO-team issues via `linear.mjs list AIO`
+1. Lists AIO-team issues via `aios linear list AIO`
 2. Prioritizes **In Progress** → **Triage** → **Backlog**
 3. Emits up to 5 workstream prompts (minimum 3 when enough candidates exist)
 4. Each prompt references the AIO ID, spec-eval gate, PR title convention, and closeout checklist

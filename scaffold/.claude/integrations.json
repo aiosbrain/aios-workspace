@@ -28,8 +28,8 @@
       "category": "issue-tracking",
       "transport": "skill",
       "status": "available",
-      "summary": "Query issues/projects/cycles through the direct GraphQL skill; Team Brain can sync linked tasks to completed states.",
-      "connect": "Run `aios connect linear` and provide LINEAR_API_KEY. Add the same provider in Team Brain Admin → Integrations for PM status sync.",
+      "summary": "Query issues/projects/cycles through the built-in `aios linear` adapter (raw GraphQL via `aios linear query`); Team Brain can sync linked tasks to completed states.",
+      "connect": "Run `aios connect linear` and provide LINEAR_API_KEY, then use `aios linear <verb>`. Add the same provider in Team Brain Admin → Integrations for PM status sync.",
       "env": ["LINEAR_API_KEY"]
     },
     {

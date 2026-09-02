@@ -80,6 +80,14 @@ aios() {
     fi
     dir="$(dirname "$dir")"
   done
+  # PATH-installed `aios` (AIO-635 Decision 2). Detection uses `whence -p` (zsh: PATH
+  # executables ONLY — this function can never match itself); execution uses `command`
+  # so the function is bypassed there too. AIOS_SHELL_SHIM is the recursion sentinel:
+  # it makes re-entry impossible even if a future PATH entry is itself a shell wrapper.
+  if [[ -z "${AIOS_SHELL_SHIM:-}" ]] && whence -p aios >/dev/null 2>&1; then
+    AIOS_SHELL_SHIM=1 command aios "$@"
+    return $?
+  fi
   # Explicit config ALWAYS beats the conventional default — otherwise a legacy
   # AIOS_TOOLKIT_CLI user who also happens to have ~/Projects/aios/aios-workspace on disk
   # would silently run that checkout instead of the one they configured.

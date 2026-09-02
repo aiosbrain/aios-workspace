@@ -480,7 +480,7 @@ When you **author or materially revise** a Linear issue that will be built (via 
 
 1. Start from [`aios-issue-template.md`](./agentic-ergonomics/aios-issue-template.md):
    `aios spec init draft.md --title "…"`, fill sections, then `aios spec eval draft.md`.
-   Push to Linear with `linear.mjs set-desc AIO-n draft.md` or `create --template aios`.
+   Push to Linear with `aios linear set-desc AIO-n draft.md` or `aios linear create --template aios`.
 2. **Before calling `aios ship`**, run a spec eval pass on the body (export to a temp file if
    helpful): `npm run aios -- spec eval path/to/spec.md` — or rely on ship's built-in gate (step 2
    above), which evaluates the live Linear description + comments.

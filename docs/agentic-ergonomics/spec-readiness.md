@@ -42,7 +42,7 @@ aios spec author <plan> --slices <dir> [--out <dir>] [--concurrency N] [--model 
 
 Author Linear issues and local specs from [`aios-issue-template.md`](./aios-issue-template.md):
 `aios spec init spec.md --title "…"` → fill sections → `aios spec eval spec.md` →
-`linear.mjs set-desc AIO-n spec.md` or `create --template aios`.
+`aios linear set-desc AIO-n spec.md` or `aios linear create --template aios`.
 
 - **eval** grades the spec. `--no-llm` runs the deterministic layer only (offline, no key).
 - **Rubric resolution:** `--rubric <path>` (explicit) → the target repo's own

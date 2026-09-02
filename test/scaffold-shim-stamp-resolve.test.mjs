@@ -18,7 +18,18 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, copyFileSync, writeFileSync, rmSync } from "node:fs";
+import {
+  mkdtempSync,
+  mkdirSync,
+  copyFileSync,
+  writeFileSync,
+  rmSync,
+  chmodSync,
+  symlinkSync,
+  readFileSync,
+  existsSync,
+  realpathSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -26,7 +37,16 @@ import { fileURLToPath } from "node:url";
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const SCAFFOLD_SCRIPT = path.join(ROOT, "scripts", "scaffold-project.sh");
 const SHIM = path.join(ROOT, "scaffold", "scripts", "aios.mjs");
-const NOT_FOUND = /aios-workspace checkout not found/;
+const NOT_FOUND = /no AIOS CLI found/;
+// The v2 shim's step 4 resolves a PATH-installed `aios` (AIO-635 Decision 2), so the
+// not-found fixtures must run under a PATH that has node but no `aios`. The real node
+// bin dir can't be used directly — global installs (nvm) put `aios` RIGHT BESIDE node —
+// so build a synthetic bin dir holding only a `node` symlink.
+const NODE_ONLY_PATH = (() => {
+  const dir = mkdtempSync(path.join(tmpdir(), "shim-nodeonly-"));
+  symlinkSync(process.execPath, path.join(dir, "node"));
+  return dir;
+})();
 
 const discard = { recursive: true, force: true, maxRetries: 3, retryDelay: 50 };
 
@@ -44,7 +64,12 @@ function runShim(workspace, env = {}) {
   const res = execFileSync(
     process.execPath,
     [path.join(workspace, "scripts", "aios.mjs"), "--no-such-command"],
-    { env: { ...rest, ...env }, encoding: "utf8", stdio: "pipe", cwd: tmpdir() }
+    {
+      env: { ...rest, PATH: NODE_ONLY_PATH, ...env },
+      encoding: "utf8",
+      stdio: "pipe",
+      cwd: tmpdir(),
+    }
   );
   return res;
 }
@@ -201,6 +226,101 @@ test("a configured entrypoint pointing back to the shim fails instead of recursi
     assert.doesNotMatch(out, /SELF_RECURSION_RAN/);
   } finally {
     rmSync(dir, discard);
+  }
+});
+
+// ── AIO-635 Decision 2: PATH-installed `aios` resolution ─────────────────────────────
+
+/** A fake `aios` binary on its own PATH dir; records argv + exits with `status`. */
+function fakeAiosOnPath(status = 0) {
+  const binDir = mkdtempSync(path.join(tmpdir(), "shim-pathbin-"));
+  const log = path.join(binDir, "invocation.log");
+  const bin = path.join(binDir, "aios");
+  writeFileSync(bin, `#!/bin/sh\nprintf '%s\\n' "$@" > ${JSON.stringify(log)}\nexit ${status}\n`);
+  chmodSync(bin, 0o755);
+  return { binDir, bin, log };
+}
+
+test("with a stub aios on PATH and no checkout, the shim execs it with --repo appended and preserves exit status", () => {
+  const { binDir, log } = fakeAiosOnPath(7);
+  const dir = fixtureWorkspace(`abc123\nsource pkg:@aiosbrain/aios@2.0.0\n`);
+  try {
+    let status = 0;
+    let stderr = "";
+    let stdout = "";
+    try {
+      stdout = runShim(dir, { PATH: `${binDir}${path.delimiter}${NODE_ONLY_PATH}` });
+    } catch (e) {
+      status = e.status;
+      stdout = e.stdout ?? "";
+      stderr = e.stderr ?? "";
+    }
+    assert.equal(status, 7, "the child's exit status is preserved");
+    const argv = readFileSync(log, "utf8").trim().split("\n");
+    assert.equal(argv[0], "--no-such-command");
+    assert.equal(argv[argv.length - 2], "--repo");
+    assert.equal(
+      realpathSync(argv[argv.length - 1]),
+      realpathSync(dir),
+      "--repo <workspaceRoot> appended exactly as before"
+    );
+    assert.equal(stdout, "", "shim adds no stdout bytes of its own");
+    assert.doesNotMatch(stderr, NOT_FOUND);
+  } finally {
+    rmSync(dir, discard);
+    rmSync(binDir, discard);
+  }
+});
+
+test("a PATH hit whose realpath lies under the workspace root is rejected (no self-exec)", () => {
+  const dir = fixtureWorkspace(`abc123\nsource pkg:@aiosbrain/aios@2.0.0\n`);
+  // A bin dir entry that is a symlink back into the workspace (npm-stub shape).
+  const binDir = mkdtempSync(path.join(tmpdir(), "shim-pathself-"));
+  const inWorkspace = path.join(dir, "bin-aios");
+  writeFileSync(inWorkspace, "#!/bin/sh\necho IN_WORKSPACE_RAN\n");
+  chmodSync(inWorkspace, 0o755);
+  symlinkSync(inWorkspace, path.join(binDir, "aios"));
+  try {
+    const out = runShimExpectingFailure(dir, {
+      PATH: `${binDir}${path.delimiter}${NODE_ONLY_PATH}`,
+    });
+    assert.doesNotMatch(out, /IN_WORKSPACE_RAN/, "a workspace-contained realpath must not exec");
+    assert.match(out, NOT_FOUND);
+  } finally {
+    rmSync(dir, discard);
+    rmSync(binDir, discard);
+  }
+});
+
+test("a checkout-path stamp still wins over a PATH-installed aios", () => {
+  const { binDir, log } = fakeAiosOnPath(0);
+  const dir = fixtureWorkspace(`abc123\nsource ${ROOT}\n`);
+  try {
+    const out = runShimExpectingFailure(dir, {
+      PATH: `${binDir}${path.delimiter}${NODE_ONLY_PATH}`,
+    });
+    assert.match(out, /unknown command/i, "the recorded checkout ran, not the PATH stub");
+    assert.ok(!existsSync(log), "the PATH stub was never invoked");
+  } finally {
+    rmSync(dir, discard);
+    rmSync(binDir, discard);
+  }
+});
+
+test("AIOS_TOOLKIT_DIR set but invalid is a hard error — never a silent fall-through to PATH", () => {
+  const { binDir, log } = fakeAiosOnPath(0);
+  const dir = fixtureWorkspace(`abc123\nsource ${ROOT}\n`);
+  const bogus = path.join(tmpdir(), "no-such-toolkit-dir");
+  try {
+    const out = runShimExpectingFailure(dir, {
+      AIOS_TOOLKIT_DIR: bogus,
+      PATH: `${binDir}${path.delimiter}${NODE_ONLY_PATH}`,
+    });
+    assert.match(out, /AIOS_TOOLKIT_DIR/, "the error names the explicit source");
+    assert.ok(!existsSync(log), "nothing else was executed after the explicit-source error");
+  } finally {
+    rmSync(dir, discard);
+    rmSync(binDir, discard);
   }
 });
 

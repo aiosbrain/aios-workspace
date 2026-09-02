@@ -37,11 +37,13 @@ const PYTHON_VERBS = [
   "disconnect",
 ];
 
-test("static matrix: the adapter's verb surface is the Python surface plus file-delete", async () => {
+test("static matrix: the adapter's verb surface is the Python surface plus file-delete/activity", async () => {
   const { VERBS } = await import("../scripts/connectors/slack/index.mjs");
+  // `file-delete` is the cleanup half the Python CLI never had; `activity` is the AIO-1072
+  // port of the retired slack-personal descriptor activity client.
   assert.deepEqual(
     Object.keys(VERBS).sort(),
-    [...PYTHON_VERBS, "file-delete"].sort(),
+    [...PYTHON_VERBS, "file-delete", "activity"].sort(),
     "canonical verb set drifted from the slack.py surface"
   );
   for (const [verb, entry] of Object.entries(VERBS)) {

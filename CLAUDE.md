@@ -163,11 +163,13 @@ they don't recognize.
 - **How forks stay in sync (two layers, one command).** Every contributor has an independent
   scaffolded workspace repo. It stays current WITHOUT re-scaffolding:
   1. **CLI = a delegating shim.** A workspace's `scripts/aios.mjs` is a thin shim (`scaffold/scripts/aios.mjs`)
-     that forwards every command to the one canonical toolkit checkout. It finds that checkout from
-     `AIOS_TOOLKIT_DIR`, else the deprecated `AIOS_TOOLKIT_CLI` entrypoint, else the `source` line in
-     the workspace's `.aios-toolkit-version` stamp (written by the scaffolder, rewritten by every
-     `aios update` — so no env var and no particular directory layout is required, AIO-814), else
-     from relative `~/Projects` layouts as a legacy last resort. So command code
+     that forwards every command to the one canonical AIOS CLI. v2 resolution order (AIO-635):
+     `AIOS_TOOLKIT_DIR` (set-but-invalid is a hard error), else the deprecated `AIOS_TOOLKIT_CLI`
+     entrypoint, else the `source` line in the workspace's `.aios-toolkit-version` stamp (written by
+     the scaffolder, rewritten by every `aios update` — AIO-814; a registry-sourced stamp records
+     `pkg:@aiosbrain/aios@<v>` and falls through), else a PATH-installed `aios`
+     (realpath + containment guarded — `npm i -g @aiosbrain/aios` is enough), else relative
+     `~/Projects` layouts as a legacy last resort (deleted at v3.0.0). So command code
      (`push`/`pull`/`analyze`/harnesses) is **always current** — you
      never vendor the full CLI (it needs `node_modules` deps and would crash in a workspace). Update it by
      `aios update` (or `git pull` in `aios-workspace`).

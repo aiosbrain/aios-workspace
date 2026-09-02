@@ -58,7 +58,7 @@ vision:
 | **AIO-166 EE12/EE13/EE14** — two-way reply, cockpit/menubar surface, principles-trained triage agent | Backlog (deferred, "documented as complete, pick-up-able") | Exactly the two-way-reply, visual-surface, and learned-autonomy pieces of this vision — already scoped by title, just not fleshed out or prioritized. |
 | **AIO-226** — Agentic Maturity Loop (instinct distillation) | In Progress | `aios instincts distill` (AM4b) already turns operator correction events into homunculus records via an injectable LLM call. This is the training substrate the triage agent needs — a second one should not be built. |
 | **`prd-executor-mcp-gateway.md`** (AIO-399; replaces AIO-242) | Pilot proposed; predecessors AIO-400/AIO-409 in progress | AIOS-managed, read-only GitHub gateway only: pinned self-hosted Executor, Brain-owned member credentials/policy/audit, and exactly seven GET-backed GitHub tools. It is not a shipped generic channel aggregation layer. |
-| **CLI channel access** (gog, slack-cli, wacli/whatsapp, bird/X, OpenClaw's Telegram) | Shipped, per-channel | Read/search/send already works per channel today — this PRD does not reimplement any of them. |
+| **CLI channel access** (gog, the `aios slack` adapter, wacli/whatsapp, bird/X, OpenClaw's Telegram) | Shipped, per-channel | Read/search/send already works per channel today — this PRD does not reimplement any of them. |
 
 **What this PRD actually adds on top:** (a) one aggregation layer that reads from *both*
 the asks store and the comms detectors instead of them being two separate surfaces, (b) the

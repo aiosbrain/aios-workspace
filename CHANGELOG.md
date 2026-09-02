@@ -5,10 +5,80 @@ loosely based on [Keep a Changelog](https://keepachangelog.com/); dates are
 ISO-8601.
 
 This is the **individual workspace** repo. The Team Brain sync contract
-(`docs/brain-api.md`) is versioned separately; it is currently at **v1.22**
+(`docs/brain-api.md`) is versioned separately; it is currently at **v1.24**
 (additive within major `v1`). Entries predating a bump did not change the protocol.
 
-## Unreleased
+## [2.0.0] — Unreleased
+
+**Major release: the published npm package becomes the distribution root of the AIOS CLI**
+(AIO-1064 program; AIO-635 distribution spec; this release candidate is AIO-1072 /
+CLI-RESET-6). `npm i -g @aiosbrain/aios` alone now gives every stamped workspace a working
+`aios` and a working `aios update`. No Brain API contract change (`docs/brain-api.md`
+stays at v1.24). Upgrade guide: `docs/migration-v2.md` — including the two notes that
+matter in practice: real 0.12.0 → v2 rehearsals on Node 24/26 must install the **legacy**
+baseline non-strict (published 0.12.0 pins devtools 0.3.0, engines `>=22 <23`), and the
+AIO-1068 Slack consent narrowing (an environment-sourced token is refused toward a
+workspace-domain brain; `--stdin`/argv is the consent path).
+
+### Added
+
+- **Stamp format 2 + content-addressed merge bases (AIO-635 D1).** `.aios-toolkit-version`
+  stays line-oriented and v1-readable (line 1 = full sha) and gains keyed lines
+  (`stamp-format 2`, `package`, `package-version`, `package-integrity`, `manifest-digest`,
+  `base-store`). Every successful apply seeds `.aios/toolkit-bases/` (committed,
+  content-addressed, pruned) so the next update 3-way-merges from the store — `gitShow`
+  against a checkout is the v1-stamped fallback only. Writes are atomic and ordered
+  managed files → store → index → stamp LAST; the v1→v2 stamp transition runs through the
+  AIO-1066 `runMigration` state machine and is a one-way ratchet.
+- **One distribution-root classifier (AIO-635 D3).** `scripts/cli/distribution-root.mjs`
+  (`checkout` | `registry` | `workspace`) replaces all three `looksLikeToolkit()` copies
+  and the marker triad. Registry roots skip the pull half (`sourceClean: "immutable"`),
+  vendor from installed files with zero git invocations against the source, and are
+  never written to by `aios update` — `aios update --self` is the one explicit
+  install-upgrade path (plus a non-fatal newer-version notice).
+- **Shim bootstrap v2 + shell function (AIO-635 D2).** The workspace shim resolves a
+  PATH-installed `aios` (realpath + workspace-containment guarded, spawned by absolute
+  path) after explicit config and the stamp's recorded source; a set-but-invalid
+  `AIOS_TOOLKIT_DIR` is a hard error. The zsh `aios()` block gains a `whence -p`/
+  `command aios` branch with an `AIOS_SHELL_SHIM` recursion sentinel.
+- **Rollback machinery (AIO-635 D5, ADR 0002 §9).** The v1→v2 upgrade records
+  `.aios/rollback.json` (exact prior package, install type, pre-upgrade stamp/config
+  snapshots) before its first mutating step; `aios update --rollback` restores the
+  snapshots atomically and prints — and only on interactive confirmation executes — the
+  exact reinstall command. `aios doctor` reports stamp format, base-store integrity,
+  migration-journal state, and rollback-record presence.
+- **Pack-time build provenance (AIO-635 D4).** `prepack` embeds `build.json`
+  (`{ sha, version, packedAt }`) into the tarball; the pack-golden inventory gate proves
+  every manifest `src` ships, that `.harness/`/`.cursor/`/top-level `.claude/` (rubric
+  excepted)/`.env*` do not, and that `build.json` matches the packed HEAD.
+- `aios linear query` / `aios linear activity` / `aios slack activity` — the descriptor
+  provider-client capabilities, rebuilt as built-in adapter verbs with the adapters' own
+  credential resolution.
+- **Repository-wide retired-route gate.** `scripts/check-retired-routes.mjs`
+  (`npm run check:retired-routes`, part of `test:prepare`) rejects executable ownership of
+  retired connector routes — files, imports, and spawns — while never flagging prose.
+
+### Changed
+
+- **Connector cutover complete (AIO-1072).** Shipped docs, scaffold, skills, rules, error
+  strings, and dogfood docs now say `aios linear` / `aios slack`; the connector-routing
+  guard's target classifier is v2 (field-scoped: only identifier-bearing field VALUES
+  classify a payload as AIOS-targeted — customer prose mentioning an AIO issue stays
+  allowed; `classifier: 1` restores the legacy scan; `mode: "off"` is retained).
+- Registry installs never read a checkout `.env` vault (explicit decision): a
+  registry-rooted Slack adapter resolves credentials from env, agent-context, and the
+  user-config reference only.
+
+### Removed
+
+- The executable provider-client copies retired at the v2.0.0 boundary:
+  `.claude/skills/aios-linear/linear.mjs` (both trees; the SKILL.md routing doc stays),
+  `.claude/descriptors/skills/linear-direct/*.mjs`, and
+  `.claude/descriptors/skills/slack-personal/{slack.py,slack.py.sha256,slack-activity-pull.mjs}`.
+  The published `linear`/`slack` bins remain warning-only delegates for the whole v2
+  window (removal no earlier than v3.0.0).
+
+### Earlier pre-release entries (now part of 2.0.0)
 
 ### Added
 
