@@ -41,13 +41,17 @@
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { gitFiles } from "./git-files.mjs";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const repo = path.resolve(process.argv[2] ?? path.join(SCRIPT_DIR, ".."));
 
-// Directories never descended into (the walk covers tracked source only).
+// Enumeration is git-authoritative (scripts/git-files.mjs — tracked + untracked-not-
+// ignored, so .gitignore is honored and ignored build trees are structurally invisible;
+// the AIO-517 rule). The readdir walk below is the FALLBACK for non-git targets only
+// (the test suite's throwaway fixture sandboxes).
 const SKIP_DIRS = new Set([".git", "node_modules", "dist", "coverage"]);
-const SKIP_REL_DIRS = new Set([path.join("test", "fixtures")]);
+const SKIP_REL_DIRS = new Set(["test/fixtures"]);
 
 // R1 — retired client paths (matched against the /-normalized relative path).
 const RETIRED_PATHS = [
@@ -72,16 +76,16 @@ const RETIRED_REFS = [
 const JS_EXEC_CONTEXT =
   /(^\s*import\b|\bimport\s*\(|\bfrom\s+["']|\brequire\s*\(|\b(?:spawn|spawnSync|execFile|execFileSync|exec|execSync|fork)\s*\()/;
 
-// Allowlist — never flagged by R2 (exact relative paths + prefixes).
+// Allowlist — never flagged by R2 (exact relative POSIX paths + prefixes).
 const ALLOW_FILES = new Set([
-  path.join("scripts", "linear.mjs"),
-  path.join("scripts", "slack.mjs"),
-  path.join("scripts", "check-retired-routes.mjs"),
-  path.join("test", "check-retired-routes.test.mjs"),
+  "scripts/linear.mjs",
+  "scripts/slack.mjs",
+  "scripts/check-retired-routes.mjs",
+  "test/check-retired-routes.test.mjs",
   "CHANGELOG.md",
-  path.join("docs", "architecture", "cli-command-inventory.v1.json"),
+  "docs/architecture/cli-command-inventory.v1.json",
 ]);
-const ALLOW_PREFIXES = [path.join("scripts", "connectors") + path.sep];
+const ALLOW_PREFIXES = ["scripts/connectors/"];
 
 const SCAN_EXTS = new Set([".mjs", ".js", ".cjs", ".sh"]);
 
@@ -97,7 +101,7 @@ function* walk(dir, rel = "") {
     return;
   }
   for (const entry of entries) {
-    const entryRel = rel === "" ? entry.name : path.join(rel, entry.name);
+    const entryRel = rel === "" ? entry.name : `${rel}/${entry.name}`;
     if (entry.isDirectory()) {
       if (SKIP_DIRS.has(entry.name) || SKIP_REL_DIRS.has(entryRel)) continue;
       yield* walk(path.join(dir, entry.name), entryRel);
@@ -105,6 +109,17 @@ function* walk(dir, rel = "") {
       yield entryRel;
     }
   }
+}
+
+/** Repo-relative POSIX paths: git-authoritative, walk fallback for non-git sandboxes. */
+function listFiles(root) {
+  const fromGit = gitFiles(root);
+  if (fromGit) {
+    return fromGit.filter(
+      (p) => !p.startsWith("test/fixtures/") && !SKIP_DIRS.has(p.split("/")[0])
+    );
+  }
+  return [...walk(root)];
 }
 
 function isCommentLine(line, ext) {
@@ -135,9 +150,8 @@ function scanFile(abs, ext) {
 }
 
 const violations = [];
-for (const rel of walk(repo)) {
-  const posix = rel.split(path.sep).join("/");
-  const ext = path.extname(rel);
+for (const posix of listFiles(repo)) {
+  const ext = path.extname(posix);
 
   // R1 — a retired client path exists at all.
   if (RETIRED_PATHS.some((re) => re.test(posix))) {
@@ -157,8 +171,8 @@ for (const rel of walk(repo)) {
   }
 
   // R2 — executable reference to a retired client from outside the allowlist.
-  if (!SCAN_EXTS.has(ext) || isAllowed(rel)) continue;
-  for (const { line, label } of scanFile(path.join(repo, rel), ext)) {
+  if (!SCAN_EXTS.has(ext) || isAllowed(posix)) continue;
+  for (const { line, label } of scanFile(path.join(repo, posix), ext)) {
     violations.push(`${posix}:${line} — imports/spawns retired client (${label})`);
   }
 }

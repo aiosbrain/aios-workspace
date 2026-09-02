@@ -101,17 +101,25 @@ const TARGET_FIELDS = new Set([
   "ticketid",
 ]);
 
-/** String values of target-identifying fields, walked recursively (arrays included). */
+/**
+ * String values of target-identifying fields, walked recursively.
+ *
+ * ONLY the declared identifier slots classify — a primitive whose OWN field name is a
+ * target field, or the elements of an ARRAY held by a target field (`issueIds: [...]`).
+ * An OBJECT under a target-named wrapper (`issue: { id, description }`) is NOT harvested
+ * wholesale: it is recursed like any other object, so its `id` counts and its
+ * `description` prose never does. Harvesting every primitive under the wrapper was the
+ * Bugbot-caught false positive — a customer payload whose nested description merely
+ * mentioned an AIO issue read as AIOS-targeted, the exact class this guard must allow.
+ */
 export function targetIdentifyingValues(input, depth = 0) {
   if (!input || typeof input !== "object" || depth > 6) return [];
   const out = [];
   for (const [k, v] of Object.entries(input)) {
     const isTarget = TARGET_FIELDS.has(normalizeFieldName(k));
     if (v && typeof v === "object") {
-      if (isTarget) {
-        for (const el of Array.isArray(v) ? v : Object.values(v)) {
-          if (el != null && typeof el !== "object") out.push(String(el));
-        }
+      if (isTarget && Array.isArray(v)) {
+        for (const el of v) if (el != null && typeof el !== "object") out.push(String(el));
       }
       out.push(...targetIdentifyingValues(v, depth + 1));
     } else if (isTarget && v != null) {
@@ -172,16 +180,20 @@ const LINEAR_GRAPHQL_HOST = /\bapi\.linear\.app\b/i;
  * its `slack connect` expects its own env var, so reaching for it fails in a way that reads as
  * "Slack is broken" rather than "wrong copy".
  */
-const DEFAULT_STALE = [
+export const DEFAULT_STALE = [
   "/.claude/skills/slack-cli/",
   // Retired at v2.0.0 (AIO-1072): the skill-local Linear delegate and the descriptor
   // provider-client copies are gone — the built-in `aios linear` / `aios slack` adapter
-  // is the one route.
+  // is the one route. Kept in LOCKSTEP with scripts/check-retired-routes.mjs (the
+  // repo-side gate) by test/connector-routing-guard.test.mjs — this hook ships into
+  // workspaces standalone, so the two lists cannot share an import.
   "/.claude/skills/aios-linear/linear.mjs",
   "/.claude/skills/linear-direct/",
   "/.claude/descriptors/skills/linear-direct/",
   "/.claude/skills/slack-personal/slack.py",
   "/.claude/descriptors/skills/slack-personal/slack.py",
+  "/.claude/skills/slack-personal/slack-activity-pull.mjs",
+  "/.claude/descriptors/skills/slack-personal/slack-activity-pull.mjs",
 ];
 
 /**
