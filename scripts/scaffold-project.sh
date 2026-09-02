@@ -692,16 +692,12 @@ mkdir -p "$OUTPUT/.aios"
 command cp -f "$SCAFFOLD/comms-config.json" "$OUTPUT/.aios/comms-config.json"
 
 # Conductor adapter (AIO-482). Conductor (conductor.build) creates its own git
-# worktree per workspace and runs `[scripts].setup` from it right after checkout —
-# the earliest of the three hydration layers. Committed repo content per Conductor's
-# own docs; seed-only on `aios update` so an owner's edits are never clobbered.
+# worktree per workspace and runs `[scripts].setup` right after checkout — the earliest
+# hydration layer. Seed-only on `aios update` so an owner's edits are never clobbered.
 mkdir -p "$OUTPUT/.conductor"
 cp "$SCAFFOLD/.conductor/settings.toml" "$OUTPUT/.conductor/settings.toml"
 
-# Pin the toolkit version this workspace was stamped from. `aios update` reads this
-# as the sync baseline; without it the first update has no base and can only blind-
-# overwrite (which is how a locally-improved managed file gets silently regressed).
-# Full sha (not --short) so it survives as a future 3-way merge base.
+# Pin the toolkit version this workspace was stamped from (full sha = future merge base).
 TOOLKIT_SHA="$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || echo unknown)"
 TOOLKIT_VER="$(sed -nE 's/.*"version"[^"]*"([^"]+)".*/\1/p' "$REPO_ROOT/package.json" | head -1)"
 BRAIN_API_VER="$(grep -m1 -oE '\*\*Version: [0-9]+\.[0-9]+\*\*' "$REPO_ROOT/docs/brain-api.md" 2>/dev/null | grep -oE '[0-9]+\.[0-9]+')"
@@ -715,13 +711,9 @@ BRAIN_API_VER="$(grep -m1 -oE '\*\*Version: [0-9]+\.[0-9]+\*\*' "$REPO_ROOT/docs
 
 . "$SCRIPT_DIR/scaffold-pm-tool.sh"
 
-# AIO-635: upgrade the stamp to format 2 + seed .aios/toolkit-bases with the toolkit's
-# own content — the first update's 3-way merge base. Best-effort: on failure the v1
-# stamp above stands (a checkout source still resolves bases via git show); a REGISTRY
-# source has no git history, so this seeding is what makes its first update mergeable.
-if command -v node >/dev/null 2>&1 && [ -f "$SCRIPT_DIR/update/seed-baseline.mjs" ]; then
+# AIO-635: stamp format 2 + seed .aios/toolkit-bases (first update's 3-way base; best-effort).
+command -v node >/dev/null 2>&1 &&
   node "$SCRIPT_DIR/update/seed-baseline.mjs" --repo "$OUTPUT" --from "$REPO_ROOT" 2>/dev/null || true
-fi
 
 # Generate the skills + integrations catalogs for the new workspace
 if command -v node >/dev/null 2>&1 && [ -f "$SCRIPT_DIR/gen-catalog.mjs" ]; then
