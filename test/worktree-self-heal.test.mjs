@@ -239,7 +239,13 @@ test("postinstall hydrates backstops for a fresh product-repository clone", () =
 });
 
 test("onboard and update invoke product-only safety hydration", () => {
-  for (const rel of ["scripts/onboard-command.mjs", "scripts/update.mjs"]) {
+  // The apply steps moved with the AIO-635 split: checkout applies live in
+  // update/vendor-apply.mjs, registry applies in update/registry-root.mjs.
+  for (const rel of [
+    "scripts/onboard-command.mjs",
+    "scripts/update/vendor-apply.mjs",
+    "scripts/update/registry-root.mjs",
+  ]) {
     const source = readFileSync(path.join(TOOLKIT, rel), "utf8");
     assert.match(
       source,

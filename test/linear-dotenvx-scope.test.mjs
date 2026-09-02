@@ -103,7 +103,9 @@ test("aios-linear skill copies stay byte-identical and do not recommend dotenvx 
   const managedDir = path.join(ROOT, ".claude/skills/aios-linear");
   const scaffoldDir = path.join(ROOT, "scaffold/.claude/skills/aios-linear");
   const files = [...new Set([...readdirSync(managedDir), ...readdirSync(scaffoldDir)])].sort();
-  assert.ok(files.includes("linear.mjs"), "sanity: skill directory listing looks wrong");
+  assert.ok(files.includes("SKILL.md"), "sanity: skill directory listing looks wrong");
+  // AIO-1072: the skill dirs are routing documentation only — no executable delegate.
+  assert.ok(!files.includes("linear.mjs"), "the retired linear.mjs delegate must stay deleted");
   for (const name of files) {
     let managed, scaffold;
     try {

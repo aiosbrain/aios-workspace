@@ -46,11 +46,13 @@ const LEGACY_VERBS = [
   "assign",
 ];
 
-test("static matrix: the adapter's verb surface is the legacy surface plus `status`", async () => {
+test("static matrix: the adapter's verb surface is the legacy surface plus status/query/activity", async () => {
   const { VERBS } = await import("../scripts/connectors/linear/index.mjs");
+  // `query` and `activity` are the AIO-1072 ports of the retired linear-direct descriptor
+  // clients; `status` is the AIO-1067 setup verb. Everything else is the legacy surface.
   assert.deepEqual(
     Object.keys(VERBS).sort(),
-    [...LEGACY_VERBS, "status"].sort(),
+    [...LEGACY_VERBS, "status", "query", "activity"].sort(),
     "canonical verb set drifted from the legacy CLI surface"
   );
   for (const [verb, entry] of Object.entries(VERBS)) {

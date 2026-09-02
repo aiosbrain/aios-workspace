@@ -232,9 +232,13 @@ export const USAGE_LINES = {
   ],
   update: [
     "  aios update [--check|--preview|--no-pull|--stash|--no-install|--force|--contribute <path>]",
-    "                                       get latest AIOS: pull the toolkit (git + npm ci) +",
-    "                                       3-way-merge governance (personal + uncommitted edits kept);",
-    "                                       --preview/--check never pull; --contribute opens a toolkit PR",
+    "                                       get latest AIOS: re-vendor governance with a 3-way merge",
+    "                                       (personal + uncommitted edits kept). Checkout sources also",
+    "                                       pull (git + npm ci); npm installs vendor in place and never",
+    "                                       write into the npm prefix. --preview/--check never write",
+    "  aios update --self                    upgrade a registry (npm) install of the toolkit itself",
+    "  aios update --rollback                restore the recorded pre-upgrade stamp/config snapshots",
+    "                                       and print the exact reinstall command (ADR 0002 §9)",
   ],
   rails: [
     "  aios rails suggest [--repo <path>]  propose a SAFE permissions.allow from the transcript log",

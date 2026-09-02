@@ -7,7 +7,7 @@ The loop needs to know what the operator communicated and what's waiting on some
 
 ## Reuse (shipped, KEEP)
 - Slack one-click OAuth (workspace PR #102, brain PR #107), native TS Slack connector (brain PR #27), per-member token store (brain PR #105).
-- `gog-workspace` skill (Gmail / Calendar / Drive via `gog`), `slack-cli` skill.
+- `gog-workspace` skill (Gmail / Calendar / Drive via `gog`), the built-in `aios slack` adapter.
 - Brain-side Slack/Gmail/Calendar ingestion readers.
 - **GOG → activity.jsonl writer (AIO-355)**: `.claude/descriptors/skills/gog-activity/gog-activity-pull.mjs`
   (descriptor: `.claude/descriptors/gog.json`). Pulls today's calendar events (`gog calendar events
@@ -17,16 +17,16 @@ The loop needs to know what the operator communicated and what's waiting on some
   `<inbox>/comms/activity.jsonl`. Emits `tier: admin` by default (calendar/email is personal-by-default;
   override `--tier` to deliberately widen). The script remains manually invokable, and AIO-366 now
   runs it automatically before a recording owner `aios loop daily` collect.
-- **Slack → activity.jsonl writer (AIO-366)**:
-  `.claude/descriptors/skills/slack-personal/slack-activity-pull.mjs` reuses the personal Slack
+- **Slack → activity.jsonl writer (AIO-366, built-in since AIO-1072)**:
+  `aios slack activity pull` reuses the personal Slack
   connector credential, scans only conversation objects with an authoritative `last_read` marker,
   and appends inbound unread messages as admin-tier `source:"slack"` records, idempotent by
   `slack:<conversation-id>:<message-ts>`. Slack does not expose unread markers on every returned
   conversation type; missing state is skipped rather than guessed. The manual script remains
   available, while recording owner daily runs invoke it automatically.
-- **Linear query connector (KEEP) + activity adapter**:
-  `.claude/descriptors/skills/linear-direct/linear-query.mjs` remains the sole Linear API/auth
-  implementation. `linear-activity-pull.mjs` invokes that existing query, then appends the viewer's
+- **Linear query connector (KEEP) + activity adapter (built-in since AIO-1072)**:
+  the built-in `aios linear query` verb is the sole Linear API/auth
+  implementation. `aios linear activity pull` invokes that existing query, then appends the viewer's
   open assigned issues as channel-less admin records. The query paginates to a bounded safety cap;
   records use stable `linear:<issue-id>` identity, one observation revision per day, and explicit
   tombstones when an issue is completed or unassigned. The comms source folds those revisions

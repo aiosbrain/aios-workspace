@@ -39,6 +39,8 @@ export const VERBS = Object.freeze({
   create: { module: "scripts/connectors/linear/create.mjs", credential: true },
   users: { module: "scripts/connectors/linear/core.mjs", credential: true },
   assign: { module: "scripts/connectors/linear/core.mjs", credential: true },
+  query: { module: "scripts/connectors/linear/query.mjs", credential: true },
+  activity: { module: "scripts/connectors/linear/activity.mjs", credential: true },
   status: { module: "scripts/connectors/linear/setup.mjs", credential: false },
 });
 
@@ -56,6 +58,12 @@ export async function cmdLinear(repo, rest, options = {}) {
   const base = repo ?? findLinearBase(options.cwd ?? process.cwd());
   const scoped = { ...options, cwd: base };
   if (!verb || verb === "help" || verb === "--help" || verb === "-h") {
+    console.log(linearUsage());
+    return 0;
+  }
+  // AIO-1116: `aios linear <verb> --help` is a HELP request, not a provider call — answer
+  // it before credential resolution so an unconfigured machine can still read usage.
+  if (rest.slice(1).includes("--help") || rest.slice(1).includes("-h")) {
     console.log(linearUsage());
     return 0;
   }

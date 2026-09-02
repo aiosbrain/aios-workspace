@@ -71,6 +71,34 @@ export const VERB_SPECS = Object.freeze({
       if (!args.file) throw usageError("file-delete requires a Slack file id (F…).");
     },
   },
+  activity: {
+    flags: {
+      repo: "value",
+      tier: "value",
+      "max-channels": "value",
+      "max-messages": "value",
+      "activity-path": "value",
+      "dry-run": "boolean",
+    },
+    positional: "action",
+    validate: (args) => {
+      if (args.action !== undefined && args.action !== "pull") {
+        throw usageError(`Unknown activity action: ${shownArg(args.action)} (expected "pull").`);
+      }
+      if (args.tier !== undefined && !["admin", "team", "external"].includes(args.tier)) {
+        throw usageError("--tier must be admin|team|external.");
+      }
+      for (const name of ["maxChannels", "maxMessages"]) {
+        if (args[name] === undefined) continue;
+        const n = Number(args[name]);
+        if (!Number.isInteger(n) || n < 1) {
+          throw usageError(
+            `--${name === "maxChannels" ? "max-channels" : "max-messages"} must be a positive integer.`
+          );
+        }
+      }
+    },
+  },
   connect: { flags: { stdin: "boolean" }, positional: "token" },
   status: {},
   disconnect: {},

@@ -19,8 +19,8 @@ triggers:
 
 The Linear implementation lives in the **aios CLI's built-in adapter**
 (`aios-workspace/scripts/connectors/linear/`), not in this skill. There is exactly ONE
-provider client; this directory carries only this document plus a thin `linear.mjs`
-delegate that forwards to the canonical command. Never add executable client code here.
+provider client; this directory carries routing instructions only (AIO-1072 removed the
+last executable delegate). Never add executable client code here.
 
 **The canonical route — from any repo, any directory:**
 
@@ -32,11 +32,10 @@ $LIN status                     # report the resolved credential source — neve
 $LIN get AIO-75                 # one line: identifier, title, state, id
 ```
 
-Compatibility routes, all delegating to the SAME adapter (identical stdout + exit status,
-plus a deprecation warning on stderr; removal no earlier than v3.0.0):
-
-- `linear <verb> …` — the published compat bin (`scripts/linear.mjs`).
-- `node .claude/skills/aios-linear/linear.mjs <verb> …` — this directory's delegate.
+One compatibility route delegates to the SAME adapter (identical stdout + exit status,
+plus a deprecation warning on stderr; removal no earlier than v3.0.0): the published
+compat bin `linear <verb> …` (`scripts/linear.mjs`). It is deprecated — prefer
+`aios linear` everywhere. The skill-vendored `linear.mjs` delegate is gone (AIO-1072).
 
 ## Credentials: `aios connect linear` (never export-and-hope)
 
@@ -91,6 +90,11 @@ $LIN list AIO --open --label finding --label repo:workspace,repo:devtools \
                                # issues lacking a label with that prefix. Rows keep the
                                # ident/state/title columns and append a TRAILING {labels}
                                # column; `count: N` goes to stderr (stdout stays parseable).
+$LIN query                     # your open assigned issues (paginated), as raw JSON
+$LIN query '{ teams { nodes { name key } } }'  # any GraphQL query/mutation; --vars '<json>'
+$LIN activity pull --repo "$PWD"  # assigned open issues → 1-inbox/comms/activity.jsonl
+                               # (operator-loop visibility records; [--tier admin|team|external]
+                               # [--activity-path PATH] [--dry-run])
 ```
 
 For a long description, write it to a temp file first, then `set-desc <IDENT> <file>` — avoids quoting hell and keeps it out of the transcript.

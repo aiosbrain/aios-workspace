@@ -169,6 +169,29 @@ test(
         );
       }
 
+      // 2c. AIO-635 D4 inventory gate: every manifest src ships; dev-only don't; build.json matches HEAD.
+      const { MANAGED_PATHS, CI_WORKFLOW_MANAGED_PATHS, SEED_IF_ABSENT } = await import(
+        pathToFileURL(path.join(ROOT, "scripts/toolkit-manifest.mjs")).href
+      );
+      const shipped = (rel) =>
+        listing.includes(`package/${rel}`) || listing.some((p) => p.startsWith(`package/${rel}/`));
+      for (const entry of [...MANAGED_PATHS, ...CI_WORKFLOW_MANAGED_PATHS, ...SEED_IF_ABSENT])
+        assert.ok(shipped(entry.src), `manifest src ${entry.src} missing from the tarball`);
+      for (const forbidden of ["package/.harness/", "package/.cursor/", "package/.env"]) {
+        const hit = listing.find((p) => p.startsWith(forbidden));
+        assert.equal(hit, undefined, `tarball must not ship ${forbidden} (found ${hit})`);
+      }
+      const claudeHits = listing.filter(
+        // Top-level .claude/** stays out — the ONE shipped rubric excepted.
+        (p) => p.startsWith("package/.claude/") && p !== "package/.claude/rubrics/spec-readiness.md"
+      );
+      assert.deepEqual(claudeHits, [], "top-level .claude/** must not ship (rubric excepted)");
+      assert.ok(listing.includes("package/build.json"), "build.json must ship in the tarball");
+      run("tar", ["-xzf", tarball, "-C", base, "package/build.json"]);
+      const buildInfo = JSON.parse(readFileSync(path.join(base, "package", "build.json"), "utf8"));
+      const head = run("git", ["-C", ROOT, "rev-parse", "HEAD"]).trim();
+      assert.equal(buildInfo.sha, head, "build.json sha must match the packed HEAD");
+
       // 3. Install into a clean prefix. --omit=optional skips the Claude native GUI
       //    binaries the CLI does not need; postinstall must survive that (warn-only).
       const prefix = path.join(base, "npm-cli-golden");

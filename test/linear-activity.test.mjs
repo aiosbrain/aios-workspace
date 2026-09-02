@@ -4,8 +4,10 @@ import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { normalizeLinearIssues } from "../scaffold/.claude/descriptors/skills/linear-direct/linear-activity-pull.mjs";
-import * as linearActivity from "../scaffold/.claude/descriptors/skills/linear-direct/linear-activity-pull.mjs";
+// AIO-1072: the activity adapter is the built-in `aios linear activity` verb now — the
+// descriptor-vendored client is retired.
+import { normalizeLinearIssues } from "../scripts/connectors/linear/activity.mjs";
+import * as linearActivity from "../scripts/connectors/linear/activity.mjs";
 
 test("normalizes viewer-assigned open Linear issues into admin activity revisions", () => {
   const records = normalizeLinearIssues(
@@ -102,12 +104,14 @@ test("pulls through the existing Linear query connector before writing activity"
   assert.equal(typeof linearActivity.pullLinearActivity, "function");
   const repo = mkdtempSync(path.join(tmpdir(), "aios-linear-pull-"));
   const activityPath = path.join(repo, "1-inbox", "comms", "activity.jsonl");
-  let queriedRepo = null;
+  let queried = 0;
   const result = await linearActivity.pullLinearActivity({
     repo,
     activityPath,
-    query(queryRepo) {
-      queriedRepo = queryRepo;
+    query() {
+      // The adapter's own query verb (credential resolved by the index.mjs preflight) —
+      // no repo argument since AIO-1072; the pull only normalizes and appends.
+      queried++;
       return {
         viewer: {
           assignedIssues: {
@@ -126,7 +130,7 @@ test("pulls through the existing Linear query connector before writing activity"
     },
   });
 
-  assert.equal(queriedRepo, repo);
+  assert.equal(queried, 1);
   assert.equal(result.records.length, 1);
   assert.equal(result.written, 1);
   assert.match(readFileSync(activityPath, "utf8"), /"source":"linear"/);
@@ -218,5 +222,6 @@ test("reactivates a same-day issue after an absence tombstone", async () => {
 });
 
 test("exposes the manual Linear activity command used by the daily orchestrator", () => {
-  assert.equal(typeof linearActivity.main, "function");
+  // Invoked as `aios linear activity pull` by the operator loop (AIO-1072).
+  assert.equal(typeof linearActivity.cmdActivity, "function");
 });

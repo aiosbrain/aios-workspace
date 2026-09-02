@@ -1,6 +1,6 @@
 {
   "name": "@aiosbrain/aios",
-  "version": "0.12.0",
+  "version": "2.0.0",
   "description": "Agent-native operating system for an individual contributor: governed workspace scaffold, multi-agent harnesses with rubric-gated self-correction, AIOS Team Brain sync client, and a local GUI.",
   "license": "AGPL-3.0-only",
   "type": "module",
@@ -32,13 +32,15 @@
     "docs/ENGINEERING-CONSTITUTION.md",
     "docs/GETTING-STARTED.md",
     "docs/guard-verification.md",
-    "CHANGELOG.md"
+    "CHANGELOG.md",
+    "build.json"
   ],
   "workspaces": [
     "packages/foundation"
   ],
   "scripts": {
     "help": "node scripts/npm-menu.mjs",
+    "prepack": "node scripts/write-build-provenance.mjs",
     "postinstall": "node scripts/ensure-loop-built.mjs && node scripts/postinstall-banner.mjs",
     "aios": "dotenvx run -- node scripts/aios.mjs",
     "gen:catalog": "node scripts/gen-catalog.mjs",
@@ -53,6 +55,7 @@
     "check:inbox-audit": "node scripts/inbox-redaction-lint.mjs",
     "integration:contracts:validate": "node scripts/integration-contracts.mjs",
     "check:review-evidence-parity": "node scripts/check-review-evidence-parity.mjs",
+    "check:retired-routes": "node scripts/check-retired-routes.mjs",
     "check:linear-skill-parity": "node scripts/check-linear-skill-parity.mjs",
     "guard:selftest": "node scripts/guard-selftest.mjs",
     "eval:transcripts": "node evals/transcript-extraction/extraction-eval.mjs",
@@ -63,7 +66,7 @@
     "format:check": "prettier --check .",
     "setup": "npm ci",
     "test": "npm run test:prepare && npm run test:node",
-    "test:prepare": "node scripts/ensure-native-abi.mjs && npm run build:loop && npm run check:domains && npm run check:size && npm run check:boundaries && npm run check:devtools && npm run check:inbox-audit && npm run check:linear-skill-parity",
+    "test:prepare": "node scripts/ensure-native-abi.mjs && npm run build:loop && npm run check:domains && npm run check:size && npm run check:boundaries && npm run check:devtools && npm run check:inbox-audit && npm run check:linear-skill-parity && npm run check:retired-routes",
     "pretest:node": "node scripts/ensure-native-abi.mjs",
     "test:node": "node scripts/ensure-loop-built.mjs --strict && node scripts/test-suite.mjs",
     "test:node:list": "node scripts/test-suite.mjs --list",

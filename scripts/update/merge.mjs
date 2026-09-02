@@ -23,9 +23,10 @@ import {
   constants as fsConstants,
 } from "node:fs";
 import path from "node:path";
-import { decideMerge, threeWayMerge, gitShow } from "../toolkit-merge.mjs";
+import { decideMerge, threeWayMerge, gitShow, lsTree } from "../toolkit-merge.mjs";
 import { unmergedPaths } from "../toolkit-pull.mjs";
 import { MANAGED_PATHS, RETIRED_PATHS, SEED_IF_ABSENT } from "../toolkit-manifest.mjs";
+import { baseFromStore, baseDestsUnder } from "./base-store.mjs";
 import {
   readIf,
   pathEntryExists,
@@ -48,13 +49,18 @@ import {
  * `cmdVendorApplyOnly` (against the pinned, immutable snapshot — the authoritative,
  * TOCTOU-immune final gate before any workspace write).
  */
-export function vendorSafety(srcRoot, managedPaths = MANAGED_PATHS) {
+export function vendorSafety(srcRoot, managedPaths = MANAGED_PATHS, { gitIndex = true } = {}) {
   const errors = [];
   let unmerged = [];
-  try {
-    unmerged = unmergedPaths(srcRoot);
-  } catch (e) {
-    errors.push(`couldn't inspect the git index: ${e.message}`);
+  // `gitIndex: false` is for IMMUTABLE registry roots (AIO-635 Decision 3): an npm install
+  // has no git index to inspect, and treating that as an inspection error would block
+  // every registry-root update. The content (marker) scan below still runs in full.
+  if (gitIndex) {
+    try {
+      unmerged = unmergedPaths(srcRoot);
+    } catch (e) {
+      errors.push(`couldn't inspect the git index: ${e.message}`);
+    }
   }
   const { paths: markerHits, errors: markerErrors } = conflictMarkerPaths(srcRoot, managedPaths);
   errors.push(...markerErrors);
@@ -67,6 +73,36 @@ export function vendorSafety(srcRoot, managedPaths = MANAGED_PATHS) {
 export function vendorSafetyReason(vs) {
   if (vs.errors.length) return `couldn't fully inspect the toolkit for safety (${vs.errors[0]})`;
   return `the toolkit has ${vs.paths.length} file(s) with conflict markers (e.g. ${vs.paths[0]})`;
+}
+
+/**
+ * Base resolvers (AIO-635 Decision 1) — the ONE seam through which every merge pass
+ * acquires its 3-way base content and its base FILE LIST for deletion detection.
+ *
+ * `gitBaseResolver` is the historical behavior: `git show`/`ls-tree` against a checkout at
+ * the workspace's pinned sha — the fallback for v1-stamped workspaces only.
+ * `storeBaseResolver` reads the workspace-local content-addressed store
+ * (`.aios/toolkit-bases`) by dest — zero git invocations against the SOURCE, which is what
+ * makes an immutable registry root mergeable at all.
+ */
+export function gitBaseResolver(toolkitDir, baseSha) {
+  return {
+    kind: "git",
+    base: (srcRel /*, destRel */) => gitShow(toolkitDir, baseSha, srcRel),
+    /** srcRel paths under an entry's src at the base — feeds deletionCandidates. */
+    baseFiles: (entry) => lsTree(toolkitDir, baseSha, entry.src),
+  };
+}
+
+export function storeBaseResolver(repo, index) {
+  return {
+    kind: "store",
+    base: (srcRel, destRel) => baseFromStore(repo, index, destRel),
+    baseFiles: (entry) =>
+      baseDestsUnder(index, entry.dest).map(
+        (dest) => `${entry.src}${dest.slice(entry.dest.length)}`
+      ),
+  };
 }
 
 /**
@@ -100,10 +136,7 @@ function applySeeds(srcRoot, repo, r, { dryRun = false } = {}) {
 }
 
 /** Apply one file's merge decision. Mutates the workspace; records into `r`. */
-function applyFile(
-  { toolkitDir, srcRoot, repo, baseSha, entry, srcRel, destRel, force, dryRun },
-  r
-) {
+function applyFile({ srcRoot, repo, resolver, entry, srcRel, destRel, force, dryRun }, r) {
   // destRel is only as trustworthy as the manifest that produced it — see
   // assertDestPathSafe's doc comment. Validated before any read/write, not just for the
   // final write, so a malicious entry can't even probe `mine`'s existence outside the repo.
@@ -131,7 +164,7 @@ function applyFile(
     return;
   }
 
-  const base = gitShow(toolkitDir, baseSha, srcRel);
+  const base = resolver.base(srcRel, destRel);
   const action = decideMerge({ base, mine, theirs });
   switch (action) {
     case "noop":
@@ -172,13 +205,13 @@ function applyFile(
 }
 
 /** Propagate upstream deletions/renames for a dir entry (files gone since baseSha). */
-function applyDeletions({ toolkitDir, srcRoot, repo, baseSha, entry, force, dryRun }, r) {
-  for (const { srcRel, destRel } of deletionCandidates(toolkitDir, srcRoot, entry, baseSha)) {
+function applyDeletions({ srcRoot, repo, resolver, entry, force, dryRun }, r) {
+  for (const { srcRel, destRel } of deletionCandidates(srcRoot, entry, resolver)) {
     assertDestPathSafe(repo, destRel, "delete");
     const destAbs = path.join(repo, destRel);
     const mine = readIf(destAbs);
     if (mine === undefined) continue; // already gone locally
-    const base = gitShow(toolkitDir, baseSha, srcRel);
+    const base = resolver.base(srcRel, destRel);
     if (force || mine === base) {
       if (!dryRun) unlinkSync(destAbs); // untouched locally → propagate the removal
       r.deleted.push(destRel);
@@ -206,12 +239,12 @@ function applyDeletions({ toolkitDir, srcRoot, repo, baseSha, entry, force, dryR
  * Anything else (a local edit, or a base we can't read) is the owner's and is reported, never
  * deleted. `force` propagates the removal the same way it does for an upstream deletion.
  */
-function applyRetired({ toolkitDir, repo, baseSha, entry, force, dryRun }, r) {
+function applyRetired({ repo, resolver, entry, force, dryRun }, r) {
   assertDestPathSafe(repo, entry.dest, "delete");
   const destAbs = path.join(repo, entry.dest);
   const mine = readIf(destAbs);
   if (mine === undefined) return; // never vendored here, or already removed
-  const base = gitShow(toolkitDir, baseSha, entry.src);
+  const base = resolver.base(entry.src, entry.dest);
   if (!force && (base === undefined || mine !== base)) {
     r.retiredKept.push(entry.dest);
     return;
@@ -286,6 +319,9 @@ export function mergeManaged(toolkitDir, srcRoot, repo, baseSha, opts = {}) {
   const dirty = opts.dirty || new Set();
   const force = !!opts.force;
   const dryRun = !!opts.dryRun;
+  // Default = historical behavior (git bases against the checkout at the pinned sha).
+  // A v2-stamped workspace passes storeBaseResolver instead (update.mjs decides).
+  const resolver = opts.resolver || gitBaseResolver(toolkitDir, baseSha);
   const r = {
     created: [],
     seeded: [],
@@ -302,7 +338,7 @@ export function mergeManaged(toolkitDir, srcRoot, repo, baseSha, opts = {}) {
   // Withdrawals run BEFORE the managed writes: a retired file is one the toolkit judged
   // harmful, so it should be gone even if a later managed write in the same run throws.
   for (const entry of opts.retiredPaths || RETIRED_PATHS)
-    applyRetired({ toolkitDir, repo, baseSha, entry, force, dryRun }, r);
+    applyRetired({ repo, resolver, entry, force, dryRun }, r);
   for (const entry of opts.managedPaths || MANAGED_PATHS) {
     if (!existsSync(path.join(srcRoot, entry.src))) continue;
     for (const f of entryFiles(srcRoot, entry)) {
@@ -310,10 +346,9 @@ export function mergeManaged(toolkitDir, srcRoot, repo, baseSha, opts = {}) {
         r.skippedDirty.push(f.destRel);
         continue;
       }
-      applyFile({ toolkitDir, srcRoot, repo, baseSha, entry, ...f, force, dryRun }, r);
+      applyFile({ srcRoot, repo, resolver, entry, ...f, force, dryRun }, r);
     }
-    if (entry.kind === "dir")
-      applyDeletions({ toolkitDir, srcRoot, repo, baseSha, entry, force, dryRun }, r);
+    if (entry.kind === "dir") applyDeletions({ srcRoot, repo, resolver, entry, force, dryRun }, r);
   }
   for (const entry of opts.prunablePaths || []) {
     if (!existsSync(path.join(srcRoot, entry.src))) continue;

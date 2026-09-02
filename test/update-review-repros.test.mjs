@@ -30,7 +30,13 @@ import {
   plannedDestRels,
 } from "../scripts/update.mjs";
 import { MANAGED_PATHS, SEED_IF_ABSENT } from "../scripts/toolkit-manifest.mjs";
-import { git, initRepo, advance, originAndToolkitClone } from "./toolkit-test-fixtures.mjs";
+import {
+  git,
+  initRepo,
+  advance,
+  originAndToolkitClone,
+  writeToolkitMarkers,
+} from "./toolkit-test-fixtures.mjs";
 import { UpdateError } from "../scripts/cli-common.mjs";
 
 // Regressions for the adversarial review rounds on `aios update` (code-review-pr343.md's 8
@@ -1645,10 +1651,8 @@ test("R8-1: --contribute refuses a nested non-git source at the choke point — 
     git(host, "add", "-A");
     git(host, "commit", "-qm", "host init");
     const nested = path.join(host, "toolkit-copy");
-    mkdirSync(path.join(nested, "scaffold"), { recursive: true });
-    mkdirSync(path.join(nested, "scripts"), { recursive: true });
+    writeToolkitMarkers(nested); // AIO-635 D3: classifies `registry`; still refused
     writeFileSync(path.join(nested, "scripts", "aios.mjs"), "// entry\n");
-
     const workspace = path.join(root, "workspace");
     mkdirSync(path.join(workspace, "hooks"), { recursive: true });
     writeFileSync(path.join(workspace, "aios.yaml"), "owner: t\n");
@@ -1661,7 +1665,7 @@ test("R8-1: --contribute refuses a nested non-git source at the choke point — 
       nested,
     ]);
     assert.equal(result.mode, "error", "structured envelope refusal, not a crash");
-    assert.match(result.reasons.join("\n"), /enclosing/i);
+    assert.match(result.reasons.join("\n"), /needs a git checkout source/i);
     assert.equal(
       git(host, "branch", "--list").includes("contribute"),
       false,
@@ -1815,7 +1819,7 @@ test("R8-5: a non-git source is an envelope refusal in EVERY mode — --check in
     assert.equal(result.mode, "error", "envelope refusal is structured even under --check");
     assert.equal(result.exitStatus, 1);
     assert.equal(result.applyAllowed, false);
-    assert.match(result.reasons.join("\n"), /not a git checkout/);
+    assert.match(result.reasons.join("\n"), /doesn't look like an AIOS toolkit/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -1912,15 +1916,11 @@ test("R8-8: the envelope gate holds on the toolkit-self --no-pull branch — a n
     git(host, "add", "-A");
     git(host, "commit", "-qm", "host init");
     const nested = path.join(host, "toolkit-copy");
-    mkdirSync(path.join(nested, "scaffold"), { recursive: true });
-    mkdirSync(path.join(nested, "scripts"), { recursive: true });
+    writeToolkitMarkers(nested);
     writeFileSync(path.join(nested, "scripts", "aios.mjs"), "// entry\n");
-
-    // Previously: exit 0, "--no-pull — nothing to re-vendor", with sourceClean/srcHead
-    // silently read from the ENCLOSING repo via git -C resolution.
-    const result = await cmdUpdate(nested, {}, ["--no-pull"]);
+    const result = await cmdUpdate(nested, {}, ["--no-pull"]); // registry target → refuse
     assert.equal(result.mode, "error", "envelope refusal, not a wrong-repo no-op success");
-    assert.match(result.reasons.join("\n"), /enclosing/i);
+    assert.match(result.reasons.join("\n"), /never writes into a registry install/i);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -1936,8 +1936,8 @@ test("R8-9: --vendor-apply-only refuses a nested non-git source — never vendor
     git(host, "add", "-A");
     git(host, "commit", "-qm", "host init");
     const nested = path.join(host, "toolkit-copy");
+    writeToolkitMarkers(nested);
     mkdirSync(path.join(nested, "scaffold", "scripts"), { recursive: true });
-    mkdirSync(path.join(nested, "scripts"), { recursive: true });
     writeFileSync(path.join(nested, "scripts", "aios.mjs"), "// entry\n");
     writeFileSync(path.join(nested, "scaffold", "scripts", "aios.mjs"), "// managed shim\n");
 
@@ -2068,7 +2068,7 @@ test("R8-12: an inherited GIT_DIR can't defeat the envelope probe (git sets it f
     writeFileSync(path.join(workspace, "aios.yaml"), "owner: t\n");
     const result = await cmdUpdate(workspace, {}, ["--check", "--from", copy]);
     assert.equal(result.mode, "error", "end-to-end: the envelope still refuses under GIT_DIR");
-    assert.match(result.reasons.join("\n"), /not a git checkout/);
+    assert.match(result.reasons.join("\n"), /doesn't look like an AIOS toolkit/);
   } finally {
     if (prevGitDir === undefined) delete process.env.GIT_DIR;
     else process.env.GIT_DIR = prevGitDir;

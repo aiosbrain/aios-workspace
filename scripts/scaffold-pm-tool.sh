@@ -50,7 +50,7 @@ if [ "$PM_TOOL" = "linear" ]; then
   mkdir -p "$OUTPUT/docs/agentic-ergonomics"
   cp "$REPO_ROOT/docs/agentic-ergonomics/aios-issue-template.md" \
     "$OUTPUT/docs/agentic-ergonomics/aios-issue-template.md"
-  # The finding-shaped sibling (AIO-999): `linear.mjs create --template finding`.
+  # The finding-shaped sibling (AIO-999): `aios linear create --template finding`.
   cp "$REPO_ROOT/docs/agentic-ergonomics/aios-finding-template.md" \
     "$OUTPUT/docs/agentic-ergonomics/aios-finding-template.md"
 else
