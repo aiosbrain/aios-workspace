@@ -715,6 +715,14 @@ BRAIN_API_VER="$(grep -m1 -oE '\*\*Version: [0-9]+\.[0-9]+\*\*' "$REPO_ROOT/docs
 
 . "$SCRIPT_DIR/scaffold-pm-tool.sh"
 
+# AIO-635: upgrade the stamp to format 2 + seed .aios/toolkit-bases with the toolkit's
+# own content — the first update's 3-way merge base. Best-effort: on failure the v1
+# stamp above stands (a checkout source still resolves bases via git show); a REGISTRY
+# source has no git history, so this seeding is what makes its first update mergeable.
+if command -v node >/dev/null 2>&1 && [ -f "$SCRIPT_DIR/update/seed-baseline.mjs" ]; then
+  node "$SCRIPT_DIR/update/seed-baseline.mjs" --repo "$OUTPUT" --from "$REPO_ROOT" 2>/dev/null || true
+fi
+
 # Generate the skills + integrations catalogs for the new workspace
 if command -v node >/dev/null 2>&1 && [ -f "$SCRIPT_DIR/gen-catalog.mjs" ]; then
   node "$SCRIPT_DIR/gen-catalog.mjs" --repo "$OUTPUT" >/dev/null 2>&1 || true

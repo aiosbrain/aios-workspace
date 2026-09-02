@@ -73,6 +73,23 @@ export function chooseBaseResolver(repo, srcDir, baseSha, { registry = false } =
   if (recorded && path.isAbsolute(recorded)) {
     const rec = resolveDistributionRoot(recorded);
     if (rec?.kind === "checkout") return gitBaseResolver(rec.dir, baseSha);
+    // The recorded source is a still-installed REGISTRY root at the SAME version the
+    // stamp pinned: its content IS the base (immutable by construction). This is what
+    // makes a 0.12.0-registry-scaffolded workspace upgradeable without a checkout —
+    // without it, every stamp-time-personalized file is a permanent no-base conflict.
+    if (rec?.kind === "registry" && rec.version && rec.version === stampInfo?.toolkitVersion) {
+      return {
+        kind: "source-content",
+        base: (srcRel) => {
+          try {
+            return readFileSync(path.join(rec.dir, srcRel), "utf8");
+          } catch {
+            return undefined;
+          }
+        },
+        baseFiles: (entry) => entryFiles(rec.dir, entry).map((f) => f.srcRel),
+      };
+    }
   }
   return { kind: "none", base: () => undefined, baseFiles: () => [] };
 }
@@ -92,14 +109,20 @@ function userConfigPathSafe() {
 export async function recordRollbackIfUpgrading(repo, { packageRoot } = {}) {
   const stampInfo = readStamp(repo);
   if (stampInfo && stampInfo.format >= 2) return null;
-  const sourceIsPath = stampInfo?.source && path.isAbsolute(stampInfo.source);
+  // A path source is only a CHECKOUT record when it still classifies as one — a
+  // registry-install path (how 0.12.0 scaffolds recorded their source) rolls back via
+  // npm, never via `git checkout` against a directory that has no git history.
+  const sourceIsCheckout =
+    stampInfo?.source &&
+    path.isAbsolute(stampInfo.source) &&
+    resolveDistributionRoot(stampInfo.source)?.kind === "checkout";
   const previousPackage = stampInfo
-    ? sourceIsPath
+    ? sourceIsCheckout
       ? `checkout:${stampInfo.baseSha ?? "unknown"}`
       : `${DISTRIBUTION_PACKAGE}@${stampInfo.toolkitVersion ?? "unknown"}`
     : null;
   const reinstall = stampInfo
-    ? sourceIsPath
+    ? sourceIsCheckout
       ? {
           argv: ["git", "-C", stampInfo.source, "checkout", stampInfo.baseSha ?? "HEAD"],
           display: `git -C ${stampInfo.source} checkout ${stampInfo.baseSha ?? "HEAD"}`,
