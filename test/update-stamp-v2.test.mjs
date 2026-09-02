@@ -18,6 +18,7 @@ import {
   existsSync,
   chmodSync,
   statSync,
+  symlinkSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -29,6 +30,7 @@ import {
   baseFromStore,
   writeBaseStore,
   manifestDigest,
+  sha256hex,
   BASE_STORE_DIR,
 } from "../scripts/update/base-store.mjs";
 import {
@@ -314,6 +316,91 @@ test("cmdUpdate --check accepts a marker-complete non-git copy as an immutable r
     assert.deepEqual([r.mode, r.sourceClean, r.exitStatus], ["check", "immutable", 0]);
   } finally {
     rmSync(srcDir, discard);
+    rmSync(repo, discard);
+  }
+});
+
+test("base store: a symlinked store dir (or .aios parent) is a LOUD refusal — zero writes/deletes at the target", async () => {
+  const repo = mkdtempSync(path.join(tmpdir(), "storelink-"));
+  const target = mkdtempSync(path.join(tmpdir(), "storelink-target-"));
+  try {
+    writeFileSync(path.join(target, "victim"), "do not touch\n");
+    mkdirSync(path.join(repo, ".aios"), { recursive: true });
+    symlinkSync(target, path.join(repo, BASE_STORE_DIR));
+    await assert.rejects(
+      () => writeBaseStore(repo, [{ destRel: "a.md", srcRel: "s/a.md", content: "x\n" }]),
+      /not a real workspace directory|symlink/,
+      "a symlinked toolkit-bases dir must refuse"
+    );
+    assert.deepEqual(readdirSync(target), ["victim"], "nothing written at the symlink target");
+    assert.equal(readFileSync(path.join(target, "victim"), "utf8"), "do not touch\n");
+
+    // Same refusal one level up: a symlinked .aios parent.
+    rmSync(path.join(repo, BASE_STORE_DIR));
+    rmSync(path.join(repo, ".aios"), { recursive: true });
+    symlinkSync(target, path.join(repo, ".aios"));
+    await assert.rejects(
+      () => writeBaseStore(repo, [{ destRel: "a.md", srcRel: "s/a.md", content: "x\n" }]),
+      /not a real workspace directory|symlink/
+    );
+    assert.deepEqual(readdirSync(target), ["victim"]);
+  } finally {
+    rmSync(repo, discard);
+    rmSync(target, discard);
+  }
+});
+
+test("base store: symlinked individual blob/index entries refuse and are never followed by the prune", async () => {
+  const repo = mkdtempSync(path.join(tmpdir(), "storelink2-"));
+  const outside = mkdtempSync(path.join(tmpdir(), "storelink2-out-"));
+  try {
+    const files = [{ destRel: "a.md", srcRel: "s/a.md", content: "alpha\n" }];
+    const hash = sha256hex("alpha\n");
+    const storeAbs = path.join(repo, BASE_STORE_DIR);
+    mkdirSync(storeAbs, { recursive: true });
+    // A planted symlink AT the blob's own path: the write must refuse, not follow.
+    writeFileSync(path.join(outside, "blob-target"), "outside bytes\n");
+    symlinkSync(path.join(outside, "blob-target"), path.join(storeAbs, hash));
+    await assert.rejects(() => writeBaseStore(repo, files), /symlink/i);
+    assert.equal(readFileSync(path.join(outside, "blob-target"), "utf8"), "outside bytes\n");
+    rmSync(path.join(storeAbs, hash));
+
+    // A planted symlink at index.json refuses identically.
+    writeFileSync(path.join(outside, "index-target"), "{}\n");
+    symlinkSync(path.join(outside, "index-target"), path.join(storeAbs, "index.json"));
+    await assert.rejects(() => writeBaseStore(repo, files), /symlink/i);
+    assert.equal(readFileSync(path.join(outside, "index-target"), "utf8"), "{}\n");
+    rmSync(path.join(storeAbs, "index.json"));
+
+    // An unreferenced symlink entry in the store: the prune leaves it alone (and the
+    // target untouched) rather than following or force-removing it.
+    writeFileSync(path.join(outside, "stray-target"), "keep\n");
+    symlinkSync(path.join(outside, "stray-target"), path.join(storeAbs, "deadbeef"));
+    await writeBaseStore(repo, files);
+    assert.equal(readFileSync(path.join(outside, "stray-target"), "utf8"), "keep\n");
+  } finally {
+    rmSync(repo, discard);
+    rmSync(outside, discard);
+  }
+});
+
+test("base store: a truncated/corrupted blob is REPAIRED on the next apply and resolves normally after", async () => {
+  const repo = mkdtempSync(path.join(tmpdir(), "storefix-"));
+  try {
+    const files = [{ destRel: "a.md", srcRel: "s/a.md", content: "alpha\n" }];
+    await writeBaseStore(repo, files, { packageVersion: "2.0.0" });
+    const index = readBaseIndex(repo);
+    const blobAbs = path.join(repo, BASE_STORE_DIR, index.entries["a.md"].hash);
+    writeFileSync(blobAbs, "trunc"); // corrupt it
+    assert.equal(baseFromStore(repo, index, "a.md"), undefined, "corruption is detected");
+    await writeBaseStore(repo, files, { packageVersion: "2.0.0" }); // next apply
+    assert.equal(readFileSync(blobAbs, "utf8"), "alpha\n", "the blob was rewritten in place");
+    assert.equal(
+      baseFromStore(repo, readBaseIndex(repo), "a.md"),
+      "alpha\n",
+      "base resolves again"
+    );
+  } finally {
     rmSync(repo, discard);
   }
 });
