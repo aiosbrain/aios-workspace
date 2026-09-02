@@ -46,11 +46,13 @@ function run(repoRoot) {
   }
 }
 
+// Since AIO-1072 the skill dirs are routing documentation only (no executable delegate),
+// so the synthetic fixture is markdown-only too.
 const IDENTICAL = {
   [path.join(COPY_SCAFFOLD, "SKILL.md")]: "# skill\n",
-  [path.join(COPY_SCAFFOLD, "linear.mjs")]: "console.log('cli');\n",
+  [path.join(COPY_SCAFFOLD, "NOTES.md")]: "routing notes\n",
   [path.join(COPY_DEV, "SKILL.md")]: "# skill\n",
-  [path.join(COPY_DEV, "linear.mjs")]: "console.log('cli');\n",
+  [path.join(COPY_DEV, "NOTES.md")]: "routing notes\n",
 };
 
 test("passes on a clean synthetic tree with both copies identical", () => {
@@ -83,12 +85,12 @@ for (const gone of [COPY_SCAFFOLD, COPY_DEV]) {
 test("drift detected by OGR17 propagates through the gate (delegation wired)", () => {
   const root = makeTree({
     ...IDENTICAL,
-    [path.join(COPY_DEV, "linear.mjs")]: "console.log('cli'); // drifted\n",
+    [path.join(COPY_DEV, "NOTES.md")]: "routing notes — drifted\n",
   });
   try {
     const { status, output } = run(root);
     assert.equal(status, 1);
-    assert.match(output, /aios-linear\/linear\.mjs/); // OGR17 names the file
+    assert.match(output, /aios-linear\/NOTES\.md/); // OGR17 names the file
     assert.match(output, /OGR17 reported drift/); // the gate surfaced it, not swallowed it
   } finally {
     rmSync(root, { recursive: true, force: true });

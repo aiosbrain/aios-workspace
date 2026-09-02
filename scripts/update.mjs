@@ -41,14 +41,12 @@ import { printMergeReport } from "./update/report.mjs";
 import { askCiWorkflow, ciWorkflowState, persistCiWorkflow } from "./ci-workflow.mjs";
 import { toolkitMeta } from "./toolkit-meta.mjs";
 import { cmdContribute } from "./toolkit-contribute.mjs";
-import { installWorktreeSafetyBackstops } from "./worktree.mjs";
 import {
   pullToolkitCheckout,
   sourceCleanliness,
   removePinnedSnapshot,
   remoteMessage,
   assertGitToolkitSource,
-  REMOTE_APPLY_ALLOW_STATES,
 } from "./toolkit-pull.mjs";
 import {
   dirtyManagedPaths,
@@ -58,7 +56,17 @@ import {
   plannedDestRels,
 } from "./update/manifest-walk.mjs";
 import { vendorSafety, vendorSafetyReason, mergeManaged } from "./update/merge.mjs";
-import { readStampBaseSha, stampBody } from "./update/stamp.mjs";
+import { readStampBaseSha, readStamp } from "./update/stamp.mjs";
+import { resolveDistributionRoot, isDistributionRoot } from "./cli.mjs";
+import { argValue, gitSha, buildResult } from "./update/flow-common.mjs";
+import { cmdVendorApplyOnly } from "./update/vendor-apply.mjs";
+import {
+  chooseBaseResolver,
+  vendorFromRegistry,
+  assessRegistrySource,
+  rollbackFromRecord,
+  selfUpgrade,
+} from "./update/registry-root.mjs";
 
 const DEFAULT_REPO = "https://github.com/aiosbrain/aios-workspace.git";
 
@@ -68,34 +76,8 @@ const DEFAULT_REPO = "https://github.com/aiosbrain/aios-workspace.git";
 // the SAME checkout the user is actually running — not a different one on the default path.
 const RUNNING_TOOLKIT = path.resolve(fileURLToPath(import.meta.url), "..", "..");
 
-function argValue(args, flag) {
-  const i = args.indexOf(flag);
-  return i >= 0 ? args[i + 1] : undefined;
-}
-
-/** A dir is a toolkit checkout if it has the scaffold template + the CLI entrypoint. */
-function looksLikeToolkit(dir) {
-  return (
-    !!dir &&
-    existsSync(path.join(dir, "scripts", "aios.mjs")) &&
-    existsSync(path.join(dir, "scaffold"))
-  );
-}
-
-export function gitSha(dir) {
-  try {
-    // Full sha (not --short): the version stamp is a merge base for future syncs,
-    // and a full sha survives shallow/ephemeral clones where short shas can collide.
-    // gitEnv(): an inherited GIT_DIR would make this report ANOTHER repo's HEAD — and
-    // this sha becomes the workspace's stamped 3-way merge base.
-    return execFileSync("git", ["-C", dir, "rev-parse", "HEAD"], {
-      encoding: "utf8",
-      env: gitEnv(),
-    }).trim();
-  } catch {
-    return "unknown";
-  }
-}
+// Toolkit detection is `resolveDistributionRoot`/`isDistributionRoot` (AIO-635 Decision 3)
+// — the ONE classifier, imported above; the local two-marker isDistributionRoot() is gone.
 
 /**
  * Resolve a local toolkit checkout for read-only inspection — same candidates as
@@ -112,7 +94,7 @@ export function resolveLocalToolkitDir(dir) {
     path.join(os.homedir(), "Projects", "aios", "aios-workspace"),
   ].filter(Boolean);
   for (const candidate of candidates) {
-    if (looksLikeToolkit(candidate)) return path.resolve(candidate);
+    if (isDistributionRoot(candidate)) return path.resolve(candidate);
   }
   return null;
 }
@@ -124,7 +106,7 @@ function resolveSource(args, cfg, warn) {
   // An explicit --from is a promise: if it isn't a toolkit, that's an error, not a
   // silent fall-through to some other source the user didn't ask for.
   const from = argValue(args, "--from");
-  if (from && !looksLikeToolkit(from)) {
+  if (from && !isDistributionRoot(from)) {
     throw new UpdateError(
       `--from ${from} doesn't look like an AIOS toolkit checkout ` +
         `(no scripts/aios.mjs + scaffold/). Point it at your aios-workspace clone.`
@@ -141,7 +123,20 @@ function resolveSource(args, cfg, warn) {
     path.join(os.homedir(), "Projects", "aios", "aios-workspace"),
   ].filter(Boolean);
   for (const dir of candidates) {
-    if (looksLikeToolkit(dir)) {
+    if (isDistributionRoot(dir)) {
+      const root = resolveDistributionRoot(dir);
+      if (root.kind === "registry") {
+        // Immutable registry root (AIO-635 Decision 3): no pull half, no git envelope —
+        // the vendor reads the installed files directly and the stamp records a pkg:
+        // source. This is what makes `aios update` work from a bare `npm i -g`.
+        return {
+          dir: root.dir,
+          ephemeral: false,
+          stampSource: `pkg:${root.version ? `@aiosbrain/aios@${root.version}` : "@aiosbrain/aios"}`,
+          kind: "registry",
+          root,
+        };
+      }
       const resolved = path.resolve(dir);
       // THE source-trust choke point: every flow that touches a toolkit source (check/
       // preview/apply, --contribute, onboarding) resolves through here, so the supported-
@@ -152,7 +147,7 @@ function resolveSource(args, cfg, warn) {
       // than the refusal. pullToolkitCheckout keeps its own assert as a backstop for
       // direct callers.
       assertGitToolkitSource(resolved);
-      return { dir: resolved, ephemeral: false, stampSource: resolved };
+      return { dir: resolved, ephemeral: false, stampSource: resolved, kind: "checkout" };
     }
   }
   // Fall back to cloning the canonical repo.
@@ -169,17 +164,18 @@ function resolveSource(args, cfg, warn) {
         `  or set AIOS_TOOLKIT_DIR, or set toolkit_repo in aios.yaml.`
     );
   }
-  if (!looksLikeToolkit(tmp)) {
+  if (!isDistributionRoot(tmp)) {
     rmSync(tmp, { recursive: true, force: true });
     throw new UpdateError(`cloned ${url} but it doesn't look like the AIOS toolkit`);
   }
-  return { dir: tmp, ephemeral: true, stampSource: url };
+  return { dir: tmp, ephemeral: true, stampSource: url, kind: "checkout" };
 }
 
 // Manifest walk, 3-way merge, and stamp bookkeeping moved to scripts/update/*.mjs
 // (AIO-557) — re-exported here (via the imports above) so every existing caller/test
 // keeps importing them from scripts/update.mjs unchanged. See each module's header
 // comment for the invariant it owns.
+export { gitSha };
 export {
   dirtyManagedPaths,
   assertDestPathSafe,
@@ -201,6 +197,8 @@ const UPDATE_BOOL_FLAGS = new Set([
   "--force",
   "--with-ci-workflow",
   "--dry-run", // alias for --preview UNLESS combined with --contribute (see cmdUpdate)
+  "--rollback", // restore the recorded pre-upgrade stamp/config snapshots (AIO-635 D5)
+  "--self", // upgrade a registry (npm) install of the toolkit itself — the ONLY root write
 ]);
 // Recognized, but deliberately excluded from --help/the "supported:" error text — internal
 // hand-off only, never meant to be typed by a user. See the exact allowlist check below.
@@ -235,71 +233,6 @@ function assertKnownUpdateFlags(args) {
 }
 
 /**
- * Build the structured result every `cmdUpdate` mode returns (replaces the old bare
- * 0/1). `applyAllowed` is derived, not caller-supplied, so it can't drift from the
- * individual signals it's computed from: blocked by a non-fast-forward/uninspectable
- * remote, a dirty/uninspectable source, or an unsafe vendor result.
- */
-function buildResult({
-  mode,
-  exitStatus,
-  remoteState = null,
-  sourceClean = null,
-  vendorSafety: vs = null,
-  srcHead = null,
-  applied = false,
-  changedCount = 0,
-  reasons = [],
-}) {
-  // ALLOWLIST, not a blocklist — and the ONE allowlist: REMOTE_APPLY_ALLOW_STATES is
-  // exported by toolkit-pull.mjs beside the classifier that owns the vocabulary, and
-  // pullToolkitCheckout's apply-mode refusals gate on the same constant, so a future
-  // classifier state blocks by construction at every gate at once and the two files can
-  // never drift.
-  const remoteBlocks = remoteState ? !REMOTE_APPLY_ALLOW_STATES.includes(remoteState.state) : false;
-  const sourceBlocks = sourceClean != null && sourceClean !== "clean";
-  const vendorBlocks = vs != null && !vs.safe;
-  // mode === "error" is cmdUpdate's outer catch converting a thrown UpdateError into a
-  // result — none of the other three signals were ever computed, so they default to
-  // non-blocking and would otherwise leave applyAllowed silently true after a failed
-  // check/preview. When we couldn't even evaluate whether it's safe, never default to
-  // "allowed". The same principle covers a FAILED apply: a vendor child that died without
-  // writing its result file leaves vendorSafety null (non-blocking) while remoteState/
-  // sourceClean are green — the pre-flight signals were fine, but the apply itself failed,
-  // and `applyAllowed: true` on a failed apply would lie to every programmatic caller
-  // reading the documented `.applyAllowed` contract.
-  const errorBlocks = mode === "error" || (mode === "apply" && exitStatus !== 0);
-  // …and the same principle one more time, generalized: a result whose safety signals
-  // were ALL never computed (remote, cleanliness, vendor safety) must not read as allowed
-  // — whatever branch produced it evaluated nothing. Deliberately NOT gated on a mode
-  // list: a mode list is a blocklist in disguise, and a future mode string missing from
-  // it would read applyAllowed:true from nothing — the exact fail-open this clause
-  // exists to close. All-null signals fail closed for every mode, present and future.
-  // `contribute` is not an apply at all (it pushes a PR), so its result never advertises
-  // apply permission.
-  const unevaluated = remoteState == null && sourceClean == null && vs == null;
-  const nonApplyMode = mode === "contribute";
-  return {
-    exitStatus,
-    mode,
-    remoteState,
-    sourceClean,
-    vendorSafety: vs,
-    srcHead,
-    applyAllowed:
-      !remoteBlocks &&
-      !sourceBlocks &&
-      !vendorBlocks &&
-      !errorBlocks &&
-      !unevaluated &&
-      !nonApplyMode,
-    applied,
-    changedCount,
-    reasons,
-  };
-}
-
-/**
  * The one read-only safety assessment of a toolkit source — remote state (via a strictly
  * read-only pullToolkitCheckout), vendor safety, source cleanliness, and the reasons list
  * built from them. Shared by the toolkit-self check/preview block, workspace --check, and
@@ -322,7 +255,9 @@ function assessReadOnlySource(srcDir, { pullOpts, io, skipRemote = false, repo =
   if (repo)
     for (const destRel of plannedDestRels(
       srcDir,
-      readStampBaseSha(repo),
+      // Same base resolver the apply itself would use (store for a v2 stamp, git for v1)
+      // so the scanned set can never differ from the set an apply would touch.
+      chooseBaseResolver(repo, srcDir, readStampBaseSha(repo)),
       managedPaths,
       pmToolPrunable(cfg)
     ))
@@ -344,162 +279,6 @@ function assessReadOnlySource(srcDir, { pullOpts, io, skipRemote = false, repo =
     reasons.push("pulling would rebuild dist/ (src/ changed upstream) — `aios update` handles it");
   if (!vs.safe) reasons.push(vendorSafetyReason(vs));
   return { remoteState, sourceClean, vs, rebuildNeeded, reasons };
-}
-
-/**
- * `--vendor-apply-only <srcDir=snapshot> --repo <repo> [--force]` — the structurally
- * non-recursive vendor step. Has NO hand-off logic anywhere in it: it cannot spawn a
- * child, so there is nothing for an ambient environment variable or a stray flag to
- * confuse — the old `AIOS_UPDATE_VENDOR_CHILD` recursion guard this replaces is deleted
- * entirely, not hardened. `srcDir` is always the caller's pinned, immutable snapshot
- * (never the live, mutable toolkit checkout), so `vendorSafety` here is the authoritative,
- * TOCTOU-immune final gate — nothing can change under it between this check and the
- * writes that follow.
- */
-async function cmdVendorApplyOnly(repo, cfg, args) {
-  const color = c;
-  const srcDir = argValue(args, "--from");
-  if (!srcDir || !looksLikeToolkit(srcDir)) {
-    throw new UpdateError(
-      `--vendor-apply-only requires --from pointing at a valid toolkit checkout — got ${srcDir}.`
-    );
-  }
-  const stampSource = argValue(args, "--stamp-source");
-  if (!stampSource || /[\r\n]/.test(stampSource)) {
-    throw new UpdateError("--vendor-apply-only requires a single-line --stamp-source value.");
-  }
-  // The envelope gate must hold on THIS entry path too: --vendor-apply-only is dispatched
-  // before resolveSource and never calls pullToolkitCheckout, so without its own assert a
-  // toolkit-shaped non-git dir nested in another repository would sail through — and
-  // worse than sailing through: gitSha/vendorSafety's git calls resolve the ENCLOSING
-  // repo, so the apply would vendor from the copy but stamp the workspace with a FOREIGN
-  // repo's HEAD as the future 3-way merge base (silent, compounding corruption). The
-  // internal hand-off always passes the pinned snapshot (a real git worktree), which
-  // passes this trivially.
-  assertGitToolkitSource(srcDir);
-  const force = args.includes("--force");
-  const managedPaths = managedPathsForConfig(cfg);
-  const vs = vendorSafety(srcDir, managedPaths);
-  if (!vs.safe) {
-    throw new UpdateError(
-      `the pinned toolkit snapshot has unresolved conflicts — ${vendorSafetyReason(vs)}.\n` +
-        `  Refusing to vendor conflict markers into your workspace.`
-    );
-  }
-  const sha = gitSha(srcDir); // srcDir IS the pinned snapshot — this trivially equals the pinned sha
-  const meta = toolkitMeta(srcDir); // unmodified — reads the snapshot's own frozen files
-  const stampPath = path.join(repo, VERSION_FILE);
-  assertDestPathSafe(repo, VERSION_FILE, "write version stamp");
-  // gen-catalog (spawned below) writes these fixed destinations with no containment checks
-  // of its own — assert them here, at the same chokepoint as every other managed write, so
-  // a symlinked catalog destination is refused before anything is written.
-  for (const rel of [".claude/skills/INDEX.md", ".claude/INTEGRATIONS.md", "RESOLVER.md"])
-    assertDestPathSafe(repo, rel, "regenerate catalog");
-  const baseSha = readStampBaseSha(repo);
-  // PRE-FLIGHT containment scan over the COMPLETE write+delete set — all-or-nothing.
-  // plannedDestRels enumerates everything the apply below could touch (managed + seed
-  // writes, conflict sidecars, upstream-deletion targets) via the same helpers the write
-  // loop itself calls, so the scan can't cover a different set than the loop touches. The
-  // per-file asserts inside mergeManaged remain as a backstop, but they fire mid-write-
-  // loop: one bad destination there would leave every earlier file already vendored (a
-  // partial apply with no stamp). Refusing up front, before the first write, keeps a
-  // symlinked/escaping destination from ever producing a half-applied workspace.
-  const prunablePaths = pmToolPrunable(cfg);
-  for (const destRel of plannedDestRels(srcDir, baseSha, managedPaths, prunablePaths))
-    assertDestPathSafe(repo, destRel);
-  const dirty = force ? new Set() : dirtyManagedPaths(repo, managedPaths);
-  const shortSha = sha.slice(0, 12);
-  console.log(color.dim(`  syncing toolkit ${meta.label} from ${stampSource} (${shortSha}) …`));
-  const r = mergeManaged(srcDir, srcDir, repo, baseSha, {
-    dirty,
-    force,
-    dryRun: false,
-    managedPaths,
-    prunablePaths,
-  });
-
-  // Regenerate the derived catalogs from the just-synced skills so INDEX.md,
-  // INTEGRATIONS.md, and RESOLVER.md's generated block never drift after an update.
-  // A snapshot without the script ships no catalogs to regenerate — skip. A script that
-  // RAN and FAILED is an incomplete apply: recorded, and the stamp write below is skipped
-  // so `--check` keeps reporting the workspace behind until a re-run succeeds.
-  const catalogScript = path.join(srcDir, "scripts", "gen-catalog.mjs");
-  let catalogFailed = false;
-  if (existsSync(catalogScript)) {
-    try {
-      execFileSync(process.execPath, [catalogScript, "--repo", repo], { stdio: "inherit" });
-    } catch {
-      catalogFailed = true;
-      console.warn(
-        color.yellow("  gen-catalog failed — catalogs may be stale; fix and re-run `aios update`.")
-      );
-    }
-  }
-
-  const changedCount = printMergeReport(color, r);
-
-  if (r.conflicts.length) {
-    // Leave the stamp at the old base so a re-run re-surfaces the conflicts once resolved.
-    // This is a NORMAL outcome of local customization (a workspace edit conflicting with
-    // the toolkit's incoming change) — not the same as vendorSafety's hard refusal above
-    // (which means the SOURCE toolkit itself is broken) — exitStatus stays 0.
-    console.warn(
-      color.yellow(
-        `  resolve the conflict(s) and re-run \`aios update\` — version stays pinned at ${(
-          baseSha || "(none)"
-        ).slice(0, 12)} until then.`
-      )
-    );
-    return buildResult({
-      mode: "vendor-apply-only",
-      exitStatus: 0,
-      applied: true,
-      changedCount,
-      vendorSafety: vs,
-      reasons: [`${r.conflicts.length} conflict(s) — not applied for those files`],
-    });
-  }
-
-  if (catalogFailed) {
-    // Same honesty model as conflicts: an incomplete apply is never stamped — a fresh
-    // stamp would make `--check` report "up to date" over drifted catalogs forever.
-    console.warn(
-      color.yellow(
-        `  catalogs were not regenerated — version stays pinned at ${(baseSha || "(none)").slice(0, 12)} until a re-run succeeds.`
-      )
-    );
-    return buildResult({
-      mode: "vendor-apply-only",
-      exitStatus: 0,
-      applied: true,
-      changedCount,
-      vendorSafety: vs,
-      reasons: ["catalog regeneration failed — version not stamped; re-run `aios update`"],
-    });
-  }
-
-  writeFileSync(stampPath, stampBody(sha, meta, stampSource));
-  // AIO-482: restore machine-local worktree hooks after an update. Personal workspaces receive
-  // post-checkout hydration only; the public product repo also restores its commit/push
-  // backstops because it carries scripts/leak-gate.sh. Never fails an update.
-  installWorktreeSafetyBackstops(repo, { quiet: true, productOnly: true });
-  if (changedCount) {
-    console.log(
-      color.green(
-        `  toolkit synced to ${meta.label} (${shortSha}) — ${changedCount} file(s) changed.`
-      )
-    );
-    console.log(color.dim("  Review + commit these on your workspace's master branch."));
-  } else {
-    console.log(color.green(`  already up to date — ${meta.label} (${shortSha}).`));
-  }
-  return buildResult({
-    mode: "vendor-apply-only",
-    exitStatus: 0,
-    applied: true,
-    changedCount,
-    vendorSafety: vs,
-  });
 }
 
 /**
@@ -573,6 +352,25 @@ async function cmdUpdateInner(repo, cfg, args) {
     return await cmdVendorApplyOnly(repo, cfg, args);
   }
 
+  // `--rollback` (AIO-635 Decision 5): restore the recorded pre-upgrade snapshots and
+  // print (interactively: offer to run) the exact reinstall command. Reinstall-plus-
+  // restore, never a reverse migration (ADR 0002 §9). Refuses combination with any other
+  // mode flag — a rollback is not an update.
+  if (args.includes("--rollback")) {
+    for (const a of args)
+      if (a.startsWith("--") && a !== "--rollback")
+        throw new UpdateError("aios update --rollback takes no other flags.");
+    await rollbackFromRecord(repo);
+    return buildResult({ mode: "rollback", exitStatus: 0, sourceClean: "immutable" });
+  }
+
+  // `--self` (AIO-635 Decision 4): the ONLY path that mutates a registry install of the
+  // toolkit itself. A plain `aios update` never writes into the npm prefix.
+  if (args.includes("--self")) {
+    const exitStatus = selfUpgrade(resolveDistributionRoot(RUNNING_TOOLKIT));
+    return buildResult({ mode: "self-upgrade", exitStatus, sourceClean: "immutable" });
+  }
+
   const check = args.includes("--check");
   // --dry-run is this CLI's universal "no writes" convention; alias it to --preview for the
   // general case. Excluded when --contribute is present, where it keeps its existing
@@ -638,7 +436,18 @@ async function cmdUpdateInner(repo, cfg, args) {
   // Run inside the toolkit checkout itself: no workspace to re-vendor into, so `aios update`
   // just brings the checkout current (git pull + npm ci) — the "self-update" case. Nothing
   // is ever vendored here, so any snapshot pullToolkitCheckout pins is unused — discard it.
-  if (looksLikeToolkit(repo)) {
+  const repoRoot = resolveDistributionRoot(repo);
+  if (repoRoot?.kind === "registry") {
+    // Files under the npm prefix belong to npm alone (AIO-635 Decision 4): `aios update`
+    // never writes into a registry install, and an installed package dir is not a
+    // workspace to vendor into either.
+    throw new UpdateError(
+      `${repo} is an installed @aiosbrain/aios package, not a workspace or checkout — ` +
+        `aios update never writes into a registry install. Run it from your workspace, ` +
+        `or upgrade the install itself with \`aios update --self\`.`
+    );
+  }
+  if (repoRoot?.kind === "checkout") {
     console.log(color.blue("aios update") + color.dim(`  toolkit checkout ${repo}`));
     assertGitToolkitSource(repo);
     // The consent pin must never be silently ignored on ANY branch that can return
@@ -697,7 +506,91 @@ async function cmdUpdateInner(repo, cfg, args) {
     });
   }
 
-  const { dir: srcDir, ephemeral, stampSource } = resolveSource(args, cfg, (m) => console.warn(m));
+  const source = resolveSource(args, cfg, (m) => console.warn(m));
+  const { dir: srcDir, ephemeral, stampSource } = source;
+
+  // ── Registry root (AIO-635 Decision 3): the pull half does not apply — content is
+  // immutable, no git operations run against the source, bases come from the workspace's
+  // own store (Decision 1), and `aios update` never writes into the npm prefix. ──
+  if (source.kind === "registry") {
+    if (args.includes("--contribute")) {
+      throw new UpdateError(
+        "aios update --contribute needs a git checkout source — the toolkit here is an npm " +
+          "install. Clone aios-workspace and re-run with --from <checkout>."
+      );
+    }
+    const expectHead = argValue(args, "--expect-src-head");
+    if (expectHead && source.root.sha !== expectHead) {
+      throw new UpdateError(
+        `the installed package's build sha (${(source.root.sha ?? "unknown").slice(0, 12)}) doesn't ` +
+          `match --expect-src-head ${expectHead.slice(0, 12)} — the install changed since the preview.`
+      );
+    }
+    const managedPaths = managedPathsForConfig(cfg);
+    const prunablePaths = pmToolPrunable(cfg);
+    const a = assessRegistrySource(repo, cfg, source.root);
+    const sha = source.root.sha ?? null;
+    const resolver = chooseBaseResolver(repo, srcDir, readStampBaseSha(repo), { registry: true });
+    for (const destRel of plannedDestRels(srcDir, resolver, managedPaths, prunablePaths))
+      assertDestPathSafe(repo, destRel);
+    if (check || preview) {
+      const stampInfo = readStamp(repo);
+      const meta = toolkitMeta(srcDir);
+      const reasons = [...a.reasons];
+      const matches = !!sha && !!stampInfo?.baseSha && sha === stampInfo.baseSha;
+      if (!matches)
+        reasons.push(
+          `this workspace is on ${stampInfo?.toolkitVersion ? `v${stampInfo.toolkitVersion}` : "(unstamped)"}, installed package ${meta.label}`
+        );
+      const missingSeeds = missingSeedPaths(srcDir, repo);
+      if (missingSeeds.length)
+        reasons.push(
+          `missing seed${missingSeeds.length === 1 ? "" : "s"}: ${missingSeeds.join(", ")}`
+        );
+      let changedCount = 0;
+      if (preview) {
+        const dirty = args.includes("--force") ? new Set() : dirtyManagedPaths(repo, managedPaths);
+        const r = mergeManaged(srcDir, srcDir, repo, stampInfo?.baseSha, {
+          dirty,
+          force: args.includes("--force"),
+          dryRun: true,
+          managedPaths,
+          prunablePaths,
+          resolver,
+        });
+        changedCount = printMergeReport(color, r, { preview: true });
+        console.log(
+          color.dim(
+            `  preview only — ${changedCount} managed file(s) would change; no files or conflict sidecars were written.`
+          )
+        );
+      } else if (matches && !missingSeeds.length && a.vs.safe) {
+        console.log(color.green(`  up to date — ${toolkitMeta(srcDir).label} (pkg).`));
+      } else {
+        console.log(color.yellow(`  behind — ${reasons.join("; ")}. Run \`aios update\`.`));
+      }
+      return buildResult({
+        mode,
+        exitStatus: 0,
+        sourceClean: "immutable",
+        vendorSafety: a.vs,
+        srcHead: sha,
+        changedCount,
+        reasons,
+      });
+    }
+    const v = await vendorFromRegistry(repo, cfg, args, source.root, io);
+    return buildResult({
+      mode: "apply",
+      exitStatus: v.exitStatus,
+      sourceClean: "immutable",
+      vendorSafety: v.vs,
+      srcHead: sha,
+      applied: v.applied,
+      changedCount: v.changedCount,
+      reasons: v.reasons,
+    });
+  }
 
   // --contribute upstreams a locally-improved managed file as a toolkit PR (own flow).
   if (args.includes("--contribute")) {
@@ -800,6 +693,9 @@ async function cmdUpdateInner(repo, cfg, args) {
         dryRun: true,
         managedPaths,
         prunablePaths: pmToolPrunable(cfg),
+        // Same base policy as the apply (store for v2 stamps, git for v1) so preview and
+        // apply can never classify the same file differently.
+        resolver: chooseBaseResolver(repo, srcDir, baseSha),
       });
 
       const changedCount = printMergeReport(color, r, { preview: true });

@@ -18,7 +18,24 @@ import { existsSync, readFileSync, statSync, readdirSync, lstatSync } from "node
 import { execFileSync } from "node:child_process";
 import { gitEnv, UpdateError } from "../cli-common.mjs";
 import { MANAGED_PATHS, RETIRED_PATHS, SEED_IF_ABSENT } from "../toolkit-manifest.mjs";
-import { lsTree } from "../toolkit-merge.mjs";
+import { gitShow, lsTree } from "../toolkit-merge.mjs";
+
+/**
+ * Normalize a base source into a resolver (AIO-635 Decision 1). Callers may pass either a
+ * resolver object ({ base(srcRel, destRel), baseFiles(entry) } — see update/merge.mjs) or
+ * the historical bare baseSha string, which resolves against `srcDir` via git exactly as
+ * before the seam existed.
+ */
+function asBaseResolver(srcDir, resolverOrSha) {
+  if (resolverOrSha && typeof resolverOrSha === "object" && resolverOrSha.baseFiles)
+    return resolverOrSha;
+  const baseSha = resolverOrSha;
+  return {
+    kind: "git",
+    base: (srcRel) => gitShow(srcDir, baseSha, srcRel),
+    baseFiles: (entry) => lsTree(srcDir, baseSha, entry.src),
+  };
+}
 
 /**
  * Managed dest paths (repo-relative, forward-slash) that have UNCOMMITTED changes in the
@@ -224,8 +241,8 @@ export function missingSeedPaths(srcRoot, repo) {
  * so the scan can never cover a different deletion set than the loop actually touches.
  * Returns [{ srcRel, destRel }].
  */
-export function deletionCandidates(toolkitDir, srcRoot, entry, baseSha) {
-  const baseFiles = lsTree(toolkitDir, baseSha, entry.src); // srcRel paths at base
+export function deletionCandidates(srcRoot, entry, resolver) {
+  const baseFiles = asBaseResolver(srcRoot, resolver).baseFiles(entry); // srcRel paths at base
   if (!baseFiles.length) return [];
   // Exact-or-prefix, mirroring entryFiles: an `exclude` naming a DIRECTORY covers everything
   // beneath it, so a file removed from an excluded subtree is never reported as an upstream
@@ -248,15 +265,15 @@ export function deletionCandidates(toolkitDir, srcRoot, entry, baseSha) {
  * would remove. Split out of plannedDestRels purely to keep that function readable; it holds
  * no policy of its own.
  */
-function managedEntryDestRels(srcDir, baseSha, entry) {
+function managedEntryDestRels(srcDir, resolver, entry) {
   const out = [];
   for (const file of entryFiles(srcDir, entry)) {
     out.push(file.destRel, `${file.destRel}.aios-incoming`, `${file.destRel}.aios-merge`);
   }
   // In cmdVendorApplyOnly the snapshot IS the toolkit checkout (toolkitDir === srcRoot),
-  // so the snapshot's own history serves the baseSha lsTree.
+  // so a git resolver serves the snapshot's own history; a store resolver reads the index.
   if (entry.kind === "dir")
-    for (const { destRel } of deletionCandidates(srcDir, srcDir, entry, baseSha)) out.push(destRel);
+    for (const { destRel } of deletionCandidates(srcDir, entry, resolver)) out.push(destRel);
   return out;
 }
 
@@ -289,11 +306,12 @@ function deleteOnlyDestRels(srcDir, entries) {
  */
 export function plannedDestRels(
   srcDir,
-  baseSha,
+  resolver,
   managedPaths = MANAGED_PATHS,
   prunablePaths = [],
   retiredPaths = RETIRED_PATHS
 ) {
+  resolver = asBaseResolver(srcDir, resolver);
   // Retirement targets are deletes of paths the toolkit no longer ships, so there is no
   // `src` on disk to guard on (the `existsSync` guard the other passes use would skip every
   // one of them) and no sidecar to enumerate — but applyRetired calls assertDestPathSafe, so
@@ -308,7 +326,7 @@ export function plannedDestRels(
     // an apply that was never going to go near it. The scanned set must equal the touched
     // set in BOTH directions.
     if (!existsSync(path.join(srcDir, entry.src))) continue;
-    out.push(...managedEntryDestRels(srcDir, baseSha, entry));
+    out.push(...managedEntryDestRels(srcDir, resolver, entry));
   }
   // Seeds keep their own inline loop, without the src guard applySeeds applies — scanning a
   // destination the seed pass would skip is safe (the scan may over-cover, never under-cover),

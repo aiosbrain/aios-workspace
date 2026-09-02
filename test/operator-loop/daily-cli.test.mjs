@@ -91,36 +91,36 @@ function run(cwd, args, env = {}) {
   }
 }
 
-const CONNECTOR_PATHS = {
-  granola: ["granola-direct", "granola-pull.mjs"],
-  gog: ["gog-activity", "gog-activity-pull.mjs"],
-  slack: ["slack-personal", "slack-activity-pull.mjs"],
-  linear: ["linear-direct", "linear-activity-pull.mjs"],
-};
+// granola/gog stay descriptor-skill adapters; slack/linear route through the workspace CLI shim
+// (`scripts/aios.mjs <connector> activity pull …`, AIO-1072) — stubbed by a dispatching aios.mjs.
+const skillStub = (dir, ...parts) => path.join(dir, ".claude", "descriptors", "skills", ...parts);
+const cliStub = (dir, name) => path.join(dir, "connector-stubs", `${name}.mjs`);
+const SHIM_BODY = "await import(`../connector-stubs/${process.argv[2]}.mjs`);\n";
 
 function seedConnectorStubs(dir, bodies = {}) {
-  for (const [name, parts] of Object.entries(CONNECTOR_PATHS)) {
-    const file = path.join(dir, ".claude", "descriptors", "skills", ...parts);
+  mkdirSync(path.join(dir, "scripts"), { recursive: true });
+  writeFileSync(path.join(dir, "scripts", "aios.mjs"), SHIM_BODY);
+  const targets = {
+    granola: skillStub(dir, "granola-direct", "granola-pull.mjs"),
+    gog: skillStub(dir, "gog-activity", "gog-activity-pull.mjs"),
+    slack: cliStub(dir, "slack"),
+    linear: cliStub(dir, "linear"),
+  };
+  for (const [name, file] of Object.entries(targets)) {
     mkdirSync(path.dirname(file), { recursive: true });
     const body =
       bodies[name] ??
       `
 import { appendFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
-const args = process.argv.slice(2);
-const root = args[args.indexOf("--repo") + 1];
+const args = process.argv.slice(2), root = args[args.indexOf("--repo") + 1];
 const activity = path.join(root, "1-inbox", "comms", "activity.jsonl");
 mkdirSync(path.dirname(activity), { recursive: true });
 appendFileSync(path.join(root, "connector-invocations.log"), ${JSON.stringify(name + "\n")});
 appendFileSync(activity, JSON.stringify({
-  source: "slack",
-  tier: "admin",
-  occurredAt: new Date().toISOString(),
-  ref: ${JSON.stringify("stub:" + name)},
-  channel: null,
-  direction: "inbound",
-  summary: ${JSON.stringify("Slack needing reply from " + name)},
-  waitingOn: "me"
+  source: "slack", tier: "admin", occurredAt: new Date().toISOString(),
+  ref: ${JSON.stringify("stub:" + name)}, channel: null, direction: "inbound",
+  summary: ${JSON.stringify("Slack needing reply from " + name)}, waitingOn: "me"
 }) + "\\n");
 `;
     writeFileSync(file, body);

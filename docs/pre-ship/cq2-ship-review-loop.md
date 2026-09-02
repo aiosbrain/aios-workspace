@@ -11,23 +11,18 @@ AIO-254 needs explicit deferral before ship — no scope ambiguity.
 Before executing, verify these tool dependencies exist. If any check fails, the builder records the missing item and stops — the operator must provide the dependency:
 
 ```bash
-# Required: aios-linear CLI (Node.js script for Linear API access)
-test -f ~/.claude/skills/aios-linear/linear.mjs || echo "aios-linear not installed"
+# Required: the aios CLI with the built-in Linear adapter
+command -v aios >/dev/null 2>&1 || echo "aios not installed"
 
-# Required: dotenvx CLI for secure env loading
-command -v dotenvx >/dev/null 2>&1 || echo "dotenvx not found"
-
-# Required: .env file with LINEAR_API_KEY
-test -f .env && grep -q 'LINEAR_API_KEY=' .env || echo "LINEAR_API_KEY not set in .env"
+# Required: a resolvable Linear credential (env, workspace vault, or `aios connect linear`)
+aios linear status || echo "Linear not connected — run `aios connect linear`"
 ```
 
-If `~/.claude/skills/aios-linear/linear.mjs` is missing: the operator must install the `aios-linear` skill. The builder cannot install it.
+If `aios` is missing: install via `npm install -g @aiosbrain/aios`.
 
-If `dotenvx` is missing: install via `npm install -g @dotenvx/dotenvx`.
-
-If `.env` is missing or lacks `LINEAR_API_KEY`: the operator provides the token; the builder writes:
+If no Linear credential resolves: the operator provides the token and connects it:
 ```bash
-echo 'LINEAR_API_KEY=<operator-provided token>' >> .env
+aios connect linear
 ```
 `.env` is gitignored — never commit it.
 
@@ -37,7 +32,7 @@ echo 'LINEAR_API_KEY=<operator-provided token>' >> .env
 2. Post the same text to Linear issue **AIO-286** using the aios-linear CLI.
 
 ```bash
-LIN="dotenvx run --quiet -f .env -- node ~/.claude/skills/aios-linear/linear.mjs"
+LIN="aios linear"
 $LIN comment AIO-286 docs/pre-ship/cq2-aio254-deferral.md
 ```
 
@@ -52,7 +47,7 @@ required for v1 public ship).
 
 - `docs/pre-ship/cq2-aio254-deferral.md` committed with deferral text.
 - `grep -q 'AIO-254 deferred' docs/pre-ship/cq2-aio254-deferral.md` exits **0**.
-- The CLI invocation `dotenvx run --quiet -f .env -- node ~/.claude/skills/aios-linear/linear.mjs comment AIO-286 docs/pre-ship/cq2-aio254-deferral.md` exits **0**.
+- The CLI invocation `aios linear comment AIO-286 docs/pre-ship/cq2-aio254-deferral.md` exits **0**.
 - Linear comment on AIO-286 is posted (operator verifies in Linear UI).
 - No AIO-254 code changes in pre-release CQ scope.
 
@@ -69,9 +64,8 @@ required for v1 public ship).
 
 ## Deps
 
-- `aios-linear` CLI (Node.js script at `~/.claude/skills/aios-linear/linear.mjs`) — requires Node.js runtime.
-- `dotenvx` CLI (available in PATH).
-- A `.env` file in the project root containing the environment variable required by the aios-linear CLI: `LINEAR_API_KEY=<your Linear personal API token>`.
+- The `aios` CLI with the built-in Linear adapter (`aios linear …`) — requires Node.js runtime.
+- A resolvable Linear credential: `LINEAR_API_KEY` in the environment, the workspace vault, or the reference stored by `aios connect linear`.
 
 ## Scope
 

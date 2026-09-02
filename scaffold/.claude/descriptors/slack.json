@@ -6,7 +6,7 @@
   "transport": "mcp",
   "auth_mode": "token",
   "status": "available",
-  "summary": "Read channels and threads, post messages, pull conversation context.",
+  "summary": "Read channels and threads, post messages, pull conversation context (team bot token over MCP). To act as yourself, use the built-in `aios slack` adapter (slack-personal) instead.",
   "secrets": [
     { "env": "SLACK_BOT_TOKEN", "label": "Bot User OAuth token", "required": true, "placeholder": "xoxb-…" }
   ],

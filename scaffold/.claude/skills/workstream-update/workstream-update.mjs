@@ -1,22 +1,37 @@
 #!/usr/bin/env node
 // workstream-update.mjs — propose 3–5 non-overlapping agent workstreams from the AIO board.
 // Run from workspace root:
-//   dotenvx run --quiet -f .env -- node .claude/skills/workstream-update/workstream-update.mjs [--json]
+//   node .claude/skills/workstream-update/workstream-update.mjs [--json]
+//
+// Board reads go through the canonical `aios linear …` adapter (AIO-1072) — credential
+// resolution is the adapter's job (`aios connect linear`), never this script's.
 import { spawnSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const LINEAR = path.join(HERE, "..", "aios-linear", "linear.mjs");
+// <workspace-or-toolkit>/scripts/aios.mjs (3 up), or the toolkit root when this copy lives
+// under scaffold/ (4 up). In a scaffolded workspace, scripts/aios.mjs is the delegating
+// shim that forwards to the canonical toolkit checkout. Fall back to `aios` on PATH.
+const CLI_CANDIDATES = [
+  path.resolve(HERE, "..", "..", "..", "scripts", "aios.mjs"),
+  path.resolve(HERE, "..", "..", "..", "..", "scripts", "aios.mjs"),
+];
+const CLI = CLI_CANDIDATES.find((candidate) => existsSync(candidate));
 
 const ACTIVE_STATES = /^(in progress|triage|backlog|todo|started)/i;
 const DONE_STATES = /^(done|canceled|cancelled)/i;
 
 function runLinear(args) {
-  const r = spawnSync(process.execPath, [LINEAR, ...args], {
-    encoding: "utf8",
-    env: process.env,
-  });
+  const argv = ["linear", ...args];
+  const r = CLI
+    ? spawnSync(process.execPath, [CLI, ...argv], { encoding: "utf8", env: process.env })
+    : spawnSync("aios", argv, { encoding: "utf8", env: process.env });
+  if (r.error) {
+    console.error(`workstream-update: could not run the aios CLI: ${r.error.message}`);
+    process.exit(1);
+  }
   if (r.status !== 0) {
     console.error(r.stderr || r.stdout);
     process.exit(r.status || 1);
@@ -80,7 +95,7 @@ function renderMarkdown(workstreams, { generatedAt = new Date().toISOString() } 
       "```",
       `You are an unsupervised batch agent. Complete ${row.ident} end-to-end.`,
       "",
-      `1. linear.mjs get ${row.ident} --full  (read contract + comments)`,
+      `1. aios linear get ${row.ident} --full  (read contract + comments)`,
       `2. aios spec eval on the issue body must be SPEC_READY before build; fix if needed`,
       `3. Implement, open PR titled "(${row.ident}) …", ensure CI green`,
       `4. Merge when review bar met; verify board → Done`,

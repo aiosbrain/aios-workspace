@@ -57,11 +57,29 @@ export function originAndClone(root) {
  *  update.mjs's logic (vendorSafety, the merge, the stamp write, ...) rather than trivially
  *  "succeeding" having done nothing. Tests that only exercise the PARENT process's behavior
  *  before a hand-off (flag validation, --check/--preview, which never spawn) don't need it. */
+/**
+ * The AIO-635 Decision-3 capability markers a dir must carry to classify as a distribution
+ * root: the manifest module, scaffold/, and a package.json named `@aiosbrain/aios`. Shared
+ * so every test fixture that needs `resolveDistributionRoot` to accept it writes the SAME
+ * marker set (bespoke fixtures in other files call this too).
+ */
+export function writeToolkitMarkers(dir) {
+  mkdirSync(path.join(dir, "scaffold"), { recursive: true });
+  mkdirSync(path.join(dir, "scripts"), { recursive: true });
+  writeFileSync(
+    path.join(dir, "package.json"),
+    `${JSON.stringify({ name: "@aiosbrain/aios", version: "0.0.0-test" }, null, 2)}\n`
+  );
+  writeFileSync(
+    path.join(dir, "scripts", "toolkit-manifest.mjs"),
+    "// test fixture marker — the classifier checks presence, not content\n"
+  );
+}
+
 export function originAndToolkitClone(root, { extraOriginFiles, realEntrypoint = false } = {}) {
   const origin = path.join(root, "origin");
   const clone = path.join(root, "toolkit");
-  mkdirSync(path.join(origin, "scaffold"), { recursive: true });
-  mkdirSync(path.join(origin, "scripts"), { recursive: true });
+  writeToolkitMarkers(origin);
   initRepo(origin);
   writeFileSync(path.join(origin, "scaffold", ".keep"), "");
   // Real toolkit checkouts gitignore node_modules; without this, a test that symlinks/creates

@@ -38,5 +38,16 @@ made public later. Before flipping it public, complete every item below.
 - [ ] **CI green** on the public ruleset (leak gate + secrets + validators + harness syntax).
 - [ ] Decide the **open/closed boundary** per component.
 
+## v2 release lane (per-release, AIO-1064)
+
+- **The packed artifact is the release authority** (CLI-RESET-5): the tarball must pass
+  `npm run test:package-acceptance` locally and the 6-cell
+  `.github/workflows/package-acceptance.yml` matrix at the candidate head.
+- **Migration runbook executed against the frozen tarball**: every fresh / upgrade /
+  repeat / rollback / canonical-command / legacy-delegate command in
+  `docs/migration-v2.md` §Runbook, with results recorded in the release PR.
+- **Retired-route gate** clean: `npm run check:retired-routes` (no executable ownership
+  of retired connector clients anywhere in the tree).
+
 ## Ongoing (already enforced in CI)
 - Leak gate, secret scan, validator suite, harness syntax checks, and the docs drift guard run on every PR.

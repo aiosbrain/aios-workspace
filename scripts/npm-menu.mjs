@@ -50,6 +50,7 @@ export const CATEGORIES = {
       "check:inbox-audit",
       "check:review-evidence-parity", // AIO-777 drift detector for the vendored review validator
       "check:linear-skill-parity", // AIO-927 byte-parity gate for the two aios-linear skill copies
+      "check:retired-routes", // AIO-1072 gate: no executable ownership of retired connector routes
       "integration:contracts:validate", // AIO-835 Phase 0 exit gate for the v1 integration contract
       "eval:transcripts",
       "pr:backlog",
@@ -62,6 +63,7 @@ export const CATEGORIES = {
       "test:coverage:report",
       "test:mutation:nightly",
       "postinstall", // npm runs this automatically after `npm install` — never invoked by hand
+      "prepack", // npm runs this at pack/publish time — embeds build.json provenance (AIO-635)
     ],
   },
 };

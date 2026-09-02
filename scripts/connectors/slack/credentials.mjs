@@ -106,11 +106,20 @@ const PACKAGE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), 
 const trim = (value) => String(value ?? "").trim();
 const stripSlash = (value) => (value ? value.replace(/\/+$/, "") : null);
 
-/** The operator's toolkit vault location: AIOS_TOOLKIT_DIR (their own env) or this package. */
+/**
+ * The operator's toolkit vault location: AIOS_TOOLKIT_DIR (their own, explicit env), or —
+ * ONLY when this package is a git checkout — the checkout's own `.env` vault.
+ *
+ * EXPLICIT DECISION (AIO-1072/AIO-635): a REGISTRY install never reads a checkout vault.
+ * The published tarball ships no `.env` (files allowlist), and an npm prefix is not a
+ * place operators keep secrets — silently reading one that appeared there would make
+ * credential behavior differ between installs in a way nobody configured. A registry
+ * root therefore contributes NO vault; env vars, agent-context.json, and the user-config
+ * reference (`aios connect slack`) are the supported sources there.
+ */
 function toolkitRoot(env) {
-  return env.AIOS_TOOLKIT_DIR && path.isAbsolute(env.AIOS_TOOLKIT_DIR)
-    ? env.AIOS_TOOLKIT_DIR
-    : PACKAGE_ROOT;
+  if (env.AIOS_TOOLKIT_DIR && path.isAbsolute(env.AIOS_TOOLKIT_DIR)) return env.AIOS_TOOLKIT_DIR;
+  return fs.existsSync(path.join(PACKAGE_ROOT, ".git")) ? PACKAGE_ROOT : null;
 }
 
 /** Operator-domain fields: process env, agent-context.json, the operator's toolkit vault. */
@@ -118,7 +127,8 @@ function operatorBrainConfig(env, brain, vaultRoot, foundation) {
   const { loadDotEnv, isDotenvxEncrypted, decryptDotenvKey } = foundation;
   let vault = {};
   try {
-    vault = loadDotEnv(vaultRoot) ?? {};
+    // vaultRoot is null on a registry install (see toolkitRoot) — no vault stage at all.
+    vault = vaultRoot ? (loadDotEnv(vaultRoot) ?? {}) : {};
   } catch {
     vault = {};
   }
@@ -130,7 +140,7 @@ function operatorBrainConfig(env, brain, vaultRoot, foundation) {
     // loadDotEnv skips dotenvx ciphertext, so an all-encrypted vault needs the scoped
     // decrypt for BOTH fields — decrypting only the key would strand the vault as
     // key-without-url and wrongly push resolution into the workspace stage.
-    if ((!url || !key) && isDotenvxEncrypted(vaultRoot)) {
+    if (vaultRoot && (!url || !key) && isDotenvxEncrypted(vaultRoot)) {
       if (!url) url = trim(decryptDotenvKey(vaultRoot, "AIOS_BRAIN_URL"));
       if (!key) key = trim(decryptDotenvKey(vaultRoot, "AIOS_API_KEY"));
     }

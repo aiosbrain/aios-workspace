@@ -9,13 +9,12 @@
 // entry point must delegate to that same adapter rather than carrying its own client.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const SKILL_MD = path.join(ROOT, "scaffold/.claude/skills/aios-linear/SKILL.md");
-const SKILL_DELEGATE = path.join(ROOT, "scaffold/.claude/skills/aios-linear/linear.mjs");
 const CORE = path.join(ROOT, "scripts/connectors/linear/core.mjs");
 const CREDENTIALS = path.join(ROOT, "scripts/connectors/linear/credentials.mjs");
 const ADAPTER = path.join(ROOT, "scripts/connectors/linear/index.mjs");
@@ -63,10 +62,15 @@ test("SKILL.md's primary invocation is the canonical aios route", () => {
   assert.match(md, /aios connect linear/, "the docs must name the credential bootstrap command");
 });
 
-test("the skill copies are routing delegates, not a second provider client", () => {
-  const delegate = readFileSync(SKILL_DELEGATE, "utf8");
-  assert.doesNotMatch(delegate, /api\.linear\.app|LINEAR_API_KEY/);
-  assert.match(delegate, /\["linear", \.\.\.process\.argv\.slice\(2\)\]/);
+test("the skill copies are routing documentation only — no executable delegate remains", () => {
+  // AIO-1072 removed the skill-vendored linear.mjs delegate; the skill dirs carry docs only.
+  for (const dir of [".claude/skills/aios-linear", "scaffold/.claude/skills/aios-linear"]) {
+    const entries = readdirSync(path.join(ROOT, dir));
+    assert.ok(
+      entries.every((name) => name.endsWith(".md")),
+      `${dir} must hold routing docs only, found: ${entries.join(", ")}`
+    );
+  }
 });
 
 test("the missing-key error names a command that can actually succeed", () => {

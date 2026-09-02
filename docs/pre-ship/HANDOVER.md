@@ -73,7 +73,7 @@ npm run aios -- spec fix docs/pre-ship/<file>.md --write --budget 2
 Epics AIO-268..272, children AIO-273..291 — update descriptions after specs pass:
 
 ```bash
-LIN="dotenvx run --quiet -f .env -- node ~/.claude/skills/aios-linear/linear.mjs"
+LIN="aios linear"
 $LIN set-desc AIO-273 docs/pre-ship/af1-agent-onboarding-contract.md
 # ... repeat for each issue
 ```
