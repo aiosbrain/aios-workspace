@@ -101,7 +101,12 @@ export function prepareV2State(repo, options) {
     } else {
       const staged = readOptional(stagedPath);
       if (staged !== null) {
-        if (sha256hex(staged) !== journal.stagedSha256 || identity(staged) !== identity(body))
+        const interruptedStaging =
+          journal.state === "snapshotted" && journal.stagedSha256 === undefined;
+        if (
+          (!interruptedStaging && sha256hex(staged) !== journal.stagedSha256) ||
+          identity(staged) !== identity(body)
+        )
           throw new UpdateError(
             "Pending migration targets a different toolkit state. Re-run its original toolkit or use update --rollback; recovery evidence was preserved."
           );

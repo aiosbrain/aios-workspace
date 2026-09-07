@@ -23,7 +23,7 @@ test("registry self-upgrade refuses read-only flags before invoking npm", () => 
   try {
     const prefix = path.join(root, "install");
     let registry = path.join(prefix, "node_modules", "@aiosbrain", "aios");
-    let globalRoot = null;
+
     mkdirSync(registry, { recursive: true });
     writeFileSync(path.join(prefix, "package.json"), JSON.stringify({ private: true }));
     const bin = path.join(root, "bin");
@@ -58,7 +58,6 @@ test("registry self-upgrade refuses read-only flags before invoking npm", () => 
           HOME: home,
           PATH: bin,
           NPM_CALLS: calls,
-          ...(globalRoot ? { NPM_GLOBAL_ROOT: globalRoot, NPM_PREFIX: prefix } : {}),
         },
         encoding: "utf8",
       });
@@ -105,7 +104,7 @@ test("registry self-upgrade refuses read-only flags before invoking npm", () => 
     assert.equal(positive.status, 0, positive.stderr);
     assert.equal(
       readFileSync(calls, "utf8"),
-      `root -g\ni --prefix ${realpathSync(prefix)} @aiosbrain/aios@latest\n`
+      `i --prefix ${realpathSync(prefix)} @aiosbrain/aios@latest\n`
     );
     rmSync(calls);
     const workspace = path.join(home, "workspace");
@@ -129,18 +128,21 @@ test("registry self-upgrade refuses read-only flags before invoking npm", () => 
     assert.equal(shim.status, 0, shim.stderr);
     assert.equal(
       readFileSync(calls, "utf8"),
-      `root -g\ni --prefix ${realpathSync(prefix)} @aiosbrain/aios@latest\n`
+      `i --prefix ${realpathSync(prefix)} @aiosbrain/aios@latest\n`
     );
     rmSync(calls);
     mkdirSync(path.join(prefix, "lib"));
-    globalRoot = path.join(prefix, "lib", "node_modules");
+    const globalRoot = path.join(prefix, "lib", "node_modules");
     renameSync(path.join(prefix, "node_modules"), globalRoot);
     registry = path.join(globalRoot, "@aiosbrain", "aios");
+    mkdirSync(path.join(prefix, "bin"));
+    symlinkSync(path.join(registry, "scripts/aios.mjs"), path.join(prefix, "bin/aios"));
+    // The npm stub still reports an unrelated ambient global root.
     const global = run(["--self"]);
     assert.equal(global.status, 0, global.stderr);
     assert.equal(
       readFileSync(calls, "utf8"),
-      `root -g\nprefix -g\ni -g --prefix ${realpathSync(prefix)} @aiosbrain/aios@latest\n`
+      `i -g --prefix ${realpathSync(prefix)} @aiosbrain/aios@latest\n`
     );
   } finally {
     rmSync(root, { recursive: true, force: true });

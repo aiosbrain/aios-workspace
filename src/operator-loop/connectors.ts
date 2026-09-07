@@ -40,6 +40,7 @@ export interface DailyConnectorCredentials {
 export interface ConnectorCommand {
   name: DailyConnectorName;
   file: string;
+  cwd?: string;
   command: string;
   args: string[];
 }
@@ -103,12 +104,14 @@ export function dailyConnectorCommands(root: string, now = new Date()): Connecto
     {
       name: "slack",
       file: aios,
+      cwd: root,
       command: process.execPath,
       args: [aios, "slack", "activity", "pull", "--repo", root],
     },
     {
       name: "linear",
       file: aios,
+      cwd: root,
       command: process.execPath,
       args: [aios, "linear", "activity", "pull", "--repo", root],
     },
@@ -158,7 +161,7 @@ function runConnector(
 
     try {
       child = spawnConnector(spec.command, spec.args, {
-        cwd: path.dirname(spec.file),
+        cwd: spec.cwd ?? path.dirname(spec.file),
         env,
         stdio: "ignore",
       });

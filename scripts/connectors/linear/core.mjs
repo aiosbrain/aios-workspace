@@ -119,7 +119,7 @@ export async function printFullIssue(issueId) {
 // cursor fails closed — a seen-cursor SET, because a guard that only remembers the
 // previous cursor loops forever on an A→B→A cycle. `stallMessage` may be a function so
 // it can name an identifier learned from the first page.
-export async function paginate(fetchPage, stallMessage) {
+export async function paginate(fetchPage, stallMessage, { onStall = fail } = {}) {
   const nodes = [];
   const seenCursors = new Set();
   let after = null;
@@ -128,8 +128,8 @@ export async function paginate(fetchPage, stallMessage) {
     nodes.push(...page.nodes);
     if (!page.pageInfo?.hasNextPage) break;
     const cursor = page.pageInfo.endCursor;
-    if (!cursor || seenCursors.has(cursor)) {
-      fail(typeof stallMessage === "function" ? stallMessage() : stallMessage);
+    if (typeof cursor !== "string" || !cursor || seenCursors.has(cursor)) {
+      onStall(typeof stallMessage === "function" ? stallMessage() : stallMessage);
     }
     seenCursors.add(cursor);
     after = cursor;

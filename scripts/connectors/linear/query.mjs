@@ -13,7 +13,7 @@
 //
 // The GraphQL `data` payload is printed as JSON on stdout (machine surface);
 // diagnostics go to stderr with a non-zero exit, matching the adapter's verbs.
-import { fail, gql } from "./core.mjs";
+import { fail, gql, paginate } from "./core.mjs";
 
 export const ASSIGNED_OPEN_QUERY = `query AssignedOpen($first: Int!, $after: String) {
   viewer {
@@ -46,27 +46,29 @@ export async function queryAssignedOpenIssues({
   pageSize = 50,
   maxIssues = 500,
 } = {}) {
-  const nodes = [];
-  let after = null;
   let viewerName = "";
-
-  for (;;) {
-    const data = await request(ASSIGNED_OPEN_QUERY, { first: pageSize, after });
-    const assigned = data?.viewer?.assignedIssues;
-    if (!Array.isArray(assigned?.nodes)) {
-      throw new Error("Linear response missing assigned issues");
+  let count = 0;
+  const nodes = await paginate(
+    async (after) => {
+      const data = await request(ASSIGNED_OPEN_QUERY, { first: pageSize, after });
+      const assigned = data?.viewer?.assignedIssues;
+      if (!Array.isArray(assigned?.nodes)) {
+        throw new Error("Linear response missing assigned issues");
+      }
+      viewerName ||= data.viewer.name || "";
+      count += assigned.nodes.length;
+      if (count > maxIssues) {
+        throw new Error(`Linear assigned issue query exceeded the ${maxIssues}-issue safety cap`);
+      }
+      return assigned;
+    },
+    "Linear pagination stalled: missing or repeated end cursor",
+    {
+      onStall: (message) => {
+        throw new Error(message);
+      },
     }
-    viewerName ||= data.viewer.name || "";
-    nodes.push(...assigned.nodes);
-    if (nodes.length > maxIssues) {
-      throw new Error(`Linear assigned issue query exceeded the ${maxIssues}-issue safety cap`);
-    }
-    if (!assigned.pageInfo?.hasNextPage) break;
-    after = assigned.pageInfo.endCursor;
-    if (typeof after !== "string" || !after) {
-      throw new Error("Linear pagination response missing end cursor");
-    }
-  }
+  );
 
   return { viewer: { name: viewerName, assignedIssues: { nodes } } };
 }

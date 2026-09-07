@@ -101,3 +101,43 @@ test("an unknown flag is a loud usage failure, not a silent default query", () =
   assert.equal(result.status, 1);
   assert.match(result.stderr, /unknown option --nope/);
 });
+
+for (const cursors of [["A", "A"], ["A", "B", "A"], [null]]) {
+  test(`assigned issues reject stalled cursors ${JSON.stringify(cursors)}`, async () => {
+    let calls = 0;
+    await assert.rejects(
+      queryAssignedOpenIssues({
+        request: async () => ({
+          viewer: {
+            assignedIssues: {
+              nodes: [],
+              pageInfo: {
+                hasNextPage: true,
+                endCursor: cursors[calls++],
+              },
+            },
+          },
+        }),
+      }),
+      /pagination stalled/
+    );
+    assert.equal(calls, cursors.length);
+  });
+}
+
+for (const value of ["--help", "-h"]) {
+  test(`Linear comment preserves the literal value ${value}`, () => {
+    const result = spawnSync(
+      process.execPath,
+      ["--import", MOCK, AIOS, "linear", "comment", "AIO-73", value],
+      {
+        cwd: ROOT,
+        encoding: "utf8",
+        env: { ...process.env, LINEAR_API_KEY: "synthetic-parity-key-not-real" },
+      }
+    );
+    assert.equal(result.status, 0, result.stderr);
+    assert.doesNotMatch(result.stdout, /usage: aios/);
+    assert.match(result.stdout, /commented/);
+  });
+}

@@ -75,6 +75,7 @@ test("connector phase starts all adapters concurrently and settles each failure/
           ? "slack"
           : "linear";
     started.push(name);
+    if (name === "slack" || name === "linear") assert.equal(options.cwd, root);
     assert.equal(options.stdio, "ignore", "child output cannot contaminate the daily surface");
     assert.equal(options.env.AIOS_API_KEY, credentialMarker, "credentials ride in env, never argv");
     assert.ok(!args.some((arg) => String(arg).includes(credentialMarker)));

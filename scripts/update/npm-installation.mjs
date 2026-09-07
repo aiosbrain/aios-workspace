@@ -1,6 +1,6 @@
 import path from "node:path";
 import { existsSync, realpathSync } from "node:fs";
-import { execFileSync, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { UpdateError } from "../cli-common.mjs";
 
 const PACKAGE = "@aiosbrain/aios";
@@ -17,27 +17,16 @@ export function npmInstallation(root) {
   if (!root || !path.isAbsolute(root)) return null;
   const packageRoot = real(root);
   if (!packageRoot) return null;
-  try {
-    const globalRoot = execFileSync("npm", ["root", "-g"], {
-      encoding: "utf8",
-      timeout: 5000,
-      stdio: ["ignore", "pipe", "ignore"],
-    }).trim();
-    if (path.isAbsolute(globalRoot) && real(path.join(globalRoot, PACKAGE)) === packageRoot) {
-      const prefix = execFileSync("npm", ["prefix", "-g"], {
-        encoding: "utf8",
-        timeout: 5000,
-        stdio: ["ignore", "pipe", "ignore"],
-      }).trim();
-      if (
-        path.isAbsolute(prefix) &&
-        real(path.join(prefix, "lib", "node_modules", PACKAGE)) === packageRoot
-      ) {
-        return { method: "global", prefix: real(prefix), root: packageRoot };
-      }
-    }
-  } catch {
-    /* A local installation can still be identified without a global npm configuration. */
+  // npm's default prefix need not own this executable (e.g. --prefix /custom).
+  // Validate both the global layout and npm's executable link at the selected root.
+  const globalPrefix = path.resolve(packageRoot, "..", "..", "..", "..");
+  if (
+    real(path.join(globalPrefix, "lib", "node_modules", PACKAGE)) === packageRoot &&
+    real(path.join(globalPrefix, "bin", "aios")) ===
+      real(path.join(packageRoot, "scripts", "aios.mjs")) &&
+    real(path.join(packageRoot, "scripts", "aios.mjs")) !== null
+  ) {
+    return { method: "global", prefix: globalPrefix, root: packageRoot };
   }
   const prefix = path.resolve(packageRoot, "..", "..", "..");
   if (

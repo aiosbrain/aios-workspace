@@ -63,7 +63,7 @@ export async function cmdLinear(repo, rest, options = {}) {
   }
   // AIO-1116: `aios linear <verb> --help` is a HELP request, not a provider call — answer
   // it before credential resolution so an unconfigured machine can still read usage.
-  if (rest.slice(1).includes("--help") || rest.slice(1).includes("-h")) {
+  if (rest.length === 2 && ["--help", "-h"].includes(rest[1])) {
     console.log(linearUsage());
     return 0;
   }

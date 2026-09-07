@@ -36,7 +36,14 @@ const options = (root) => ({
 });
 const vendor = (repo, root) => vendorFromRegistry(repo, cfg, [], root, io);
 
-for (const state of ["discovered", "snapshotted", "staged", "validated", "committed"]) {
+for (const state of [
+  "discovered",
+  "snapshotted",
+  "staging-written",
+  "staged",
+  "validated",
+  "committed",
+]) {
   test(`workspace migration resumes a matching ${state} transition and retains exact bases`, async () => {
     const old = fakeRegistryRoot({ version: "0.12.0" });
     const next = fakeRegistryRoot();
@@ -54,10 +61,12 @@ for (const state of ["discovered", "snapshotted", "staged", "validated", "commit
           stage: () => plan.body,
           validate: () => {},
           interrupt: (at) => {
-            if (at === state) throw new Error("power loss");
+            if (at === state || (state === "staging-written" && at === "snapshotted"))
+              throw new Error("power loss");
           },
         })
       );
+      if (state === "staging-written") writeFileSync(`${stampFile(repo)}.staged`, plan.body);
       if (state !== "committed") assert.equal(readFileSync(stampFile(repo), "utf8"), before);
       const result = await vendor(repo, next.root);
       assert.equal(result.exitStatus, 0);
