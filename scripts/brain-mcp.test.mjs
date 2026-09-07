@@ -100,7 +100,12 @@ test("aios_loop_collect (local tool) reads the workspace at ctx.cwd and matches 
       "---\naccess: team\n---\n\n" +
         "| # | Date | Decision | Rationale | Decided By | Impact | Type | Audience |\n" +
         "|---|------|----------|-----------|------------|--------|------|----------|\n" +
-        `| 1 | ${today} | Test decision | because | alex | impact | 1 | team |\n`
+        `| 1 | ${today} | Test decision | because | alex | impact | 1 | team |\n` +
+        Array.from(
+          { length: 300 },
+          (_, i) =>
+            `| ${i + 2} | ${today} | Synthetic decision ${i}: ${"x".repeat(100)} | because | alex | impact | 1 | team |\n`
+        ).join("")
     );
     // Local tool ignores the brain client; ctx.cwd points it at the workspace.
     const dispatch = createDispatcher({ client: stubClient(), ctx: { cwd: dir } });
@@ -111,6 +116,10 @@ test("aios_loop_collect (local tool) reads the workspace at ctx.cwd and matches 
       params: { name: "aios_loop_collect", arguments: { cadence: "weekly" } },
     });
     assert.ok(!res.result.isError, res.result.content?.[0]?.text);
+    assert.ok(
+      res.result.content[0].text.length > 25_000,
+      "large loop output remains complete JSON"
+    );
     const manifest = JSON.parse(res.result.content[0].text);
     assert.equal(manifest.window.cadence, "weekly");
     assert.ok(
