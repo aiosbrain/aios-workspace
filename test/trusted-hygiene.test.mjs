@@ -225,6 +225,7 @@ for (const generated of [false, true]) {
         write(candidate, "scripts/cross-boundary.mjs", "export {};\n");
         passed(size.run);
         passed(boundaries.run);
+        rejected(boundaries.run.replace(" --allow-stale", ""), /stale grandfather/);
       } finally {
         rmSync(dir, { recursive: true, force: true });
       }
