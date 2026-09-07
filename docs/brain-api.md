@@ -1,6 +1,6 @@
 # AIOS Team Brain — API Contract
 
-**Version: 1.24** is the shipped member-facing Brain API (`/api/v1`). **Document revision: 1.24**
+**Version: 1.24** is the shipped member-facing Brain API (`/api/v1`). **Document revision: 1.25**
 also carries the separately negotiated internal Executor gateway contract **1.10**; it does not
 claim unimplemented member-facing v1.10 routes. This document is the single pinned contract between the
 contributor repo (this toolkit's `aios` CLI) and the `aios-team-brain` service. Both
@@ -424,13 +424,20 @@ carries the coordinated rollback procedure.
   versioned supplement
   [`contract/codebase-request-limits-v1.json`](./contract/codebase-request-limits-v1.json)
   (`kind: aios-codebase-request-limits`, `revision: 1`).
-  **No member-facing version bump.** The member API stays **1.24** and the document revision stays
-  **1.24**. This is the resource-admission exception stated in the change policy above, exercised
-  for the first time: successful requests keep their existing payload shape and `201` envelope,
-  every historical valid fixture is still accepted, and no new field, negotiation header, or
-  runtime version switch is introduced. The supplement is scoped to `POST /api/v1/codebases` for
-  member API major 1, from **1.23** onward, until explicitly superseded or withdrawn; it does not
-  describe `/api/v2`.
+  **No member-facing version bump.** The member API stays **1.24**; only the document revision
+  moves (**1.25**, carrying the deployment-activation clarification below, alongside the
+  supplement's own unchanged `revision: 1`). This is the resource-admission exception stated in the
+  change policy above, exercised for the first time: successful requests keep their existing
+  payload shape and `201` envelope, every historical valid fixture is still accepted, and no new
+  field, negotiation header, or runtime version switch is introduced. The supplement is scoped to
+  `POST /api/v1/codebases` for member API major 1, from **1.23** onward, until explicitly
+  superseded or withdrawn; it does not describe `/api/v2`.
+  **Publication is not deployment.** Publishing this document and the supplement makes the limits
+  canonical; it does not switch enforcement on anywhere. A given brain instance enforces them only
+  once it is running a Brain build that contains the AUDITFIX-17 enforcement, and an instance
+  reporting member API **1.23** or **1.24** has not thereby proved it carries that build. Instances
+  on older builds keep their previous behaviour until upgraded. Normative statement in the endpoint
+  section below.
   **Compatibility is a deliberate narrowing, stated rather than discovered.** Before this
   supplement the route bounded only a *declared* `Content-Length` above 2,400,000 bytes, so a
   chunked request that declared no length was effectively unbounded, and `metrics.recent_commits`
@@ -1907,7 +1914,21 @@ The executable statement of this table is
 (`kind: aios-codebase-request-limits`, `revision: 1`), which applies from member API **1.23**
 onward within major 1 until explicitly superseded or withdrawn. It is a **resource-admission
 supplement**, not a payload-shape revision: it is versioned independently of the member API
-version, and the member API remains **1.24**.
+version, and the member API remains **1.24** (only this document's revision moved, to **1.25**,
+for the deployment note below).
+
+**Enforcement is per deployed instance.** These bounds are normative for the contract from
+publication, but a brain enforces them only once that instance is running a Brain build that
+contains the AUDITFIX-17 enforcement. Publication of the canonical contract activates nothing by
+itself, and a version handshake is not proof of the patch: an instance reporting member API
+**1.23** or **1.24** is reporting its API version, and "from **1.23** onward" states the *eligible*
+member-API range for this supplement, not that every instance in that range enforces it. An
+instance on an older build retains the previous behaviour — a *declared* `Content-Length` bound
+only, and no `recent_commits` cardinality bound — until it is upgraded. That window is the mirror
+image of the rollback window below, where servers are temporarily *stricter* than the published
+contract. Producers MUST size scans to these limits whichever instance they are talking to, and
+MUST NOT read one instance's acceptance of an oversized request as evidence the limit was
+withdrawn: withdrawal is an explicit canonical act (see the rollback procedure below).
 
 | Boundary | Inclusive limit | Exceeded ⇒ |
 | --- | --- | --- |

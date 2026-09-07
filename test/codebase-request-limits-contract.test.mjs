@@ -22,7 +22,12 @@
 //      its message is a contract that lies to the operator it exists to help.
 //   5. docs/brain-api.md must name this file and state the same two literals, and must NOT have
 //      bumped the member-facing version to claim it — the supplement is versioned on its own
-//      `revision`, and the member API deliberately stays 1.24.
+//      `revision`, and the member API deliberately stays 1.24 (only the document revision moved,
+//      to 1.25, for the deployment note below).
+//   6. The document must keep publication and deployment distinct. Nothing on the wire tells a
+//      caller whether the brain it is talking to enforces these limits yet, so the doc has to say
+//      so; the easy rot is a later edit that reads the published contract, or the "from 1.23"
+//      eligibility range, as an enforcement guarantee.
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -155,8 +160,39 @@ test("brain-api.md adopts this supplement by name and repeats its literals", () 
 
 test("adopting the supplement did NOT bump the member-facing API version", () => {
   // The supplement is versioned on its own `revision`. Bumping the member API to 1.25 here would
-  // silently claim the 1.24 scanner-identity semantics this change does not implement.
+  // silently claim the 1.24 scanner-identity semantics this change does not implement. Only the
+  // DOCUMENT revision moves, which is what a doc-only clarification is allowed to move.
   assert.match(brainApi, /\*\*Version: 1\.24\*\* is the shipped member-facing Brain API/);
-  assert.match(brainApi, /\*\*Document revision: 1\.24\*\*/);
+  assert.match(brainApi, /\*\*Document revision: 1\.25\*\*/);
   assert.equal(brainApi.includes("**Version: 1.25**"), false);
+});
+
+test("enforcement is documented as per-deployment, not implied by publication or version", () => {
+  // Phrase matching against wrapped prose: collapse the markdown's hard wraps first, otherwise
+  // every assertion here is really an assertion about where the line breaks fall.
+  const prose = brainApi.replace(/\s+/g, " ");
+
+  assert.match(prose, /\*\*Enforcement is per deployed instance\.\*\*/);
+  // Deployment of the patched build is the activating event — nothing else is.
+  assert.match(
+    prose,
+    /enforces them only once that instance is running a Brain build that contains the AUDITFIX-17 enforcement/
+  );
+  assert.match(prose, /Publication of the canonical contract activates nothing by itself/);
+  // Reported API version is not evidence of the patch, and the supplement's applicability range is
+  // eligibility, not an enforcement claim — these are the two inferences a reader will reach for.
+  assert.match(
+    prose,
+    /an instance reporting member API \*\*1\.23\*\* or \*\*1\.24\*\* is reporting its API version/
+  );
+  assert.match(
+    prose,
+    /states the \*eligible\* member-API range for this supplement, not that every instance in that range enforces it/
+  );
+  assert.match(
+    prose,
+    /An instance on an older build retains the previous behaviour .{0,120} until it is upgraded/
+  );
+  // The applicability floor the prose refers to must still be the one the supplement declares.
+  assert.equal(supplement.appliesFromMemberApiVersion, "1.23");
 });
