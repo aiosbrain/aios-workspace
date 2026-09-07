@@ -104,14 +104,18 @@ test(
         path.join(dir, "test/check-workflow-policy-hardening.test.mjs")
       );
       const run = () =>
-        spawnSync(process.execPath, ["--test", "test/check-workflow-policy-hardening.test.mjs"], {
-          cwd: dir,
-          encoding: "utf8",
-          timeout: 10_000,
-          env: Object.fromEntries(
-            Object.entries(process.env).filter(([key]) => !key.startsWith("NODE_TEST_"))
-          ),
-        });
+        spawnSync(
+          process.execPath,
+          ["--test", "--test-reporter=tap", "test/check-workflow-policy-hardening.test.mjs"],
+          {
+            cwd: dir,
+            encoding: "utf8",
+            timeout: 10_000,
+            env: Object.fromEntries(
+              Object.entries(process.env).filter(([key]) => !key.startsWith("NODE_TEST_"))
+            ),
+          }
+        );
       const control = run();
       assert.equal(control.status, 0, control.stdout + control.stderr);
       for (const [label, module, before, after] of mutations) {
