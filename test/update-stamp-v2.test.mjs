@@ -40,7 +40,6 @@ import {
   recordRollbackIfUpgrading,
   rollbackFromRecord,
   ROLLBACK_FILE,
-  writeV2State,
   chooseBaseResolver,
 } from "../scripts/update/registry-root.mjs";
 
@@ -224,15 +223,19 @@ test("v1→v2 upgrade: rollback record precedes mutation; ratchet to format 2; -
   const { dir: srcDir, root } = fakeRegistryRoot();
   const repo = fakeWorkspace();
   try {
-    // A v1 stamp recording a registry-ish history (no checkout on disk).
-    const v1Stamp = `${"9".repeat(40)}\ntoolkit-version 0.12.0\nbrain-api 1.24\nsynced-at 2026-08-21T00:00:00.000Z\nsource https://github.com/aiosbrain/aios-workspace.git\n`;
+    // The exact prior registry source remains available during staged migration.
+    writeFileSync(
+      path.join(srcDir, "package.json"),
+      JSON.stringify({ name: "@aiosbrain/aios", version: "0.12.0", type: "module" })
+    );
+    const v1Stamp = `${"9".repeat(40)}\ntoolkit-version 0.12.0\nbrain-api 1.24\nsynced-at 2026-08-21T00:00:00.000Z\nsource ${srcDir}\n`;
     writeFileSync(path.join(repo, ".aios-toolkit-version"), v1Stamp);
     const r = await vendor(repo, root);
     assert.equal(r.exitStatus, 0);
     const record = JSON.parse(readFileSync(path.join(repo, ROLLBACK_FILE), "utf8"));
     assert.equal(record.previousPackage, "@aiosbrain/aios@0.12.0");
     assert.equal(record.stampSnapshot, v1Stamp, "the EXACT pre-upgrade stamp bytes");
-    assert.match(record.reinstall.display, /npm i -g @aiosbrain\/aios@0\.12\.0/);
+    assert.equal(record.reinstall, undefined, "rollback records data, not executable commands");
     assert.equal(readStamp(repo).format, 2, "one-way ratchet");
     // Journal artifacts are cleaned after the committed transition.
     assert.ok(!existsSync(path.join(repo, ".aios-toolkit-version.migration.json")));
@@ -251,7 +254,7 @@ test("v1→v2 upgrade: rollback record precedes mutation; ratchet to format 2; -
   }
 });
 
-test("a stale interrupted stamp-migration journal is discarded and the apply converges", async () => {
+test("an unavailable v1 source preserves its stamp and interrupted journal", async () => {
   process.env.AIOS_UPDATE_OFFLINE = "1";
   const { dir: srcDir, root } = fakeRegistryRoot();
   const repo = fakeWorkspace();
@@ -272,10 +275,9 @@ test("a stale interrupted stamp-migration journal is discarded and the apply con
         stagedSha256: "1".repeat(64),
       })
     );
-    const r = await vendor(repo, root);
-    assert.equal(r.exitStatus, 0);
-    assert.equal(readStamp(repo).format, 2, "re-entry converged despite the stale journal");
-    assert.ok(!existsSync(`${stampPath}.migration.json`));
+    await assert.rejects(vendor(repo, root), /previous package|exact source/);
+    assert.equal(readFileSync(stampPath, "utf8"), v1Stamp);
+    assert.ok(existsSync(`${stampPath}.migration.json`));
   } finally {
     delete process.env.AIOS_UPDATE_OFFLINE;
     rmSync(srcDir, discard);
@@ -443,42 +445,6 @@ test("v2 bases survive normal commit and clone while private .aios state stays i
     rmSync(cloned, discard);
   }
 });
-
-for (const state of ["validated", "committed"]) {
-  test(`resumed ${state} stamp is rebound to today's complete target`, async () => {
-    const { runMigration } = await import("../scripts/cli/migration.mjs");
-    const { dir: srcDir } = fakeRegistryRoot();
-    const repo = fakeWorkspace();
-    const stampPath = path.join(repo, ".aios-toolkit-version");
-    try {
-      writeFileSync(stampPath, `${"a".repeat(40)}\ntoolkit-version 0.12.0\n`);
-      await assert.rejects(
-        runMigration({
-          configPath: stampPath,
-          stage: () => `${"c".repeat(40)}\nstamp-format 2\nmanifest-digest stale\n`,
-          validate: () => {},
-          interrupt: (at) => {
-            if (at === state) throw new Error("fixture interruption");
-          },
-        })
-      );
-      await writeV2State(repo, {
-        srcDir,
-        sha: BUILD_SHA,
-        meta: { version: "2.0.0", brainApi: "1.24" },
-        stampSource: "pkg:@aiosbrain/aios@2.0.0",
-        managedPaths: [{ src: "scaffold/.claude/rules", dest: ".claude/rules", kind: "dir" }],
-      });
-      assert.equal(readStamp(repo).baseSha, BUILD_SHA);
-      assert.match(readFileSync(stampPath, "utf8"), /package-version 2\.0\.0/);
-      assert.doesNotMatch(readFileSync(stampPath, "utf8"), /stale/);
-      assert.ok(!existsSync(`${stampPath}.migration.json`));
-    } finally {
-      rmSync(srcDir, discard);
-      rmSync(repo, discard);
-    }
-  });
-}
 
 test("an overwritten v1 registry source refuses before losing the upgrade baseline", () => {
   const { dir: srcDir } = fakeRegistryRoot();

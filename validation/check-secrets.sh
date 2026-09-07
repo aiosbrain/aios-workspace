@@ -125,7 +125,7 @@ strip_known_non_secrets() {
 
 # Files to scan (exclude .git, binary files, local .env, .env.example, the vendored
 # skill-library — integrity-locked official upstream skills (OGR09), whose docs
-# carry example/placeholder tokens like "xoxp-new-..." that are not real secrets —
+# carry example/placeholder tokens like "xoxp-EXAMPLE-new-..." that are not real secrets —
 # skill-scan-fixtures, the deliberately-malicious scanner test inputs, and the
 # gitignored agentic UX-testing harness OUTPUT (test/ux/evidence/ — screenshots
 # and transcripts from throwaway cockpit fixtures). Committed harness code and

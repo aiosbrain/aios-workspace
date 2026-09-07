@@ -13,6 +13,7 @@ const RULES = [
   "/.aios/toolkit-bases/*",
   "!/.aios/toolkit-bases/index.json",
   `!/.aios/toolkit-bases/${"[0-9a-f]".repeat(64)}`,
+  `!/.aios/toolkit-bases/${"[0-9a-f]".repeat(64)}.json`,
 ].join("\n");
 
 /** Upgrade old blanket .aios ignores without replacing any user ignore rules. */

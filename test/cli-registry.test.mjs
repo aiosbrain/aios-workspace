@@ -319,7 +319,7 @@ test("registry: every adapt hands its module the EXACT argument signature (table
     validate: ["mod", "cmdValidate", R, A],
     verify: ["mod", "cmdVerify", R, A],
     worktree: ["mod", "cmdWorktree", R, C, A],
-    update: ["mod", "cmdUpdate", R, C, A],
+    update: ["mod", "cmdUpdate", R, C, A, undefined],
     rails: ["mod", "cmdRails", R, C, A],
     relay: ["mod", "cmdRelay", R, A],
     build: ["mod", "cmdBuild", R, A],

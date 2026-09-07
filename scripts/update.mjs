@@ -1,3 +1,4 @@
+import { parseUpdateArgs } from "./update-args.mjs";
 /**
  * update.mjs — `aios update`: get the latest AIOS (the "auto-update like Claude" command).
  *
@@ -115,6 +116,14 @@ function resolveSource(args, cfg, warn) {
   const legacyCliDir = process.env.AIOS_TOOLKIT_CLI
     ? path.resolve(process.env.AIOS_TOOLKIT_CLI, "..", "..") // <dir>/scripts/aios.mjs → <dir>
     : undefined;
+  if (!from) {
+    const explicit = process.env.AIOS_TOOLKIT_DIR || legacyCliDir;
+    if (explicit && !isDistributionRoot(explicit)) {
+      throw new UpdateError(
+        "Explicit AIOS_TOOLKIT_DIR/AIOS_TOOLKIT_CLI does not identify an AIOS distribution; correct or unset it."
+      );
+    }
+  }
   const candidates = [
     from,
     process.env.AIOS_TOOLKIT_DIR,
@@ -186,52 +195,6 @@ export {
   mergeManaged,
 };
 
-// Every flag `aios update` understands. Anything else is refused up front — in particular so
-// the internal vendor hand-off can never silently drop a flag it doesn't recognize.
-const UPDATE_BOOL_FLAGS = new Set([
-  "--check",
-  "--preview",
-  "--no-pull",
-  "--stash",
-  "--no-install",
-  "--force",
-  "--with-ci-workflow",
-  "--dry-run", // alias for --preview UNLESS combined with --contribute (see cmdUpdate)
-  "--rollback", // restore the recorded pre-upgrade stamp/config snapshots (AIO-635 D5)
-  "--self", // upgrade a registry (npm) install of the toolkit itself — the ONLY root write
-]);
-// Recognized, but deliberately excluded from --help/the "supported:" error text — internal
-// hand-off only, never meant to be typed by a user. See the exact allowlist check below.
-const UPDATE_HIDDEN_BOOL_FLAGS = new Set(["--vendor-apply-only"]);
-// --result-file: the vendor-apply-only child writes its structured result here as JSON.
-// --stamp-source: the live checkout path (or clone URL for an ephemeral source) recorded in
-// the workspace stamp; --from itself is the disposable pinned snapshot and must not be stamped.
-// `stdio: "inherit"` gives the user live progress output (worth keeping — this can be a
-// slow operation), but means the parent process can't read the child's stdout at all, so
-// there is no other channel to get `changedCount`/`vendorSafety` back across the process
-// boundary. Internal only, alongside --vendor-apply-only.
-// --expect-src-head: refuse the apply if the resolved source's HEAD differs from the sha a
-// prior --preview reported (result.srcHead) — the consent pin for two-step preview→apply
-// flows (onboarding), so a source that moved between the two steps can never vendor content
-// the user didn't see.
-const UPDATE_HIDDEN_VALUE_FLAGS = new Set(["--result-file", "--stamp-source", "--expect-src-head"]);
-const UPDATE_VALUE_FLAGS = new Set(["--from", "--repo", "--contribute"]);
-
-function assertKnownUpdateFlags(args) {
-  for (let i = 0; i < args.length; i++) {
-    const a = args[i];
-    if (UPDATE_VALUE_FLAGS.has(a) || UPDATE_HIDDEN_VALUE_FLAGS.has(a)) {
-      i++; // skip the flag's value
-      continue;
-    }
-    if (a.startsWith("--") && !UPDATE_BOOL_FLAGS.has(a) && !UPDATE_HIDDEN_BOOL_FLAGS.has(a))
-      throw new UpdateError(
-        `aios update: unknown flag ${a} — supported: ` +
-          `${[...UPDATE_BOOL_FLAGS].join("|")} ${[...UPDATE_VALUE_FLAGS].map((f) => `${f} <val>`).join(" ")}`
-      );
-  }
-}
-
 /**
  * The one read-only safety assessment of a toolkit source — remote state (via a strictly
  * read-only pullToolkitCheckout), vendor safety, source cleanliness, and the reasons list
@@ -290,9 +253,17 @@ function assessReadOnlySource(srcDir, { pullOpts, io, skipRemote = false, repo =
  * printed message + a non-zero result. Any OTHER thrown error is a genuinely unexpected
  * bug and is left to propagate to the CLI dispatcher's own catch-all (`scripts/aios.mjs`).
  */
-export async function cmdUpdate(repo, cfg, args) {
+export async function cmdUpdate(repo, cfg, args, parsedArgs) {
   let result;
+  let plan;
   try {
+    plan = parsedArgs ?? parseUpdateArgs(args);
+    const repoFlag = args.indexOf("--repo");
+    if (repoFlag >= 0) {
+      if (!repo || path.resolve(repo) !== path.resolve(args[repoFlag + 1]))
+        throw new UpdateError("--repo disagrees with the update target supplied by the caller.");
+      args = args.filter((_, index) => index !== repoFlag && index !== repoFlag + 1);
+    }
     result = await cmdUpdateInner(repo, cfg, args);
   } catch (e) {
     if (e instanceof UpdateError) {
@@ -307,10 +278,10 @@ export async function cmdUpdate(repo, cfg, args) {
   // can't read this process's return value at all, only its exit code. --result-file is
   // the one place BOTH the normal-return and thrown-UpdateError paths converge (this same
   // try/catch), so writing it here — once — covers every outcome the child can have.
-  const resultFile = argValue(args, "--result-file");
+  const resultFile = plan?.mode === "internal" ? plan.resultFile : null;
   if (resultFile) {
     try {
-      writeFileSync(resultFile, JSON.stringify(result));
+      writeFileSync(resultFile, JSON.stringify(result), { flag: "wx", mode: 0o600 });
     } catch {
       /* best-effort — the parent falls back to exit-code-only if this write fails */
     }
@@ -320,35 +291,12 @@ export async function cmdUpdate(repo, cfg, args) {
 
 async function cmdUpdateInner(repo, cfg, args) {
   const color = c;
-  assertKnownUpdateFlags(args);
 
   // Structurally non-recursive internal hand-off. Validated and dispatched FIRST, before
   // anything else in this function runs — nothing below this block is reachable from a
   // --vendor-apply-only invocation, and cmdVendorApplyOnly itself has no code path that
   // could ever reach back here.
   if (args.includes("--vendor-apply-only")) {
-    const allowed = new Set([
-      "--vendor-apply-only",
-      "--from",
-      "--repo",
-      "--force",
-      "--with-ci-workflow",
-      "--result-file",
-      "--stamp-source",
-    ]);
-    for (let i = 0; i < args.length; i++) {
-      const a = args[i];
-      if (a === "--from" || a === "--repo" || a === "--result-file" || a === "--stamp-source") {
-        i++; // skip the flag's value
-        continue;
-      }
-      if (!allowed.has(a)) {
-        throw new UpdateError(
-          `aios update --vendor-apply-only accepts only --from/--repo/--force/--result-file/--stamp-source — got ${a}. ` +
-            `This is an internal hand-off entrypoint, not meant to be combined with other flags.`
-        );
-      }
-    }
     return await cmdVendorApplyOnly(repo, cfg, args);
   }
 
@@ -367,11 +315,6 @@ async function cmdUpdateInner(repo, cfg, args) {
   // `--self` (AIO-635 Decision 4): the ONLY path that mutates a registry install of the
   // toolkit itself. A plain `aios update` never writes into the npm prefix.
   if (args.includes("--self")) {
-    if (["--check", "--preview", "--dry-run"].some((flag) => args.includes(flag))) {
-      throw new UpdateError(
-        "aios update --self cannot be combined with --check/--preview/--dry-run — it installs the toolkit globally."
-      );
-    }
     const exitStatus = selfUpgrade(resolveDistributionRoot(RUNNING_TOOLKIT));
     return buildResult({ mode: "self-upgrade", exitStatus, sourceClean: "immutable" });
   }

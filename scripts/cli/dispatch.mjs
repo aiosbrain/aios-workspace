@@ -18,6 +18,8 @@
  * This module imports nothing from scripts/aios.mjs — the resolvers and the inline handlers are
  * injected — so it stays a leaf and adding it costs no cold-start time.
  */
+import { AiosError } from "./errors.mjs";
+import { UpdateError } from "../cli-common.mjs";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { consumeDevtoolsDirArg } from "../devtools-dispatch.mjs";
@@ -56,6 +58,28 @@ export async function dispatch({ argv, local, resolvers, contextLoader }) {
     return finish(
       desc,
       await desc.adapt({ repo: null, cfg: null, patterns: null, rest, local: null, catalog }, mod)
+    );
+  }
+
+  let parsedArgs;
+  try {
+    parsedArgs = desc.parseArgs?.(rest);
+  } catch (error) {
+    if (!(error instanceof UpdateError)) throw error;
+    throw new AiosError(
+      "AIOS_E_USAGE",
+      error.message,
+      "Run aios help and select one update mode with its supported flags."
+    );
+  }
+  if (parsedArgs?.mode === "self") {
+    const mod = await desc.loader();
+    return finish(
+      desc,
+      await desc.adapt(
+        { repo: null, cfg: null, patterns: null, rest, local: null, parsedArgs },
+        mod
+      )
     );
   }
 
@@ -100,7 +124,7 @@ export async function dispatch({ argv, local, resolvers, contextLoader }) {
 
   try {
     const mod = desc.loader ? await desc.loader() : null;
-    return finish(desc, await desc.adapt({ repo, cfg, patterns, rest, local }, mod));
+    return finish(desc, await desc.adapt({ repo, cfg, patterns, rest, local, parsedArgs }, mod));
   } catch (e) {
     die(e.message);
   }

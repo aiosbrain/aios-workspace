@@ -1,3 +1,5 @@
+import { withUpdateLock } from "./lock.mjs";
+import { prepareV2State, commitV2State } from "./state-plan.mjs";
 /**
  * update/registry-root.mjs — the registry-root half of `aios update` (AIO-635 Decisions
  * 1/3/5) plus the v2 state writer and rollback machinery shared with the checkout path.
@@ -19,20 +21,12 @@
  */
 
 import path from "node:path";
-import { createInterface } from "node:readline/promises";
-import { existsSync, readFileSync, rmSync } from "node:fs";
-import { execFileSync, spawnSync } from "node:child_process";
+import { existsSync, readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { c, UpdateError } from "../cli-common.mjs";
-import {
-  atomicWrite,
-  runMigration,
-  classifyInstallType,
-  resolveUserConfigPath,
-  resolveDistributionRoot,
-  DISTRIBUTION_PACKAGE,
-} from "../cli.mjs";
-import { readStamp, stampBody } from "./stamp.mjs";
-import { readBaseIndex, writeBaseStore, manifestDigest } from "./base-store.mjs";
+import { resolveDistributionRoot, DISTRIBUTION_PACKAGE } from "../cli.mjs";
+import { readStamp } from "./stamp.mjs";
+import { verifiedBaseIndex } from "./base-store.mjs";
 import {
   entryFiles,
   assertDestPathSafe,
@@ -50,9 +44,9 @@ import { printMergeReport } from "./report.mjs";
 import { installWorktreeSafetyBackstops } from "../worktree.mjs";
 import { toolkitMeta } from "../toolkit-meta.mjs";
 import { VERSION_FILE, managedPathsForConfig, pmToolPrunable } from "../toolkit-manifest.mjs";
-import { ensureBaseStoreTracked } from "./base-store-tracking.mjs";
 
-export const ROLLBACK_FILE = ".aios/rollback.json";
+export { ROLLBACK_FILE, recordRollbackIfUpgrading, rollbackFromRecord } from "./rollback.mjs";
+import { recordRollbackIfUpgrading } from "./rollback.mjs";
 
 /**
  * Base-resolver policy (Decision 1): a format-2 stamp resolves bases from the workspace's
@@ -63,11 +57,7 @@ export const ROLLBACK_FILE = ".aios/rollback.json";
 export function chooseBaseResolver(repo, srcDir, baseSha, { registry = false } = {}) {
   const stampInfo = readStamp(repo);
   if (stampInfo?.format >= 2) {
-    const index = readBaseIndex(repo);
-    if (index) return storeBaseResolver(repo, index);
-    // v2 stamp with a missing/corrupt index: fall back to git where possible — for a
-    // registry source the empty resolver below surfaces fallback rather than guessing.
-    if (!registry) return gitBaseResolver(srcDir, baseSha);
+    return storeBaseResolver(repo, verifiedBaseIndex(repo, stampInfo));
   }
   if (!registry) return gitBaseResolver(srcDir, baseSha);
   const recorded = stampInfo?.source;
@@ -91,7 +81,7 @@ export function chooseBaseResolver(repo, srcDir, baseSha, { registry = false } =
         baseFiles: (entry) => entryFiles(rec.dir, entry).map((f) => f.srcRel),
       };
     }
-    if (rec?.kind === "registry" && stampInfo?.format < 2) {
+    if (stampInfo?.format < 2) {
       throw new UpdateError(
         "The registry installation recorded by this v1 workspace has already been replaced. " +
           "Restore its exact previous package version and follow docs/migration-v2.md: " +
@@ -100,68 +90,12 @@ export function chooseBaseResolver(repo, srcDir, baseSha, { registry = false } =
       );
     }
   }
+  if (stampInfo?.format < 2) {
+    throw new UpdateError(
+      "The exact source recorded by this v1 workspace is unavailable. Restore the recorded checkout or previous package and follow docs/migration-v2.md before updating. No managed files were changed; --force is not a migration recovery path."
+    );
+  }
   return { kind: "none", base: () => undefined, baseFiles: () => [] };
-}
-
-function userConfigPathSafe() {
-  try {
-    return resolveUserConfigPath({});
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Record the exact prior-package state BEFORE the first mutating step of the v1→v2
- * upgrade. A workspace already on format 2 keeps the record from its original upgrade.
- */
-export async function recordRollbackIfUpgrading(repo, { packageRoot } = {}) {
-  const stampInfo = readStamp(repo);
-  if (stampInfo && stampInfo.format >= 2) return null;
-  // A path source is only a CHECKOUT record when it still classifies as one — a
-  // registry-install path (how 0.12.0 scaffolds recorded their source) rolls back via
-  // npm, never via `git checkout` against a directory that has no git history.
-  const sourceIsCheckout =
-    stampInfo?.source &&
-    path.isAbsolute(stampInfo.source) &&
-    resolveDistributionRoot(stampInfo.source)?.kind === "checkout";
-  const previousPackage = stampInfo
-    ? sourceIsCheckout
-      ? `checkout:${stampInfo.baseSha ?? "unknown"}`
-      : `${DISTRIBUTION_PACKAGE}@${stampInfo.toolkitVersion ?? "unknown"}`
-    : null;
-  const reinstall = stampInfo
-    ? sourceIsCheckout
-      ? {
-          argv: ["git", "-C", stampInfo.source, "checkout", stampInfo.baseSha ?? "HEAD"],
-          display: `git -C ${stampInfo.source} checkout ${stampInfo.baseSha ?? "HEAD"}`,
-        }
-      : {
-          argv: ["npm", "i", "-g", `${DISTRIBUTION_PACKAGE}@${stampInfo.toolkitVersion}`],
-          display: `npm i -g ${DISTRIBUTION_PACKAGE}@${stampInfo.toolkitVersion}`,
-        }
-    : null;
-  const configPath = userConfigPathSafe();
-  let configSnapshot = null;
-  try {
-    if (configPath) configSnapshot = readFileSync(configPath, "utf8");
-  } catch {
-    configSnapshot = null; // no user config yet — nothing to restore
-  }
-  const record = {
-    schemaVersion: 1,
-    previousPackage,
-    integrity: "unverified",
-    installType: classifyInstallType({ packageRoot, packageName: DISTRIBUTION_PACKAGE }),
-    stampPath: VERSION_FILE,
-    stampSnapshot: stampInfo?.raw ?? null,
-    configPath,
-    configSnapshot,
-    reinstall,
-    recordedAt: new Date().toISOString(),
-  };
-  await atomicWrite(path.join(repo, ROLLBACK_FILE), `${JSON.stringify(record, null, 2)}\n`);
-  return record;
 }
 
 /**
@@ -171,70 +105,7 @@ export async function recordRollbackIfUpgrading(repo, { packageRoot } = {}) {
  * `.last-known-good` snapshot, staged format-2 stamp validated against the freshly
  * written index before commit); a first-ever stamp is a plain atomic write.
  */
-export async function writeV2State(
-  repo,
-  { srcDir, sha, meta, stampSource, managedPaths, packageVersion, packageIntegrity }
-) {
-  await ensureBaseStoreTracked(repo);
-  const files = [];
-  for (const entry of managedPaths) {
-    if (!existsSync(path.join(srcDir, entry.src))) continue;
-    for (const f of entryFiles(srcDir, entry)) {
-      files.push({
-        destRel: f.destRel,
-        srcRel: f.srcRel,
-        content: readFileSync(path.join(srcDir, f.srcRel), "utf8"),
-      });
-    }
-  }
-  await writeBaseStore(repo, files, { packageVersion: packageVersion ?? meta.version });
-  const digest = manifestDigest(files);
-  const body = stampBody(sha, meta, stampSource, {
-    packageName: DISTRIBUTION_PACKAGE,
-    packageVersion: packageVersion ?? meta.version,
-    packageIntegrity: packageIntegrity ?? "unverified",
-    manifestDigest: digest,
-  });
-  const stampPath = path.join(repo, VERSION_FILE);
-  if (!existsSync(stampPath)) {
-    await atomicWrite(stampPath, body);
-    return { digest };
-  }
-  const journalPath = `${stampPath}.migration.json`;
-  const snapshotPath = `${stampPath}.last-known-good`;
-  const stagedPath = `${stampPath}.staged`;
-  const run = () =>
-    runMigration({
-      configPath: stampPath,
-      journalPath,
-      snapshotPath,
-      stagedPath,
-      packageRecord: { name: DISTRIBUTION_PACKAGE, version: packageVersion ?? meta.version },
-      stage: () => body,
-      validate: (staged) => {
-        if (String(staged) !== body) {
-          throw new Error("staged stamp does not match the current toolkit transition");
-        }
-      },
-    });
-  try {
-    await run();
-    // The journal can resume from validated/committed without calling validate again.
-    // A successful old transition is not proof that today's stamp/index pair agrees.
-    if (readFileSync(stampPath, "utf8") !== body) {
-      throw new Error("resumed stamp does not match the current toolkit transition");
-    }
-  } catch {
-    // A stale journal/snapshot from an interrupted run against a DIFFERENT toolkit state
-    // cannot be resumed into today's apply — discard that transition and run fresh once.
-    // The live stamp is untouched by construction (only `committed` mutates it).
-    for (const p of [journalPath, snapshotPath, stagedPath]) rmSync(p, { force: true });
-    await run();
-  }
-  // The transition is committed; the journal artifacts are working files, not state.
-  for (const p of [journalPath, snapshotPath, stagedPath]) rmSync(p, { force: true });
-  return { digest };
-}
+export { writeV2State } from "./state-plan.mjs";
 
 /** Best-effort, non-fatal-offline: tell the user (stderr) when the registry is newer. */
 export function reportNewerVersion(currentVersion, warn) {
@@ -262,76 +133,23 @@ export function reportNewerVersion(currentVersion, warn) {
  * running CLI is a registry root. Explicit by design: a plain `aios update` never writes
  * into the npm prefix.
  */
-export function selfUpgrade(root) {
-  if (root?.kind !== "registry") {
-    throw new UpdateError(
-      "aios update --self upgrades a registry (npm) install of the toolkit — this CLI is " +
-        "running from a checkout. Update the checkout with `git pull` / `aios update` there."
-    );
-  }
-  const res = spawnSync("npm", ["i", "-g", `${DISTRIBUTION_PACKAGE}@latest`], {
-    stdio: "inherit",
-  });
-  if (res.error) throw new UpdateError(`couldn't run npm (${res.error.message})`);
-  return res.status ?? 1;
-}
+export { upgradeInvokedInstallation as selfUpgrade } from "./npm-installation.mjs";
 
 /**
  * `aios update --rollback` — restore the recorded pre-upgrade stamp and user-config
  * snapshots atomically, print the exact reinstall command from `.aios/rollback.json`, and
  * execute it only on interactive confirmation.
  */
-export async function rollbackFromRecord(repo, { interactive = process.stdin.isTTY } = {}) {
-  const recPath = path.join(repo, ROLLBACK_FILE);
-  let record;
-  try {
-    record = JSON.parse(readFileSync(recPath, "utf8"));
-  } catch {
-    throw new UpdateError(
-      `no rollback record at ${ROLLBACK_FILE} — nothing recorded a prior package for this ` +
-        `workspace. Rollback is only available after a v2 upgrade wrote the record.`
-    );
-  }
-  const stampPath = path.join(repo, record.stampPath ?? VERSION_FILE);
-  if (record.stampSnapshot != null) {
-    await atomicWrite(stampPath, record.stampSnapshot);
-    console.log(
-      c.green(`  restored ${record.stampPath ?? VERSION_FILE} to its pre-upgrade bytes.`)
-    );
-  } else {
-    rmSync(stampPath, { force: true });
-    console.log(c.green("  removed the version stamp (no stamp existed before the upgrade)."));
-  }
-  if (record.configPath && record.configSnapshot != null) {
-    await atomicWrite(record.configPath, record.configSnapshot);
-    console.log(c.green(`  restored ${record.configPath} to its pre-upgrade bytes.`));
-  }
-  if (record.reinstall?.display) {
-    console.log(`  reinstall the prior package with:\n    ${record.reinstall.display}`);
-    if (interactive && Array.isArray(record.reinstall.argv) && record.reinstall.argv.length) {
-      const rl = createInterface({ input: process.stdin, output: process.stderr });
-      const answer = (await rl.question("  run it now? [y/N] ")).trim().toLowerCase();
-      rl.close();
-      if (answer === "y" || answer === "yes") {
-        const [cmd, ...rest] = record.reinstall.argv;
-        const res = spawnSync(cmd, rest, { stdio: "inherit" });
-        if ((res.status ?? 1) !== 0) {
-          throw new UpdateError(
-            `the reinstall command failed — run it by hand: ${record.reinstall.display}`
-          );
-        }
-      }
-    }
-  }
-  return { previousPackage: record.previousPackage ?? null };
-}
-
 /**
  * Vendor governance into `repo` from an immutable registry root — the apply half only,
  * with ZERO git invocations against the source. Returns the pieces update.mjs folds into
  * its structured result.
  */
 export async function vendorFromRegistry(repo, cfg, args, root, io = {}) {
+  return withUpdateLock(repo, () => vendorFromRegistryLocked(repo, cfg, args, root, io));
+}
+
+async function vendorFromRegistryLocked(repo, cfg, args, root, io) {
   const log = io.log ?? ((m) => console.log(m));
   const warn = io.warn ?? ((m) => console.warn(m));
   const sha = root.sha;
@@ -355,6 +173,11 @@ export async function vendorFromRegistry(repo, cfg, args, root, io = {}) {
   const stampInfo = readStamp(repo);
   const baseSha = stampInfo?.baseSha;
   const resolver = chooseBaseResolver(repo, root.dir, baseSha, { registry: true });
+  assertDestPathSafe(
+    repo,
+    ".gitignore",
+    "record versioned merge bases (materialize a symlinked ignore file before updating)"
+  );
   assertDestPathSafe(repo, VERSION_FILE, "write version stamp");
   for (const rel of [".claude/skills/INDEX.md", ".claude/INTEGRATIONS.md", "RESOLVER.md"])
     assertDestPathSafe(repo, rel, "regenerate catalog");
@@ -363,6 +186,16 @@ export async function vendorFromRegistry(repo, cfg, args, root, io = {}) {
   const force = args.includes("--force");
   const dirty = force ? new Set() : dirtyManagedPaths(repo, managedPaths);
   log(c.dim(`  syncing toolkit ${meta.label} from ${stampSource} (${sha.slice(0, 12)}) …`));
+
+  const statePlan = prepareV2State(repo, {
+    srcDir: root.dir,
+    sha,
+    meta,
+    stampSource,
+    managedPaths,
+    packageVersion: meta.version,
+    packageIntegrity: readInstalledIntegrity(root.dir),
+  });
 
   // Exact prior-package record BEFORE the first mutating step (Decision 5).
   await recordRollbackIfUpgrading(repo, { packageRoot: root.dir });
@@ -387,10 +220,10 @@ export async function vendorFromRegistry(repo, cfg, args, root, io = {}) {
     }
   }
   const changedCount = printMergeReport(c, r);
-  if (r.conflicts.length || catalogFailed) {
+  if (r.conflicts.length || r.skippedDirty.length || catalogFailed) {
     warn(
       c.yellow(
-        `  ${r.conflicts.length ? `resolve the conflict(s) and ` : "catalogs were not regenerated — "}re-run \`aios update\` — version stays pinned at ${(baseSha || "(none)").slice(0, 12)} until then.`
+        `  ${r.conflicts.length ? `resolve the conflict(s) and ` : r.skippedDirty.length ? "commit the skipped managed changes and " : "catalogs were not regenerated — "}re-run \`aios update\` — version stays pinned at ${(baseSha || "(none)").slice(0, 12)} until then.`
       )
     );
     return {
@@ -400,19 +233,15 @@ export async function vendorFromRegistry(repo, cfg, args, root, io = {}) {
       applied: true,
       reasons: r.conflicts.length
         ? [`${r.conflicts.length} conflict(s) — not applied for those files`]
-        : ["catalog regeneration failed — version not stamped; re-run `aios update`"],
+        : r.skippedDirty.length
+          ? [
+              "uncommitted managed files skipped — version not stamped; commit and re-run `aios update`",
+            ]
+          : ["catalog regeneration failed — version not stamped; re-run `aios update`"],
     };
   }
 
-  await writeV2State(repo, {
-    srcDir: root.dir,
-    sha,
-    meta,
-    stampSource,
-    managedPaths,
-    packageVersion: meta.version,
-    packageIntegrity: readInstalledIntegrity(root.dir),
-  });
+  await commitV2State(statePlan);
   // AIO-482 parity with the checkout apply: restore machine-local worktree hooks.
   installWorktreeSafetyBackstops(repo, { quiet: true, productOnly: true });
   if (changedCount) {

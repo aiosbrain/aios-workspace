@@ -1,3 +1,4 @@
+import { verifiedBaseIndex, readStamp } from "../toolkit-state.mjs";
 import * as fs from "node:fs";
 import path from "node:path";
 import { createHash } from "node:crypto";
@@ -178,6 +179,24 @@ function workspaceStateChecks(cwd) {
 }
 
 function baseStoreCheck(ws, format) {
+  if (format >= 2) {
+    try {
+      const index = verifiedBaseIndex(ws, readStamp(ws));
+      return result(
+        "workspace-base-store",
+        "pass",
+        `${Object.keys(index.entries).length} bases verified against the stamp digest`
+      );
+    } catch {
+      return result(
+        "workspace-base-store",
+        "fail",
+        "stamped base generation is missing, corrupt, or inconsistent",
+        "Restore the committed stamp and .aios/toolkit-bases before running aios update."
+      );
+    }
+  }
+
   const storeDir = path.join(ws, ".aios", "toolkit-bases");
   const indexPath = path.join(storeDir, "index.json");
   if (!fs.existsSync(indexPath)) {

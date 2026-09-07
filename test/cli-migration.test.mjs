@@ -98,7 +98,8 @@ test("a crash after the live swap but before journal commit converges on re-entr
     assert.equal(resumed.journal.committedSha256, resumed.journal.stagedSha256);
     assert.deepEqual(readFileSync(configPath), migrated);
     assert.equal(stageCalls, 1);
-    assert.equal(validateCalls, 1);
+    // Validate staged bytes, revalidate before live publication, and revalidate the resumed target.
+    assert.equal(validateCalls, 3);
     await assert.rejects(fs.access(`${configPath}.staged`), { code: "ENOENT" });
   } finally {
     rmSync(root, { recursive: true, force: true });

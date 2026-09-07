@@ -13,14 +13,18 @@ Python, no `jq`. The one canonical surface is `aios <command>`; the connector ro
   `package-integrity`, `manifest-digest`, `base-store`. The upgrade is a one-way ratchet —
   v2 always writes format 2, including for `--from <checkout>` sources.
 - **Content-addressed merge bases.** Every successful `aios update` persists the
-  just-synced managed content into `.aios/toolkit-bases/` (blobs + `index.json`, committed
-  to your workspace repo). The next update 3-way-merges against that store — which is what
+  just-synced managed content into `.aios/toolkit-bases/` (blobs, `index.json`, and
+  digest-named generation indices, committed to your workspace repo). The stamp selects
+  one verified generation; prior generations remain available during interrupted updates.
+  The next update 3-way-merges against that store — which is what
   lets an immutable npm install act as an update source, with zero git operations against
   it.
 - **One toolkit classifier.** `checkout` / `registry` / `workspace` roots are classified
   by one resolver; a registry root skips the pull half entirely and `aios update` **never
   writes into the npm prefix** — upgrading the install itself is `aios update --self`
-  (or `npm i -g @aiosbrain/aios@<version>`).
+  (or `npm i -g @aiosbrain/aios@<version>`). `--self` works outside a workspace and
+  targets the invoked global or local npm installation, including its prefix. It refuses
+  an unpacked directory whose npm installation cannot be identified, and takes no other flags.
 - **Shim + shell v2.** The workspace shim resolves, in order: `AIOS_TOOLKIT_DIR`
   (set-but-invalid is a hard error), the deprecated `AIOS_TOOLKIT_CLI`, the stamp's
   recorded source, a PATH-installed `aios` (realpath + containment guarded), then the
@@ -85,7 +89,7 @@ uses that installation before upgrading it globally.
 aios_v2_stage=$(mktemp -d)
 npm i --prefix "$aios_v2_stage" @aiosbrain/aios@2
 "$aios_v2_stage/node_modules/.bin/aios" update --repo "$PWD"
-# Resolve any reported conflicts and repeat the staged update before proceeding.
+# Resolve conflicts, commit any skipped dirty managed files, and repeat before proceeding.
 "$aios_v2_stage/node_modules/.bin/aios" doctor --json
 # Confirm the workspace stamp reports format 2 and the base store is healthy.
 git add .gitignore .aios-toolkit-version .aios/toolkit-bases
@@ -103,9 +107,30 @@ workspace changes; do not use `--force` to bypass missing bases.
 
 ```sh
 aios update --rollback          # restores the recorded pre-upgrade stamp/config snapshots
-                                # and prints the exact reinstall command from
-                                # .aios/rollback.json (runs it only on interactive confirm)
+                                # and derives the exact reinstall command from recorded
+                                # installation data (runs it only on interactive confirm)
 ```
+
+Rollback refuses if user configuration changed after its snapshot, preserving both the
+newer configuration and the current workspace stamp. Save and reconcile those changes
+before retrying. If the recorded installation can no longer be verified, rollback reports
+the exact prior package for manual restoration instead of guessing a global npm target.
+Executable command arrays in a rollback JSON file are never trusted.
+
+### Recovering an interrupted update
+
+Re-run with the same toolkit version to resume its journal. A different pending target,
+a changed live stamp, or missing/corrupt bases is a refusal before managed files change;
+recovery evidence remains on disk. Restore the committed stamp and `.aios/toolkit-bases`
+together, or use the validated rollback record. Do not delete a failed migration journal
+as a shortcut. For v1 stamps recording a URL or a lost checkout, use `--from <checkout>`
+with a toolkit checkout retaining the recorded base commit, or restore the exact previous
+registry package at its recorded path before retrying the staged migration.
+
+Updates serialize per workspace. A dead update owner is recovered automatically; an
+interrupted lock-recovery guard reports its path for inspection. Remove that guard only
+after its recorded process has exited. A symlinked `.gitignore` must be materialized as a
+regular workspace file before updating; AIOS does not write through it.
 
 ### Canonical commands
 
@@ -132,3 +157,6 @@ slack whoami                    # same
   field-by-field migration).
 - `aios provenance --json` — which install is actually running when PATH, checkout, and
   shell-function shadowing disagree.
+
+The release acceptance matrix covers Linux and macOS on Node 22, 24, and 26. Windows
+shim execution is outside this release's validated platform surface.

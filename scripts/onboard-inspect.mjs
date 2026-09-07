@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { normalizeBrainOrigin } from "./brain-origin.mjs";
 import { parseFlatYaml } from "./flat-yaml.mjs";
 import { toolkitMeta } from "./toolkit-meta.mjs";
-import { isDistributionRoot } from "./cli.mjs";
+import { isDistributionRoot, resolveDistributionRoot } from "./cli.mjs";
 
 const MODULE_TOOLKIT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const SKIP_DIRS = new Set([
@@ -156,6 +156,21 @@ function collectCandidates(root, maxDepth, out, seen) {
 
 function toolkitState(dir) {
   if (!dir || !isDistributionRoot(dir)) return null;
+  const distribution = resolveDistributionRoot(dir);
+  if (distribution?.kind === "registry") {
+    const meta = toolkitMeta(dir);
+    return {
+      path: distribution.dir,
+      version: meta.version,
+      brain_api: meta.brainApi || null,
+      head: distribution.sha,
+      upstream: null,
+      relation: "immutable",
+      git: { available: false, dirty: null },
+      recommended_strategy: "vendor-installed-package",
+      fresh_checkout_path: null,
+    };
+  }
   const gitInfo = gitState(dir);
   const meta = toolkitMeta(dir);
   const head = git(dir, ["rev-parse", "HEAD"]);
@@ -293,7 +308,7 @@ export function formatInspection(report) {
   }
   if (report.toolkit) {
     lines.push(
-      `  Toolkit: ${report.toolkit.path} (v${report.toolkit.version}, ${report.toolkit.relation}, ${report.toolkit.git.dirty ? "dirty" : "clean"})`
+      `  Toolkit: ${report.toolkit.path} (v${report.toolkit.version}, ${report.toolkit.relation}, ${report.toolkit.relation === "immutable" ? "npm package" : report.toolkit.git.dirty ? "dirty" : "clean"})`
     );
   }
   lines.push(

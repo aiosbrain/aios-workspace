@@ -1,3 +1,5 @@
+import { withUpdateLock } from "./lock.mjs";
+import { prepareV2State, commitV2State } from "./state-plan.mjs";
 /**
  * update/vendor-apply.mjs — the `--vendor-apply-only` child entrypoint, extracted verbatim
  * from scripts/update.mjs (AIO-1072 size discipline). See the function docblock for the
@@ -11,12 +13,12 @@ import { VERSION_FILE, managedPathsForConfig, pmToolPrunable } from "../toolkit-
 import { printMergeReport } from "./report.mjs";
 import { toolkitMeta } from "../toolkit-meta.mjs";
 import { installWorktreeSafetyBackstops } from "../worktree.mjs";
-import { assertGitToolkitSource } from "../toolkit-pull.mjs";
+import { assertGitToolkitSource, sourceCleanliness } from "../toolkit-pull.mjs";
 import { dirtyManagedPaths, assertDestPathSafe, plannedDestRels } from "./manifest-walk.mjs";
 import { vendorSafety, vendorSafetyReason, mergeManaged } from "./merge.mjs";
 import { readStampBaseSha } from "./stamp.mjs";
 import { isDistributionRoot } from "../cli.mjs";
-import { chooseBaseResolver, recordRollbackIfUpgrading, writeV2State } from "./registry-root.mjs";
+import { chooseBaseResolver, recordRollbackIfUpgrading } from "./registry-root.mjs";
 import { argValue, gitSha, buildResult } from "./flow-common.mjs";
 
 /**
@@ -30,6 +32,10 @@ import { argValue, gitSha, buildResult } from "./flow-common.mjs";
  * writes that follow.
  */
 export async function cmdVendorApplyOnly(repo, cfg, args) {
+  return withUpdateLock(repo, () => cmdVendorApplyOnlyLocked(repo, cfg, args));
+}
+
+async function cmdVendorApplyOnlyLocked(repo, cfg, args) {
   const color = c;
   const srcDir = argValue(args, "--from");
   if (!srcDir || !isDistributionRoot(srcDir)) {
@@ -50,6 +56,11 @@ export async function cmdVendorApplyOnly(repo, cfg, args) {
   // internal hand-off always passes the pinned snapshot (a real git worktree), which
   // passes this trivially.
   assertGitToolkitSource(srcDir);
+  if (sourceCleanliness(srcDir) !== "clean") {
+    throw new UpdateError(
+      "The vendor hand-off source must be a clean committed snapshot; commit source changes before updating."
+    );
+  }
   const force = args.includes("--force");
   const managedPaths = managedPathsForConfig(cfg);
   const vs = vendorSafety(srcDir, managedPaths);
@@ -60,7 +71,17 @@ export async function cmdVendorApplyOnly(repo, cfg, args) {
     );
   }
   const sha = gitSha(srcDir); // srcDir IS the pinned snapshot — this trivially equals the pinned sha
+  const expectedHead = argValue(args, "--expect-src-head");
+  if (expectedHead && expectedHead !== sha)
+    throw new UpdateError(
+      "The vendor snapshot HEAD does not match --expect-src-head; re-run the preview."
+    );
   const meta = toolkitMeta(srcDir); // unmodified — reads the snapshot's own frozen files
+  assertDestPathSafe(
+    repo,
+    ".gitignore",
+    "record versioned merge bases (materialize a symlinked ignore file before updating)"
+  );
   assertDestPathSafe(repo, VERSION_FILE, "write version stamp");
   // gen-catalog (spawned below) writes these fixed destinations with no containment checks
   // of its own — assert them here, at the same chokepoint as every other managed write, so
@@ -86,6 +107,14 @@ export async function cmdVendorApplyOnly(repo, cfg, args) {
   const dirty = force ? new Set() : dirtyManagedPaths(repo, managedPaths);
   const shortSha = sha.slice(0, 12);
   console.log(color.dim(`  syncing toolkit ${meta.label} from ${stampSource} (${shortSha}) …`));
+  const statePlan = prepareV2State(repo, {
+    srcDir,
+    sha,
+    meta,
+    stampSource,
+    managedPaths,
+    packageVersion: meta.version,
+  });
   // Exact prior-package record BEFORE the first mutating step (AIO-635 Decision 5) —
   // only ever written while the workspace is still on stamp format 1.
   await recordRollbackIfUpgrading(repo, { packageRoot: srcDir });
@@ -118,14 +147,14 @@ export async function cmdVendorApplyOnly(repo, cfg, args) {
 
   const changedCount = printMergeReport(color, r);
 
-  if (r.conflicts.length) {
+  if (r.conflicts.length || r.skippedDirty.length) {
     // Leave the stamp at the old base so a re-run re-surfaces the conflicts once resolved.
     // This is a NORMAL outcome of local customization (a workspace edit conflicting with
     // the toolkit's incoming change) — not the same as vendorSafety's hard refusal above
     // (which means the SOURCE toolkit itself is broken) — exitStatus stays 0.
     console.warn(
       color.yellow(
-        `  resolve the conflict(s) and re-run \`aios update\` — version stays pinned at ${(
+        `  resolve conflicts / commit skipped managed changes and re-run \`aios update\` — version stays pinned at ${(
           baseSha || "(none)"
         ).slice(0, 12)} until then.`
       )
@@ -136,7 +165,9 @@ export async function cmdVendorApplyOnly(repo, cfg, args) {
       applied: true,
       changedCount,
       vendorSafety: vs,
-      reasons: [`${r.conflicts.length} conflict(s) — not applied for those files`],
+      reasons: [
+        `${r.conflicts.length} conflict(s), ${r.skippedDirty.length} dirty file(s) skipped — version not stamped; resolve/commit and re-run`,
+      ],
     });
   }
 
@@ -159,17 +190,10 @@ export async function cmdVendorApplyOnly(repo, cfg, args) {
   }
 
   // Decision-1 write ordering: managed files (above) → base-store entries → index →
-  // stamp LAST, all atomic — an interruption leaves the old stamp/index intact and the
-  // next run re-derives the same plan. Always writes stamp format 2 (one-way ratchet),
+  // stamp LAST. Immutable generation indices keep the old live stamp resolvable if
+  // publication is interrupted; recovery never silently changes the pending target. Always writes stamp format 2 (one-way ratchet),
   // including for --from <checkout> sources. The stamp destination is asserted safe above.
-  await writeV2State(repo, {
-    srcDir,
-    sha,
-    meta,
-    stampSource,
-    managedPaths,
-    packageVersion: meta.version,
-  });
+  await commitV2State(statePlan);
   // AIO-482: restore machine-local worktree hooks after an update. Personal workspaces receive
   // post-checkout hydration only; the public product repo also restores its commit/push
   // backstops because it carries scripts/leak-gate.sh. Never fails an update.

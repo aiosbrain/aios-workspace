@@ -22,7 +22,7 @@ export function fakeRegistryRoot({ version = "2.0.0", sha = BUILD_SHA, rules = {
   }
   // docs/brain-api.md so toolkitMeta can read a brain-api version.
   mkdirSync(path.join(dir, "docs"), { recursive: true });
-  writeFileSync(path.join(dir, "docs", "brain-api.md"), "**API version:** 1.24\n");
+  writeFileSync(path.join(dir, "docs", "brain-api.md"), "**Version: 1.24**\n");
   return { dir, root: { dir, kind: "registry", version, sha } };
 }
 
