@@ -13,8 +13,9 @@ const put = (root, rel, content) => {
   writeFileSync(path.join(root, rel), content);
 };
 
-for (const format of [1, 2]) {
-  test(`installed connector skills migrate from v${format} while preserving local additions`, async () => {
+for (const mode of ["v1", "v2-before", "v2-after"]) {
+  const format = mode === "v1" ? 1 : 2;
+  test(`installed connector skills migrate from ${mode} while preserving local additions`, async () => {
     const old = fakeRegistryRoot({ version: format === 1 ? "0.12.0" : "2.0.0" });
     const next = fakeRegistryRoot({ version: "2.0.1", sha: "c".repeat(40) });
     const repo = fakeWorkspace();
@@ -24,6 +25,12 @@ for (const format of [1, 2]) {
         put(old.dir, `${src}/SKILL.md`, "legacy route\nshared instructions\n");
         put(old.dir, `${src}/activity.mjs`, "// untouched retired client\n");
         put(next.dir, `${src}/SKILL.md`, "canonical aios route\nshared instructions\n");
+      }
+      if (mode === "v2-before") {
+        for (const name of ["linear-direct", "slack-personal"]) {
+          put(repo, `.claude/skills/${name}/SKILL.md`, "legacy route\nshared instructions\n");
+          put(repo, `.claude/skills/${name}/activity.mjs`, "// untouched retired client\n");
+        }
       }
       if (format === 1) {
         put(

@@ -11,6 +11,7 @@
  */
 import { createOutput, normalizeError } from "../../cli.mjs";
 import { ensureLinearCredential, findLinearBase } from "./credentials.mjs";
+import { parseLinearActivityArgs } from "./activity-args.mjs";
 import { linearUsage, runLinearVerb } from "./verbs.mjs";
 
 /** verb → { module, credential } — the canonical Linear command surface. */
@@ -135,6 +136,12 @@ export async function cmdLinear(repo, rest, options = {}) {
     const { cmdLinearStatus } = await import("./setup.mjs");
     return cmdLinearStatus(rest.slice(1), scoped);
   }
+  let activityPlan;
+  try {
+    if (verb === "activity") activityPlan = parseLinearActivityArgs(rest.slice(1), base);
+  } catch (error) {
+    return output.failure(normalizeError(error));
+  }
   if (VERBS[verb]?.credential) {
     try {
       await ensureLinearCredential(scoped);
@@ -142,5 +149,5 @@ export async function cmdLinear(repo, rest, options = {}) {
       return output.failure(normalizeError(error));
     }
   }
-  return runLinearVerb(rest, base);
+  return runLinearVerb(rest, base, { activityPlan });
 }

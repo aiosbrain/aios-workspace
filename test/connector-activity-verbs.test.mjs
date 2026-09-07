@@ -40,10 +40,10 @@ test("`aios linear activity pull` writes idempotent activity records into the re
 
 test("`aios linear activity` rejects an unknown action and a bad tier offline", () => {
   const bogus = runLinear(["activity", "shove"]);
-  assert.equal(bogus.status, 1);
-  assert.match(bogus.stderr, /unknown activity action/);
+  assert.equal(bogus.status, 2);
+  assert.match(bogus.stderr, /unknown activity argument/);
   const badTier = runLinear(["activity", "pull", "--tier", "public"]);
-  assert.equal(badTier.status, 1);
+  assert.equal(badTier.status, 2);
   assert.match(badTier.stderr, /--tier must be admin\|team\|external/);
 });
 

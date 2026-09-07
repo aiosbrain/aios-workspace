@@ -79,7 +79,7 @@ export function chooseBaseResolver(repo, srcDir, baseSha, { registry = false } =
             return undefined;
           }
         },
-        baseFiles: (entry) => entryFiles(rec.dir, entry).map((f) => f.srcRel),
+        baseMappings: (entry) => entryFiles(rec.dir, entry),
       };
     }
     if (stampInfo?.format < 2) {
@@ -96,7 +96,7 @@ export function chooseBaseResolver(repo, srcDir, baseSha, { registry = false } =
       "The exact source recorded by this v1 workspace is unavailable. Restore the recorded checkout or previous package and follow docs/migration-v2.md before updating. No managed files were changed; --force is not a migration recovery path."
     );
   }
-  return { kind: "none", base: () => undefined, baseFiles: () => [] };
+  return { kind: "none", base: () => undefined, baseMappings: () => [] };
 }
 
 /**

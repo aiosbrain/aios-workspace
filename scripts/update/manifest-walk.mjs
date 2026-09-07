@@ -22,18 +22,22 @@ import { gitShow, lsTree } from "../toolkit-merge.mjs";
 
 /**
  * Normalize a base source into a resolver (AIO-635 Decision 1). Callers may pass either a
- * resolver object ({ base(srcRel, destRel), baseFiles(entry) } — see update/merge.mjs) or
+ * resolver object ({ base(srcRel, destRel), baseMappings(entry) } — see update/merge.mjs) or
  * the historical bare baseSha string, which resolves against `srcDir` via git exactly as
  * before the seam existed.
  */
 function asBaseResolver(srcDir, resolverOrSha) {
-  if (resolverOrSha && typeof resolverOrSha === "object" && resolverOrSha.baseFiles)
+  if (resolverOrSha && typeof resolverOrSha === "object" && resolverOrSha.baseMappings)
     return resolverOrSha;
   const baseSha = resolverOrSha;
   return {
     kind: "git",
     base: (srcRel) => gitShow(srcDir, baseSha, srcRel),
-    baseFiles: (entry) => lsTree(srcDir, baseSha, entry.src),
+    baseMappings: (entry) =>
+      lsTree(srcDir, baseSha, entry.src).map((srcRel) => ({
+        srcRel,
+        destRel: entry.dest + srcRel.slice(entry.src.length),
+      })),
   };
 }
 
@@ -242,19 +246,21 @@ export function missingSeedPaths(srcRoot, repo) {
  * Returns [{ srcRel, destRel }].
  */
 export function deletionCandidates(srcRoot, entry, resolver) {
-  const baseFiles = asBaseResolver(srcRoot, resolver).baseFiles(entry); // srcRel paths at base
-  if (!baseFiles.length) return [];
+  const mappings = asBaseResolver(srcRoot, resolver).baseMappings(entry);
+  if (!mappings.length) return [];
   // Exact-or-prefix, mirroring entryFiles: an `exclude` naming a DIRECTORY covers everything
   // beneath it, so a file removed from an excluded subtree is never reported as an upstream
   // deletion for a workspace that was never supposed to receive it.
   const exclude = (entry.exclude || []).map((rel) => `${entry.src}/${rel}`);
   const isExcluded = (srcRel) => exclude.some((x) => srcRel === x || srcRel.startsWith(`${x}/`));
-  const present = new Set(entryFiles(srcRoot, entry).map((f) => f.srcRel));
+  const key = ({ srcRel, destRel }) => JSON.stringify([srcRel, destRel]);
+  const present = new Set(entryFiles(srcRoot, entry).map(key));
   const out = [];
-  for (const srcRel of baseFiles) {
+  for (const mapping of mappings) {
+    const { srcRel } = mapping;
     if (isExcluded(srcRel)) continue; // excluded files are never synced — never "deleted" either
-    if (present.has(srcRel)) continue; // still shipped — not a deletion
-    out.push({ srcRel, destRel: entry.dest + srcRel.slice(entry.src.length) });
+    if (present.has(key(mapping))) continue; // still shipped — not a deletion
+    out.push(mapping);
   }
   return out;
 }

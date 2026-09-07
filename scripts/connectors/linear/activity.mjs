@@ -14,8 +14,7 @@ import path from "node:path";
 import { fail } from "./core.mjs";
 import { queryAssignedOpenIssues } from "./query.mjs";
 
-const DEFAULT_TIER = "admin";
-const TIERS = new Set(["admin", "team", "external"]);
+import { DEFAULT_TIER, parseLinearActivityArgs } from "./activity-args.mjs";
 
 function oneLine(value, max = 300) {
   const text = String(value ?? "")
@@ -158,27 +157,9 @@ export async function pullLinearActivity({
   return { records, ...append, activityPath: target };
 }
 
-function parseArgs(argv, baseDir) {
-  const value = (name, fallback = null) => {
-    const index = argv.indexOf(name);
-    return index >= 0 ? argv[index + 1] : fallback;
-  };
-  return {
-    repo: path.resolve(value("--repo", baseDir)),
-    tier: value("--tier", DEFAULT_TIER),
-    activityPath: value("--activity-path"),
-    dryRun: argv.includes("--dry-run"),
-  };
-}
-
 /** `aios linear activity [pull] …` — argv is everything after `activity`. */
-export async function cmdActivity(argv, baseDir = process.cwd()) {
-  const rest = argv[0] === "pull" ? argv.slice(1) : argv;
-  if (rest[0] && !rest[0].startsWith("--")) {
-    fail(`unknown activity action "${rest[0]}" — usage: aios linear activity pull [--repo PATH]`);
-  }
-  const opts = parseArgs(rest, baseDir);
-  if (!TIERS.has(opts.tier)) fail("--tier must be admin|team|external");
+export async function cmdActivity(argv, baseDir = process.cwd(), plan) {
+  const opts = plan ?? parseLinearActivityArgs(argv, baseDir);
   let result;
   try {
     result = await pullLinearActivity(opts);

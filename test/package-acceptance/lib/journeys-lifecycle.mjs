@@ -213,6 +213,8 @@ export function upgradeJourney(ctx) {
   const upgraded = JSON.parse(readFileSync(livePkg, "utf8"));
   assert.equal(upgraded.version, ctx.manifest.packageVersion, "live install runs the candidate");
   const liveBin = path.join(livePrefix, "node_modules", ".bin", "aios");
+  const rubricPath = path.join(workspace, ".claude/rubrics/spec-readiness.md");
+  const rubricBefore = readFileSync(rubricPath, "utf8");
   const beforeRepeat = readFileSync(stampPath, "utf8").replace(
     /^synced-at .+$/m,
     "synced-at MASKED"
@@ -225,6 +227,11 @@ export function upgradeJourney(ctx) {
   assert.equal(
     readFileSync(stampPath, "utf8").replace(/^synced-at .+$/m, "synced-at MASKED"),
     beforeRepeat
+  );
+  assert.equal(
+    readFileSync(rubricPath, "utf8"),
+    rubricBefore,
+    "repeat update retains required exact-file rubric"
   );
   assert.match(readFileSync(customPath, "utf8"), /acceptance customization/);
   const liveDoctor = JSON.parse(

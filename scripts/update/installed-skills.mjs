@@ -32,14 +32,20 @@ export function withInstalledSkillBases(resolver) {
       );
       return base ?? (entry ? resolver.base(src, src.slice("scaffold/".length)) : undefined);
     },
-    baseFiles(entry) {
-      const files = resolver.baseFiles(entry);
+    baseMappings(entry) {
+      const files = resolver.baseMappings(entry);
       if (!entries.some((e) => e.src === entry.src && e.dest === entry.dest)) return files;
+      const descriptorDest = entry.src.slice("scaffold/".length);
+      const aliases = resolver
+        .baseMappings({ ...entry, dest: descriptorDest })
+        .map(({ srcRel, destRel }) => ({
+          srcRel,
+          destRel: entry.dest + destRel.slice(descriptorDest.length),
+        }));
       return [
-        ...new Set([
-          ...files,
-          ...resolver.baseFiles({ ...entry, dest: entry.src.slice("scaffold/".length) }),
-        ]),
+        ...new Map(
+          [...files, ...aliases].map((f) => [JSON.stringify([f.srcRel, f.destRel]), f])
+        ).values(),
       ];
     },
   };

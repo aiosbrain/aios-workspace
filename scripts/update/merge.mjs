@@ -89,8 +89,12 @@ export function gitBaseResolver(toolkitDir, baseSha) {
   return {
     kind: "git",
     base: (srcRel /*, destRel */) => gitShow(toolkitDir, baseSha, srcRel),
-    /** srcRel paths under an entry's src at the base — feeds deletionCandidates. */
-    baseFiles: (entry) => lsTree(toolkitDir, baseSha, entry.src),
+    /** Historical source/destination mappings owned by this manifest entry. */
+    baseMappings: (entry) =>
+      lsTree(toolkitDir, baseSha, entry.src).map((srcRel) => ({
+        srcRel,
+        destRel: entry.dest + srcRel.slice(entry.src.length),
+      })),
   };
 }
 
@@ -98,10 +102,10 @@ export function storeBaseResolver(repo, index) {
   return {
     kind: "store",
     base: (srcRel, destRel) => baseFromStore(repo, index, destRel),
-    baseFiles: (entry) =>
-      baseDestsUnder(index, entry.dest).map(
-        (dest) => `${entry.src}${dest.slice(entry.dest.length)}`
-      ),
+    baseMappings: (entry) =>
+      baseDestsUnder(index, entry.dest)
+        .filter((dest) => index.entries[dest].src === entry.src + dest.slice(entry.dest.length))
+        .map((destRel) => ({ srcRel: index.entries[destRel].src, destRel })),
   };
 }
 

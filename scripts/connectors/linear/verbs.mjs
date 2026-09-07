@@ -108,7 +108,7 @@ export function linearUsage() {
  * verbs print their own diagnostics and process.exit(1) on provider/usage failures; a
  * completed verb returns 0.
  */
-export async function runLinearVerb(argv, baseDir = process.cwd()) {
+export async function runLinearVerb(argv, baseDir = process.cwd(), { activityPlan } = {}) {
   const cmd = argv[0];
 
   if (cmd === "get") {
@@ -466,7 +466,7 @@ export async function runLinearVerb(argv, baseDir = process.cwd()) {
   } else if (cmd === "activity") {
     // Operator-loop activity pull (AIO-1072) — lazy for the same reason.
     const { cmdActivity } = await import("./activity.mjs");
-    await cmdActivity(argv.slice(1), baseDir);
+    await cmdActivity(argv.slice(1), baseDir, activityPlan);
   } else {
     console.log(linearUsage());
   }

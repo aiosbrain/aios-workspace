@@ -164,6 +164,7 @@ function runConnector(
         cwd: spec.cwd ?? path.dirname(spec.file),
         env,
         stdio: "ignore",
+        detached: process.platform !== "win32",
       });
     } catch {
       finish("failed", "adapter could not start");
@@ -181,24 +182,16 @@ function runConnector(
     });
 
     timer = setTimeout(() => {
-      // Resolve immediately after requesting termination: even a wedged/unkillable child must never
-      // hold the daily renderer. A short, unref'd SIGKILL backstop cleans up ordinary stragglers.
+      // POSIX adapters own a process group: the workspace shim delegates synchronously,
+      // so killing only its leader leaves the provider process writing after the deadline.
+      // Send the hard deadline signal before settling; no unref'd cleanup timer can be lost.
       try {
-        child.kill("SIGTERM");
-        // If the OS refuses both signals, the dead adapter still must not keep the CLI event loop
-        // alive after the daily has rendered.
-        child.unref?.();
-        const killTimer = setTimeout(() => {
-          try {
-            if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
-          } catch {
-            // Best-effort cleanup only; the fail-open result has already settled.
-          }
-        }, 250);
-        killTimer.unref();
+        if (process.platform !== "win32" && child.pid) process.kill(-child.pid, "SIGKILL");
+        else child.kill("SIGKILL");
       } catch {
-        // The process may already be gone; timeout status remains the honest bounded result.
+        // The group may already be gone. Preserve the bounded, non-secret timeout result.
       }
+      child.unref?.();
       finish("timed_out", `timed out after ${timeoutMs}ms`);
     }, timeoutMs);
   });

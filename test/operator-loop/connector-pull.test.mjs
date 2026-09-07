@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync, cpSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -212,3 +212,53 @@ test("Slack activity append is idempotent by stable ref and tolerates a fresh st
   // Token resolution moved to the adapter preflight (scripts/connectors/slack/credentials.mjs)
   // and is pinned by the slack adapter suites — no client-side resolver remains here.
 });
+
+test(
+  "real workspace shim and TERM-resistant delegates stop at the connector deadline",
+  {
+    skip: process.platform === "win32",
+  },
+  async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "connector-group-"));
+    const workspace = path.join(root, "workspace"),
+      toolkit = path.join(root, "toolkit");
+    try {
+      for (const dir of [workspace, toolkit])
+        mkdirSync(path.join(dir, "scripts"), { recursive: true });
+      cpSync(
+        path.join(ROOT, "scaffold/scripts/aios.mjs"),
+        path.join(workspace, "scripts/aios.mjs")
+      );
+      writeFileSync(
+        path.join(toolkit, "scripts/aios.mjs"),
+        `import { writeFileSync } from "node:fs";
+process.on("SIGTERM", () => {});
+const name = process.argv[2];
+writeFileSync(${JSON.stringify(root)} + "/started-" + name, JSON.stringify({ pid: process.pid, shim: process.ppid }));
+setTimeout(() => writeFileSync(${JSON.stringify(root)} + "/late-" + name, "late"), 1800);`
+      );
+      const result = await pullDailyConnectors({
+        root: workspace,
+        timeouts: { slack: 1200, linear: 1200 },
+        env: { HOME: root, PATH: process.env.PATH, AIOS_TOOLKIT_DIR: toolkit },
+      });
+      for (const name of ["slack", "linear"]) {
+        assert.equal(result.connectors.find((c) => c.name === name).status, "timed_out");
+        assert.equal(
+          existsSync(path.join(root, "started-" + name)),
+          true,
+          "delegate really started"
+        );
+      }
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+      for (const name of ["slack", "linear"]) {
+        assert.equal(existsSync(path.join(root, "late-" + name)), false, "no post-timeout writes");
+        const { shim, pid } = JSON.parse(readFileSync(path.join(root, "started-" + name), "utf8"));
+        assert.throws(() => process.kill(shim, 0), { code: "ESRCH" });
+        assert.throws(() => process.kill(pid, 0), { code: "ESRCH" });
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }
+);

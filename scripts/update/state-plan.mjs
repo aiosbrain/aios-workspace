@@ -48,16 +48,23 @@ export function prepareV2State(repo, options) {
       "prepare versioned update state (materialize symlinked files first)"
     );
   }
-  const files = [];
+  const byDestination = new Map();
   for (const entry of managedPaths) {
     if (!existsSync(path.join(srcDir, entry.src))) continue;
-    for (const f of entryFiles(srcDir, entry))
-      files.push({
+    for (const f of entryFiles(srcDir, entry)) {
+      const prior = byDestination.get(f.destRel);
+      if (prior && prior.srcRel !== f.srcRel)
+        throw new UpdateError(
+          `Ambiguous managed destination ${f.destRel}: ${prior.srcRel} and ${f.srcRel}`
+        );
+      byDestination.set(f.destRel, {
         destRel: f.destRel,
         srcRel: f.srcRel,
         content: readFileSync(path.join(srcDir, f.srcRel), "utf8"),
       });
+    }
   }
+  const files = [...byDestination.values()];
   const digest = manifestDigest(files);
   for (const f of files)
     assertDestPathSafe(repo, `${BASE_STORE_DIR}/${sha256hex(f.content)}`, "prepare merge bases");
