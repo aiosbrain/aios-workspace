@@ -258,5 +258,6 @@ export function main(
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  process.exit(main());
+  // Let piped diagnostics drain before termination; process.exit() can truncate findings in CI.
+  process.exitCode = main();
 }
