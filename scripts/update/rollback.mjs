@@ -56,11 +56,11 @@ function parseRecord(repo) {
   const source = field(record.stampSnapshot, "source");
   if (
     record.stampSnapshot !== null &&
-    (!/^[0-9a-f]{40}$/.test(sha ?? "") ||
+    ((record.installType === "checkout" && !/^[0-9a-f]{40}$/.test(sha ?? "")) ||
       !/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(version ?? ""))
   ) {
     throw new UpdateError(
-      "Rollback snapshot does not identify an exact prior toolkit version and commit."
+      "Rollback snapshot does not identify an exact prior package version (and commit for a checkout)."
     );
   }
   const expected =

@@ -263,3 +263,23 @@ for (const state of ["validated", "committed"]) {
     }
   });
 }
+
+test("registry rollback preserves an unversioned legacy stamp with an exact package version", async () => {
+  const old = fakeRegistryRoot({ version: "0.12.0" });
+  const repo = fakeWorkspace();
+  try {
+    const legacy = `unknown\ntoolkit-version 0.12.0\nsource ${old.dir}\n`;
+    writeFileSync(stampFile(repo), legacy);
+    await recordRollbackIfUpgrading(repo);
+    writeFileSync(
+      stampFile(repo),
+      stampBody("b".repeat(40), { version: "2.0.0" }, "pkg:@aiosbrain/aios@2.0.0")
+    );
+    const result = await rollbackFromRecord(repo, { interactive: false });
+    assert.equal(result.previousPackage, "@aiosbrain/aios@0.12.0");
+    assert.equal(readFileSync(stampFile(repo), "utf8"), legacy);
+  } finally {
+    rmSync(old.dir, discard);
+    rmSync(repo, discard);
+  }
+});

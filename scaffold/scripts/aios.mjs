@@ -122,7 +122,8 @@ if (!delegate) {
 
 const args = process.argv.slice(2);
 const hasRepo = args.some((a) => a === "--repo" || a.startsWith("--repo="));
-const forwarded = hasRepo ? args : [...args, "--repo", workspaceRoot];
+const installationMode = args[0] === "update" && args.includes("--self");
+const forwarded = hasRepo || installationMode ? args : [...args, "--repo", workspaceRoot];
 
 const result = delegate.bin
   ? spawnSync(delegate.bin, forwarded, { stdio: "inherit", cwd: workspaceRoot, env: process.env })

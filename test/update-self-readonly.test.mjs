@@ -108,6 +108,30 @@ test("registry self-upgrade refuses read-only flags before invoking npm", () => 
       `root -g\ni --prefix ${realpathSync(prefix)} @aiosbrain/aios@latest\n`
     );
     rmSync(calls);
+    const workspace = path.join(home, "workspace");
+    mkdirSync(path.join(workspace, "scripts"), { recursive: true });
+    writeFileSync(path.join(workspace, "aios.yaml"), "owner: fixture\n");
+    cpSync(
+      path.join(source, "scaffold/scripts/aios.mjs"),
+      path.join(workspace, "scripts/aios.mjs")
+    );
+    symlinkSync(process.execPath, path.join(bin, "node"));
+    symlinkSync(path.join(registry, "scripts/aios.mjs"), path.join(bin, "aios"));
+    const shim = spawnSync(
+      process.execPath,
+      [path.join(workspace, "scripts/aios.mjs"), "update", "--self"],
+      {
+        cwd: workspace,
+        env: { HOME: home, PATH: bin, NPM_CALLS: calls },
+        encoding: "utf8",
+      }
+    );
+    assert.equal(shim.status, 0, shim.stderr);
+    assert.equal(
+      readFileSync(calls, "utf8"),
+      `root -g\ni --prefix ${realpathSync(prefix)} @aiosbrain/aios@latest\n`
+    );
+    rmSync(calls);
     mkdirSync(path.join(prefix, "lib"));
     globalRoot = path.join(prefix, "lib", "node_modules");
     renameSync(path.join(prefix, "node_modules"), globalRoot);
