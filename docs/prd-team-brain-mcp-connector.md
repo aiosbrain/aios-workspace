@@ -188,8 +188,8 @@ the connector stores nothing and logs no secret. **stdout is protocol-only; all 
 
 | Phase | Deliverable | State |
 |---|---|---|
-| **P0 — Server + CLI seam** | `scripts/brain-mcp.mjs` (9 read tools incl. `brain_status` probe, zero-dep stdio), `scripts/brain-mcp.test.mjs` (16 protocol tests), `aios mcp` command + usage, `npm test` wiring | **Done** in this change |
-| **P0.5 — Tier-safety integration test** | One test against a staging brain with an **external-tier** key asserting AC4 (403/422 → `isError`, never widened data). **Blocking gate before any non-engineer pilot** — protocol unit tests don't prove the core safety claim (G4). | Proposed (do before P1 pilot) |
+| **P0 — Server + CLI seam** | `scripts/brain-mcp.mjs` (9 read tools incl. `brain_status` probe, zero-dep stdio), `scripts/brain-mcp.test.mjs` (offline protocol tests), `aios mcp` command + usage, `npm test` wiring | **Done** in this change |
+| **P0.5 — Tier-safety integration test** | Disposable real Brain/Postgres acceptance with direct parity, membership grants/revocation, stale-board 403 and two mutation controls. | AIO-1109; release gate before publication |
 | **P1 — Packaging** | `.mcpb` bundle + user-config manifest; `npx @aios/team-brain-mcp` entry; README + install GIF; submit to private/team distribution. **Unblocks the G1 persona** (no-terminal Desktop install). | Proposed |
 | **P2 — Shared client refactor** | Extract `scripts/brain-client.mjs` (HTTP + auth + config) shared by `aios.mjs` and `brain-mcp.mjs`; delete the duplicated slice | Proposed |
 | **P3 — Writes (gated)** | `brain_push_note` into a single `team`-tier inbox path, behind `AIOS_MCP_WRITES=1`, never `external`; resolves §9 | Proposed, needs design sign-off |
@@ -234,17 +234,20 @@ the connector stores nothing and logs no secret. **stdout is protocol-only; all 
 
 - **AC1 (protocol).** `initialize` → correct `protocolVersion` + tools capability; `tools/list`
   returns all read tools with JSON-Schema `inputSchema`; notifications get no reply; unknown
-  method/tool → correct JSON-RPC error codes. *(Covered by `brain-mcp.test.mjs` — 16 tests passing.)*
+  method/tool → correct JSON-RPC error codes. *(Covered by the offline protocol and capability suites.)*
 - **AC2 (stdout hygiene).** Over a real `aios mcp` process, stdout contains only JSON-RPC frames;
   the startup banner and all diagnostics appear only on stderr. *(Verified via piped handshake.)*
-- **AC3 (config).** Missing any of the three required vars exits 1 naming them; env beats `.env`
-  beats `aios.yaml`; trailing slash on the URL is trimmed. *(Covered by tests.)*
-- **AC4 (tier safety) — P0.5, blocking before any non-engineer pilot.** An `external`-tier key
-  calling `brain_list_projects` receives the brain's `403/422` surfaced as an `isError` tool result —
-  never a widened view; and an `external`-tier `brain_pull_items` returns only `external`-audience
-  items. This is the core safety claim (G4) — the protocol unit tests do **not** prove it. Assert it
-  with one integration test against a staging brain using a real external-tier key, **before** P1 ships
-  to anyone non-technical (not deferred to P1's end).
+- **AC3 (config).** Missing Brain configuration starts the toolkit with only the workspace tool.
+  Environment beats `.env`, which beats `aios.yaml`; team is optional because the key identifies
+  the team. The mandatory `/me` probe fails closed within three seconds.
+- **AC4 (tier safety) — AIO-1109, blocking before publication.** Use the pinned production Brain
+  HTTP harness with disposable Postgres and synthetic members. Initialize with team posture,
+  demote through canonical membership helpers, verify external posture, and call the stale listed
+  board tool: the Brain's 403 must surface as `isError`. External members without project grants
+  see external-shared items; explicit grants and revocations retain direct Brain parity. Require
+  nonempty visible fixtures, separate project-denial/item-visibility mutation controls, and
+  verified principal/key/process/database cleanup on success and failure. The offline protocol
+  suite remains independent; it cannot prove the network authorization boundary.
 - **AC5 (end-to-end, P1).** From a clean Claude Desktop with the `.mcpb` installed and three values
   entered, `brain_query` returns a grounded, cited answer. *(Manual acceptance — the one step not
   coverable by unit tests; gate P1 on it.)*

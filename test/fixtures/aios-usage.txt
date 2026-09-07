@@ -68,11 +68,9 @@ usage:
     [--until <date>] [--dry-run]        external render is tier-filtered + leak-gate swept,
     [--no-shots] [--config <p>] [--json]  fail-closed (exit 2 leak · 3 sweep unavailable);
     [--workspace <p>] [--max-shots N]   repos/tiers/live URLs: .aios/timeline-config.json
-  aios mcp                              run the Team Brain MCP server over stdio, for
-                                        GUI-only agents (Claude Desktop/Cowork/claude.ai)
-                                        that can't shell out; env-first, no workspace needed.
-                                        Codex + Conductor DO have a shell — they use this CLI
-                                        directly (see `aios worktree doctor`)
+  aios mcp [--toolsets brain,board,workspace] [--tools <name>]
+    Run the read-only stdio MCP server; available tools follow the startup Brain /me probe.
+    CLI toolsets override AIOS_MCP_TOOLSETS; --tools is additive; all selects every permitted tool.
   aios analyze [--since 7d|billing] [--tool x]   agentic-maturity + cost from local session logs
     [--report] [--json] [--push]        --push also sends Cursor dashboard billing (W2.1)
     [--full] [--no-cache]               tools: claude|codex|cursor; billing = Cursor cycle
