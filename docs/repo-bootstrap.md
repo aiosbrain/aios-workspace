@@ -105,3 +105,21 @@ detection (`--check` exit 1) and `--force` restore, conflict surfacing via
 commit is **blocked** while `git worktree add -b feat/x <sibling> origin/main` plus a
 commit inside the worktree both work, with the stamped `post-checkout` self-hydration
 firing and the stamped gates running clean, all with no adjacent core checkout.
+
+## Trusted hygiene gates
+
+Newly generated governance jobs check out the base at `trusted-hygiene` and candidate files at
+`candidate`, with persisted checkout credentials disabled. Node executes only base-owned size and
+boundary checkers and their dependencies. The size checker receives the base's `scripts/size-caps.json`
+through `--config`; boundary rules remain colocated with the base checker. Candidate package scripts,
+checker edits, size caps and boundary waivers cannot change these decisions. Hygiene steps run before
+any candidate code, without installing candidate dependencies.
+
+Fresh repositories must establish all managed checker files, their dependencies and both configurations
+on the base before enabling these jobs. Missing trusted files fail explicitly; there is no candidate
+fallback. Bootstrap still updates managed checker files and never overwrites an existing
+repository-owned CI workflow. Existing repositories adopt the workflow changes through a reviewed PR.
+
+This protects the checking code and configuration, but does not independently prevent a PR from
+changing its workflow invocation. That remaining limitation requires a separate authority boundary;
+branch-protection redesign is outside AIO-1135.

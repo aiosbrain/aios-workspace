@@ -173,17 +173,41 @@ jobs:
     name: Constitution guards (domain isolation + boundaries + size)
     runs-on: ubuntu-latest
     timeout-minutes: 15 # observed p100 1.5 min (npm ci + the health scorer's gh calls)
+    defaults:
+      run:
+        working-directory: candidate
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+      - name: Check out trusted hygiene files from the base revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}
+          path: trusted-hygiene
+          persist-credentials: false
+      - name: Check out candidate files as inert hygiene input
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: candidate
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
-          cache: npm
+      # Establish these files on the base before enabling this job in a fresh repository.
+      # No fallback to candidate code/configuration. Dependencies resolve from the base scripts.
+      - name: Verify trusted hygiene files
+        run: |
+          for file in scripts/check-file-size.mjs scripts/size-caps.json scripts/check-boundaries.mjs scripts/boundaries.json scripts/git-files.mjs validation/agent-readiness-lib.mjs; do
+            if ! test -f "$GITHUB_WORKSPACE/trusted-hygiene/$file"; then
+              echo "::error::Missing trusted hygiene file: $file. Establish the gate on the base before enforcing it."
+              exit 1
+            fi
+          done
+      - name: File-size gate (default-deny, ratchet-only-down)
+        run: node "$GITHUB_WORKSPACE/trusted-hygiene/scripts/check-file-size.mjs" --config "$GITHUB_WORKSPACE/trusted-hygiene/scripts/size-caps.json"
+      - name: Repo-boundary gate
+        run: node "$GITHUB_WORKSPACE/trusted-hygiene/scripts/check-boundaries.mjs"
       # §4 domains-are-siblings (no cross-domain value imports) + the repo-boundary
       # seam gate for the multi-repo split (AIO-597) + the aios.mjs size gate (AIO-320).
       - run: npm run check:domains
-      - run: npm run check:size
-      - run: npm run check:boundaries
       - run: npm run check:inbox-audit
       # AIO-927: the two canonical aios-linear skill copies (.claude/skills/aios-linear/
       # and scaffold/.claude/skills/aios-linear/) must stay byte-identical.
