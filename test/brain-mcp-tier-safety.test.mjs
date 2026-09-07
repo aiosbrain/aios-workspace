@@ -60,6 +60,7 @@ async function startMcp(key, t) {
       for (const call of calls.values()) clearTimeout(call.timer);
       await rm(cwd, { recursive: true });
     }
+    console.log('MCP_PROCESS_CLEANUP_OK');
   });
   return async (method, params = {}) => {
     const requestId = ++id;

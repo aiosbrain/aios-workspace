@@ -19,7 +19,13 @@ const env = { PATH: process.env.PATH, HOME: scratch, CI: '1', NEXT_TELEMETRY_DIS
   DB_BACKEND: 'postgres', NEXT_PUBLIC_DB_BACKEND: 'postgres', AUTH_SECRET: 'disposable-mcp-test-secret',
   SECRETS_KEY: Buffer.alloc(32, 7).toString('base64'), LLM_BASE_URL: '' };
 const children = new Set();
-function run(command, args, { cwd = scratch, extraEnv = {}, allowFailure = false, timeout = 600000 } = {}) {
+let cancelled = false;
+for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => {
+  cancelled = true;
+  for (const child of children) { try { process.kill(-child.pid, 'SIGKILL'); } catch {} }
+});
+function run(command, args, { cwd = scratch, extraEnv = {}, allowFailure = false, timeout = 600000, cleanup = false } = {}) {
+  if (cancelled && !cleanup) return Promise.reject(new Error('MCP safety run cancelled'));
   return new Promise((resolveRun, reject) => {
     const child = spawn(command, args, { cwd, env: { ...env, ...extraEnv }, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
     children.add(child);
@@ -73,8 +79,8 @@ try {
     report.runs.push(result);
     try {
       console.log(`MCP safety: ${mutation}: provisioning isolated Postgres`);
-      await run('docker', ['run', '-d', '--name', container, '-e', 'POSTGRES_USER=app', '-e', 'POSTGRES_PASSWORD=app', '-e', 'POSTGRES_DB=app_test', '-p', '127.0.0.1::5432', 'postgres:16']);
       created = true;
+      await run('docker', ['run', '-d', '--name', container, '-e', 'POSTGRES_USER=app', '-e', 'POSTGRES_PASSWORD=app', '-e', 'POSTGRES_DB=app_test', '-p', '127.0.0.1::5432', 'postgres:16']);
       let ready = false;
       for (let attempt = 0; attempt < 60; attempt++) {
         if ((await run('docker', ['exec', container, 'pg_isready', '-U', 'app'], { allowFailure: true })).code === 0) { ready = true; break; }
@@ -87,7 +93,7 @@ try {
       const database = `postgres://app:app@127.0.0.1:${dbPort}/app_test`;
       const httpPort = await port();
       const extraEnv = { DATABASE_URL: database, DATABASE_TEST_URL: database, HTTP_TEST_PORT: String(httpPort),
-        APP_URL: `http://127.0.0.1:${httpPort}`, MCP_WORKSPACE_DIR: workspace };
+        APP_URL: `http://127.0.0.1:${httpPort}`, MCP_WORKSPACE_DIR: workspace, MCP_HTTP_ATTACHED: '1' };
       const schema = await run(process.execPath, ['scripts/pg-load-schema.mjs'], { cwd: directory, extraEnv });
       await writeFile(join(evidence, `${mutation}-schema.log`), schema.output);
       console.log(`MCP safety: ${mutation}: building production Brain ${sha}`);
@@ -100,14 +106,18 @@ try {
       result.exitCode = test.code;
       result.logSha256 = digest(test.output);
       if (!test.output.includes('MCP_FIXTURE_CLEANUP_OK')) throw new Error(`Fixture cleanup unverified: ${mutation}`);
+      if (!test.output.includes('HTTP_SERVER_CLEANUP_OK') || test.output.split('MCP_PROCESS_CLEANUP_OK').length !== 3) {
+        throw new Error(`Process cleanup unverified: ${mutation}`);
+      }
       if (mutation === 'baseline' ? test.code !== 0 : test.code === 0 || !test.output.includes(mutation === 'project-denial' ? 'MCP_PROJECT_DENIAL:' : 'MCP_ITEM_VISIBILITY:')) {
         throw new Error(`Outcome gate failed: ${mutation}; see ${mutation}-test.log`);
       }
       console.log(`MCP safety: ${mutation}: expected outcome verified`);
     } finally {
       if (created) {
-        await run('docker', ['rm', '-f', '-v', container]);
-        const remaining = await run('docker', ['ps', '-a', '--filter', `name=^${container}$`, '--format', '{{.Names}}']);
+        const existing = await run('docker', ['ps', '-a', '--filter', `name=^${container}$`, '--format', '{{.Names}}'], { cleanup: true });
+        if (existing.output.trim()) await run('docker', ['rm', '-f', '-v', container], { cleanup: true });
+        const remaining = await run('docker', ['ps', '-a', '--filter', `name=^${container}$`, '--format', '{{.Names}}'], { cleanup: true });
         if (remaining.output.trim()) throw new Error('Isolated database cleanup failed');
       }
       result.cleanup = true;

@@ -13,7 +13,7 @@ jobs:
     timeout-minutes: 40
     env:
       # Companion test support; full immutable SHA, never a moving branch.
-      MCP_BRAIN_SHA: 4c6f62ec978afc8100ea88de39691fb6b58270f1
+      MCP_BRAIN_SHA: 1a2ca61fd39003f3a72b5cdf4beb39ae5dfe32f7
       MCP_BRAIN_DIR: ${{ github.workspace }}/.mcp-brain
       MCP_EVIDENCE_DIR: ${{ github.workspace }}/.tmp/mcp-tier-evidence
     steps:

@@ -9,7 +9,7 @@ Install the pinned Brain checkout's development dependencies, then run:
 
 ```sh
 MCP_BRAIN_DIR=/absolute/path/to/aios-team-brain \
-MCP_BRAIN_SHA=4c6f62ec978afc8100ea88de39691fb6b58270f1 \
+MCP_BRAIN_SHA=1a2ca61fd39003f3a72b5cdf4beb39ae5dfe32f7 \
 node scripts/test-mcp-tier-safety.mjs
 ```
 
