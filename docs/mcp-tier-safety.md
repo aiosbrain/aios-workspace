@@ -10,7 +10,7 @@ Install the pinned Brain checkout's development dependencies, then run:
 ```sh
 MCP_BRAIN_DIR=/absolute/path/to/aios-team-brain \
 MCP_BRAIN_SHA=1a2ca61fd39003f3a72b5cdf4beb39ae5dfe32f7 \
-node scripts/test-mcp-tier-safety.mjs
+node test/support/mcp-tier-safety.mjs
 ```
 
 Docker and Node 22 are required. No production or durable staging credentials

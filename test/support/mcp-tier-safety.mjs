@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 import { createHash, randomUUID } from "node:crypto";
 import { createServer } from "node:net";
 
-const workspace = resolve(fileURLToPath(new URL("..", import.meta.url)));
+const workspace = resolve(fileURLToPath(new URL("../..", import.meta.url)));
 const brain = resolve(process.env.MCP_BRAIN_DIR || "../aios-team-brain");
 const sha = process.env.MCP_BRAIN_SHA;
 if (!/^[a-f0-9]{40}$/.test(sha || ""))
