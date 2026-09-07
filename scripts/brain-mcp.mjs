@@ -8,9 +8,8 @@ import { resolveBrainConfig } from "./mcp-config.mjs";
 import { workspaceHandler } from "./mcp-workspace.mjs";
 import { createDispatcher as dispatcher } from "./mcp-stdio.mjs";
 import { startMcp } from "./mcp-runtime.mjs";
-import { AiosError } from "./cli/errors.mjs";
 
-export { TOOLS, resolveBrainConfig };
+export { TOOLS, resolveBrainConfig, McpSelectorError };
 export { createBrainClient } from "./brain-client.mjs";
 export const SERVER_NAME = "aios-team-brain-mcp-server";
 export const SERVER_VERSION = JSON.parse(
@@ -28,16 +27,7 @@ export function createDispatcher(options = {}) {
   });
 }
 export function runStdio(config, deps = {}) {
-  try {
-    return startMcp(config, { ...deps, serverInfo, surface: "toolkit", workspaceHandler });
-  } catch (error) {
-    if (!(error instanceof McpSelectorError)) throw error;
-    throw new AiosError(
-      "AIOS_E_USAGE",
-      error.message,
-      "Use --toolsets brain,board,workspace or --tools <known-tool-name>; all selects every permitted tool."
-    );
-  }
+  return startMcp(config, { ...deps, serverInfo, surface: "toolkit", workspaceHandler });
 }
 const invokedDirectly =
   process.argv[1] && path.resolve(fileURLToPath(import.meta.url)) === path.resolve(process.argv[1]);

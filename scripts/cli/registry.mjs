@@ -24,6 +24,7 @@ import { DIAGNOSTIC_COMMANDS } from "./diagnostic-commands.mjs";
 import { LINEAR_COMMANDS as LC } from "./linear-commands.mjs";
 import { SLACK_COMMANDS as SC } from "./slack-commands.mjs";
 import { HIDDEN_COMMANDS } from "./hidden-commands.mjs";
+import { AiosError } from "./errors.mjs";
 
 /** @type {CommandDescriptor[]} Help order; hidden commands (`usage: []`) stay last. */
 export const COMMANDS = [
@@ -176,7 +177,16 @@ export const COMMANDS = [
     loader: () => import("../brain-mcp.mjs"),
     adapt: async (ctx, mod) => {
       const mcpCfg = mod.resolveBrainConfig();
-      await mod.runStdio(mcpCfg, { argv: ctx.rest });
+      try {
+        await mod.runStdio(mcpCfg, { argv: ctx.rest });
+      } catch (error) {
+        if (!(error instanceof mod.McpSelectorError)) throw error;
+        throw new AiosError(
+          "AIOS_E_USAGE",
+          error.message,
+          "Use --toolsets brain,board,workspace or --tools <known-tool-name>; all selects every permitted tool."
+        );
+      }
       return 0;
     },
     exit: "exit-code",
