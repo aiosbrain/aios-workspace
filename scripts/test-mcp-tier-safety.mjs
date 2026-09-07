@@ -139,6 +139,7 @@ try {
     }
     const container = `aios-mcp-${randomUUID()}`;
     let created = false;
+    let primaryError;
     const result = { mutation, mutationDigest, cleanup: false };
     report.runs.push(result);
     try {
@@ -227,7 +228,11 @@ try {
         throw new Error(`Outcome gate failed: ${mutation}; see ${mutation}-test.log`);
       }
       console.log(`MCP safety: ${mutation}: expected outcome verified`);
-    } finally {
+    } catch (error) {
+      primaryError = error;
+      result.error = String(error);
+    }
+    try {
       if (created) {
         const existing = await run(
           "docker",
@@ -244,7 +249,14 @@ try {
         assert.equal(remaining.output.trim(), "", "Isolated database cleanup failed");
       }
       result.cleanup = true;
+    } catch (error) {
+      result.cleanupError = String(error);
+      throw new AggregateError(
+        [primaryError, error].filter(Boolean),
+        [result.error, result.cleanupError].filter(Boolean).join("; ")
+      );
     }
+    if (primaryError) throw primaryError;
   }
 } catch (error) {
   failed = error;
