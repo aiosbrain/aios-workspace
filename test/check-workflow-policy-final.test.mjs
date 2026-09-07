@@ -14,7 +14,7 @@ test("CLI drains every diagnostic to a slow pipe before exiting", async () => {
     for (let i = 0; i < 300; i++) {
       writeFileSync(
         path.join(dir, `probe-${i}.yml`),
-        "on: pull_request\njobs:\n  dump:\n    steps: [{ run: 'echo ${{ secrets.TOKEN }}' }]\n"
+        "on: pull_request\npermissions: {}\njobs:\n  dump:\n    steps: [{ run: 'echo ${{ secrets.TOKEN }}' }]\n"
       );
     }
     const child = spawn(
