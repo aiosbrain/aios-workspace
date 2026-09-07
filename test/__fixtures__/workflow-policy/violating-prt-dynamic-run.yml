@@ -1,0 +1,12 @@
+# VIOLATES pr-target-dynamic-run — a PR title expanded into the shell program text.
+name: violating prt dynamic run
+on:
+  pull_request_target:
+permissions:
+  contents: read
+jobs:
+  greet:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "title is ${{ github.event.pull_request.title }}"
+      - run: echo "branch is ${{ github.head_ref }}"

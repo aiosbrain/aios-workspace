@@ -1,0 +1,26 @@
+# NEGATIVE CONTROLS for bracket-index normalization. Normalizing must not turn "uses a bracket
+# index" into "is a violation" — only the resolved target decides.
+name: compliant prt bracket notation
+on:
+  pull_request_target:
+permissions:
+  contents: read
+jobs:
+  # `base.sha` is on the proven-trusted field allowlist. It has to stay trusted through the
+  # bracket form too, or the documented-correct base checkout starts failing.
+  trusted-base-bracket:
+    runs-on: ubuntu-latest
+    env:
+      SAFE: ${{ github.event.pull_request.base.sha }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ env['SAFE'] }}
+
+  # A double-quoted literal index onto a literal value is not PR-controlled by any route.
+  literal-bracket:
+    runs-on: ubuntu-latest
+    env:
+      FOO: bar
+    steps:
+      - run: echo ${{ env["FOO"] }}

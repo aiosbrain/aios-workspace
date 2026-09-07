@@ -1,0 +1,13 @@
+# REGRESSION FIXTURE (2 of 3): the non-PR-reachable twin, sharing the `name:` above. Sorts AFTER
+# its twin, so a last-write-wins index retains THIS one — the file that proves nothing.
+name: duplicated upstream name
+on:
+  schedule:
+    - cron: "0 5 * * *"
+permissions:
+  contents: read
+jobs:
+  noop:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo scheduled twin

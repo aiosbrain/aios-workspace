@@ -1,0 +1,10 @@
+# Transitive case, hop 2 of 3. Clean itself; it only forwards the call one more level.
+# The pull_request_target origin has to survive BOTH hops.
+name: upstream prt chain middle
+on:
+  workflow_call:
+permissions:
+  contents: read
+jobs:
+  hop:
+    uses: ./.github/workflows/violating-prt-chain-end.yml

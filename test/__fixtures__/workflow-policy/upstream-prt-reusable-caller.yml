@@ -1,0 +1,10 @@
+# The caller in the reusable-workflow bypass. Clean itself — it delegates every privileged step to
+# a local reusable workflow, which is an ordinary refactor and exactly what makes the hole dangerous.
+name: upstream prt reusable caller
+on:
+  pull_request_target:
+permissions:
+  contents: read
+jobs:
+  delegate:
+    uses: ./.github/workflows/violating-prt-reusable-callee.yml

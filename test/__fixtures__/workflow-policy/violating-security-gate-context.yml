@@ -1,0 +1,12 @@
+# VIOLATES security-gate-context — an Actions job naming the App-owned required context.
+name: violating security gate context
+on:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  forge:
+    runs-on: ubuntu-latest
+    steps:
+      - name: AIOS Security Gate
+        run: echo "pretending to be the gate"

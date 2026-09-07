@@ -1,0 +1,11 @@
+# NEGATIVE CONTROL (a): a plain `pull_request` caller. Its callee IS PR-reachable — so the secrets
+# rule must fire there — but pull_request does not carry base-repo privileges, so the pr-target
+# rules must NOT fire. This is what stops the bypass fix from becoming a false positive.
+name: upstream plain pr caller
+on:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  delegate:
+    uses: ./.github/workflows/pr-reachable-not-prt-callee.yml

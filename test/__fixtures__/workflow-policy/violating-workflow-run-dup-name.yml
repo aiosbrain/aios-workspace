@@ -1,0 +1,19 @@
+# REGRESSION FIXTURE (3 of 3): the downstream. It must be judged reachable via the PR-reachable
+# twin, AND inherit that twin's pull_request_target origin — so both a secrets finding and the
+# pr-target rules have to fire here.
+name: violating workflow run dup name
+on:
+  workflow_run:
+    workflows: ["duplicated upstream name"]
+    types: [completed]
+permissions:
+  contents: read
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    env:
+      DUP_TOKEN: ${{ secrets.DUP_TOKEN }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}

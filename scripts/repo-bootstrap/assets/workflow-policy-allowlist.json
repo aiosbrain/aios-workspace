@@ -1,0 +1,4 @@
+{
+  "$comment": "Reviewed waivers for scripts/check-workflow-policy.mjs, seeded empty by `aios repo-bootstrap`. This repo owns it from here. One entry suspends ONE rule for ONE (workflow, job) pair — there is no blanket file skip and no wildcard rule, by construction. Every entry needs an accountable `owner` and a `justification` of at least 40 characters naming the follow-up that deletes it; an entry missing either is itself a gate failure. Ratchet-only-down: removing an entry never needs permission, adding one does.",
+  "entries": []
+}

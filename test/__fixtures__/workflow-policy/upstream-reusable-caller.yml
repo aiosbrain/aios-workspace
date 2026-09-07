@@ -1,0 +1,9 @@
+# Compliant on its own; exists so violating-reusable.yml has a PR-like caller to be reached from.
+name: upstream reusable caller
+on:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  call:
+    uses: ./.github/workflows/violating-reusable.yml

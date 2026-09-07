@@ -1,0 +1,33 @@
+# Job/step OUTPUTS launder taint: their values are produced by a `run:` body the checker cannot
+# evaluate, and in a pull_request_target job that body routinely derives from the pull request.
+# Neither resolves statically, so both are treated as tainted — same conservative default as an
+# unresolvable index expression.
+name: prt opaque outputs
+on:
+  pull_request_target:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      ref: ${{ steps.p.outputs.ref }}
+    steps:
+      - id: p
+        run: echo "ref=x" >> "$GITHUB_OUTPUT"
+  via-steps:
+    runs-on: ubuntu-latest
+    steps:
+      - id: prep
+        run: echo "ref=y" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ steps.prep.outputs.ref }}
+  via-needs:
+    needs: prepare
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.prepare.outputs.ref }}

@@ -1,0 +1,12 @@
+# VIOLATES elevated-permissions — `checks: write` at workflow level.
+name: violating checks write
+on:
+  pull_request:
+permissions:
+  contents: read
+  checks: write
+jobs:
+  annotate:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo annotate
