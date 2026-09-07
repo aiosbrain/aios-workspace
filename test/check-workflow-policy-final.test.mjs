@@ -28,7 +28,9 @@ for (const trigger of ["workflow_call", "[workflow_call]", "[workflow_dispatch, 
     );
     const via = computeReachability([caller, callee]).get(callee.rel);
     assert.equal(via?.prTarget, true);
-    assert.ok(auditWorkflow(callee, via.prTarget).some((f) => f.rule === "pr-target-package-install"));
+    assert.ok(
+      auditWorkflow(callee, via.prTarget).some((f) => f.rule === "pr-target-package-install")
+    );
   });
 }
 
