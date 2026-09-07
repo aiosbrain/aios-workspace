@@ -17,12 +17,21 @@ const home = path.join(scratch, "home");
 const directory = path.join(home, ".aios");
 const file = path.join(directory, "credentials.json");
 const powershell = (script, target) =>
-  execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], {
-    encoding: "utf8",
-    timeout: 30000,
-    env: { ...process.env, MCP_ACL_TARGET: target },
-    windowsHide: true,
-  });
+  execFileSync(
+    "powershell.exe",
+    [
+      "-NoProfile",
+      "-NonInteractive",
+      "-Command",
+      "$env:PSModulePath=Join-Path $PSHOME 'Modules'; " + script,
+    ],
+    {
+      encoding: "utf8",
+      timeout: 30000,
+      env: { ...process.env, MCP_ACL_TARGET: target },
+      windowsHide: true,
+    }
+  );
 const ownerOnly =
   "$ErrorActionPreference='Stop'; $p=$env:MCP_ACL_TARGET; " +
   "$sid=[System.Security.Principal.WindowsIdentity]::GetCurrent().User; " +
