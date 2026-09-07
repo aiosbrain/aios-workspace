@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { managedPathsForWorkspace } from "./installed-skills.mjs";
 /**
  * update/seed-baseline.mjs — scaffold-time v2 baseline seeding (AIO-635 Decisions 1/5).
  *
@@ -17,7 +18,6 @@ import path from "node:path";
 import { readFileSync } from "node:fs";
 import { resolveDistributionRoot } from "../cli.mjs";
 import { toolkitMeta } from "../toolkit-meta.mjs";
-import { managedPathsForConfig } from "../toolkit-manifest.mjs";
 import { parseFlatYaml } from "../flat-yaml.mjs";
 import { writeV2State } from "./registry-root.mjs";
 
@@ -53,7 +53,7 @@ await writeV2State(repo, {
   sha: root.sha,
   meta,
   stampSource,
-  managedPaths: managedPathsForConfig(cfg),
+  managedPaths: managedPathsForWorkspace(repo, cfg),
   packageVersion: meta.version,
 });
 process.stderr.write(`seeded v2 sync baseline (${root.kind}, ${root.sha.slice(0, 12)})\n`);

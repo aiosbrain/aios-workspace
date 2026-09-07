@@ -44,6 +44,70 @@ export const VERBS = Object.freeze({
   status: { module: "scripts/connectors/linear/setup.mjs", credential: false },
 });
 
+// Required positional values can themselves be "--help". Beyond those operands,
+// recognize help flags while consuming option values just as the verb parsers do.
+function helpRequested(rest) {
+  const isHelp = (value) => value === "--help" || value === "-h";
+  if (rest.length === 2 && isHelp(rest[1])) return true;
+  const arity =
+    {
+      "export-desc": 2,
+      "verify-desc": 2,
+      "set-desc": 2,
+      "patch-desc": 2,
+      "set-title": 2,
+      "set-state": 2,
+      "set-priority": 2,
+      comment: 2,
+      blocks: 2,
+      related: 2,
+      "remove-relation": 3,
+      "set-project": 2,
+      "set-parent": 2,
+      "add-label": 2,
+      assign: 2,
+      get: 1,
+      comments: 1,
+      list: 1,
+      relations: 1,
+      projects: 1,
+      "create-project": 1,
+      template: 1,
+      create: 1,
+      users: 1,
+      query: 1,
+    }[rest[0]] ?? 0;
+  const valueFlags = new Set([
+    "--desc",
+    "--template",
+    "--label",
+    "--state",
+    "--parent",
+    "--assignee",
+    "--project",
+    "--priority",
+    "--team",
+    "--missing-label",
+    "--vars",
+    "--repo",
+    "--tier",
+    "--activity-path",
+  ]);
+  let operands = 0;
+  for (let i = 1; i < rest.length; i++) {
+    if (valueFlags.has(rest[i])) {
+      i++;
+      continue;
+    }
+    if (operands < arity) {
+      operands++;
+      continue;
+    }
+    if (isHelp(rest[i])) return true;
+  }
+  return false;
+}
+
 /**
  * `aios linear <verb> …`. Returns the exit code (the registry descriptor is exit-code);
  * legacy verb implementations keep their own process.exit(1) on provider failures, so the
@@ -63,7 +127,7 @@ export async function cmdLinear(repo, rest, options = {}) {
   }
   // AIO-1116: `aios linear <verb> --help` is a HELP request, not a provider call — answer
   // it before credential resolution so an unconfigured machine can still read usage.
-  if (rest.length === 2 && ["--help", "-h"].includes(rest[1])) {
+  if (helpRequested(rest)) {
     console.log(linearUsage());
     return 0;
   }

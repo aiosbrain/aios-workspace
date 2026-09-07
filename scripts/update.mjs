@@ -1,3 +1,4 @@
+import { managedPathsForWorkspace } from "./update/installed-skills.mjs";
 import { parseUpdateArgs } from "./update-args.mjs";
 /**
  * update.mjs — `aios update`: get the latest AIOS (the "auto-update like Claude" command).
@@ -36,7 +37,7 @@ import { existsSync, mkdtempSync, rmSync, writeFileSync, readFileSync } from "no
 import { execFileSync, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { c, UpdateError, gitEnv } from "./cli-common.mjs";
-import { VERSION_FILE, managedPathsForConfig, pmToolPrunable } from "./toolkit-manifest.mjs";
+import { VERSION_FILE, pmToolPrunable } from "./toolkit-manifest.mjs";
 import { migratePmTool } from "./update/pm-tool.mjs";
 import { printMergeReport } from "./update/report.mjs";
 import { askCiWorkflow, ciWorkflowState, persistCiWorkflow } from "./ci-workflow.mjs";
@@ -214,7 +215,7 @@ function assessReadOnlySource(srcDir, { pullOpts, io, skipRemote = false, repo =
   // whole change set exists to eliminate. Throwing (rather than folding into `reasons`)
   // matches the contract already set by `missingSeedPaths`, whose identical refusal has
   // always surfaced read-only as a structured `mode: "error"` result.
-  const managedPaths = managedPathsForConfig(cfg);
+  const managedPaths = managedPathsForWorkspace(repo, cfg);
   if (repo)
     for (const destRel of plannedDestRels(
       srcDir,
@@ -474,7 +475,7 @@ async function cmdUpdateInner(repo, cfg, args) {
           `match --expect-src-head ${expectHead.slice(0, 12)} — the install changed since the preview.`
       );
     }
-    const managedPaths = managedPathsForConfig(cfg);
+    const managedPaths = managedPathsForWorkspace(repo, cfg);
     const prunablePaths = pmToolPrunable(cfg);
     const a = assessRegistrySource(repo, cfg, source.root);
     const sha = source.root.sha ?? null;
@@ -632,7 +633,7 @@ async function cmdUpdateInner(repo, cfg, args) {
         ? readFileSync(stampPath, "utf8").split(/\s/)[0]
         : undefined;
       const force = args.includes("--force");
-      const managedPaths = managedPathsForConfig(cfg);
+      const managedPaths = managedPathsForWorkspace(repo, cfg);
       const dirty = force ? new Set() : dirtyManagedPaths(repo, managedPaths);
 
       const r = mergeManaged(srcDir, srcDir, repo, baseSha, {

@@ -12,7 +12,8 @@
  *      registry root has a `pkg:` source line that falls through to PATH by construction.
  *   4. A PATH-installed `aios` (a `command -v`-equivalent walk of $PATH). The hit is
  *      realpath'd and rejected when it is this shim itself or lies under the workspace
- *      root — npm bin stubs are wrappers whose realpath differs from the shim file, so
+ *      root unless it is the verified workspace-local npm package entrypoint. Bin stubs
+ *      are wrappers whose realpath differs from the shim file, so
  *      the old equality-only self-exec guard is extended to directory containment. The
  *      surviving hit is spawned directly by absolute path (never through a shell).
  *   5. Relative ~/Projects layout guesses — legacy last resort (deleted at v3.0.0).
@@ -62,6 +63,17 @@ const usableEntry = (p) => {
   }
 };
 
+// Permit the actual local npm package, while still rejecting workspace wrappers.
+const localPackageEntry = (real) => {
+  try {
+    const root = resolve(workspaceRoot, "node_modules/@aiosbrain/aios");
+    const pkg = JSON.parse(readFileSync(resolve(root, "package.json"), "utf8"));
+    const build = JSON.parse(readFileSync(resolve(root, "build.json"), "utf8"));
+    return pkg.name === "@aiosbrain/aios" && /^[0-9a-f]{40}$/.test(build.sha) &&
+      real === realpathSync(fromDir(root));
+  } catch { return false; }
+};
+
 // PATH-installed `aios` — the directory-containment extension of the self-exec guard.
 const fromPath = () => {
   for (const dir of (process.env.PATH ?? "").split(delimiter).filter(Boolean)) {
@@ -70,7 +82,7 @@ const fromPath = () => {
       accessSync(candidate, constants.X_OK);
       const real = realpathSync(candidate);
       if (real === currentScript) continue; // this shim on PATH — never self-exec
-      if (real === workspaceRoot || real.startsWith(workspaceRoot + sep)) continue;
+      if ((real === workspaceRoot || real.startsWith(workspaceRoot + sep)) && !localPackageEntry(real)) continue;
       return candidate; // spawned by ABSOLUTE path, never through a shell
     } catch {
       continue; // not executable / dangling — keep walking

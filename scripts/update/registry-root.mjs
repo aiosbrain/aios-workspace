@@ -1,3 +1,4 @@
+import { managedPathsForWorkspace, withInstalledSkillBases } from "./installed-skills.mjs";
 import { withUpdateLock } from "./lock.mjs";
 import { prepareV2State, commitV2State } from "./state-plan.mjs";
 /**
@@ -43,7 +44,7 @@ import {
 import { printMergeReport } from "./report.mjs";
 import { installWorktreeSafetyBackstops } from "../worktree.mjs";
 import { toolkitMeta } from "../toolkit-meta.mjs";
-import { VERSION_FILE, managedPathsForConfig, pmToolPrunable } from "../toolkit-manifest.mjs";
+import { VERSION_FILE, pmToolPrunable } from "../toolkit-manifest.mjs";
 
 export { ROLLBACK_FILE, recordRollbackIfUpgrading, rollbackFromRecord } from "./rollback.mjs";
 import { recordRollbackIfUpgrading } from "./rollback.mjs";
@@ -57,7 +58,7 @@ import { recordRollbackIfUpgrading } from "./rollback.mjs";
 export function chooseBaseResolver(repo, srcDir, baseSha, { registry = false } = {}) {
   const stampInfo = readStamp(repo);
   if (stampInfo?.format >= 2) {
-    return storeBaseResolver(repo, verifiedBaseIndex(repo, stampInfo));
+    return withInstalledSkillBases(storeBaseResolver(repo, verifiedBaseIndex(repo, stampInfo)));
   }
   if (!registry) return gitBaseResolver(srcDir, baseSha);
   const recorded = stampInfo?.source;
@@ -162,7 +163,7 @@ async function vendorFromRegistryLocked(repo, cfg, args, root, io) {
   }
   const meta = toolkitMeta(root.dir);
   const stampSource = `pkg:${DISTRIBUTION_PACKAGE}@${meta.version}`;
-  const managedPaths = managedPathsForConfig(cfg);
+  const managedPaths = managedPathsForWorkspace(repo, cfg);
   const prunablePaths = pmToolPrunable(cfg);
   const vs = vendorSafety(root.dir, managedPaths, { gitIndex: false });
   if (!vs.safe) {
@@ -272,7 +273,7 @@ function readInstalledIntegrity(rootDir) {
 
 /** Read-only assessment of a registry root for `--check`/`--preview`. */
 export function assessRegistrySource(repo, cfg, root) {
-  const managedPaths = managedPathsForConfig(cfg);
+  const managedPaths = managedPathsForWorkspace(repo, cfg);
   const vs = vendorSafety(root.dir, managedPaths, { gitIndex: false });
   const reasons = [];
   if (!vs.safe) reasons.push(vendorSafetyReason(vs));

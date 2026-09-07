@@ -1,3 +1,4 @@
+import { managedPathsForWorkspace } from "./installed-skills.mjs";
 import { withUpdateLock } from "./lock.mjs";
 import { prepareV2State, commitV2State } from "./state-plan.mjs";
 /**
@@ -9,7 +10,7 @@ import path from "node:path";
 import { existsSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { c, UpdateError } from "../cli-common.mjs";
-import { VERSION_FILE, managedPathsForConfig, pmToolPrunable } from "../toolkit-manifest.mjs";
+import { VERSION_FILE, pmToolPrunable } from "../toolkit-manifest.mjs";
 import { printMergeReport } from "./report.mjs";
 import { toolkitMeta } from "../toolkit-meta.mjs";
 import { installWorktreeSafetyBackstops } from "../worktree.mjs";
@@ -62,7 +63,7 @@ async function cmdVendorApplyOnlyLocked(repo, cfg, args) {
     );
   }
   const force = args.includes("--force");
-  const managedPaths = managedPathsForConfig(cfg);
+  const managedPaths = managedPathsForWorkspace(repo, cfg);
   const vs = vendorSafety(srcDir, managedPaths);
   if (!vs.safe) {
     throw new UpdateError(

@@ -5,6 +5,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
+import { mkdtempSync, existsSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
 
 import {
@@ -139,5 +141,32 @@ for (const value of ["--help", "-h"]) {
     assert.equal(result.status, 0, result.stderr);
     assert.doesNotMatch(result.stdout, /usage: aios/);
     assert.match(result.stdout, /commented/);
+  });
+}
+
+for (const configured of [false, true]) {
+  test(`Linear nested activity help is read-only with configured=${configured}`, () => {
+    const home = mkdtempSync(path.join(tmpdir(), "linear-help-"));
+    const output = path.join(home, "activity.jsonl");
+    try {
+      const result = spawnSync(
+        process.execPath,
+        ["--import", MOCK, AIOS, "linear", "activity", "pull", "--help", "--activity-path", output],
+        {
+          cwd: home,
+          encoding: "utf8",
+          env: {
+            HOME: home,
+            PATH: process.env.PATH,
+            ...(configured ? { LINEAR_API_KEY: "synthetic-parity-key-not-real" } : {}),
+          },
+        }
+      );
+      assert.equal(result.status, 0, result.stderr);
+      assert.match(result.stdout, /usage: aios linear/);
+      assert.equal(existsSync(output), false);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 }

@@ -336,3 +336,29 @@ test("a missing or malformed stamp is a missing signal, not a crash", () => {
     }
   }
 });
+
+test("a pkg-stamped workspace delegates to its own real npm installation", () => {
+  const workspace = fixtureWorkspace("source pkg:@aiosbrain/aios@2.0.0\n");
+  try {
+    const pkg = path.join(workspace, "node_modules/@aiosbrain/aios");
+    mkdirSync(path.join(pkg, "scripts"), { recursive: true });
+    const entry = path.join(pkg, "scripts/aios.mjs");
+    writeFileSync(entry, '#!/usr/bin/env node\nconsole.log("LOCAL-NPM-DELEGATE");\n', {
+      mode: 0o755,
+    });
+    writeFileSync(
+      path.join(pkg, "package.json"),
+      JSON.stringify({ name: "@aiosbrain/aios", version: "2.0.0" })
+    );
+    writeFileSync(path.join(pkg, "build.json"), JSON.stringify({ sha: "b".repeat(40) }));
+    const bin = path.join(workspace, "node_modules/.bin");
+    mkdirSync(bin);
+    symlinkSync(entry, path.join(bin, "aios"));
+    assert.match(
+      runShim(workspace, { PATH: `${bin}${path.delimiter}${NODE_ONLY_PATH}` }),
+      /LOCAL-NPM-DELEGATE/
+    );
+  } finally {
+    rmSync(workspace, discard);
+  }
+});
