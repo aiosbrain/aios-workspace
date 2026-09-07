@@ -31,12 +31,16 @@
 import { existsSync, realpathSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { DISTRIBUTION_MARKERS, missingDistributionMarkers, isDistributionRoot } from "./cli.mjs";
+import {
+  DISTRIBUTION_MARKERS,
+  missingDistributionMarkers,
+  isDistributionRoot,
+} from "./distribution-root.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
 /**
- * Toolkit detection is the ONE classifier in `scripts/cli/distribution-root.mjs`
+ * Toolkit detection is the ONE classifier in `scripts/distribution-root.mjs`
  * (AIO-635 Decision 3) — this module re-exports the marker set and boolean under their
  * historical names so the devtools copy and the GUI's sibling keep a stable surface.
  * A `checkout` OR `registry` (npm-installed / unpacked tarball) root both qualify.
