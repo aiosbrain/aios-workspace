@@ -719,7 +719,6 @@ fi
 # Repository-meta files: CODEOWNERS, brain-reporting CI, .gitignore, planning stub.
 export CI_WORKFLOW
 . "$SCRIPT_DIR/scaffold-repo-meta.sh"
-
 # Seed after repository metadata, so .gitignore cannot overwrite the base-store rules.
 if command -v node >/dev/null 2>&1; then
   node "$SCRIPT_DIR/update/seed-baseline.mjs" --repo "$OUTPUT" --from "$REPO_ROOT" || exit 1

@@ -24,6 +24,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
+import { fakeRegistryRoot, fakeWorkspace, BUILD_SHA } from "./update-registry-fixtures.mjs";
 
 import { stampBody, readStamp, readStampBaseSha, STAMP_FORMAT } from "../scripts/update/stamp.mjs";
 import {
@@ -44,39 +45,11 @@ import {
 } from "../scripts/update/registry-root.mjs";
 
 const discard = { recursive: true, force: true };
-const BUILD_SHA = "b".repeat(40);
+
 const NOOP_IO = { log: () => {}, warn: () => {} };
 
 // The fixtures ship a minimal managed surface (the shim file entry + the .claude/rules
 // dir entry); vendorFromRegistry walks the REAL manifest and skips absent srcs.
-
-function fakeRegistryRoot({ version = "2.0.0", sha = BUILD_SHA, rules = {} } = {}) {
-  const dir = mkdtempSync(path.join(tmpdir(), "regroot-"));
-  mkdirSync(path.join(dir, "scaffold", "scripts"), { recursive: true });
-  mkdirSync(path.join(dir, "scaffold", ".claude", "rules"), { recursive: true });
-  mkdirSync(path.join(dir, "scripts"), { recursive: true });
-  writeFileSync(path.join(dir, "scripts", "toolkit-manifest.mjs"), "// marker\n");
-  writeFileSync(
-    path.join(dir, "package.json"),
-    JSON.stringify({ name: "@aiosbrain/aios", version })
-  );
-  writeFileSync(path.join(dir, "build.json"), JSON.stringify({ sha, version }));
-  writeFileSync(path.join(dir, "scaffold", "scripts", "aios.mjs"), "// shim v2\n");
-  const allRules = { "one.md": "rule one v1\nshared tail\n", ...rules };
-  for (const [name, content] of Object.entries(allRules)) {
-    writeFileSync(path.join(dir, "scaffold", ".claude", "rules", name), content);
-  }
-  // docs/brain-api.md so toolkitMeta can read a brain-api version.
-  mkdirSync(path.join(dir, "docs"), { recursive: true });
-  writeFileSync(path.join(dir, "docs", "brain-api.md"), "**API version:** 1.24\n");
-  return { dir, root: { dir, kind: "registry", version, sha } };
-}
-
-function fakeWorkspace() {
-  const dir = mkdtempSync(path.join(tmpdir(), "regws-"));
-  writeFileSync(path.join(dir, "aios.yaml"), "owner: t\npm_tool: none\n");
-  return dir;
-}
 
 const vendorArgs = [];
 const cfg = { pm_tool: "none" };
