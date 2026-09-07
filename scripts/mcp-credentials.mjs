@@ -19,7 +19,7 @@ export function readWindowsCredentialAcl(file, exec = execFileSync) {
   // The path is passed as an environment value, never interpolated into PowerShell code.
   // Node can inherit PowerShell 7 module paths; use this process's bundled Windows modules.
   const script =
-    "$ErrorActionPreference='Stop'; $env:PSModulePath=Join-Path $PSHOME 'Modules'; " +
+    "$ErrorActionPreference='Stop'; $env:PSModulePath=$PSHOME+'\\Modules'; " +
     "$a=Get-Acl -LiteralPath $env:AIOS_CREDENTIAL_ACL_PATH; " +
     "$current=[System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value; " +
     "$owner=([System.Security.Principal.NTAccount]$a.Owner).Translate([System.Security.Principal.SecurityIdentifier]).Value; " +

@@ -23,7 +23,7 @@ const powershell = (script, target) =>
       "-NoProfile",
       "-NonInteractive",
       "-Command",
-      "$env:PSModulePath=Join-Path $PSHOME 'Modules'; " + script,
+      "$env:PSModulePath=$PSHOME+'\\Modules'; " + script,
     ],
     {
       encoding: "utf8",
