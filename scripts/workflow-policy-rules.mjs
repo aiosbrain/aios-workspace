@@ -255,12 +255,20 @@ function validPermissions(perms) {
   );
 }
 
-function auditInputs(node, jobId, tainted, add) {
+function auditInputs(node, jobId, tainted, add, skip = []) {
   if (!isMap(node.with)) return;
-  for (const { value, line } of walkScalars(node.with)) {
-    const hit = taintedExpression(value, tainted);
-    if (hit)
-      add(jobId, "pr-target-input", line || lineOf(node, "with"), `action/workflow input: ${hit}`);
+  for (const [key, value] of Object.entries(node.with)) {
+    if (skip.includes(key)) continue;
+    for (const scalar of walkScalars(value, key, lineOf(node.with, key))) {
+      const hit = taintedExpression(scalar.value, tainted);
+      if (hit)
+        add(
+          jobId,
+          "pr-target-input",
+          scalar.line || lineOf(node, "with"),
+          `action/workflow input: ${hit}`
+        );
+    }
   }
 }
 
@@ -354,13 +362,8 @@ function auditPrTargetStep(step, ctx) {
     );
   // Checkout selectors retain their scoped acquisition rule; all remaining action inputs
   // are checked here, including scripts and opaque third-party inputs.
-  const inputNode = { ...step, with: { ...withBlock } };
-  if (/(^|\/)checkout@/.test(uses)) {
-    delete inputNode.with.ref;
-    delete inputNode.with.repository;
-  }
-  delete inputNode.with.script;
-  auditInputs(inputNode, jobId, tainted, add);
+  const skip = /(^|\/)checkout@/.test(uses) ? ["ref", "repository", "script"] : ["script"];
+  auditInputs(step, jobId, tainted, add, skip);
 
   for (const { line, detail } of prContentAcquisition(step, tainted, stepLine))
     add(jobId, "pr-target-checkout", line, `${label}: ${detail}`);

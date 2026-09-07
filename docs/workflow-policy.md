@@ -55,3 +55,9 @@ privileged channels, environment resolution, local calls, permissions and direct
 `test/workflow-policy-mutations.test.mjs` restores seventeen exact defects in disposable checker copies,
 requires assertion failures for every mutant, and reruns the restored controls. The existing bypass
 fixtures and slow-pipe test remain active; the latter still requires all 300 diagnostic records.
+
+The boundary checker also prepares `--allow-stale` for trusted-base hygiene execution. Local runs
+remain strict about unused waivers. When a candidate removes a coupling, a base-owned waiver may
+legitimately be unused; this option reports it as a note while still rejecting new violations.
+Without it, removing an old coupling and its waiver would have no passing migration path once CI
+loads the rules from the base.

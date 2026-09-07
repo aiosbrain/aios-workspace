@@ -64,7 +64,7 @@ const mutations = [
   [
     "remote inputs unchecked",
     "rules",
-    "auditInputs(inputNode, jobId, tainted, add);",
+    "auditInputs(step, jobId, tainted, add, skip);",
     "// defect: no action inputs",
   ],
   [

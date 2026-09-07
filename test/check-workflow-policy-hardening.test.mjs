@@ -9,6 +9,7 @@ import {
   classifyValue,
   environmentValues,
 } from "../scripts/workflow-policy-values.mjs";
+import { parseWorkflowYaml } from "../scripts/workflow-yaml.mjs";
 import { main } from "../scripts/check-workflow-policy.mjs";
 
 const pin = "a".repeat(40);
@@ -249,4 +250,18 @@ test("different-case shell variables cannot shadow inherited acquisition taint",
     }),
     []
   );
+});
+
+test("action input diagnostics preserve parsed source lines", () => {
+  const doc = parseWorkflowYaml(`on: pull_request_target
+permissions: {}
+jobs:
+  test:
+    steps:
+      - uses: vendor/action@${pin}
+        with:
+          command: ${expr("matrix.command")}
+`);
+  const findings = auditWorkflow({ rel: "probe.yml", doc });
+  assert.equal(findings.find((f) => f.rule === "pr-target-input").line, 8);
 });
