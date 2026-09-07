@@ -1,0 +1,28 @@
+# A primitive invoked by ABSOLUTE PATH is the same primitive. The prefix character class
+# originally accepted only whitespace/`;&|(`/backtick/`$`, so `/usr/bin/npm ci` slipped every
+# primitive list while a bare `npm ci` was caught. Same hole in the fetch and archive lists.
+name: prt abspath primitives
+on:
+  pull_request_target:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  abs-package:
+    runs-on: ubuntu-latest
+    steps:
+      - run: /usr/bin/npm ci
+  abs-pip:
+    runs-on: ubuntu-latest
+    steps:
+      - run: /opt/bin/pip install .
+  abs-fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - run: /usr/bin/curl -sL "https://example.com/${{ github.event.pull_request.head.sha }}/a.sh" -o a.sh
+  abs-archive:
+    runs-on: ubuntu-latest
+    env:
+      H: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - run: /bin/tar -xzf "$H.tar.gz"

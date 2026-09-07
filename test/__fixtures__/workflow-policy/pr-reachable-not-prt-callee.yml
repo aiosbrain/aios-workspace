@@ -1,0 +1,18 @@
+# NEGATIVE CONTROL (a), callee. Byte-for-byte the same risky shapes as the prt callee, but reached
+# only from `pull_request`. Expected: `secrets-in-pr-reachable` fires (it is PR-reachable), and
+# every pr-target rule stays silent.
+name: pr reachable not prt callee
+on:
+  workflow_call:
+permissions:
+  contents: read
+jobs:
+  ordinary:
+    runs-on: ubuntu-latest
+    env:
+      CALLEE_TOKEN: ${{ secrets.CALLEE_TOKEN }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - run: echo "ordinary ${{ github.event.pull_request.title }}"

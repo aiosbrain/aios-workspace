@@ -1,0 +1,14 @@
+# Transitive case, hop 3 of 3 — the violation lives here, two reusable hops from the trigger.
+name: violating prt chain end
+on:
+  workflow_call:
+permissions:
+  contents: read
+jobs:
+  deep:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - run: echo "deep ${{ github.head_ref }}"

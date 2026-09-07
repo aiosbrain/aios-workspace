@@ -1,0 +1,13 @@
+# NEGATIVE CONTROL (b): a scheduled/push-only caller. No PR-like event reaches it, so neither it
+# nor its callee is in scope at all — not even for the secrets rule.
+name: upstream schedule caller
+on:
+  schedule:
+    - cron: "0 4 * * *"
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  delegate:
+    uses: ./.github/workflows/compliant-unreached-callee.yml

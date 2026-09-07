@@ -1,0 +1,30 @@
+# REGRESSION FIXTURE for the reusable-workflow bypass (Codex adversarial review, P1).
+#
+# This file declares `on: workflow_call`, so its OWN trigger list contains no pull_request_target.
+# It nonetheless executes with the CALLER's pull_request_target event context and privileges. A gate
+# that derives "is this a pull_request_target job?" from the audited file's own `on:` block lets
+# every pr-target rule be laundered by moving the step in here.
+#
+# All four pr-target facets are present so the coverage oracle can require each of them to have
+# fired at least once on an INDIRECTLY reached workflow.
+name: violating prt reusable callee
+on:
+  workflow_call:
+permissions:
+  contents: read
+jobs:
+  privileged:
+    runs-on: ubuntu-latest
+    steps:
+      # pr-target-checkout
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      # pr-target-artifact-download
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: pr-build
+      # pr-target-package-install
+      - run: npm ci
+      # pr-target-dynamic-run
+      - run: echo "building ${{ github.event.pull_request.title }}"

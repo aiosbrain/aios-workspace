@@ -1,0 +1,37 @@
+# REGRESSION FIXTURE: the `${{ env.X }}` indirection (demonstrated bypass, final review round).
+#
+# Taint tracking originally covered only the SHELL form (`HEAD_SHA: ${{ …head.sha }}` then
+# `curl "$HEAD_SHA"`). The GitHub-expression form `${{ env.HEAD_SHA }}` is substituted by the
+# Actions expression evaluator BEFORE the shell ever runs, so it is the more direct injection of
+# the two — and it matched nothing. The reproducer below produced zero findings.
+#
+# `probe` is that reproducer verbatim. `two-hop` proves the taint survives a chain.
+name: violating prt env expression
+on:
+  pull_request_target:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  # Both rules must fire: checkout of a PR-controlled ref, and a PR title interpolated into a shell.
+  probe:
+    runs-on: ubuntu-latest
+    env:
+      TITLE: ${{ github.event.pull_request.title }}
+      HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ env.HEAD_SHA }}
+      - run: echo ${{ env.TITLE }}
+
+  # Indirection through two hops: A is tainted directly, B is tainted only via `env.A`.
+  two-hop:
+    runs-on: ubuntu-latest
+    env:
+      A: ${{ github.event.pull_request.head.sha }}
+      B: ${{ env.A }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ env.B }}

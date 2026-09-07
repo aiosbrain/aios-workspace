@@ -1,0 +1,22 @@
+# NEGATIVE CONTROL for the inverted fetch rule. A pull_request_target job may legitimately fetch
+# things — a pinned toolchain, a fixed schema, its own base-branch tree. None of these carry a
+# PR-controlled reference, so the conjunction must stay silent. Without this control, inverting the
+# rule would simply have traded a false negative for a rule that flags every `curl` in the repo.
+name: compliant prt trusted fetch
+on:
+  pull_request_target:
+permissions:
+  contents: read
+jobs:
+  trusted:
+    runs-on: ubuntu-latest
+    env:
+      # Note: a github.* value that is NOT attacker-controlled must not taint anything.
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+      - run: curl -sSfL https://example.invalid/pinned/v1.2.3/tool.tgz -o tool.tgz
+      - run: tar -xzf tool.tgz -C /opt/tool
+      - run: git fetch origin main --depth 1

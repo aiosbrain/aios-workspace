@@ -1,0 +1,45 @@
+# REGRESSION FIXTURE: GitHub's bracket index syntax (demonstrated bypass, final round).
+#
+# `env['NAME']` is exactly equivalent to `env.NAME`, and every context supports it —
+# `github['event']`, `inputs["x"]`, `secrets['x']`. The taint resolver matched only the dot form,
+# so swapping one character of syntax produced ZERO findings. Fixed by normalizing the
+# literal-string index into dot notation before any pattern runs, so one set of patterns covers
+# both syntaxes and no future rule can forget the bracket case.
+name: violating prt bracket notation
+on:
+  pull_request_target:
+permissions:
+  contents: read
+jobs:
+  # `env['HEAD_SHA']` in a checkout ref — the reported reproducer.
+  bracket-ref:
+    runs-on: ubuntu-latest
+    env:
+      HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ env['HEAD_SHA'] }}
+
+  # Bracket indexing of the `github` context itself, straight into a run body.
+  bracket-context:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo ${{ github['event'].pull_request.title }}
+
+  # Two hops, the second of which uses the bracket form.
+  bracket-two-hop:
+    runs-on: ubuntu-latest
+    env:
+      A: ${{ github.event.pull_request.head.sha }}
+      B: ${{ env['A'] }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ env['B'] }}
+
+  # A non-literal index cannot be resolved statically, so it cannot be proven safe — fail closed.
+  unresolvable-index:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo ${{ env[format('HEAD_{0}', 1)] }}

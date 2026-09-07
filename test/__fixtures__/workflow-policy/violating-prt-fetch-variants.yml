@@ -1,0 +1,52 @@
+# REGRESSION FIXTURES for the endpoint-blocklist hole (Codex adversarial review, P1 #2).
+#
+# The old rule enumerated known-bad endpoints and missed every shape below. Each job here is one
+# way to pull attacker-controlled source into a pull_request_target job; all of them must trip
+# `pr-target-checkout` via the primitive x PR-controlled-reference conjunction, NOT via an
+# endpoint list. One job per variant so a test can name the exact shape that regressed.
+name: violating prt fetch variants
+on:
+  pull_request_target:
+permissions:
+  contents: read
+jobs:
+  # 1. The exact Codex case. `tar.gz` is not `tarball|zipball|legacy`, and there is no `git fetch`,
+  #    so all three of the old alternatives missed it.
+  codeload-targz:
+    runs-on: ubuntu-latest
+    steps:
+      - run: curl -sL https://codeload.github.com/o/r/tar.gz/refs/pull/123/head -o src.tgz
+
+  # 2. A different host entirely, selected by an inline expression.
+  raw-content:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          curl -sL "https://raw.githubusercontent.com/o/r/${{ github.event.pull_request.head.sha }}/build.sh" -o build.sh
+
+  # 3. A bare object fetch with no `refs/pull/` literal anywhere.
+  git-fetch-sha:
+    runs-on: ubuntu-latest
+    steps:
+      - run: git fetch origin ${{ github.event.pull_request.head.sha }}
+
+  # 4. The `env:` indirection: the run body contains no `${{ }}` at all, so an expression-only
+  #    check sees nothing. Taint has to flow from `env:` into `$HEAD_SHA`. This is also the shape
+  #    a "fetch PR objects as inert data" scanner uses — see the boundary test.
+  env-indirection:
+    runs-on: ubuntu-latest
+    env:
+      HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+      HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - run: |
+          curl -sL "https://example.invalid/$HEAD_REPO/archive/$HEAD_SHA" -o cand.tgz
+          tar -xzf cand.tgz -C ./candidate
+
+  # 5. Archive extraction driven by the webhook payload on disk — no expression, no env mapping.
+  event-path:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          sha=$(jq -r .pull_request.head.sha "$GITHUB_EVENT_PATH")
+          git fetch origin "$sha"

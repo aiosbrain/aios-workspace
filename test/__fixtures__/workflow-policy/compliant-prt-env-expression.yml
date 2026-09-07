@@ -1,0 +1,38 @@
+# NEGATIVE CONTROLS for the `${{ env.X }}` taint fix. Each job is the SAFE twin of a job in
+# violating-prt-env-expression.yml. Without these, resolving `env.X` would simply flag every
+# workflow that uses an env var — trading a false negative for a rule nobody can keep green.
+name: compliant prt env expression
+on:
+  pull_request_target:
+permissions:
+  contents: read
+jobs:
+  # `base.sha` is on the proven-trusted field allowlist, so BASE never enters the taint set and
+  # `ref: ${{ env.BASE }}` is the documented-correct way to check out the base tree.
+  trusted-base:
+    runs-on: ubuntu-latest
+    env:
+      BASE: ${{ github.event.pull_request.base.sha }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ env.BASE }}
+
+  # A literal env value is not PR-controlled by any route.
+  literal:
+    runs-on: ubuntu-latest
+    env:
+      FOO: bar
+    steps:
+      - run: echo ${{ env.FOO }}
+
+  # SHADOWING: tainted at job scope, overridden with a literal at STEP scope. The step's own
+  # definition decides, so this step is clean — precedence, not a blind union.
+  shadowed:
+    runs-on: ubuntu-latest
+    env:
+      TITLE: ${{ github.event.pull_request.title }}
+    steps:
+      - env:
+          TITLE: redacted
+        run: echo ${{ env.TITLE }}
