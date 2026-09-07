@@ -99,6 +99,8 @@ export function splitKey(content, lineNo) {
     if (key === "" || /^[[{>|]/.test(key)) return null;
   }
   if (key === "<<") throw new YamlError("merge keys (`<<`) are not supported", lineNo);
+  if (key === "__proto__")
+    throw new YamlError("`__proto__` mapping keys are not supported", lineNo);
   if (/^[&*!]/.test(key)) throw new YamlError("anchors/aliases/tags are not supported", lineNo);
   return { key, rest: after };
 }

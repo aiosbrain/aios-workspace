@@ -41,7 +41,7 @@ const ARTIFACT_RUN = /\bgh\s+run\s+download\b|\/actions\/runs\/[^\s"']*\/artifac
 // Deliberately broader than "install": in a pull_request_target job, running the PR's own scripts,
 // lockfile lifecycle hooks, or build files is the exploit primitive, not just fetching packages.
 const PACKAGE_INSTALL_RUN =
-  /(?:^|[\s;&|(`\/])(?:npm\s+(?:ci|install|i|exec|run)|npx\s|yarn(?:\s|$)|pnpm(?:\s|$)|bun\s+(?:install|run)|pip3?\s+install|poetry\s+install|bundle\s+install|composer\s+install|go\s+(?:mod\s+download|get)|cargo\s+(?:build|test|run|install)|mvn(?:\s|$)|\.?\/?gradlew?(?:\s|$)|make(?:\s|$))/;
+  /(?:^|[\s;&|(`/])(?:npm\s+(?:ci|install|i|exec|run)|npx\s|yarn(?:\s|$)|pnpm(?:\s|$)|bun\s+(?:install|run)|pip3?\s+install|poetry\s+install|bundle\s+install|composer\s+install|go\s+(?:mod\s+download|get)|cargo\s+(?:build|test|run|install)|mvn(?:\s|$)|\.?\/?gradlew?(?:\s|$)|make(?:\s|$))/;
 
 const isMap = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
 const lineOf = (node, key) => node?.$keyLines?.[key] ?? node?.$line ?? 0;
@@ -185,10 +185,14 @@ export function computeReachability(files) {
     for (const f of files) {
       if (f.error) continue;
       const on = isMap(f.doc.on) ? f.doc.on : {};
-      const next =
-        ("workflow_run" in on ? workflowRunReach(on, byName, reach) : null) ??
-        ("workflow_call" in on ? workflowCallReach(f, files, reach) : null);
-      if (next && record(f.rel, next)) grew = true;
+      const triggers = triggersOf(f.doc);
+      // Both edges contribute; an ordinary-PR workflow_run must not hide a privileged caller.
+      for (const next of [
+        triggers.includes("workflow_run") ? workflowRunReach(on, byName, reach) : null,
+        triggers.includes("workflow_call") ? workflowCallReach(f, files, reach) : null,
+      ]) {
+        if (next && record(f.rel, next)) grew = true;
+      }
     }
     if (!grew) break;
   }
