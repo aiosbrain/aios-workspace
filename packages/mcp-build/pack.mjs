@@ -24,6 +24,17 @@ export function assertFrozenMcpSource(root = MCP_SOURCE_ROOT) {
   if (status.trim()) throw new Error("Refusing to pack uncommitted MCP source inputs");
   return run("git", ["rev-parse", "HEAD"], root).trim();
 }
+export function parseMcpPackOutput(text) {
+  const parsed = JSON.parse(text);
+  const records = Array.isArray(parsed) ? parsed : Object.values(parsed);
+  if (
+    records.length !== 1 ||
+    records[0]?.name !== "@aiosbrain/mcp" ||
+    !Array.isArray(records[0]?.files)
+  )
+    throw new Error("Unrecognized npm pack metadata for the standalone package");
+  return records[0];
+}
 export function assertMcpPackageInventory(metadata) {
   const manifest = JSON.parse(readFileSync(path.join(metadata.directory, "package.json"), "utf8"));
   if (
@@ -62,11 +73,11 @@ export function packMcp(out, root = MCP_SOURCE_ROOT) {
   try {
     const sourceDigests = buildMcpPackage(build, root);
     const npmArgs = ["--json", "--ignore-scripts", "--workspaces=false"];
-    const dry = JSON.parse(run("npm", ["pack", "--dry-run", ...npmArgs], build))[0];
+    const dry = parseMcpPackOutput(run("npm", ["pack", "--dry-run", ...npmArgs], build));
     assertMcpPackageInventory({ ...dry, directory: build });
-    const packed = JSON.parse(
+    const packed = parseMcpPackOutput(
       run("npm", ["pack", ...npmArgs, "--pack-destination", directory], build)
-    )[0];
+    );
     const manifest = assertMcpPackageInventory({ ...packed, directory: build });
     if (assertFrozenMcpSource(root) !== candidateSha)
       throw new Error("MCP candidate changed during packing");

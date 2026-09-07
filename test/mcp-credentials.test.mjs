@@ -11,7 +11,7 @@ import {
 } from "../scripts/mcp-credentials.mjs";
 import { resolveBrainConfig } from "../scripts/mcp-config.mjs";
 
-const tuple = { brain_url: "https://global.example", api_key: "synthetic-global-key" };
+const tuple = { brain_url: "https://global.example", api_key: "test-global-key" };
 function fixture(fn) {
   const home = mkdtempSync(path.join(tmpdir(), "mcp-credential-test-"));
   const directory = path.join(home, ".aios");

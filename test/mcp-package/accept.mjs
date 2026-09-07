@@ -49,9 +49,11 @@ try {
   assert.ok(!globalPackages.dependencies?.aios, "Acceptance environment must not have global aios");
   let install = tarball;
   if (process.env.MCP_REGISTRY_ACCEPTANCE === "1") {
-    const integrity = JSON.parse(
+    const metadata = JSON.parse(
       npm(["view", `${candidate.packageName}@${candidate.version}`, "dist.integrity", "--json"])
     );
+    if (Array.isArray(metadata)) assert.equal(metadata.length, 1);
+    const integrity = Array.isArray(metadata) ? metadata[0] : metadata;
     assert.equal(integrity, candidate.integrity, "Registry must contain the verified tarball");
     install = `${candidate.packageName}@${candidate.version}`;
   }

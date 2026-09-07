@@ -6,6 +6,15 @@ import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
+export function parseRegistryIntegrity(text) {
+  const parsed = JSON.parse(text);
+  if (Array.isArray(parsed)) assert.equal(parsed.length, 1, "Expected one registry version");
+  const integrity = Array.isArray(parsed) ? parsed[0] : parsed;
+  assert.equal(typeof integrity, "string");
+  assert.match(integrity, /^sha512-/);
+  return integrity;
+}
+
 export function verifyMcpRelease({
   directory,
   run,
@@ -84,7 +93,7 @@ if (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === imp
       ["publish", verified.tarball, "--access", "public", "--provenance", "--ignore-scripts"],
       { stdio: "inherit" }
     );
-    const integrity = JSON.parse(
+    const integrity = parseRegistryIntegrity(
       execFileSync(
         "npm",
         ["view", `@aiosbrain/mcp@${manifest.version}`, "dist.integrity", "--json"],

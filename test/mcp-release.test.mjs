@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { createHash } from "node:crypto";
-import { verifyMcpRelease } from "../scripts/verify-mcp-release.mjs";
+import { verifyMcpRelease, parseRegistryIntegrity } from "../scripts/verify-mcp-release.mjs";
 
 test("release gate binds the exact tag, successful dispatch, three isolated cells and tarball bytes", (t) => {
   const directory = mkdtempSync(path.join(tmpdir(), "mcp-release-"));
@@ -79,4 +79,11 @@ test("release gate binds the exact tag, successful dispatch, three isolated cell
   );
   writeFileSync(path.join(directory, "mcp-candidate", candidate.tarball), "changed artifact");
   assert.throws(() => verifyMcpRelease(args));
+});
+
+test("registry integrity parsing supports npm 12 singleton arrays without accepting ambiguous versions", () => {
+  assert.equal(parseRegistryIntegrity('"sha512-synthetic"'), "sha512-synthetic");
+  assert.equal(parseRegistryIntegrity('["sha512-synthetic"]'), "sha512-synthetic");
+  for (const value of [[], ["sha512-a", "sha512-b"], {}, null, "wrong"])
+    assert.throws(() => parseRegistryIntegrity(JSON.stringify(value)));
 });

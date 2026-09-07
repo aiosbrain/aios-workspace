@@ -12,7 +12,11 @@ import {
   MCP_PACK_INPUTS,
   sha256,
 } from "../packages/mcp-build/build.mjs";
-import { packMcp, assertMcpPackageInventory } from "../packages/mcp-build/pack.mjs";
+import {
+  packMcp,
+  assertMcpPackageInventory,
+  parseMcpPackOutput,
+} from "../packages/mcp-build/pack.mjs";
 
 function temporary(t) {
   const dir = mkdtempSync(path.join(tmpdir(), "mcp-package-test-"));
@@ -109,4 +113,21 @@ test("one frozen candidate tarball records its exact bytes and refuses dirty sou
   assert.throws(() => packMcp(out, source), /EEXIST/);
   writeFileSync(path.join(source, "scripts/mcp-runtime.mjs"), "// changed after freeze\n");
   assert.throws(() => packMcp(path.join(dir, "dirty"), source), /uncommitted MCP source/);
+});
+
+test("pack metadata accepts npm 10/11 arrays and npm 12 named records, rejecting ambiguous output", () => {
+  const record = { name: "@aiosbrain/mcp", files: [] };
+  assert.deepEqual(parseMcpPackOutput(JSON.stringify([record])), record);
+  assert.deepEqual(parseMcpPackOutput(JSON.stringify({ "@aiosbrain/mcp": record })), record);
+  for (const value of [
+    [],
+    {},
+    [record, record],
+    [{ name: "foreign", files: [] }],
+    [{ name: "@aiosbrain/mcp" }],
+  ])
+    assert.throws(
+      () => parseMcpPackOutput(JSON.stringify(value)),
+      /Unrecognized npm pack metadata/
+    );
 });
