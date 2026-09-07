@@ -46,5 +46,5 @@ version. Query answers preserve citation markers and source lists. This package 
 provide a remote HTTP endpoint or write tools.
 
 Maintainers: generate and pack from the committed candidate with
-`node scripts/pack-mcp.mjs --out <new-artifact-directory>` in the source repository.
+`node packages/mcp-build/pack.mjs --out <new-artifact-directory>` in the source repository.
 Publish the accepted tarball, never the unbuilt source directory.

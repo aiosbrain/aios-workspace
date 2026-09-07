@@ -10,7 +10,7 @@ import {
   MCP_PACK_INPUTS,
   MCP_MODULES,
   sha256,
-} from "./build-mcp-package.mjs";
+} from "./build.mjs";
 
 const run = (command, args, cwd) =>
   execFileSync(command, args, { cwd, encoding: "utf8", maxBuffer: 16 * 1024 * 1024 });
@@ -97,6 +97,6 @@ export function packMcp(out, root = MCP_SOURCE_ROOT) {
 if (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url) {
   const i = process.argv.indexOf("--out");
   if (i < 0 || !process.argv[i + 1])
-    throw new Error("Usage: node scripts/pack-mcp.mjs --out <new-directory>");
+    throw new Error("Usage: node packages/mcp-build/pack.mjs --out <new-directory>");
   console.log(JSON.stringify(packMcp(process.argv[i + 1]), null, 2));
 }

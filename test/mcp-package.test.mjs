@@ -11,8 +11,8 @@ import {
   MCP_MODULES,
   MCP_PACK_INPUTS,
   sha256,
-} from "../scripts/build-mcp-package.mjs";
-import { packMcp, assertMcpPackageInventory } from "../scripts/pack-mcp.mjs";
+} from "../packages/mcp-build/build.mjs";
+import { packMcp, assertMcpPackageInventory } from "../packages/mcp-build/pack.mjs";
 
 function temporary(t) {
   const dir = mkdtempSync(path.join(tmpdir(), "mcp-package-test-"));

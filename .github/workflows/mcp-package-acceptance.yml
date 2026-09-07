@@ -8,8 +8,8 @@ on:
       - "scripts/mcp-*.mjs"
       - "scripts/brain-client.mjs"
       - "scripts/flat-yaml.mjs"
-      - "scripts/build-mcp-package.mjs"
-      - "scripts/pack-mcp.mjs"
+      - "packages/mcp-build/build.mjs"
+      - "packages/mcp-build/pack.mjs"
       - "test/mcp-package/**"
       - "test/support/mcp-package*"
       - "test/support/mcp-tier-safety.mjs"
@@ -31,7 +31,7 @@ jobs:
         with:
           node-version: "22"
       - run: npm ci --ignore-scripts
-      - run: node scripts/pack-mcp.mjs --out mcp-candidate-artifact
+      - run: node packages/mcp-build/pack.mjs --out mcp-candidate-artifact
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: mcp-candidate

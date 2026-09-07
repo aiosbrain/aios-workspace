@@ -8,7 +8,7 @@ module closure.
 
 ## Candidate acceptance
 
-Commit the candidate first. `node scripts/pack-mcp.mjs --out <new-directory>` validates
+Commit the candidate first. `node packages/mcp-build/pack.mjs --out <new-directory>` validates
 the static import closure and npm inventory, runs a pack dry-run, then creates one
 tarball. `candidate.json` records the source SHA, source digests, tarball SHA-256,
 npm SHA-512 integrity, inventory and toolchain versions. Reuse those bytes for every

@@ -5,7 +5,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { createHash } from "node:crypto";
 import ts from "typescript";
 
-export const MCP_SOURCE_ROOT = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
+export const MCP_SOURCE_ROOT = path.resolve(fileURLToPath(new URL("../..", import.meta.url)));
 // Explicit transitive dependency closure. New dependencies require a reviewed change here.
 export const MCP_MODULES = Object.freeze([
   "scripts/mcp-runtime.mjs",
@@ -26,8 +26,8 @@ export const MCP_PACK_INPUTS = Object.freeze([
   "packages/mcp/bin/aios-brain-mcp.mjs",
   "packages/mcp/README.md",
   "LICENSE",
-  "scripts/build-mcp-package.mjs",
-  "scripts/pack-mcp.mjs",
+  "packages/mcp-build/build.mjs",
+  "packages/mcp-build/pack.mjs",
 ]);
 export const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
 
@@ -101,6 +101,6 @@ export function buildMcpPackage(out, root = MCP_SOURCE_ROOT) {
 if (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url) {
   const i = process.argv.indexOf("--out");
   if (i < 0 || !process.argv[i + 1])
-    throw new Error("Usage: node scripts/build-mcp-package.mjs --out <new-directory>");
+    throw new Error("Usage: node packages/mcp-build/build.mjs --out <new-directory>");
   console.log(JSON.stringify(buildMcpPackage(process.argv[i + 1]), null, 2));
 }
