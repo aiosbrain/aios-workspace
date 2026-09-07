@@ -54,19 +54,20 @@ test("configuration preserves workspace, dotenv and environment compatibility wi
       path.join(dir, "nested", ".env"),
       'CUSTOM_KEY="synthetic-custom"\nAIOS_BRAIN_URL=https://dotenv.example/\nDOTENV_PUBLIC_KEY=ignored\nAIOS_API_KEY=encrypted:ignored\n# ignore comment\n'
     );
-    const cfg = resolveBrainConfig({ cwd: path.join(dir, "nested"), env: {} });
+    const cfg = resolveBrainConfig({ cwd: path.join(dir, "nested"), home: dir, env: {} });
     assert.equal(cfg.brain_url, "https://dotenv.example");
     assert.equal(cfg.api_key, "synthetic-custom");
     assert.equal(cfg.team_id, "synthetic-team");
     assert.equal(cfg.member, "synthetic-member");
     const env = resolveBrainConfig({
       cwd: path.join(dir, "nested"),
+      home: dir,
       env: { AIOS_BRAIN_URL: "https://env.example", CUSTOM_KEY: "env-key" },
     });
     assert.equal(env.api_key, "env-key");
     assert.equal(env.brain_url, "https://env.example");
     rmSync(path.join(dir, "nested", ".env"));
-    assert.deepEqual(resolveBrainConfig({ cwd: dir, env: {} }).missing, ["CUSTOM_KEY"]);
+    assert.deepEqual(resolveBrainConfig({ cwd: dir, home: dir, env: {} }).missing, ["CUSTOM_KEY"]);
     rmSync(path.join(dir, "aios.yaml"));
     const stdin = JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }) + "\n";
     const output = execFileSync(

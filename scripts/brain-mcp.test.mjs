@@ -446,6 +446,7 @@ test("unknown method is method-not-found", async () => {
 test("resolveBrainConfig reads env-first and reports missing required fields", () => {
   const full = resolveBrainConfig({
     cwd: "/nonexistent-dir-xyz",
+    home: "/nonexistent-home-xyz",
     env: {
       AIOS_BRAIN_URL: "https://brain.example/",
       AIOS_API_KEY: "aios_k_secret",
@@ -456,13 +457,18 @@ test("resolveBrainConfig reads env-first and reports missing required fields", (
   assert.equal(full.team_id, "acme");
   assert.deepEqual(full.missing, []);
 
-  const partial = resolveBrainConfig({ cwd: "/nonexistent-dir-xyz", env: {} });
+  const partial = resolveBrainConfig({
+    cwd: "/nonexistent-dir-xyz",
+    home: "/nonexistent-home-xyz",
+    env: {},
+  });
   assert.deepEqual(partial.missing.sort(), ["AIOS_API_KEY", "AIOS_BRAIN_URL"]);
 });
 
 test("resolveBrainConfig treats team_id as optional because the API key owns team identity", () => {
   const config = resolveBrainConfig({
     cwd: "/nonexistent-dir-xyz",
+    home: "/nonexistent-home-xyz",
     env: { AIOS_BRAIN_URL: "https://brain.example", AIOS_API_KEY: "aios_k_secret" },
   });
   assert.equal(config.team_id, "");

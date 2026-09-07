@@ -1,6 +1,8 @@
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { parseFlatYaml, stripQuotes } from "./flat-yaml.mjs";
+import { readGlobalCredential } from "./mcp-credentials.mjs";
+import { normalizeBrainOriginFromConfig } from "../packages/foundation/src/internal/brain-origin.mjs";
 
 /** Minimal .env reader — mirrors aios.mjs loadDotEnv (skips dotenvx ciphertext). */
 function loadDotEnv(dir) {
@@ -36,29 +38,50 @@ function findWorkspaceConfig(dir) {
   return {};
 }
 
-/**
- * Resolve brain connection config. Precedence: process env → cwd/.env → aios.yaml.
- * env-first is deliberate: a Claude Desktop / Cowork user configures the server purely
- * through the extension's env block and has no workspace. Returns a config object plus
- * `missing[]` listing any required field that could not be resolved. Team is
- * optional: the API key is the authoritative team identity.
- */
-export function resolveBrainConfig({ cwd = process.cwd(), env = process.env } = {}) {
+/** Resolve complete credential sources without sending a stored key to another Brain origin. */
+export function resolveBrainConfig({ cwd = process.cwd(), env = process.env, home } = {}) {
   const dotenv = loadDotEnv(cwd);
   const ws = findWorkspaceConfig(cwd);
   const keyEnv = ws.api_key_env || "AIOS_API_KEY";
-
-  const brain_url = (env.AIOS_BRAIN_URL || dotenv.AIOS_BRAIN_URL || ws.brain_url || "").replace(
-    /\/$/,
-    ""
-  );
-  const api_key = env[keyEnv] || dotenv[keyEnv] || env.AIOS_API_KEY || dotenv.AIOS_API_KEY || "";
-  const team_id = env.AIOS_TEAM || dotenv.AIOS_TEAM || ws.team_id || "";
-  const member = env.AIOS_MEMBER || dotenv.AIOS_MEMBER || ws.member || "";
-
-  const missing = [];
-  if (!brain_url) missing.push("AIOS_BRAIN_URL");
-  if (!api_key) missing.push(keyEnv);
-
-  return { brain_url, api_key, team_id, member, missing };
+  const envKey = env[keyEnv] || env.AIOS_API_KEY || "";
+  const localKey = dotenv[keyEnv] || dotenv.AIOS_API_KEY || "";
+  const localUrl = dotenv.AIOS_BRAIN_URL || ws.brain_url || "";
+  const brain_url = (env.AIOS_BRAIN_URL || localUrl).replace(/\/$/, "");
+  const api_key = envKey || localKey;
+  const legacy = {
+    brain_url,
+    api_key,
+    team_id: env.AIOS_TEAM || dotenv.AIOS_TEAM || ws.team_id || "",
+    member: env.AIOS_MEMBER || dotenv.AIOS_MEMBER || ws.member || "",
+    credential_source: api_key ? (envKey ? "environment" : "workspace") : "none",
+    missing: [...(!brain_url ? ["AIOS_BRAIN_URL"] : []), ...(!api_key ? [keyEnv] : [])],
+  };
+  // An environment key uses an explicitly supplied or existing workspace URL, never a
+  // URL borrowed from another stored credential tuple. Partial config stays incomplete.
+  if (envKey) return legacy;
+  const sameOrigin = (left, right) =>
+    normalizeBrainOriginFromConfig(left) === normalizeBrainOriginFromConfig(right);
+  // Preserve the existing env-URL + workspace-key flow when its recorded origin agrees.
+  if (env.AIOS_BRAIN_URL && localKey && localUrl && sameOrigin(env.AIOS_BRAIN_URL, localUrl))
+    return legacy;
+  const global = readGlobalCredential({ home });
+  if (global) {
+    if (env.AIOS_BRAIN_URL && !sameOrigin(env.AIOS_BRAIN_URL, global.brain_url)) {
+      throw new Error(
+        "AIOS_BRAIN_URL differs from the stored credential origin; supply its matching AIOS_API_KEY explicitly"
+      );
+    }
+    return {
+      ...global,
+      team_id: env.AIOS_TEAM || global.team_id,
+      member: env.AIOS_MEMBER || global.member,
+      missing: [],
+    };
+  }
+  if (env.AIOS_BRAIN_URL && localKey && localUrl && !sameOrigin(env.AIOS_BRAIN_URL, localUrl)) {
+    throw new Error(
+      "AIOS_BRAIN_URL differs from the workspace credential origin; supply its matching AIOS_API_KEY explicitly"
+    );
+  }
+  return legacy;
 }
