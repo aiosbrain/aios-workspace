@@ -19,29 +19,32 @@ const words = (value) =>
     .map((s) => s.trim())
     .filter(Boolean);
 
+export class McpSelectorError extends Error {}
+
 export function parseSelectors(argv = [], env = {}) {
   let toolsets;
   const tools = [];
   for (let i = 0; i < argv.length; i++) {
     const [flag, ...inline] = argv[i].split("=");
-    if (flag !== "--toolsets" && flag !== "--tools") throw new Error(`Unknown MCP option: ${flag}`);
+    if (flag !== "--toolsets" && flag !== "--tools")
+      throw new McpSelectorError(`Unknown MCP option: ${flag}`);
     const value = inline.length ? inline.join("=") : argv[++i];
     if (!value || value.startsWith("--") || !words(value).length)
-      throw new Error(`${flag} requires a comma-separated selection`);
+      throw new McpSelectorError(`${flag} requires a comma-separated selection`);
     if (flag === "--toolsets") toolsets = [...(toolsets || []), ...words(value)];
     else tools.push(...words(value));
   }
   if (toolsets === undefined && env.AIOS_MCP_TOOLSETS !== undefined) {
     toolsets = words(env.AIOS_MCP_TOOLSETS);
-    if (!toolsets.length) throw new Error("AIOS_MCP_TOOLSETS requires a selection");
+    if (!toolsets.length) throw new McpSelectorError("AIOS_MCP_TOOLSETS requires a selection");
   }
   for (const name of toolsets || []) {
     if (name !== "all" && !Object.hasOwn(TOOLSETS, name))
-      throw new Error(`Unknown MCP toolset: ${name}`);
+      throw new McpSelectorError(`Unknown MCP toolset: ${name}`);
   }
   for (const name of tools) {
     if (name !== "all" && !SURFACES.toolkit.includes(name))
-      throw new Error(`Unknown MCP tool: ${name}`);
+      throw new McpSelectorError(`Unknown MCP tool: ${name}`);
   }
   return { toolsets, tools };
 }

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { assertMcpContract } from "../scripts/mcp-contract.mjs";
 import { TOOLS, SURFACES } from "../packages/mcp-core/index.mjs";
 import { resolveBrainConfig } from "../scripts/mcp-config.mjs";
@@ -84,6 +84,31 @@ test("configuration preserves workspace, dotenv and environment compatibility wi
       JSON.parse(output).result.tools.map((t) => t.name),
       ["aios_loop_collect"]
     );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("public CLI reports selector mistakes as actionable usage errors", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "mcp-cli-usage-"));
+  try {
+    for (const args of [["--tools", "wat"], ["--toolsets", "wat"], ["--tools"], ["--bogus"]]) {
+      const result = spawnSync(
+        process.execPath,
+        [new URL("../scripts/aios.mjs", import.meta.url).pathname, "mcp", ...args],
+        {
+          cwd: dir,
+          env: { PATH: process.env.PATH },
+          input: "",
+          encoding: "utf8",
+          timeout: 10000,
+        }
+      );
+      assert.equal(result.status, 2, result.stderr);
+      assert.match(result.stderr, /AIOS_E_USAGE/);
+      assert.match(result.stderr, /Unknown MCP|requires a comma-separated selection/);
+      assert.equal(result.stdout, "");
+    }
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
