@@ -274,21 +274,28 @@ try {
       result.error = String(error);
     }
     try {
+      const cleanupErrors = [];
       for (const ownedContainer of created ? [acceptanceContainer, container] : []) {
-        const existing = await run(
-          "docker",
-          ["ps", "-a", "--filter", `name=^${ownedContainer}$`, "--format", "{{.Names}}"],
-          { cleanup: true }
-        );
-        if (existing.output.trim())
-          await run("docker", ["rm", "-f", "-v", ownedContainer], { cleanup: true });
-        const remaining = await run(
-          "docker",
-          ["ps", "-a", "--filter", `name=^${ownedContainer}$`, "--format", "{{.Names}}"],
-          { cleanup: true }
-        );
-        assert.equal(remaining.output.trim(), "", "Isolated database cleanup failed");
+        try {
+          const existing = await run(
+            "docker",
+            ["ps", "-a", "--filter", `name=^${ownedContainer}$`, "--format", "{{.Names}}"],
+            { cleanup: true }
+          );
+          if (existing.output.trim())
+            await run("docker", ["rm", "-f", "-v", ownedContainer], { cleanup: true });
+          const remaining = await run(
+            "docker",
+            ["ps", "-a", "--filter", `name=^${ownedContainer}$`, "--format", "{{.Names}}"],
+            { cleanup: true }
+          );
+          assert.equal(remaining.output.trim(), "", "Isolated container cleanup failed");
+        } catch (error) {
+          cleanupErrors.push(error);
+        }
       }
+      if (cleanupErrors.length)
+        throw new AggregateError(cleanupErrors, cleanupErrors.map(String).join("; "));
       result.cleanup = true;
     } catch (error) {
       result.cleanupError = String(error);

@@ -26,7 +26,7 @@ it("invokes all eight installed standalone tools against the real Brain", async 
       path: "3-log/tasks.md",
       rows: [{ row_key: "MCP-1", title: "MCP lighthouse checklist", status: "in_progress" }],
     });
-    await ingest(seed, {
+    const decision = await ingest(seed, {
       kind: "decision",
       body: "| ID | Decision | Audience |\n| --- | --- | --- |\n| MCP-D1 | Lighthouse launch is violet | team |",
       access: "team",
@@ -45,6 +45,24 @@ it("invokes all eight installed standalone tools against the real Brain", async 
       },
     });
     await convergeTeam(seed);
+    // Same fixture operation as the Brain decision-writeback suite: mark the
+    // ingested decision as edited after sync, which is what this legacy feed serves.
+    const { data: decisionSource, error: sourceError } = await db()
+      .from("items")
+      .select("synced_at")
+      .eq("id", decision.id)
+      .single();
+    expect(sourceError).toBeNull();
+    const editedAt = new Date(new Date(decisionSource!.synced_at).getTime() + 1000).toISOString();
+    expect(
+      (
+        await db()
+          .from("decisions")
+          .update({ updated_at: editedAt })
+          .eq("team_id", seed.teamId)
+          .eq("source_item_id", decision.id)
+      ).error
+    ).toBeNull();
     const { key } = await issueApiKey(
       db(),
       seed.teamId,

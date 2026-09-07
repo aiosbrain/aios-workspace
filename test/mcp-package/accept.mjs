@@ -185,8 +185,10 @@ try {
   assert.ok(JSON.stringify(await invoke("brain_list_projects")).includes("acme"));
   const tasks = await invoke("brain_list_tasks");
   assert.ok(JSON.stringify(tasks).includes("MCP lighthouse checklist"), JSON.stringify(tasks));
+  const decisions = await invoke("brain_list_decisions");
   assert.ok(
-    JSON.stringify(await invoke("brain_list_decisions")).includes("Lighthouse launch is violet")
+    JSON.stringify(decisions).includes("Lighthouse launch is violet"),
+    JSON.stringify(decisions)
   );
   const items = await invoke("brain_pull_items", { path_prefix: "2-work/mcp-package" });
   assert.ok(items.items.some((item) => item.id === fixture.itemId && item.body.includes("violet")));
