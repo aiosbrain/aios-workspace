@@ -55,7 +55,7 @@ jobs:
         with:
           name: mcp-candidate
           path: mcp-candidate-artifact
-      - run: npm exec --no -- node test/mcp-package/windows-credentials.mjs
+      - run: node test/mcp-package/windows-credentials.mjs
         env:
           MCP_PACKAGE_ARTIFACT: ${{ github.workspace }}/mcp-candidate-artifact
   live:

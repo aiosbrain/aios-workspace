@@ -35,8 +35,13 @@ try {
   mkdirSync(directory, { recursive: true });
   writeFileSync(path.join(scratch, "package.json"), '{"private":true}');
   // npm's JS entry avoids shell interpretation of the tarball path on Windows.
-  const npmCli = process.env.npm_execpath;
-  assert.ok(npmCli, "Launch through npm exec so its CLI path is explicit");
+  const npmCli = path.join(
+    path.dirname(process.execPath),
+    "node_modules",
+    "npm",
+    "bin",
+    "npm-cli.js"
+  );
   execFileSync(
     process.execPath,
     [npmCli, "install", tarball, "--ignore-scripts", "--no-audit", "--no-fund"],
