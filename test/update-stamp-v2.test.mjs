@@ -22,6 +22,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 
 import { stampBody, readStamp, readStampBaseSha, STAMP_FORMAT } from "../scripts/update/stamp.mjs";
@@ -38,6 +39,8 @@ import {
   recordRollbackIfUpgrading,
   rollbackFromRecord,
   ROLLBACK_FILE,
+  writeV2State,
+  chooseBaseResolver,
 } from "../scripts/update/registry-root.mjs";
 
 const discard = { recursive: true, force: true };
@@ -422,6 +425,102 @@ test("recordRollbackIfUpgrading is a no-op once the workspace is on format 2", a
     assert.equal(await recordRollbackIfUpgrading(repo, {}), null);
     assert.ok(!existsSync(path.join(repo, ROLLBACK_FILE)));
   } finally {
+    rmSync(repo, discard);
+  }
+});
+
+test("v2 bases survive normal commit and clone while private .aios state stays ignored", async () => {
+  const { dir: srcDir, root } = fakeRegistryRoot();
+  const repo = fakeWorkspace();
+  const cloned = `${repo}-clone`;
+  const git = (...args) => execFileSync("git", ["-C", repo, ...args], { encoding: "utf8" });
+  try {
+    writeFileSync(path.join(repo, ".gitignore"), ".aios/\nprivate-note\n");
+    await vendor(repo, root);
+    writeFileSync(path.join(repo, ".aios", "private.json"), "private fixture\n");
+    writeFileSync(path.join(repo, BASE_STORE_DIR, "private-note"), "private fixture\n");
+    git("init", "-q");
+    git("add", "-A");
+    const staged = git("diff", "--cached", "--name-only").split("\n");
+    assert.ok(staged.includes(`${BASE_STORE_DIR}/index.json`));
+    assert.ok(staged.some((name) => /toolkit-bases\/[0-9a-f]{64}$/.test(name)));
+    assert.ok(!staged.some((name) => /private|rollback/.test(name)));
+    git(
+      "-c",
+      "user.name=Fixture",
+      "-c",
+      "user.email=fixture@example.invalid",
+      "commit",
+      "-qm",
+      "baseline"
+    );
+    git("clone", "-q", repo, cloned);
+    const index = readBaseIndex(cloned);
+    assert.ok(index);
+    assert.equal(
+      baseFromStore(cloned, index, ".claude/rules/one.md"),
+      "rule one v1\nshared tail\n"
+    );
+    const before = readFileSync(path.join(repo, ".gitignore"), "utf8");
+    await vendor(repo, root);
+    assert.equal(readFileSync(path.join(repo, ".gitignore"), "utf8"), before);
+  } finally {
+    rmSync(srcDir, discard);
+    rmSync(repo, discard);
+    rmSync(cloned, discard);
+  }
+});
+
+for (const state of ["validated", "committed"]) {
+  test(`resumed ${state} stamp is rebound to today's complete target`, async () => {
+    const { runMigration } = await import("../scripts/cli/migration.mjs");
+    const { dir: srcDir } = fakeRegistryRoot();
+    const repo = fakeWorkspace();
+    const stampPath = path.join(repo, ".aios-toolkit-version");
+    try {
+      writeFileSync(stampPath, `${"a".repeat(40)}\ntoolkit-version 0.12.0\n`);
+      await assert.rejects(
+        runMigration({
+          configPath: stampPath,
+          stage: () => `${"c".repeat(40)}\nstamp-format 2\nmanifest-digest stale\n`,
+          validate: () => {},
+          interrupt: (at) => {
+            if (at === state) throw new Error("fixture interruption");
+          },
+        })
+      );
+      await writeV2State(repo, {
+        srcDir,
+        sha: BUILD_SHA,
+        meta: { version: "2.0.0", brainApi: "1.24" },
+        stampSource: "pkg:@aiosbrain/aios@2.0.0",
+        managedPaths: [{ src: "scaffold/.claude/rules", dest: ".claude/rules", kind: "dir" }],
+      });
+      assert.equal(readStamp(repo).baseSha, BUILD_SHA);
+      assert.match(readFileSync(stampPath, "utf8"), /package-version 2\.0\.0/);
+      assert.doesNotMatch(readFileSync(stampPath, "utf8"), /stale/);
+      assert.ok(!existsSync(`${stampPath}.migration.json`));
+    } finally {
+      rmSync(srcDir, discard);
+      rmSync(repo, discard);
+    }
+  });
+}
+
+test("an overwritten v1 registry source refuses before losing the upgrade baseline", () => {
+  const { dir: srcDir } = fakeRegistryRoot();
+  const repo = fakeWorkspace();
+  try {
+    const stamp = `${"a".repeat(40)}\ntoolkit-version 0.12.0\nsource ${srcDir}\n`;
+    writeFileSync(path.join(repo, ".aios-toolkit-version"), stamp);
+    assert.throws(
+      () => chooseBaseResolver(repo, srcDir, "a".repeat(40), { registry: true }),
+      /already been replaced/
+    );
+    assert.equal(readFileSync(path.join(repo, ".aios-toolkit-version"), "utf8"), stamp);
+    assert.ok(!existsSync(path.join(repo, ".aios")));
+  } finally {
+    rmSync(srcDir, discard);
     rmSync(repo, discard);
   }
 });

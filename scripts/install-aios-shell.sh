@@ -80,6 +80,27 @@ aios() {
     fi
     dir="$(dirname "$dir")"
   done
+  # Explicit config ALWAYS beats the conventional default — otherwise a legacy
+  # AIOS_TOOLKIT_CLI user who also happens to have ~/Projects/aios/aios-workspace on disk
+  # would silently run that checkout instead of the one they configured.
+  local cli=""
+  if [[ -n "${AIOS_TOOLKIT_DIR:-}" ]]; then
+    if [[ ! -f "$AIOS_TOOLKIT_DIR/scripts/aios.mjs" ]]; then
+      echo "aios: AIOS_TOOLKIT_DIR has no scripts/aios.mjs" >&2
+      return 1
+    fi
+    cli="$AIOS_TOOLKIT_DIR/scripts/aios.mjs"
+  elif [[ -n "${AIOS_TOOLKIT_CLI:-}" ]]; then
+    if [[ ! -f "$AIOS_TOOLKIT_CLI" ]]; then
+      echo "aios: AIOS_TOOLKIT_CLI does not name a CLI file" >&2
+      return 1
+    fi
+    cli="$AIOS_TOOLKIT_CLI" # deprecated alias — prefer AIOS_TOOLKIT_DIR
+  fi
+  if [[ -n "$cli" ]]; then
+    node "$cli" "$@"
+    return $?
+  fi
   # PATH-installed `aios` (AIO-635 Decision 2). Detection uses `whence -p` (zsh: PATH
   # executables ONLY — this function can never match itself); execution uses `command`
   # so the function is bypassed there too. AIOS_SHELL_SHIM is the recursion sentinel:
@@ -88,19 +109,8 @@ aios() {
     AIOS_SHELL_SHIM=1 command aios "$@"
     return $?
   fi
-  # Explicit config ALWAYS beats the conventional default — otherwise a legacy
-  # AIOS_TOOLKIT_CLI user who also happens to have ~/Projects/aios/aios-workspace on disk
-  # would silently run that checkout instead of the one they configured.
-  local cli=""
-  if [[ -n "${AIOS_TOOLKIT_DIR:-}" && -f "$AIOS_TOOLKIT_DIR/scripts/aios.mjs" ]]; then
-    cli="$AIOS_TOOLKIT_DIR/scripts/aios.mjs"
-  elif [[ -n "${AIOS_TOOLKIT_CLI:-}" && -f "$AIOS_TOOLKIT_CLI" ]]; then
-    cli="$AIOS_TOOLKIT_CLI" # deprecated alias — prefer AIOS_TOOLKIT_DIR
-  elif [[ -f "$HOME/Projects/aios/aios-workspace/scripts/aios.mjs" ]]; then
-    cli="$HOME/Projects/aios/aios-workspace/scripts/aios.mjs"
-  fi
-  if [[ -n "$cli" ]]; then
-    node "$cli" "$@"
+  if [[ -f "$HOME/Projects/aios/aios-workspace/scripts/aios.mjs" ]]; then
+    node "$HOME/Projects/aios/aios-workspace/scripts/aios.mjs" "$@"
     return $?
   fi
   echo "aios: no workspace found (walk up from cwd for aios.yaml)" >&2

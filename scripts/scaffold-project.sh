@@ -711,10 +711,6 @@ BRAIN_API_VER="$(grep -m1 -oE '\*\*Version: [0-9]+\.[0-9]+\*\*' "$REPO_ROOT/docs
 
 . "$SCRIPT_DIR/scaffold-pm-tool.sh"
 
-# AIO-635: stamp format 2 + seed .aios/toolkit-bases (first update's 3-way base; best-effort).
-command -v node >/dev/null 2>&1 &&
-  node "$SCRIPT_DIR/update/seed-baseline.mjs" --repo "$OUTPUT" --from "$REPO_ROOT" 2>/dev/null || true
-
 # Generate the skills + integrations catalogs for the new workspace
 if command -v node >/dev/null 2>&1 && [ -f "$SCRIPT_DIR/gen-catalog.mjs" ]; then
   node "$SCRIPT_DIR/gen-catalog.mjs" --repo "$OUTPUT" >/dev/null 2>&1 || true
@@ -723,6 +719,11 @@ fi
 # Repository-meta files: CODEOWNERS, brain-reporting CI, .gitignore, planning stub.
 export CI_WORKFLOW
 . "$SCRIPT_DIR/scaffold-repo-meta.sh"
+
+# Seed after repository metadata, so .gitignore cannot overwrite the base-store rules.
+if command -v node >/dev/null 2>&1; then
+  node "$SCRIPT_DIR/update/seed-baseline.mjs" --repo "$OUTPUT" --from "$REPO_ROOT" || exit 1
+fi
 
 echo "Initializing git..."
 cd "$OUTPUT"

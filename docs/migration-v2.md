@@ -76,13 +76,28 @@ aios doctor                     # workspace-stamp: format 2; base store verified
 
 ### Upgrade from 0.12.0 (existing workspace)
 
+Run this from each existing workspace **before replacing the working 0.12.0
+installation**. The staged v2 CLI reads the old package's immutable contents to
+preserve the workspace's merge bases. Complete this step for every workspace that
+uses that installation before upgrading it globally.
+
 ```sh
-npm_config_engine_strict=false npm i -g @aiosbrain/aios@0.12.0   # legacy baseline (note 1)
+aios_v2_stage=$(mktemp -d)
+npm i --prefix "$aios_v2_stage" @aiosbrain/aios@2
+"$aios_v2_stage/node_modules/.bin/aios" update --repo "$PWD"
+# Resolve any reported conflicts and repeat the staged update before proceeding.
+"$aios_v2_stage/node_modules/.bin/aios" doctor --json
+# Confirm the workspace stamp reports format 2 and the base store is healthy.
+git add .gitignore .aios-toolkit-version .aios/toolkit-bases
+# Commit these together with the reviewed managed-file changes in your workspace.
 npm i -g @aiosbrain/aios@2
-aios update                     # reads the v1 stamp, merges, records .aios/rollback.json,
-                                # ratchets the stamp to format 2
 aios update                     # repeat: byte-stable no-op (only synced-at may move)
 ```
+
+If the v1 stamp's installation was already overwritten, restore exact 0.12.0 in
+that same prefix (`npm_config_engine_strict=false npm i -g @aiosbrain/aios@0.12.0`
+for a global installation), then follow the staged sequence above. Keep local
+workspace changes; do not use `--force` to bypass missing bases.
 
 ### Rollback (any time during the v2 window)
 

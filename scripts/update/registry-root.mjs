@@ -50,6 +50,7 @@ import { printMergeReport } from "./report.mjs";
 import { installWorktreeSafetyBackstops } from "../worktree.mjs";
 import { toolkitMeta } from "../toolkit-meta.mjs";
 import { VERSION_FILE, managedPathsForConfig, pmToolPrunable } from "../toolkit-manifest.mjs";
+import { ensureBaseStoreTracked } from "./base-store-tracking.mjs";
 
 export const ROLLBACK_FILE = ".aios/rollback.json";
 
@@ -89,6 +90,14 @@ export function chooseBaseResolver(repo, srcDir, baseSha, { registry = false } =
         },
         baseFiles: (entry) => entryFiles(rec.dir, entry).map((f) => f.srcRel),
       };
+    }
+    if (rec?.kind === "registry" && stampInfo?.format < 2) {
+      throw new UpdateError(
+        "The registry installation recorded by this v1 workspace has already been replaced. " +
+          "Restore its exact previous package version and follow docs/migration-v2.md: " +
+          "run the staged v2 CLI's update before replacing the working installation. " +
+          "No managed files were changed; --force is not a migration recovery path."
+      );
     }
   }
   return { kind: "none", base: () => undefined, baseFiles: () => [] };
@@ -166,6 +175,7 @@ export async function writeV2State(
   repo,
   { srcDir, sha, meta, stampSource, managedPaths, packageVersion, packageIntegrity }
 ) {
+  await ensureBaseStoreTracked(repo);
   const files = [];
   for (const entry of managedPaths) {
     if (!existsSync(path.join(srcDir, entry.src))) continue;
@@ -202,16 +212,18 @@ export async function writeV2State(
       packageRecord: { name: DISTRIBUTION_PACKAGE, version: packageVersion ?? meta.version },
       stage: () => body,
       validate: (staged) => {
-        const m = String(staged).match(/^manifest-digest (.+)$/m);
-        if (!m || m[1] !== digest) {
-          throw new Error(
-            "staged stamp digest does not match the freshly written base-store index"
-          );
+        if (String(staged) !== body) {
+          throw new Error("staged stamp does not match the current toolkit transition");
         }
       },
     });
   try {
     await run();
+    // The journal can resume from validated/committed without calling validate again.
+    // A successful old transition is not proof that today's stamp/index pair agrees.
+    if (readFileSync(stampPath, "utf8") !== body) {
+      throw new Error("resumed stamp does not match the current toolkit transition");
+    }
   } catch {
     // A stale journal/snapshot from an interrupted run against a DIFFERENT toolkit state
     // cannot be resumed into today's apply — discard that transition and run fresh once.

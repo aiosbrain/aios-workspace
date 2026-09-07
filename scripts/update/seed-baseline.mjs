@@ -10,8 +10,8 @@
  * surfaced a permanent `no-base` conflict on the very first update — the AIO-351 storm,
  * reproduced verbatim in the AIO-1072 migration-runbook rehearsal.
  *
- * Best-effort by contract: any failure leaves the scaffolder's v1 stamp in place (the
- * checkout flow still resolves bases via gitShow), and the caller ignores the exit code.
+ * Seeding failures stop scaffold completion: a format-2 workspace must not be
+ * committed without its merge bases and their narrowly scoped ignore exceptions.
  */
 import path from "node:path";
 import { readFileSync } from "node:fs";

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -35,13 +35,22 @@ function fakeToolkit(root, label) {
 function runAios(env) {
   const scratch = mkdtempSync(path.join(tmpdir(), "aios-shell-run-"));
   try {
+    const runtime = path.join(scratch, "runtime");
+    mkdirSync(runtime);
+    symlinkSync(process.execPath, path.join(runtime, "node"));
+    symlinkSync("/usr/bin/dirname", path.join(runtime, "dirname"));
     const fnFile = path.join(scratch, "fn.sh");
     writeFileSync(fnFile, `${aiosFunctionSource()}\n`);
-    const res = spawnSync("bash", ["-c", `source ${fnFile}; aios`], {
-      cwd: scratch,
-      encoding: "utf8",
-      env: { PATH: process.env.PATH, ...env },
-    });
+    // The installer targets zsh; emulate its PATH-only whence in portable bash tests.
+    const res = spawnSync(
+      "/bin/bash",
+      ["-c", `whence() { type -P "$2"; }; source ${fnFile}; aios`],
+      {
+        cwd: scratch,
+        encoding: "utf8",
+        env: { PATH: runtime, ...env },
+      }
+    );
     return `${res.stdout}${res.stderr}`.trim();
   } finally {
     rmSync(scratch, { recursive: true, force: true });
@@ -83,6 +92,28 @@ test("AIOS_TOOLKIT_DIR wins over the deprecated AIOS_TOOLKIT_CLI", () => {
       AIOS_TOOLKIT_CLI: path.join(custom, "scripts", "aios.mjs"),
     });
     assert.match(out, /RAN_CANONICAL/, "the canonical var takes precedence");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("explicit toolkit config beats an installed PATH binary, including invalid config", () => {
+  const { root, home, custom } = makeEnvRoots();
+  const bin = path.join(root, "bin");
+  mkdirSync(bin);
+  writeFileSync(path.join(bin, "aios"), "#!/bin/sh\necho RAN_PATH\n", { mode: 0o755 });
+  const env = { HOME: home, PATH: `${bin}:${process.env.PATH}` };
+  try {
+    for (const config of [
+      { AIOS_TOOLKIT_DIR: custom },
+      { AIOS_TOOLKIT_CLI: path.join(custom, "scripts", "aios.mjs") },
+    ]) {
+      assert.equal(runAios({ ...env, ...config }), "RAN_CUSTOM");
+    }
+    assert.equal(runAios(env), "RAN_PATH");
+    const invalid = runAios({ ...env, AIOS_TOOLKIT_DIR: path.join(root, "missing") });
+    assert.match(invalid, /AIOS_TOOLKIT_DIR has no/);
+    assert.doesNotMatch(invalid, /RAN_PATH|RAN_DEFAULT/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
