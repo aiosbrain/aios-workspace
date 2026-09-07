@@ -12,7 +12,7 @@
  */
 import path from "node:path";
 import { walkScalars } from "./workflow-yaml.mjs";
-import { PR_LIKE_EVENTS } from "./workflow-policy-catalogue.mjs";
+import { PR_LIKE_EVENTS, PERMISSION_LEVELS } from "./workflow-policy-catalogue.mjs";
 import {
   ALL_INPUTS_TAINTED,
   ALWAYS_PR_FETCH,
@@ -227,30 +227,11 @@ function elevatedPermissions(perms, permsLine) {
 
 function validPermissions(perms) {
   if (["read-all", "write-all"].includes(perms)) return true;
-  const scopes = [
-    "actions",
-    "attestations",
-    "checks",
-    "contents",
-    "deployments",
-    "discussions",
-    "id-token",
-    "issues",
-    "models",
-    "packages",
-    "pages",
-    "pull-requests",
-    "security-events",
-    "statuses",
-  ];
   return (
     isMap(perms) &&
     Object.entries(perms).every(
       ([key, level]) =>
-        scopes.includes(key) &&
-        ["read", "write", "none"].includes(level) &&
-        !(key === "id-token" && level === "read") &&
-        !(key === "models" && level === "write")
+        Object.hasOwn(PERMISSION_LEVELS, key) && PERMISSION_LEVELS[key].includes(level)
     )
   );
 }

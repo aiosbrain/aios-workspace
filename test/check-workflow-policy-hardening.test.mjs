@@ -287,3 +287,42 @@ test("reusable jobs require their own explicit job or workflow declaration", () 
   files[1].doc.permissions = {};
   assert.deepEqual(auditWorkflow(files[1]), []);
 });
+
+test("permissions match the published literal schema, including restricted scopes", () => {
+  const any = [
+    "actions",
+    "artifact-metadata",
+    "attestations",
+    "checks",
+    "code-quality",
+    "contents",
+    "deployments",
+    "discussions",
+    "drives",
+    "issues",
+    "packages",
+    "pages",
+    "pull-requests",
+    "repository-projects",
+    "security-events",
+    "statuses",
+  ];
+  for (const key of [...any, "id-token", "copilot-requests", "models", "vulnerability-alerts"]) {
+    for (const level of ["read", "write", "none", expr("inputs.level"), "invalid"]) {
+      const valid =
+        ["read", "write", "none"].includes(level) &&
+        !(["id-token", "copilot-requests"].includes(key) && level === "read") &&
+        !(["models", "vulnerability-alerts"].includes(key) && level === "write");
+      for (const findings of [
+        audit([], { permissions: { [key]: level } }),
+        audit([], {}, { permissions: { [key]: level } }),
+      ]) {
+        assert.equal(
+          findings.some((f) => f.rule === "permissions-invalid"),
+          !valid,
+          `${key}: ${level}`
+        );
+      }
+    }
+  }
+});
