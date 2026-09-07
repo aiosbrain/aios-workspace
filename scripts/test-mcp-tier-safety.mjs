@@ -164,7 +164,7 @@ try {
       for (let attempt = 0; attempt < 60; attempt++) {
         if (
           (
-            await run("docker", ["exec", container, "pg_isready", "-U", "app"], {
+            await run("docker", ["exec", container, "pg_isready", "-h", "127.0.0.1", "-U", "app"], {
               allowFailure: true,
             })
           ).code === 0
