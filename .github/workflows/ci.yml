@@ -5,6 +5,9 @@ on:
   push:
     branches: [main]
 
+permissions:
+  contents: read
+
 # Cancel superseded runs on the same ref (saves CI time on rapid pushes).
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -38,6 +41,9 @@ jobs:
   # `false` skips anything; absent, empty, or malformed all RUN the lane. The lane values
   # must earn a skip, not inherit one.
   changes:
+    permissions:
+      contents: read
+      pull-requests: read
     name: Detect changed lanes
     runs-on: ubuntu-latest
     timeout-minutes: 10 # observed p100 0.7 min (a gh api call + one node script)
@@ -46,8 +52,8 @@ jobs:
       rust: ${{ steps.detect.outputs.rust }}
       client: ${{ steps.detect.outputs.client }}
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 22
       - name: List the PR's changed paths
@@ -70,8 +76,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10 # observed p100 0.7 min
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 22
       - run: npm run check:docs
@@ -81,8 +87,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10 # observed p100 0.5 min
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 22
       - run: npm run check:context
@@ -168,8 +174,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15 # observed p100 1.5 min (npm ci + the health scorer's gh calls)
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 22
           cache: npm
@@ -196,8 +202,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15 # observed p100 1.8 min (three scaffolds + validators + eval smoke)
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 22
           cache: npm
@@ -289,10 +295,10 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 22
           cache: npm
@@ -357,8 +363,8 @@ jobs:
         test/sync-execution-smoke.test.mjs
         test/vault-error-surfacing.test.mjs
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 22
           cache: npm
@@ -397,8 +403,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10 # observed p100 1.6 min
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 22
           cache: npm
@@ -432,8 +438,8 @@ jobs:
         shard: [1, 2, 3]
         node: [22, 24, 26]
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: ${{ matrix.node }}
           cache: npm
@@ -454,8 +460,8 @@ jobs:
         # coverage/shard-<k> beyond the merge total exists, so drift goes red.
         shard: [1, 2, 3]
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 22
           cache: npm
@@ -463,7 +469,7 @@ jobs:
       - name: Run coverage shard (raw c8 data only, no report/check)
         run: node scripts/run-coverage.mjs --shard ${{ matrix.shard }}/3
       - name: Upload shard coverage data
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: coverage-shard-${{ matrix.shard }}
           path: coverage/shard-${{ matrix.shard }}
@@ -478,11 +484,11 @@ jobs:
     timeout-minutes: 20 # observed p100 2.9 min (download + merge + ratchet)
     needs: coverage-shard
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           # check-coverage.mjs diffs changed lines against the merge base.
           fetch-depth: 0
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 22
           cache: npm
@@ -728,8 +734,8 @@ jobs:
     env:
       npm_config_engine_strict: "true"
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: ${{ matrix.node }}
           cache: npm
@@ -769,8 +775,8 @@ jobs:
     needs: changes
     if: needs.changes.outputs.code != 'false'
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 22
           cache: npm
@@ -822,10 +828,10 @@ jobs:
     # diffs — the lane is advisory calibration, not a gate (AIO-539).
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 22
           cache: npm

@@ -237,3 +237,44 @@ test("a grandfathered path that no longer matches is reported as a stale advisor
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("explicit config owns caps and ratchets independently of candidate config", () => {
+  const dir = makeRepo();
+  const trusted = makeRepo();
+  try {
+    writeConfig(dir, { defaultCap: 1000 });
+    writeConfig(trusted, { grandfathered: { "scripts/large.mjs": 70 } });
+    writeLines(dir, "scripts/large.mjs", 60);
+    const config = path.join(trusted, "scripts/size-caps.json");
+    assert.equal(run(dir, ["--config", config, "--ratchet"]).code, 0);
+    assert.equal(readConfig(trusted).grandfathered["scripts/large.mjs"], 60);
+    assert.equal(readConfig(dir).defaultCap, 1000);
+    writeLines(dir, "scripts/large.mjs", 71);
+    assert.equal(run(dir, ["--config", config]).code, 1);
+    assert.equal(run(dir).code, 0);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(trusted, { recursive: true, force: true });
+  }
+});
+
+test("explicit missing, invalid and incomplete configs fail closed", () => {
+  const dir = makeRepo();
+  try {
+    writeConfig(dir);
+    assert.notEqual(run(dir, ["--config"]).code, 0);
+    assert.notEqual(run(dir, ["--config", "absent.json"]).code, 0);
+    for (const value of [
+      "{",
+      "null",
+      "{}",
+      JSON.stringify({ defaultCap: "50", include: [], exclude: [] }),
+      JSON.stringify({ defaultCap: 50, include: [], exclude: [], grandfathered: [] }),
+    ]) {
+      writeFileSync(path.join(dir, "bad.json"), value);
+      assert.notEqual(run(dir, ["--config", "bad.json"]).code, 0, value);
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
