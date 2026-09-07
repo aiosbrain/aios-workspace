@@ -367,6 +367,11 @@ async function cmdUpdateInner(repo, cfg, args) {
   // `--self` (AIO-635 Decision 4): the ONLY path that mutates a registry install of the
   // toolkit itself. A plain `aios update` never writes into the npm prefix.
   if (args.includes("--self")) {
+    if (["--check", "--preview", "--dry-run"].some((flag) => args.includes(flag))) {
+      throw new UpdateError(
+        "aios update --self cannot be combined with --check/--preview/--dry-run — it installs the toolkit globally."
+      );
+    }
     const exitStatus = selfUpgrade(resolveDistributionRoot(RUNNING_TOOLKIT));
     return buildResult({ mode: "self-upgrade", exitStatus, sourceClean: "immutable" });
   }
