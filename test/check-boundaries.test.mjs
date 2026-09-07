@@ -50,7 +50,7 @@ function minimalRules(extraGrandfathered = []) {
 // Sets up a temp dir with a fixed synthetic tree (a "sealed" scripts/widgets/ cmd dir with no
 // barrel, a hooks/ file, a src/ file, and a gui/server file) plus a caller-supplied set of extra
 // files, then runs the real script against it with an isolated, minimal rules file.
-function runIn({ grandfathered = [], extraFiles = {} } = {}) {
+function runIn({ grandfathered = [], extraFiles = {}, args = [] } = {}) {
   const dir = mkdtempSync(path.join(tmpdir(), "boundaries-"));
   try {
     mkdirSync(path.join(dir, "scripts", "widgets"), { recursive: true });
@@ -66,7 +66,7 @@ function runIn({ grandfathered = [], extraFiles = {} } = {}) {
     writeFileSync(rulesPath, JSON.stringify(minimalRules(grandfathered), null, 2));
 
     try {
-      const stdout = execFileSync("node", [SCRIPT], {
+      const stdout = execFileSync("node", [SCRIPT, ...args], {
         cwd: dir,
         encoding: "utf8",
         env: { ...process.env, CHECK_BOUNDARIES_RULES_PATH: rulesPath },
@@ -294,4 +294,21 @@ test("rejects a stale grandfather entry (coupling no longer present in the tree)
 test("passes on this repo's real tree with its real, measured boundaries.json", () => {
   const stdout = execFileSync("node", [SCRIPT], { cwd: ROOT, encoding: "utf8" });
   assert.match(stdout, /clean/);
+});
+
+test("trusted-base mode permits removed waivers but still rejects new boundary violations", () => {
+  const grandfathered = [
+    { from: "scripts/removed.mjs", to: "test/helper.mjs", reason: "removed coupling" },
+  ];
+  const args = ["--allow-stale"];
+  const clean = runIn({ grandfathered, args });
+  assert.equal(clean.code, 0, clean.out);
+  assert.match(clean.out, /unused trusted-base boundary waiver/);
+  const violation = runIn({
+    grandfathered,
+    args,
+    extraFiles: { "src/new.mjs": 'import "../scripts/other.mjs";\n' },
+  });
+  assert.equal(violation.code, 1, violation.out);
+  assert.match(violation.out, /R3/);
 });

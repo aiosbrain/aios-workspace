@@ -33,7 +33,15 @@ import { gitFiles } from "./git-files.mjs";
 import { globToRegex } from "../validation/agent-readiness-lib.mjs";
 
 const ROOT = process.cwd();
-const CONFIG_PATH = path.join(ROOT, "scripts", "size-caps.json");
+const args = process.argv.slice(2);
+let CONFIG_PATH = path.join(ROOT, "scripts", "size-caps.json");
+for (let i = 0; i < args.length; i++) {
+  if (args[i] === "--ratchet") continue;
+  if (args[i] !== "--config" || !args[i + 1] || args[i + 1].startsWith("--")) {
+    throw new Error("Usage: check-file-size.mjs [--config <path>] [--ratchet]");
+  }
+  CONFIG_PATH = path.resolve(ROOT, args[++i]);
+}
 const RATCHET = process.argv.includes("--ratchet");
 
 function countLines(abs) {
@@ -43,7 +51,23 @@ function countLines(abs) {
 }
 
 function loadConfig() {
-  return JSON.parse(readFileSync(CONFIG_PATH, "utf8"));
+  const value = JSON.parse(readFileSync(CONFIG_PATH, "utf8"));
+  const cap = (n) => Number.isSafeInteger(n) && n >= 0;
+  const globs = (v) => Array.isArray(v) && v.every((s) => typeof s === "string");
+  if (
+    !value ||
+    !cap(value.defaultCap) ||
+    !globs(value.include) ||
+    !globs(value.exclude) ||
+    (value.grandfathered !== undefined &&
+      (!value.grandfathered ||
+        typeof value.grandfathered !== "object" ||
+        Array.isArray(value.grandfathered) ||
+        !Object.values(value.grandfathered).every(cap)))
+  ) {
+    throw new Error(`Invalid file-size configuration: ${CONFIG_PATH}`);
+  }
+  return value;
 }
 
 function matchesAny(rel, regexes) {

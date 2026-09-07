@@ -9,6 +9,22 @@
  */
 /** Rule catalogue. `why` states the failure this prevents; `fix` is the remediation prompt. */
 export const RULES = {
+  "permissions-required": {
+    why: "Repository defaults are not an explicit permission policy for a PR-reachable job.",
+    fix: "Declare workflow or job permissions explicitly; an empty mapping is valid.",
+  },
+  "permissions-invalid": {
+    why: "GitHub permissions require literal levels; malformed or expression-valued declarations cannot establish policy.",
+    fix: "Use a permissions mapping of literal read/write/none levels, read-all, or write-all (elevation remains separately checked).",
+  },
+  "pr-target-input": {
+    why: "An action or reusable-workflow input can select or execute content under a privileged origin; unresolved expressions cannot be proven safe.",
+    fix: "Use literal inputs or proven trusted base values, or move the operation to ordinary PR testing.",
+  },
+  "pr-target-local-action": {
+    why: "Local actions execute repository code under the privileged origin, and recursive composite analysis is outside this checker.",
+    fix: "Move local action execution to an unprivileged pull_request workflow.",
+  },
   "unparseable-workflow": {
     why: "A workflow this gate cannot read as data is a workflow it cannot police. Passing it would let any construct the reader does not model become a blind spot.",
     fix: "Simplify the file to plain block YAML (no anchors, aliases, merge keys, explicit tags, or multiple documents), or extend scripts/workflow-yaml.mjs to model the construct — with a test.",
@@ -64,3 +80,28 @@ export const PR_LIKE_EVENTS = [
  * enough that "WIP", "temporary" or a bare ticket id cannot satisfy it.
  */
 export const MIN_JUSTIFICATION = 40;
+
+// Literal levels from actions/languageservices workflow-v1.0.json, verified 2026-09-07.
+// This validates policy input; checks/statuses write escalation is audited separately.
+export const PERMISSION_LEVELS = {
+  actions: ["read", "write", "none"],
+  "artifact-metadata": ["read", "write", "none"],
+  attestations: ["read", "write", "none"],
+  checks: ["read", "write", "none"],
+  "code-quality": ["read", "write", "none"],
+  contents: ["read", "write", "none"],
+  "copilot-requests": ["write", "none"],
+  deployments: ["read", "write", "none"],
+  discussions: ["read", "write", "none"],
+  drives: ["read", "write", "none"],
+  "id-token": ["write", "none"],
+  issues: ["read", "write", "none"],
+  models: ["read", "none"],
+  packages: ["read", "write", "none"],
+  pages: ["read", "write", "none"],
+  "pull-requests": ["read", "write", "none"],
+  "repository-projects": ["read", "write", "none"],
+  "security-events": ["read", "write", "none"],
+  statuses: ["read", "write", "none"],
+  "vulnerability-alerts": ["read", "none"],
+};
