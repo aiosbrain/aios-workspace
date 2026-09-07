@@ -100,7 +100,9 @@ export function discoverNodeTests() {
   }
   return filterTracked(
     NODE_TEST_ROOTS.flatMap((root) => walk(root, (name) => NODE_TEST_FILE_RE.test(name)))
-  ).filter((file) => !NETWORK_TESTS.includes(file)).sort();
+  )
+    .filter((file) => !NETWORK_TESTS.includes(file))
+    .sort();
 }
 
 export function discoverTestInventory() {
