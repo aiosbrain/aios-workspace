@@ -29,8 +29,6 @@ test("CLI drains every diagnostic to a slow pipe before exiting", async () => {
       { stdio: ["ignore", "pipe", "pipe"] }
     );
     const closed = once(child, "close");
-    // The report exceeds pipe capacity; a slow consumer must still receive every finding.
-    await new Promise((resolve) => setTimeout(resolve, 200));
     let output = "";
     child.stdout.on("data", (chunk) => {
       output += chunk;
@@ -38,6 +36,12 @@ test("CLI drains every diagnostic to a slow pipe before exiting", async () => {
     child.stderr.on("data", (chunk) => {
       output += chunk;
     });
+    // Attach listeners before pausing: child exit may resume pipes automatically.
+    child.stdout.pause();
+    child.stderr.pause();
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    child.stdout.resume();
+    child.stderr.resume();
     const [code] = await closed;
     assert.equal(code, 1);
     assert.equal([...output.matchAll(/^FAIL {2}/gm)].length, 300);
