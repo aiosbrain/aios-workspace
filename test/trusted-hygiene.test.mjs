@@ -180,6 +180,17 @@ for (const generated of [false, true]) {
         ];
         write(candidate, "scripts/boundaries.json", JSON.stringify(rules));
         prove();
+        // An old base waiver may become unused as the candidate removes debt.
+        const baseRules = JSON.parse(
+          readFileSync(path.join(base, "scripts/boundaries.json"), "utf8")
+        );
+        baseRules.grandfathered.push({
+          from: "scripts/deleted.mjs",
+          to: "test/old.mjs",
+          reason: "candidate removed this coupling",
+        });
+        write(base, "scripts/boundaries.json", JSON.stringify(baseRules));
+        prove();
         // Exact authority mutations must reverse the verdict, proving the fixture can detect them.
         passed("node scripts/check-file-size.mjs");
         passed("node scripts/check-boundaries.mjs");

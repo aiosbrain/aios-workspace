@@ -78,7 +78,7 @@ jobs:
       - name: File-size gate (default-deny, ratchet-only-down)
         run: node "$GITHUB_WORKSPACE/trusted-hygiene/scripts/check-file-size.mjs" --config "$GITHUB_WORKSPACE/trusted-hygiene/scripts/size-caps.json"
       - name: Repo-boundary gate
-        run: node "$GITHUB_WORKSPACE/trusted-hygiene/scripts/check-boundaries.mjs"
+        run: node "$GITHUB_WORKSPACE/trusted-hygiene/scripts/check-boundaries.mjs" --allow-stale
 
   workflow-policy:
     name: workflow policy (PR-reachable workflows)

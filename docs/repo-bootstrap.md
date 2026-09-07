@@ -111,7 +111,8 @@ firing and the stamped gates running clean, all with no adjacent core checkout.
 Newly generated governance jobs check out the base at `trusted-hygiene` and candidate files at
 `candidate`, with persisted checkout credentials disabled. Node executes only base-owned size and
 boundary checkers and their dependencies. The size checker receives the base's `scripts/size-caps.json`
-through `--config`; boundary rules remain colocated with the base checker. Candidate package scripts,
+through `--config`; boundary rules remain colocated with the base checker. `--allow-stale` permits unused base
+waivers when the candidate removes an old coupling, without permitting new violations. Candidate package scripts,
 checker edits, size caps and boundary waivers cannot change these decisions. Hygiene steps run before
 any candidate code, without installing candidate dependencies.
 
