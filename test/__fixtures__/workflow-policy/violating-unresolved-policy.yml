@@ -1,0 +1,11 @@
+on: pull_request_target
+jobs:
+  missing:
+    steps:
+      - uses: ./local-action
+      - uses: vendor/action@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        with:
+          command: ${{ matrix.command }}
+  invalid:
+    permissions: ${{ inputs.permissions }}
+    steps: [{ run: echo safe }]

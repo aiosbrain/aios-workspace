@@ -9,6 +9,22 @@
  */
 /** Rule catalogue. `why` states the failure this prevents; `fix` is the remediation prompt. */
 export const RULES = {
+  "permissions-required": {
+    why: "Repository defaults are not an explicit permission policy for a PR-reachable job.",
+    fix: "Declare workflow or job permissions explicitly; an empty mapping is valid.",
+  },
+  "permissions-invalid": {
+    why: "GitHub permissions require literal levels; malformed or expression-valued declarations cannot establish policy.",
+    fix: "Use a permissions mapping of literal read/write/none levels, read-all, or write-all (elevation remains separately checked).",
+  },
+  "pr-target-input": {
+    why: "An action or reusable-workflow input can select or execute content under a privileged origin; unresolved expressions cannot be proven safe.",
+    fix: "Use literal inputs or proven trusted base values, or move the operation to ordinary PR testing.",
+  },
+  "pr-target-local-action": {
+    why: "Local actions execute repository code under the privileged origin, and recursive composite analysis is outside this checker.",
+    fix: "Move local action execution to an unprivileged pull_request workflow.",
+  },
   "unparseable-workflow": {
     why: "A workflow this gate cannot read as data is a workflow it cannot police. Passing it would let any construct the reader does not model become a blind spot.",
     fix: "Simplify the file to plain block YAML (no anchors, aliases, merge keys, explicit tags, or multiple documents), or extend scripts/workflow-yaml.mjs to model the construct — with a test.",

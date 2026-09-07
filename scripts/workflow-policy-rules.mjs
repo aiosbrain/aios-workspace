@@ -36,7 +36,7 @@ export { validateAllowlist } from "./workflow-policy-allowlist.mjs";
 // every secret at once, and a step can then re-encode the result to defeat log masking. Matching
 // only a named or indexed read let that through while catching the far less dangerous
 // `secrets.FOO`. The bare-context alternative is last so a named read still reports its name.
-const SECRET_REF = /\bsecrets\s*(?:\.\s*([A-Za-z_][\w-]*)|\[|(?![\s]*[.[\w]))/g;
+const SECRET_REF = /\bsecrets\s*(?:\.\s*([A-Za-z_][\w-]*)|\[|(?![\s]*[.[\w]))/gi;
 const ARTIFACT_RUN = /\bgh\s+run\s+download\b|\/actions\/runs\/[^\s"']*\/artifacts\b/;
 // Deliberately broader than "install": in a pull_request_target job, running the PR's own scripts,
 // lockfile lifecycle hooks, or build files is the exploit primitive, not just fetching packages.
@@ -208,7 +208,7 @@ function* workflowScalars(doc) {
 }
 
 function elevatedPermissions(perms, permsLine) {
-  if (perms === null || perms === undefined) return [];
+  if (!validPermissions(perms)) return [];
   if (typeof perms === "string")
     return perms.trim() === "write-all"
       ? [
@@ -223,6 +223,45 @@ function elevatedPermissions(perms, permsLine) {
   return ["checks", "statuses"]
     .filter((scope) => String(perms[scope]) === "write")
     .map((scope) => ({ detail: `\`${scope}: write\``, line: lineOf(perms, scope) || permsLine }));
+}
+
+function validPermissions(perms) {
+  if (["read-all", "write-all"].includes(perms)) return true;
+  const scopes = [
+    "actions",
+    "attestations",
+    "checks",
+    "contents",
+    "deployments",
+    "discussions",
+    "id-token",
+    "issues",
+    "models",
+    "packages",
+    "pages",
+    "pull-requests",
+    "security-events",
+    "statuses",
+  ];
+  return (
+    isMap(perms) &&
+    Object.entries(perms).every(
+      ([key, level]) =>
+        scopes.includes(key) &&
+        ["read", "write", "none"].includes(level) &&
+        !(key === "id-token" && level === "read") &&
+        !(key === "models" && level === "write")
+    )
+  );
+}
+
+function auditInputs(node, jobId, tainted, add) {
+  if (!isMap(node.with)) return;
+  for (const { value, line } of walkScalars(node.with)) {
+    const hit = taintedExpression(value, tainted);
+    if (hit)
+      add(jobId, "pr-target-input", line || lineOf(node, "with"), `action/workflow input: ${hit}`);
+  }
 }
 
 /** Classify one `uses:` ref. Returns a message when it is not immutably pinned. */
@@ -266,11 +305,7 @@ function auditScope(jobId, scalars, add) {
   }
 }
 
-/**
- * Every way this step brings PR-controlled content into a privileged job, as {line, detail}.
- * Extracted from auditPrTargetStep so each rule family stays independently readable — and so the
- * acquisition logic, which is the part that has already regressed twice, sits on its own.
- */
+/** Acquisition commands require proven-safe selectors under a privileged origin. */
 function prContentAcquisition(step, tainted, stepLine) {
   const out = [];
   const uses = typeof step.uses === "string" ? step.uses : "";
@@ -284,7 +319,10 @@ function prContentAcquisition(step, tainted, stepLine) {
   if (/(^|\/)checkout@/.test(uses) && inputs.some(untrustedInput))
     out.push({
       line: lineOf(withBlock, "ref") || stepLine,
-      detail: "checks out PR-controlled ref",
+      detail: `checks out PR-controlled ref or a selector we cannot prove safe: ${inputs
+        .map((v) => taintedExpression(v, tainted))
+        .filter(Boolean)
+        .join("; ")}`,
     });
 
   // Fast path: a command that names the pull request itself needs no correlating reference.
@@ -307,6 +345,22 @@ function auditPrTargetStep(step, ctx) {
   const script = typeof withBlock.script === "string" ? withBlock.script : "";
   const tainted = taintedVarsFrom(step.env, ctx.tainted);
   const runLine = lineOf(step, "run") || stepLine;
+  if (/^\.\.?\//.test(uses))
+    add(
+      jobId,
+      "pr-target-local-action",
+      lineOf(step, "uses"),
+      `${label}: local action execution is not analyzed`
+    );
+  // Checkout selectors retain their scoped acquisition rule; all remaining action inputs
+  // are checked here, including scripts and opaque third-party inputs.
+  const inputNode = { ...step, with: { ...withBlock } };
+  if (/(^|\/)checkout@/.test(uses)) {
+    delete inputNode.with.ref;
+    delete inputNode.with.repository;
+  }
+  delete inputNode.with.script;
+  auditInputs(inputNode, jobId, tainted, add);
 
   for (const { line, detail } of prContentAcquisition(step, tainted, stepLine))
     add(jobId, "pr-target-checkout", line, `${label}: ${detail}`);
@@ -335,7 +389,7 @@ function auditPrTargetStep(step, ctx) {
         jobId,
         "pr-target-dynamic-run",
         lineOf(step, key === "run" ? "run" : "with") || stepLine,
-        `${label}: \`${key}:\` interpolates \`\${{${hit}}}\``
+        `${label}: \`${key}:\` interpolates ${hit}`
       );
   }
 }
@@ -343,6 +397,22 @@ function auditPrTargetStep(step, ctx) {
 function auditJob(jobId, job, ctx) {
   const { jobLine, isPrTarget, add } = ctx;
   const tainted = taintedVarsFrom(job.env, ctx.tainted);
+  const effective = Object.hasOwn(job, "permissions") ? job.permissions : ctx.permissions;
+  if (effective === undefined)
+    add(
+      jobId,
+      "permissions-required",
+      jobLine,
+      "PR-reachable job has no explicit effective permissions"
+    );
+  if (Object.hasOwn(job, "permissions") && !validPermissions(job.permissions))
+    add(
+      jobId,
+      "permissions-invalid",
+      lineOf(job, "permissions"),
+      "invalid literal permissions declaration (policy input, not a confirmed escalation)"
+    );
+  if (isPrTarget) auditInputs(job, jobId, tainted, add);
   for (const violation of elevatedPermissions(job.permissions, lineOf(job, "permissions")))
     add(jobId, "elevated-permissions", violation.line, violation.detail);
 
@@ -381,23 +451,27 @@ function auditJob(jobId, job, ctx) {
   }
 }
 
-/**
- * Every rule that applies to one PR-reachable workflow.
- *
- * `prTarget` is the ORIGIN of the path that reaches this file (from computeReachability), not the
- * file's own trigger. A local reusable workflow declares `on: workflow_call` yet runs with its
- * caller's `pull_request_target` privileges, so deriving this from `doc.on` here would let any
- * privileged step be laundered through a `uses: ./.github/workflows/...` call.
- *
- * @returns {Array<{file: string, job: string, rule: string, line: number, detail: string}>}
- */
+/** Audit a workflow using its strongest propagated origin and effective permissions. */
 export function auditWorkflow(file, prTarget = false) {
   const found = [];
   const doc = file.doc;
   const add = (job, rule, line, detail) => found.push({ file: file.rel, job, rule, line, detail });
 
   auditScope("(workflow)", workflowScalars(doc), add);
-  for (const violation of elevatedPermissions(doc.permissions, lineOf(doc, "permissions")))
+  if (Object.hasOwn(doc, "permissions") && !validPermissions(doc.permissions))
+    add(
+      "(workflow)",
+      "permissions-invalid",
+      lineOf(doc, "permissions"),
+      "invalid literal permissions declaration (policy input, not a confirmed escalation)"
+    );
+  const inherits = Object.values(doc.jobs ?? {}).some(
+    (job) => isMap(job) && !Object.hasOwn(job, "permissions")
+  );
+  for (const violation of elevatedPermissions(
+    inherits ? doc.permissions : undefined,
+    lineOf(doc, "permissions")
+  ))
     add("(workflow)", "elevated-permissions", violation.line, violation.detail);
 
   const jobs = isMap(doc.jobs) ? doc.jobs : {};
@@ -411,7 +485,13 @@ export function auditWorkflow(file, prTarget = false) {
   const tainted = taintedVarsFrom(doc.env, seed);
   for (const [jobId, job] of Object.entries(jobs)) {
     if (isMap(job))
-      auditJob(jobId, job, { jobLine: lineOf(jobs, jobId), isPrTarget, add, tainted });
+      auditJob(jobId, job, {
+        jobLine: lineOf(jobs, jobId),
+        isPrTarget,
+        add,
+        tainted,
+        permissions: doc.permissions,
+      });
   }
   return found;
 }

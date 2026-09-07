@@ -29,7 +29,7 @@
  */
 
 /** Bootstrap installer semver — bump on any manifest/semantics change. */
-export const BOOTSTRAP_VERSION = "0.2.0";
+export const BOOTSTRAP_VERSION = "0.3.0";
 
 /** The version stamp a bootstrapped repo carries (bootstrap semver + toolkit sha + hashes). */
 export const BOOTSTRAP_VERSION_FILE = ".aios-bootstrap-version";
@@ -40,6 +40,7 @@ export const BOOTSTRAP_VERSION_FILE = ".aios-bootstrap-version";
  * `asset` is relative to scripts/repo-bootstrap/assets/.
  */
 export const BOOTSTRAP_MANAGED = [
+  { dest: "scripts/workflow-policy-values.mjs", src: "scripts/workflow-policy-values.mjs" },
   // ── The harness license, carried with the files it covers. `.harness/` is Apache-2.0
   //    (see LICENSING.md), and Apache s4(a)/(d) require a recipient of those files to get
   //    a copy of the License and the NOTICE. We stamp harness files into a target repo,
