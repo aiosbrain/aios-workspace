@@ -16,6 +16,8 @@ import { fileURLToPath } from "node:url";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 export const NODE_TEST_ROOTS = ["test", "scripts"];
+// These run in their dedicated fail-closed infrastructure lane, never offline.
+export const NETWORK_TESTS = ["test/brain-mcp-tier-safety.test.mjs"];
 // test/test-suite.test.mjs imports this so its git-parity oracle can never silently disagree
 // with what the runner actually executes.
 export const NODE_TEST_FILE_RE = /\.test\.(?:mjs|js)$/;
@@ -98,7 +100,7 @@ export function discoverNodeTests() {
   }
   return filterTracked(
     NODE_TEST_ROOTS.flatMap((root) => walk(root, (name) => NODE_TEST_FILE_RE.test(name)))
-  ).sort();
+  ).filter((file) => !NETWORK_TESTS.includes(file)).sort();
 }
 
 export function discoverTestInventory() {
@@ -108,7 +110,8 @@ export function discoverTestInventory() {
   // .sort() here is also a real defect, not just redundancy: it sorts by UTF-16 code unit, which
   // is only correct for these paths by accident, and SonarCloud flags it (javascript:S2871).
   // A copy, not an alias, so a caller mutating one cannot silently reorder the other.
-  return { node, all: [...node] };
+  const network = filterTracked(NETWORK_TESTS);
+  return { node, network, all: [...node, ...network].sort() };
 }
 
 function parsePositiveInt(raw, label) {

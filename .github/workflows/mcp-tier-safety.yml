@@ -1,0 +1,39 @@
+name: MCP authorization boundary
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  mcp-tier-safety:
+    name: MCP live authorization and mutation controls
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      # Companion test support; full immutable SHA, never a moving branch.
+      MCP_BRAIN_SHA: 4c6f62ec978afc8100ea88de39691fb6b58270f1
+      MCP_BRAIN_DIR: ${{ github.workspace }}/.mcp-brain
+      MCP_EVIDENCE_DIR: ${{ github.workspace }}/.tmp/mcp-tier-evidence
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/checkout@v4
+        with:
+          repository: aiosbrain/aios-team-brain
+          ref: ${{ env.MCP_BRAIN_SHA }}
+          path: .mcp-brain
+          persist-credentials: false
+      - run: npm ci
+        working-directory: .mcp-brain
+      - run: node scripts/test-mcp-tier-safety.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mcp-tier-safety-${{ github.sha }}
+          path: .tmp/mcp-tier-evidence
+          if-no-files-found: error
+          retention-days: 30

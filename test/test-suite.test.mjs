@@ -50,6 +50,16 @@ test("every Node root contributes discovered tests", () => {
   }
 });
 
+test("networked MCP safety gate is separate and refuses missing infrastructure", () => {
+  const inventory = discoverTestInventory();
+  const file = "test/brain-mcp-tier-safety.test.mjs";
+  assert.ok(inventory.network.includes(file));
+  assert.ok(!inventory.node.includes(file));
+  assert.throws(() => execFileSync(process.execPath, [file], {
+    cwd: ROOT, env: { PATH: process.env.PATH }, stdio: "pipe",
+  }), (error) => error.status === 1 && /Disposable Brain harness required/.test(String(error.stdout)));
+});
+
 test("a tracked Node-root test with an unrunnable extension fails loudly", () => {
   // The live tree must be clean of them (discoverNodeTests above would throw)…
   assert.deepEqual(findUnrunnableNodeTests(trackedTests()), []);
