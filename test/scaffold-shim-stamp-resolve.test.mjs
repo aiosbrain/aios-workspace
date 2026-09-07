@@ -448,3 +448,38 @@ export async function run(args) {
     for (const p of [ws, toolkit]) rmSync(p, discard);
   }
 });
+
+test("a cross-workspace PATH hop still reaches the first workspace's verified npm CLI", () => {
+  const a = fixtureWorkspace("source pkg:@aiosbrain/aios@2.0.0\n");
+  const b = fixtureWorkspace("source pkg:@aiosbrain/aios@2.0.0\n");
+  try {
+    mkdirSync(path.join(b, "bin"));
+    symlinkSync(path.join(b, "scripts/aios.mjs"), path.join(b, "bin/aios"));
+    chmodSync(path.join(b, "scripts/aios.mjs"), 0o755);
+    const pkg = path.join(a, "node_modules/@aiosbrain/aios");
+    mkdirSync(path.join(pkg, "scripts"), { recursive: true });
+    mkdirSync(path.join(a, "node_modules/.bin"), { recursive: true });
+    writeFileSync(
+      path.join(pkg, "package.json"),
+      JSON.stringify({ name: "@aiosbrain/aios", version: "2.0.0" })
+    );
+    writeFileSync(
+      path.join(pkg, "build.json"),
+      JSON.stringify({ sha: "a".repeat(40), version: "2.0.0" })
+    );
+    writeFileSync(
+      path.join(pkg, "scripts/aios.mjs"),
+      "#!/usr/bin/env node\nconsole.log('verified local CLI reached');\n"
+    );
+    chmodSync(path.join(pkg, "scripts/aios.mjs"), 0o755);
+    symlinkSync(path.join(pkg, "scripts/aios.mjs"), path.join(a, "node_modules/.bin/aios"));
+    const output = runShim(a, {
+      PATH: [path.join(b, "bin"), path.join(a, "node_modules/.bin"), NODE_ONLY_PATH].join(
+        path.delimiter
+      ),
+    });
+    assert.match(output, /verified local CLI reached/);
+  } finally {
+    for (const p of [a, b]) rmSync(p, discard);
+  }
+});

@@ -80,9 +80,9 @@ const usableEntry = (p) => {
 };
 
 // Permit the actual local npm package, while still rejecting workspace wrappers.
-const localPackageEntry = (real) => {
+const localPackageEntry = (real, workspace = workspaceRoot) => {
   try {
-    const root = resolve(workspaceRoot, "node_modules/@aiosbrain/aios");
+    const root = resolve(workspace, "node_modules/@aiosbrain/aios");
     const pkg = JSON.parse(readFileSync(resolve(root, "package.json"), "utf8"));
     const build = JSON.parse(readFileSync(resolve(root, "build.json"), "utf8"));
     return pkg.name === "@aiosbrain/aios" && /^[0-9a-f]{40}$/.test(build.sha) &&
@@ -98,7 +98,7 @@ const fromPath = () => {
       accessSync(candidate, constants.X_OK);
       const real = realpathSync(candidate);
       if (real === currentScript) continue; // this shim on PATH — never self-exec
-      if (visited.some((root) => real === root || real.startsWith(root + sep)) && !localPackageEntry(real)) continue;
+      if (visited.some((root) => real === root || real.startsWith(root + sep)) && !visited.some((root) => localPackageEntry(real, root))) continue;
       return candidate; // spawned by ABSOLUTE path, never through a shell
     } catch {
       continue; // not executable / dangling — keep walking
