@@ -204,6 +204,7 @@ try {
               MCP_PACKAGE_LOCAL: process.env.MCP_PACKAGE_LOCAL || "0",
               MCP_REGISTRY_ACCEPTANCE: process.env.MCP_REGISTRY_ACCEPTANCE || "0",
               LLM_BASE_URL: llm.url,
+              MCP_PACKAGE_LLM_URL: llm.url,
               LLM_MODEL: "synthetic-package-acceptance",
             }
           : {}),
@@ -229,7 +230,7 @@ try {
         );
         await writeFile(
           join(directory, "vitest.mcp.config.ts"),
-          'import { defineConfig } from "vitest/config";\nimport httpConfig from "./vitest.http.config";\nexport default defineConfig({ ...httpConfig, test: { ...httpConfig.test, include: ["test/http/mcp-package.acceptance.ts"] } });\n'
+          'import { defineConfig } from "vitest/config";\nimport httpConfig from "./vitest.http.config";\nprocess.env.LLM_BASE_URL = process.env.MCP_PACKAGE_LLM_URL;\nexport default defineConfig({ ...httpConfig, test: { ...httpConfig.test, include: ["test/http/mcp-package.acceptance.ts"] } });\n'
         );
       }
       console.log(`MCP safety: ${mutation}: running live stdio outcome assertions`);

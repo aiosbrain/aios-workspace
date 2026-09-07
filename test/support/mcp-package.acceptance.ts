@@ -21,14 +21,14 @@ it("invokes all eight installed standalone tools against the real Brain", async 
     });
     await ingest(seed, {
       kind: "task",
-      body: "Synthetic MCP task rows",
+      body: "| ID | Task | Status |\n| --- | --- | --- |\n| MCP-1 | MCP lighthouse checklist | in_progress |",
       access: "team",
       path: "3-log/tasks.md",
       rows: [{ row_key: "MCP-1", title: "MCP lighthouse checklist", status: "in_progress" }],
     });
     await ingest(seed, {
       kind: "decision",
-      body: "Synthetic MCP decision rows",
+      body: "| ID | Decision | Audience |\n| --- | --- | --- |\n| MCP-D1 | Lighthouse launch is violet | team |",
       access: "team",
       path: "3-log/decision-log.md",
       rows: [{ row_key: "MCP-D1", title: "Lighthouse launch is violet", audience: "team" }],
@@ -51,6 +51,27 @@ it("invokes all eight installed standalone tools against the real Brain", async 
       seed.memberId,
       "Disposable standalone package acceptance"
     );
+    // The existing MCP task tool reads the writeback feed. Canonically apply a
+    // Brain-side work event so the ingested task is newer than its workspace push.
+    const event = await fetch(`${BASE_URL}/api/v1/work-events`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${key}`,
+        "x-aios-team": seed.teamSlug,
+      },
+      body: JSON.stringify({
+        project: "acme",
+        event_kind: "merged",
+        repo: "synthetic/package-fixture",
+        merged_sha: "a".repeat(40),
+        pr_url: "https://example.invalid/synthetic/1",
+        pr_title: "MCP-1 lighthouse checklist",
+        work_keys: ["MCP-1"],
+        actor: "tester",
+      }),
+    });
+    expect(event.status, await event.text()).toBe(201);
     const fixture = JSON.stringify({ url: BASE_URL, key, team: seed.teamSlug, itemId: item.id });
     const local = process.env.MCP_PACKAGE_LOCAL === "1";
     const args = local

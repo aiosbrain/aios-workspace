@@ -114,12 +114,25 @@ try {
   child.stderr.on("data", (chunk) => {
     stderr += chunk;
   });
+  child.once("close", (code) => {
+    for (const pending of calls.values()) {
+      clearTimeout(pending.timer);
+      pending.reject(
+        new Error(`MCP exited (${code}): ${stderr.replaceAll(fixture.key, "[REDACTED]")}`)
+      );
+    }
+    calls.clear();
+  });
   const rpc = (method, params = {}) =>
     new Promise((resolve, reject) => {
       const id = ++nextId;
       const timer = setTimeout(() => {
         calls.delete(id);
-        reject(new Error(`Protocol timeout: ${method}`));
+        reject(
+          new Error(
+            `Protocol timeout: ${method}; stderr: ${stderr.replaceAll(fixture.key, "[REDACTED]")}`
+          )
+        );
       }, 45000);
       calls.set(id, { resolve, reject, timer });
       child.stdin.write(JSON.stringify({ jsonrpc: "2.0", id, method, params }) + "\n");
@@ -170,7 +183,8 @@ try {
     "Citation must identify the ingested item"
   );
   assert.ok(JSON.stringify(await invoke("brain_list_projects")).includes("acme"));
-  assert.ok(JSON.stringify(await invoke("brain_list_tasks")).includes("MCP lighthouse checklist"));
+  const tasks = await invoke("brain_list_tasks");
+  assert.ok(JSON.stringify(tasks).includes("MCP lighthouse checklist"), JSON.stringify(tasks));
   assert.ok(
     JSON.stringify(await invoke("brain_list_decisions")).includes("Lighthouse launch is violet")
   );

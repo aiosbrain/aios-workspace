@@ -1,8 +1,9 @@
 import { fileURLToPath } from "node:url";
 import path from "node:path";
+import { realpathSync } from "node:fs";
 let root;
 export function initialize(data) {
-  root = path.resolve(data.root) + path.sep;
+  root = realpathSync(data.root) + path.sep;
 }
 export async function resolve(specifier, context, nextResolve) {
   const result = await nextResolve(specifier, context);
