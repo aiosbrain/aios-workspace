@@ -316,7 +316,7 @@ function auditScope(jobId, scalars, add) {
 /** Acquisition commands require proven-safe selectors under a privileged origin. */
 function prContentAcquisition(step, tainted, stepLine) {
   const out = [];
-  const uses = typeof step.uses === "string" ? step.uses : "";
+  const uses = typeof step.uses === "string" ? step.uses.trim() : "";
   const withBlock = isMap(step.with) ? step.with : {};
   const run = typeof step.run === "string" ? step.run : "";
   const inputs = [withBlock.ref, withBlock.repository].filter((v) => typeof v === "string");
@@ -347,7 +347,7 @@ function prContentAcquisition(step, tainted, stepLine) {
 /** The four facets of the plan's `pull_request_target` rule, for one step. */
 function auditPrTargetStep(step, ctx) {
   const { jobId, label, stepLine, add } = ctx;
-  const uses = typeof step.uses === "string" ? step.uses : "";
+  const uses = typeof step.uses === "string" ? step.uses.trim() : "";
   const withBlock = isMap(step.with) ? step.with : {};
   const run = typeof step.run === "string" ? step.run : "";
   const script = typeof withBlock.script === "string" ? withBlock.script : "";

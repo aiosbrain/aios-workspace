@@ -135,7 +135,7 @@ test("environment resolution closes cycles, missing definitions and shadowed cha
 });
 
 test("local actions are rejected only under privileged origins, including local callees", () => {
-  for (const uses of ["./.github/actions/local", "../local"]) {
+  for (const uses of ["./.github/actions/local", "../local", " ./local "]) {
     assert.ok(audit([{ uses }]).some((f) => f.rule === "pr-target-local-action"));
     assert.deepEqual(audit([{ uses }], {}, { on: "pull_request" }), []);
   }
@@ -264,4 +264,26 @@ jobs:
 `);
   const findings = auditWorkflow({ rel: "probe.yml", doc });
   assert.equal(findings.find((f) => f.rule === "pr-target-input").line, 8);
+});
+
+test("reusable jobs require their own explicit job or workflow declaration", () => {
+  const files = [
+    {
+      rel: ".github/workflows/caller.yml",
+      doc: {
+        on: "pull_request",
+        permissions: { contents: "read" },
+        jobs: { call: { uses: "./.github/workflows/callee.yml" } },
+      },
+    },
+    {
+      rel: ".github/workflows/callee.yml",
+      doc: { on: "workflow_call", jobs: { test: { steps: [{ run: "echo safe" }] } } },
+    },
+  ];
+  const reachable = computeReachability(files);
+  assert.ok(reachable.has(files[1].rel));
+  assert.ok(auditWorkflow(files[1]).some((f) => f.rule === "permissions-required"));
+  files[1].doc.permissions = {};
+  assert.deepEqual(auditWorkflow(files[1]), []);
 });

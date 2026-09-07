@@ -21,7 +21,11 @@ Diagnostics distinguish known PR-controlled or secret references from values the
 prove safe. Case variants and whole contexts cannot evade enforcement.
 
 Each PR-reachable job needs an explicit effective permissions declaration. Job permissions replace
-workflow permissions; `{}` is valid. Invalid declarations fail a separate policy-input rule.
+workflow permissions; `{}` is valid. This declaration must appear on the job or its containing
+workflow, including reusable workflow jobs. GitHub can restrict a callee's token through its caller;
+this bounded policy still requires the callee to declare its own limit. Caller permission propagation
+is not modeled. A rejection for a missing callee declaration is a policy requirement, not a claim
+that GitHub grants that callee additional authority. Invalid declarations fail a separate policy-input rule.
 Expression-valued permission levels are not demonstrated escalation paths: GitHub's
 [workflow schema](https://raw.githubusercontent.com/actions/languageservices/main/workflow-parser/src/workflow-v1.0.json)
 defines literal levels. Elevation remains independently rejected when effective permissions grant
