@@ -362,3 +362,89 @@ test("a pkg-stamped workspace delegates to its own real npm installation", () =>
     rmSync(workspace, discard);
   }
 });
+
+for (const installed of [false, true]) {
+  test(`two workspace PATH wrappers terminate and reach installed CLI=${installed}`, () => {
+    const a = fixtureWorkspace("source pkg:@aiosbrain/aios@2.0.0\n");
+    const b = fixtureWorkspace("source pkg:@aiosbrain/aios@2.0.0\n");
+    const target = fakeAiosOnPath();
+    try {
+      for (const ws of [a, b]) {
+        mkdirSync(path.join(ws, "bin"));
+        const wrapper = path.join(ws, "bin", "aios");
+        // Bound the fixture itself so a regression cannot exhaust process resources.
+        writeFileSync(
+          wrapper,
+          `#!/bin/sh
+export SHIM_TEST_HOPS=$((SHIM_TEST_HOPS+1))
+if [ "$SHIM_TEST_HOPS" -gt 4 ]; then echo fixture-cycle-limit >&2; exit 88; fi
+exec ${JSON.stringify(process.execPath)} ${JSON.stringify(path.join(ws, "scripts/aios.mjs"))} "$@"
+`
+        );
+        chmodSync(wrapper, 0o755);
+      }
+      const env = {
+        PATH: [
+          path.join(a, "bin"),
+          path.join(b, "bin"),
+          ...(installed ? [target.binDir] : []),
+          NODE_ONLY_PATH,
+        ].join(path.delimiter),
+      };
+      if (installed) {
+        runShim(a, env);
+        assert.match(readFileSync(target.log, "utf8"), /--no-such-command/);
+        assert.match(readFileSync(target.log, "utf8"), new RegExp(a));
+      } else {
+        const output = runShimExpectingFailure(a, env);
+        assert.match(output, NOT_FOUND);
+        assert.doesNotMatch(output, /fixture-cycle-limit/);
+      }
+    } finally {
+      for (const p of [a, b, target.binDir]) rmSync(p, discard);
+    }
+  });
+}
+
+test("cross-workspace stamp cycles fail before repeated delegation", () => {
+  const a = fixtureWorkspace(),
+    b = fixtureWorkspace();
+  try {
+    for (const ws of [a, b]) {
+      const file = path.join(ws, "scripts/aios.mjs");
+      writeFileSync(
+        file,
+        readFileSync(file, "utf8").replace(
+          "#!/usr/bin/env node\n",
+          "#!/usr/bin/env node\nif (Number(process.env.SHIM_TEST_HOPS ?? 0) > 4) { console.error('fixture-cycle-limit'); process.exit(88); }\nprocess.env.SHIM_TEST_HOPS = String(Number(process.env.SHIM_TEST_HOPS ?? 0) + 1);\n"
+        )
+      );
+    }
+    writeFileSync(path.join(a, ".aios-toolkit-version"), `source ${b}\n`);
+    writeFileSync(path.join(b, ".aios-toolkit-version"), `source ${a}\n`);
+    assert.match(runShimExpectingFailure(a), /cyclic workspace delegation/);
+  } finally {
+    for (const p of [a, b]) rmSync(p, discard);
+  }
+});
+
+test("the real CLI entrypoint resets the guard before launching a later workspace command", () => {
+  const ws = fixtureWorkspace();
+  const toolkit = mkdtempSync(path.join(tmpdir(), "shim-real-entry-"));
+  try {
+    mkdirSync(path.join(toolkit, "scripts"));
+    copyFileSync(path.join(ROOT, "scripts/aios.mjs"), path.join(toolkit, "scripts/aios.mjs"));
+    writeFileSync(
+      path.join(toolkit, "scripts/cli.mjs"),
+      `import { execFileSync } from "node:child_process";
+export async function run(args) {
+  if (args.includes("nested")) { console.log("nested workspace command completed"); return; }
+  process.stdout.write(execFileSync(process.execPath, [${JSON.stringify(path.join(ws, "scripts/aios.mjs"))}, "nested"], { env: process.env, encoding: "utf8" }));
+}`
+    );
+    writeFileSync(path.join(ws, ".aios-toolkit-version"), `source ${toolkit}\n`);
+    assert.match(runShim(ws), /nested workspace command completed/);
+  } finally {
+    for (const p of [ws, toolkit]) rmSync(p, discard);
+  }
+});

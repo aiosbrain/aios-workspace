@@ -31,6 +31,22 @@ const currentScript = realpathSync(fileURLToPath(import.meta.url));
 const workspaceRoot = resolve(dirname(currentScript), "..");
 const fromDir = (dir) => resolve(dir, TOOLKIT_CLI);
 
+// Propagate canonical workspace roots across shim hops. This also bounds explicit/stamp
+// cycles; PATH search skips prior workspaces so it can reach an installed CLI after them.
+let visited;
+try {
+  visited = JSON.parse(process.env.AIOS_SHIM_VISITED_ROOTS ?? "[]");
+  if (!Array.isArray(visited) || visited.length >= 16 ||
+      visited.some((root) => typeof root !== "string" || !isAbsolute(root)) ||
+      visited.includes(workspaceRoot)) throw new Error("cycle");
+} catch {
+  console.error("aios: invalid or cyclic workspace delegation; select an installed CLI with AIOS_TOOLKIT_DIR.");
+  process.exit(1);
+}
+visited.push(workspaceRoot);
+const childEnv = { ...process.env, AIOS_SHIM_VISITED_ROOTS: JSON.stringify(visited) };
+
+
 // AIOS_TOOLKIT_CLI (a direct path to the entrypoint) is the deprecated predecessor of
 // AIOS_TOOLKIT_DIR — honored so existing custom-path configs keep working, with a nudge.
 if (process.env.AIOS_TOOLKIT_CLI && !process.env.AIOS_TOOLKIT_DIR) {
@@ -82,7 +98,7 @@ const fromPath = () => {
       accessSync(candidate, constants.X_OK);
       const real = realpathSync(candidate);
       if (real === currentScript) continue; // this shim on PATH — never self-exec
-      if ((real === workspaceRoot || real.startsWith(workspaceRoot + sep)) && !localPackageEntry(real)) continue;
+      if (visited.some((root) => real === root || real.startsWith(root + sep)) && !localPackageEntry(real)) continue;
       return candidate; // spawned by ABSOLUTE path, never through a shell
     } catch {
       continue; // not executable / dangling — keep walking
@@ -138,11 +154,11 @@ const installationMode = args[0] === "update" && args.includes("--self");
 const forwarded = hasRepo || installationMode ? args : [...args, "--repo", workspaceRoot];
 
 const result = delegate.bin
-  ? spawnSync(delegate.bin, forwarded, { stdio: "inherit", cwd: workspaceRoot, env: process.env })
+  ? spawnSync(delegate.bin, forwarded, { stdio: "inherit", cwd: workspaceRoot, env: childEnv })
   : spawnSync(process.execPath, [delegate.entry, ...forwarded], {
       stdio: "inherit",
       cwd: workspaceRoot,
-      env: process.env,
+      env: childEnv,
     });
 
 process.exit(result.status ?? 1);
