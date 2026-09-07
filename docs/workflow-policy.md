@@ -52,6 +52,6 @@ Security App and credential workstream. No new waiver is introduced by expressio
 
 `test/check-workflow-policy-hardening.test.mjs` pairs rejected probes with trusted controls across
 privileged channels, environment resolution, local calls, permissions and directory handling.
-`test/workflow-policy-mutations.test.mjs` restores sixteen exact defects in disposable checker copies,
+`test/workflow-policy-mutations.test.mjs` restores seventeen exact defects in disposable checker copies,
 requires assertion failures for every mutant, and reruns the restored controls. The existing bypass
 fixtures and slow-pipe test remain active; the latter still requires all 300 diagnostic records.

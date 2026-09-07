@@ -129,7 +129,7 @@ test("environment resolution closes cycles, missing definitions and shadowed cha
     }).length
   );
   const inherited = environmentValues({ A: "safe", B: expr("env.A") });
-  assert.equal(environmentValues({ A: expr("env.A") }, inherited).get("a"), "unknown");
+  assert.equal(environmentValues({ A: expr("env.A") }, inherited).get("A"), "unknown");
   assert.equal(classifyValue("${{ env.A"), "unknown");
 });
 
@@ -236,4 +236,17 @@ test("workflow directory errors return 2; explicit existing empty audit returns 
     chmodSync(path.join(root, "empty"), 0o700);
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("different-case shell variables cannot shadow inherited acquisition taint", () => {
+  const findings = audit([{ env: { head_sha: "literal" }, run: 'git fetch origin "$HEAD_SHA"' }], {
+    env: { HEAD_SHA: expr("github.event.pull_request.head.sha") },
+  });
+  assert.ok(findings.some((f) => f.rule === "pr-target-checkout"));
+  assert.deepEqual(
+    audit([{ env: { HEAD_SHA: "literal" }, run: 'git fetch origin "$HEAD_SHA"' }], {
+      env: { HEAD_SHA: expr("github.event.pull_request.head.sha") },
+    }),
+    []
+  );
 });

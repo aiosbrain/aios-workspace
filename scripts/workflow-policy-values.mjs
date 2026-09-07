@@ -84,12 +84,18 @@ export function classifyValue(value, resolveEnv = () => "unknown") {
   }
 }
 
-/** Scope snapshots preserve shadowing; DFS makes missing definitions and cycles unknown. */
+/** Expression context lookup is case-insensitive; ambiguous shell names take strongest trust. */
+export function lookupEnvironment(values, name) {
+  const matches = [...values].filter(([key]) => key.toLowerCase() === name.toLowerCase());
+  return matches.length
+    ? matches.reduce((status, [, value]) => strongest(status, value), "safe")
+    : "unknown";
+}
+
+/** Shell env names remain case-sensitive: a safe `head` cannot erase inherited `$HEAD`. */
 export function environmentValues(env, inherited = new Map()) {
   const definitions = new Map(
-    env && typeof env === "object" && !Array.isArray(env)
-      ? Object.entries(env).map(([key, value]) => [key.toLowerCase(), value])
-      : []
+    env && typeof env === "object" && !Array.isArray(env) ? Object.entries(env) : []
   );
   const values = new Map(inherited);
   for (const key of definitions.keys()) values.delete(key);
@@ -98,7 +104,15 @@ export function environmentValues(env, inherited = new Map()) {
     if (values.has(key)) return values.get(key);
     if (!definitions.has(key) || visiting.has(key)) return "unknown";
     visiting.add(key);
-    const status = classifyValue(definitions.get(key), resolve);
+    const lookup = (name) => {
+      const keys = [...new Set([...definitions.keys(), ...values.keys()])].filter(
+        (k) => k.toLowerCase() === name.toLowerCase()
+      );
+      return keys.length
+        ? keys.reduce((status, k) => strongest(status, resolve(k)), "safe")
+        : "unknown";
+    };
+    const status = classifyValue(definitions.get(key), lookup);
     visiting.delete(key);
     values.set(key, status);
     return status;

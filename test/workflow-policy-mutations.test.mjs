@@ -19,6 +19,12 @@ const modules = [
 ];
 const mutations = [
   [
+    "shell env case collision",
+    "values",
+    "? Object.entries(env) : []",
+    "? Object.entries(env).map(([key, value]) => [key.toLowerCase(), value]) : []",
+  ],
+  [
     "unknown values accepted",
     "values",
     "return knownReferences(text, resolveEnv);",

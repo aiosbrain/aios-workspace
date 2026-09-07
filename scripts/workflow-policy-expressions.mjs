@@ -1,5 +1,5 @@
 /** Privileged expression and acquisition policy. Unknown values fail closed. */
-import { classifyValue, environmentValues } from "./workflow-policy-values.mjs";
+import { classifyValue, environmentValues, lookupEnvironment } from "./workflow-policy-values.mjs";
 
 // Include the whole event object while excluding the fixed `github.event_name` trigger name.
 export const ATTACKER_EXPR = /\bgithub\s*\.\s*(?:event\b|head_ref\b)/i;
@@ -55,7 +55,7 @@ export function expressionsIn(value) {
 }
 
 export function taintedExpression(text, tainted = new Set()) {
-  const resolve = (name) => tainted.valuesByName?.get(name) ?? "unknown";
+  const resolve = (name) => lookupEnvironment(tainted.valuesByName ?? new Map(), name);
   const status = classifyValue(text, resolve);
   if (status === "safe") return null;
   return `${String(text).trim()} (${status === "tainted" ? "known PR-controlled or secret reference" : "cannot prove safe: unknown expression"})`;
@@ -73,7 +73,7 @@ export function prControlledRef(body, tainted) {
   const expression = taintedExpression(body, tainted);
   if (expression) return expression;
   for (const name of [...tainted, ...IMPLICITLY_TAINTED_VARS]) {
-    if (SHELL_NAME.test(name) && new RegExp(`\\$\\{?${name}\\b`, "i").test(body))
+    if (SHELL_NAME.test(name) && new RegExp(`\\$\\{?${name}\\b`).test(body))
       return `\`$${name}\`, which carries ${tainted.valuesByName?.get(name) === "tainted" ? "a PR-controlled value" : "a value we cannot prove safe"}`;
   }
   return null;
