@@ -170,3 +170,19 @@ test("Windows ACL verification accepts owner/SYSTEM/admin only and passes paths 
     });
     assert.deepEqual(actual, acl);
   }));
+
+test("new global tuples reject remote plaintext HTTP while allowing loopback fixtures", () => {
+  assert.throws(
+    () =>
+      validateCredentialTuple({
+        brain_url: "http://brain.example.com",
+        api_key: "synthetic-secret",
+      }),
+    /https/i
+  );
+  assert.equal(
+    validateCredentialTuple({ brain_url: "http://127.0.0.1:12345", api_key: "synthetic-secret" })
+      .brain_url,
+    "http://127.0.0.1:12345"
+  );
+});

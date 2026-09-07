@@ -3,7 +3,7 @@ import { constants, lstatSync, openSync, fstatSync, readFileSync, closeSync } fr
 import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { homedir } from "node:os";
-import { normalizeBrainOriginFromConfig } from "../packages/foundation/src/internal/brain-origin.mjs";
+import { normalizeBrainOrigin } from "../packages/foundation/src/internal/brain-origin.mjs";
 
 export function assertWindowsCredentialAcl(acl) {
   if (!acl || acl.owner !== acl.current || !Array.isArray(acl.allow))
@@ -48,7 +48,7 @@ export function validateCredentialTuple(value) {
       throw new Error(`Invalid credential field: ${key}`);
   }
   return {
-    brain_url: normalizeBrainOriginFromConfig(value.brain_url),
+    brain_url: normalizeBrainOrigin(value.brain_url),
     api_key: value.api_key,
     team_id: value.team_id || "",
     member: value.member || "",

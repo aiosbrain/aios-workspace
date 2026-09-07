@@ -46,11 +46,13 @@ test("release gate binds the exact tag, successful dispatch, three isolated cell
     repository: { full_name: "aiosbrain/aios-workspace" },
     head_repository: { full_name: "aiosbrain/aios-workspace" },
     head_sha: sha,
+    head_branch: "main",
   };
   const args = { directory, run, sha, version: "0.1.0", ref: "refs/tags/mcp-v0.1.0" };
   assert.equal(verifyMcpRelease(args).candidate.sha256, candidate.sha256);
   for (const change of [
     { conclusion: "failure" },
+    { head_branch: "feature/unmerged" },
     { event: "pull_request" },
     { head_sha: "b".repeat(40) },
     { path: ".github/workflows/unrelated.yml" },

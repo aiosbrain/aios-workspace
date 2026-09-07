@@ -21,6 +21,7 @@ export function verifyMcpRelease({
   assert.equal(run.repository.full_name, repository);
   assert.equal(run.head_repository.full_name, repository);
   assert.equal(run.head_sha, sha, "Acceptance must name this exact release commit");
+  assert.equal(run.head_branch, "main", "Release acceptance must run from merged main");
   assert.match(sha, /^[a-f0-9]{40}$/);
   assert.match(version, /^\d+\.\d+\.\d+$/);
   assert.equal(ref, `refs/tags/mcp-v${version}`, "MCP release requires its exact version tag");
