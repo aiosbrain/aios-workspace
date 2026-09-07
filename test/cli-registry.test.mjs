@@ -336,7 +336,7 @@ test("registry: every adapt hands its module the EXACT argument signature (table
     doctor: ["mod", "cmdDoctor", A],
     provenance: ["mod", "cmdProvenance", A],
     // mcp inlines its pre-config block: resolve the env-first config, then own the process.
-    mcp: ["mod", "runStdio", { missing: [] }],
+    mcp: ["mod", "runStdio", { missing: [] }, { argv: A }],
   });
 
   // The table must cover the registry exactly — a new command can't slip in unasserted.

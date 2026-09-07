@@ -176,21 +176,7 @@ export const COMMANDS = [
     loader: () => import("../brain-mcp.mjs"),
     adapt: async (ctx, mod) => {
       const mcpCfg = mod.resolveBrainConfig();
-      if (mcpCfg.missing.length) {
-        // Brain unconfigured: still start IF a workspace resolves (local aios_* tools only).
-        const ws = ctx.local.findRepoRootOffline(process.cwd());
-        if (!ws) {
-          ctx.local.die(
-            `aios mcp: missing brain config: ${mcpCfg.missing.join(", ")} and no workspace at cwd. ` +
-              `Set the brain env (AIOS_BRAIN_URL/AIOS_API_KEY/AIOS_TEAM) or run from a workspace.`
-          );
-        }
-        process.stderr.write(
-          `aios mcp: brain not configured (${mcpCfg.missing.join(", ")}); ` +
-            `starting in local-only mode — aios_* tools available.\n`
-        );
-      }
-      await mod.runStdio(mcpCfg);
+      await mod.runStdio(mcpCfg, { argv: ctx.rest });
       return 0;
     },
     exit: "exit-code",

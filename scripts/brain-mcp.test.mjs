@@ -42,7 +42,7 @@ test("initialize returns protocol version, tools capability, and server info", a
   const res = await dispatch({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} });
   assert.equal(res.jsonrpc, "2.0");
   assert.equal(res.id, 1);
-  assert.equal(res.result.protocolVersion, "2024-11-05");
+  assert.equal(res.result.protocolVersion, "2025-11-25");
   assert.ok(res.result.capabilities.tools);
   assert.equal(res.result.serverInfo.name, SERVER_NAME);
   assert.equal(res.result.serverInfo.version, SERVER_VERSION);
