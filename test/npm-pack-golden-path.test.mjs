@@ -48,6 +48,10 @@ const REQUIRED_TARBALL_PATHS = [
   "package/scripts/connectors.mjs",
   "package/scripts/connectors/linear/index.mjs",
   "package/scripts/linear.mjs",
+  "package/scripts/cli/slack-commands.mjs",
+  "package/scripts/connectors/slack/index.mjs",
+  "package/scripts/connectors/slack/files.mjs",
+  "package/scripts/slack.mjs",
   "package/scripts/scaffold-project.sh",
   "package/scripts/leak-gate.sh",
   "package/scaffold/aios.yaml.tmpl",
@@ -292,28 +296,29 @@ process.stdout.write(JSON.stringify({
         const p = path.join(prefix, "node_modules", ".bin", binName);
         assert.ok(existsSync(p), `npm exposed the ${binName} bin`);
       }
-      // `slack --help` exits non-zero on argparse usage, so capture rather than assert exit 0.
-      const slackHelp = (() => {
-        try {
-          return run(path.join(prefix, "node_modules", ".bin", "slack"), ["--help"], {
-            cwd: prefix,
-          });
-        } catch (e) {
-          return `${e.stdout ?? ""}${e.stderr ?? ""}`;
-        }
-      })();
-      // Parse argparse's own `{a,b,c}` choices block rather than substring-matching the help
-      // text: `read` would match "already", `file` would match "filename". Membership in the
-      // declared choice set is the actual property, and it needs no constructed regex.
+      // AIO-1068: `slack --help` is the Node delegate now — exit 0, no python3 anywhere.
+      const slackHelp = run(path.join(prefix, "node_modules", ".bin", "slack"), ["--help"], {
+        cwd: prefix,
+        env: { PATH: nodeOnlyPath },
+      });
+      // Parse the argparse-shaped `{a,b,c}` choices block rather than substring-matching the
+      // help text: `read` would match "already", `file` would match "filename". Membership in
+      // the declared choice set is the actual property.
       const slackVerbs = new Set(
-        (/\{([a-z,]+)\}/.exec(slackHelp)?.[1] ?? "").split(",").filter(Boolean)
+        (/\{([a-z,-]+)\}/.exec(slackHelp)?.[1] ?? "").split(",").filter(Boolean)
       );
-      for (const verb of ["file", "resolve", "dm", "send", "read"]) {
+      for (const verb of ["file", "file-delete", "resolve", "dm", "send", "read", "whoami"]) {
         assert.ok(
           slackVerbs.has(verb),
           `installed slack must expose '${verb}' (got: ${[...slackVerbs].join(",") || "none"})`
         );
       }
+
+      // 4b-slack. AIO-1068 packed Slack leg: empty HOME/config, node-only PATH, synthetic
+      // credentials, in-process mock provider — no Python, jq, or global dotenvx can
+      // participate, and no network is touched. Extracted body: helpers/pack-golden-slack-leg.
+      const { runPackedSlackLeg } = await import("./helpers/pack-golden-slack-leg.mjs");
+      runPackedSlackLeg({ run, bin, prefix, base, nodeOnlyPath, root: ROOT });
 
       // 4c. The devtools pin must be EXACT and satisfied. `aios spec eval` reaches into the
       //     sibling package, so a stale pin silently reintroduces AIO-686 for every installer

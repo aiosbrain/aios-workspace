@@ -22,6 +22,8 @@ import { commandMetadata as M } from "./command-contract.mjs";
 import { commandIndex, nearestName, renderCommandUsage } from "./registry-lookup.mjs";
 import { DIAGNOSTIC_COMMANDS } from "./diagnostic-commands.mjs";
 import { LINEAR_COMMANDS as LC } from "./linear-commands.mjs";
+import { SLACK_COMMANDS as SC } from "./slack-commands.mjs";
+import { HIDDEN_COMMANDS } from "./hidden-commands.mjs";
 
 /** @type {CommandDescriptor[]} Help order; hidden commands (`usage: []`) stay last. */
 export const COMMANDS = [
@@ -72,6 +74,7 @@ export const COMMANDS = [
   },
   LC.disconnect,
   LC.linear,
+  SC.slack,
   {
     name: "review",
     metadata: M`review core.cli workspace brain required human requires-workspace`,
@@ -442,40 +445,8 @@ export const COMMANDS = [
     usage: U["repo-bootstrap"],
   },
 
-  // ── hidden (no help text; reachable but undocumented, exactly as before) ────
-  {
-    name: "whoami",
-    metadata: M`whoami core.cli workspace brain required human requires-workspace`,
-    resolution: "workspace",
-    adapt: (ctx) => ctx.local.cmdWhoami(ctx.repo, ctx.cfg),
-    usage: U.whoami,
-  },
-  // AIO-600 GUI seams: gui/server shells `aios gen-catalog|catalog|connector`, never scripts/*.
-  {
-    name: "gen-catalog",
-    metadata: M`gen-catalog core.cli optional none never human offline`,
-    resolution: "offline",
-    loader: () => import("../gen-catalog.mjs"),
-    adapt: (ctx, mod) => mod.generate(ctx.repo),
-    usage: [],
-  },
-  {
-    name: "catalog",
-    metadata: M`catalog core.cli optional none never human offline`,
-    resolution: "offline",
-    loader: () => import("../gen-catalog.mjs"),
-    adapt: (ctx, mod) => mod.cmdCatalog(ctx.repo, ctx.rest),
-    usage: U.catalog,
-  },
-  {
-    name: "connector",
-    metadata: M`connector core.cli optional optional optional human-or-json offline`,
-    resolution: "offline",
-    loader: () => import("../connector-cli.mjs"),
-    adapt: (ctx, mod) => mod.cmdConnector(ctx.repo, ctx.rest),
-    exit: "exit-status",
-    usage: U.connector,
-  },
+  // ── hidden (no help text; reachable but undocumented) — see hidden-commands.mjs ────
+  ...HIDDEN_COMMANDS,
 ];
 
 const BY_NAME = commandIndex(COMMANDS);

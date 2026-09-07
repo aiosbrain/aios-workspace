@@ -54,16 +54,21 @@ test("an unrelated workspace command survives a broken Linear adapter", () => {
 });
 
 test("the Slack surface never imports the Linear adapter", () => {
-  // Static: neither the slack bin nor its shared runtime references the adapter seam.
-  for (const file of ["scripts/slack.mjs", "scripts/global-connector-runtime.mjs"]) {
-    assert.doesNotMatch(
-      readFileSync(path.join(ROOT, file), "utf8"),
-      /connectors\/linear|connectors\.mjs/
-    );
-  }
-  // Dynamic: the slack entrypoint under the sabotage hook never trips the fixture (its own
-  // exit status depends on a python3 runtime, which is not what this test asserts).
+  // Static: the slack bin reaches only the lazy barrel (whose thunks never import an
+  // adapter at load), never the Linear adapter directory; the shared runtime touches
+  // neither. (AIO-1068: slack.mjs became an in-process delegate through connectors.mjs.)
+  assert.doesNotMatch(
+    readFileSync(path.join(ROOT, "scripts/slack.mjs"), "utf8"),
+    /connectors\/linear/
+  );
+  assert.doesNotMatch(
+    readFileSync(path.join(ROOT, "scripts/global-connector-runtime.mjs"), "utf8"),
+    /connectors\/linear|connectors\.mjs/
+  );
+  // Dynamic: the slack entrypoint under the sabotage hook never trips the fixture, and its
+  // own help surface still works with the Linear adapter broken.
   const result = run(SLACK_BIN, ["dm", "--help"]);
+  assert.equal(result.status, 0, result.stderr);
   assert.doesNotMatch(`${result.stdout}\n${result.stderr}`, /broken adapter fixture/);
 });
 

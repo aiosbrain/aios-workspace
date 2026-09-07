@@ -12,6 +12,15 @@ This is the **individual workspace** repo. The Team Brain sync contract
 
 ### Added
 
+- **Packaged-artifact acceptance lane (AIO-1071).** The packed candidate — not a checkout — is now
+  the release authority: one pack job emits the tarball + SHA-256 + inventory + provenance tuple,
+  and six OS/Node cells (Linux/macOS × Node 22/24/26, `.github/workflows/package-acceptance.yml`)
+  install that exact digest into empty-HOME, allowlisted, engine-strict environments and drive
+  fresh-install, configured-use, mocked Linear/Slack, migration-interruption/repeat,
+  registry-0.12.0 upgrade (stage-and-verify) and rollback journeys, plus nine fault-injection
+  negative controls and a secret-sentinel evidence scan. Local single-cell equivalent:
+  `npm run test:package-acceptance`. Live provider smokes stay operator-gated outside CI.
+
 - **Portable CLI runtime foundation (AIO-1066).** The canonical `aios` bin now starts through a
   dependency-light bootstrap and loads legacy handlers only after registry selection. Ordinary
   registry-owned `help`, `version`, `doctor`, and `provenance` diagnostics remain usable with

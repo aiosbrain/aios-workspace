@@ -52,6 +52,9 @@ function implementationFor(name, owner) {
   if (owner === "adapter.linear") {
     return "scripts/connectors/linear/index.mjs";
   }
+  if (owner === "adapter.slack") {
+    return "scripts/connectors/slack/index.mjs";
+  }
   return `scripts/cli/registry.mjs#${name}`;
 }
 

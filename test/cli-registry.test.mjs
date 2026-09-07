@@ -75,8 +75,8 @@ const PRE_REFACTOR = {
   mcp: "pre-config",
 };
 
-// AIO-1067: the built-in Linear adapter and its user-level credential lifecycle.
-const V2_ADAPTERS = { linear: "offline", disconnect: "offline" };
+// AIO-1067/AIO-1068: the built-in adapters and the user-level credential lifecycle.
+const V2_ADAPTERS = { linear: "offline", disconnect: "offline", slack: "offline" };
 
 const V2_DIAGNOSTICS = {
   help: "diagnostic",
@@ -309,6 +309,7 @@ test("registry: every adapt hands its module the EXACT argument signature (table
     catalog: ["mod", "cmdCatalog", R, A],
     connector: ["mod", "cmdConnector", R, A],
     linear: ["mod", "cmdLinear", R, A],
+    slack: ["mod", "cmdSlack", R, A],
     disconnect: ["mod", "cmdDisconnect", R, A],
     transcripts: ["mod", "cmdTranscripts", R, C, A],
     pm: ["mod", "cmdPm", C, A],

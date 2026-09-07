@@ -82,6 +82,10 @@ export async function trustedFetch(input, options = {}) {
       body,
       headers,
       redirect: "manual",
+      // Per-request timeout seam (AIO-1068): the Slack adapter aborts slow requests. The
+      // signal changes WHEN a request may run, never WHERE it may go — validation above is
+      // untouched.
+      signal: options.signal,
     });
     if (![301, 302, 303, 307, 308].includes(response.status)) return response;
     if (redirects >= (options.maxRedirects ?? 5) || !response.headers.get("location")) {

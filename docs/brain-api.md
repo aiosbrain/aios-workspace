@@ -1,6 +1,6 @@
 # AIOS Team Brain — API Contract
 
-**Version: 1.23** is the shipped member-facing Brain API (`/api/v1`). **Document revision: 1.23**
+**Version: 1.24** is the shipped member-facing Brain API (`/api/v1`). **Document revision: 1.24**
 also carries the separately negotiated internal Executor gateway contract **1.10**; it does not
 claim unimplemented member-facing v1.10 routes. This document is the single pinned contract between the
 contributor repo (this toolkit's `aios` CLI) and the `aios-team-brain` service. Both
@@ -194,9 +194,9 @@ writeback/registration pulls), so a newer client still works against an older br
   2026-06-19 rule); a health-only push would zero existing analytics and is rejected `422` like
   any other sparse push. Scalars only — no file paths, no source text, no contributor identity
   ever cross the boundary. The machine-readable payload contract is
-  [`contract/codebase-payload-1.23.schema.json`](./contract/codebase-payload-1.23.schema.json),
+  [`contract/codebase-payload-1.24.schema.json`](./contract/codebase-payload-1.24.schema.json),
   with canonical parity fixtures in
-  [`contract/codebase-payload-1.23-fixtures.json`](./contract/codebase-payload-1.23-fixtures.json).
+  [`contract/codebase-payload-1.24-fixtures.json`](./contract/codebase-payload-1.24-fixtures.json).
   This revision is doc + schema only — it enables no push lane; the canonical pusher remains the
   ingestion sidecar.*
 - *2026-08-03 — **v1.16**: documented two authenticated reads that were already shipped:
@@ -298,8 +298,8 @@ writeback/registration pulls), so a newer client still works against an older br
   `test_coverage_pct` agreeing with the counts to within a percentage point. Each fires only
   when both sides are present — unknown contradicts nothing.
   The executable contract moves with this revision:
-  [`contract/codebase-payload-1.22.schema.json`](./contract/codebase-payload-1.22.schema.json)
-  (fixtures: [`contract/codebase-payload-1.22-fixtures.json`](./contract/codebase-payload-1.22-fixtures.json)),
+  [`contract/codebase-payload-1.24.schema.json`](./contract/codebase-payload-1.24.schema.json)
+  (fixtures: [`contract/codebase-payload-1.24-fixtures.json`](./contract/codebase-payload-1.24-fixtures.json)),
   superseding the 1.15 pair. It pins each of the six as an integer `≥ 0` or null. It cannot pin
   the CROSS-FIELD rules — JSON Schema 2020-12 has no way to compare two sibling properties — so
   those stay normative prose here and enforced in the brain, and the schema's own `description`
@@ -324,6 +324,87 @@ writeback/registration pulls), so a newer client still works against an older br
   [`contract/codebase-payload-1.23-fixtures.json`](./contract/codebase-payload-1.23-fixtures.json).
   Upgrade the brain before relying on the fields: a pre-1.23 brain accepts the surrounding open
   commit object but strips the unknown analytical keys, so semantic coverage is lost silently.*
+- *2026-08-31 — **v1.24**: `POST /api/v1/codebases` gains two OPTIONAL, nullable scanner-identity
+  fields on `metrics` — `scanner_version` and `scanner_sha` — so a scan says **which scanner build
+  produced it**, and the brain can tell a repo whose scanner predates what the contract needs
+  (AIO-1011).
+  **Why this revision exists.** 1.22 shipped the coverage denominator and it never arrived. Every
+  consuming repo fetches the scanner pinned to an exact commit in
+  `.github/scripts/fetch-brain-scanner.sh` — a deliberate supply-chain control, since that code
+  executes in their CI holding brain credentials — and all seven were pinned to a 2026-07-30 build
+  that had never heard of the new fields. Every scan returned `200`. Nothing went red. The brain
+  rendered `(scope unknown)` for the whole fleet and the KPI read "7 reporting · 7 without scope",
+  and it was caught by a human looking at a screenshot. The pin is not the defect; the absence of
+  staleness DETECTION is. A payload that does not say what built it cannot be told apart from one
+  built yesterday that genuinely had nothing to report.
+  - `scanner_version` (string ≤ 64, or null) — the ingestion package version that built the
+    payload (`aios_ingest.__version__`, e.g. `"0.2.0"`).
+  - `scanner_sha` (string ≤ 64, or null) — **provenance only**: the `aios-team-brain` commit the
+    scanner ran from, when knowable. `fetch-brain-scanner.sh` leaves a real detached checkout at
+    the pinned SHA, so the scanner can read its own build; a future package install has no git
+    history and sends `null`. It is never used to compute staleness — see below.
+  **`null` means UNKNOWN — absent, `null` and unparseable all read as `unknown`, and a reader MUST
+  NOT treat any of them as `current`.** Absence of evidence is not evidence of currency. It is
+  equally not evidence of staleness, and `unknown` is **not** a synonym for "predates 1.24": a
+  CURRENT scanner that cannot determine its own build also sends `null` (the endpoint section
+  requires exactly that, rather than a guess). Every scan pushed before this revision reports no
+  identity at all, so the unknown state is the *common* state and must render as a caveat, not as
+  a pass — and not as a verdict of staleness either.
+  **Staleness is defined by a DECLARED MINIMUM, not by commit distance.**
+  `docs/contract/brain-contract.json` carries a `codebasePayloadContract.minScannerVersion`
+  (`"0.2.0"` at this revision): the oldest scanner build that can emit everything the current
+  contract asks for. **Three outcomes, and `unknown` is never folded into `stale`** — "the scan did
+  not tell us" is a different statement from "the scan told us it is old", and collapsing them is
+  the very error this revision exists to remove:
+
+  | `metrics.scanner_version` | State |
+  |---|---|
+  | absent / `null` / unparseable | `unknown` |
+  | parseable, orders below `minScannerVersion` | `stale` |
+  | parseable, orders at or above `minScannerVersion` | `current` |
+
+  **Parseable means exactly three dotted non-negative integers** (`MAJOR.MINOR.PATCH`) and nothing
+  else. A leading `v`, a two-part version, a channel name, and a SemVer pre-release or build
+  suffix (`0.2.0-rc1`, `0.2.0+dirty`) are all UNREADABLE, and therefore `unknown`. Deliberately
+  narrow, and it fails safe: an unrecognised build reads as a caveat, never as a pass. A
+  pre-release is `unknown` rather than `current` on purpose — SemVer orders a pre-release BEFORE
+  its release, so `0.2.0-rc1` is not evidence that the build emits everything `0.2.0` promises.
+  **The accepted cost, stated here rather than discovered later:** a genuine pre-release build —
+  if `aios_ingest.__version__` is ever shipped as `0.2.0-rc1` — reports `unknown` rather than
+  `current`, and stays `unknown` until the producer emits a bare `MAJOR.MINOR.PATCH` — normally
+  the final `0.2.0` release. No value of `minScannerVersion` can rescue it: the pre-release is
+  unreadable and resolves to `unknown` BEFORE any comparison happens, and `minScannerVersion` is
+  itself required to be a bare release triple. That is the right trade: "I could not read this"
+  is true, whereas "this is current" was a guess. A producer that wants to be identified MUST
+  emit a bare `MAJOR.MINOR.PATCH`.
+
+  At the moment 1.24 ships every scanner predates it and sends nothing, so `unknown` will almost
+  always *in fact* be an old scanner — but that is a strong prior, not a measurement, and the
+  contract must not encode a prior as a fact. A reader MAY present the prior ("no scanner identity
+  — most likely a build older than 1.24"); it MUST NOT report `unknown` as `stale`. Commit distance ("149 commits behind") is the tempting alternative and is
+  the wrong measure: it is undefined across branches and forks, requires the brain to hold a git
+  history it does not have at runtime, ceases to exist the moment the scanner ships as a package,
+  and — decisively — says nothing about whether anything the contract needs actually changed in
+  those commits. A declared minimum costs a deliberate bump in the contract PR; it buys a number
+  that means something. The cost is real and named here so it is not forgotten: **if a revision
+  adds a field the scanner must emit and does not raise `minScannerVersion`, staleness detection
+  is silently disabled for that field.** That bump belongs in the same PR as the field.
+  **A stale scanner is never a reason to reject a scan.** These fields are typed loosely on
+  purpose: any bounded string parses, and a version the brain cannot read normalizes to unknown.
+  A `422` drops the repo's ENTIRE scan — metrics, findings, contributions, issues — and returns
+  before the ingest run is recorded, so the failure is not even logged. Provenance can never be
+  worth that. The executable contract
+  ([`contract/codebase-payload-1.24.schema.json`](./contract/codebase-payload-1.24.schema.json),
+  fixtures [`contract/codebase-payload-1.24-fixtures.json`](./contract/codebase-payload-1.24-fixtures.json))
+  pins the two as `string | null` with a length bound and deliberately pins **no `pattern`** —
+  a pattern would make the canonical contract stricter than the brain, which is 1.22's drift bug
+  pointed the other way.
+  **Compatibility, both directions, stated semantically rather than on the wire.** An OLD scanner
+  against a 1.24 brain: accepted unchanged, both fields null, every score identical — it renders
+  as "unknown scanner build", which is exactly the true statement. A NEW scanner against a
+  pre-1.24 brain: accepted, the two keys stripped and discarded, no error — the old brain simply
+  cannot flag anything, which is the same silence 1.22 shipped into. Wire acceptance is not
+  graceful degradation; upgrade the brain before, or with, the scanners.*
 
 ---
 
@@ -1831,7 +1912,9 @@ isolation is enforced in app code, with no DB backstop). Rate limit: 60/min per 
       "dimensions": { "structure": { "passed": 4, "total": 4 }, "governance": { "passed": 3, "total": 4 } },
       "failed_invariant_ids": ["OGR04.tier-coverage"],
       "measured_at": "2026-07-30T09:00:00Z"
-    }
+    },
+    "scanner_version": "0.2.0",
+    "scanner_sha": "8c29919236e602af63508abf5e988d4ab1d97eff"
   }
 }
 ```
@@ -1929,6 +2012,45 @@ isolation is enforced in app code, with no DB backstop). Rate limit: 60/min per 
     and a coverage runner's instrumentation are different censuses, so a ratio above 1 means
     they disagree, not that the repo is over-covered. A sender MUST NOT push this field; it is a
     brain-side derivation of two raw measures, like every other score in `code_metrics`.
+- **Scanner identity** (document revision 1.24, **both optional and nullable**, AIO-1011).
+  `scanner_version` (string ≤ 64) is the ingestion package version that built this payload;
+  `scanner_sha` (string ≤ 64) is the `aios-team-brain` commit it ran from, provenance only.
+  - **A sender SHOULD send `scanner_version` and MUST NOT fabricate it.** If the build cannot be
+    determined, send `null`. `null` is a true statement; a guess is not, and the whole point of
+    the field is that the brain can distinguish "old scanner" from "current scanner with nothing
+    to report".
+  - **`null` means UNKNOWN, and a reader MUST NOT treat it as current.** Every pre-1.24 scan is in
+    this state permanently — the field cannot be backfilled — so the unknown branch is the common
+    one, not an edge case.
+  - **Staleness is a reading, never a rejection.** A scanner older than
+    `codebasePayloadContract.minScannerVersion` (in `docs/contract/brain-contract.json`) is
+    reported to the operator at the point of confusion. The brain **MUST NOT** `422` a scan over
+    either field: an unparseable or unexpected value normalizes to unknown. A rejected payload
+    drops the repo's entire scan and returns before the ingest run is logged.
+  - **The comparison is a declared minimum, not a commit distance.** See the v1.24 revision entry
+    for why: commit distance is undefined across branches, unavailable to the brain at runtime,
+    disappears when the scanner ships as a package, and does not say whether anything relevant
+    changed. Raising `minScannerVersion` is part of any revision that requires new scanner output.
+  - **Derived, not sent:** the brain classifies each scan as `current` / `stale` / `unknown` from
+    `scanner_version` alone, by the same table as the v1.24 revision entry. A sender MUST NOT push
+    a staleness verdict.
+
+    | `metrics.scanner_version` | State |
+    |---|---|
+    | absent / `null` / unparseable | `unknown` |
+    | parseable, orders below `minScannerVersion` | `stale` |
+    | parseable, orders at or above `minScannerVersion` | `current` |
+
+    **Parseable means exactly three dotted non-negative integers** (`MAJOR.MINOR.PATCH`) and nothing
+    else. A leading `v`, a two-part version, a channel name, and a SemVer pre-release or build
+    suffix (`0.2.0-rc1`, `0.2.0+dirty`) are all UNREADABLE, and therefore `unknown`. Deliberately
+    narrow, and it fails safe: an unrecognised build reads as a caveat, never as a pass. A
+    pre-release is `unknown` rather than `current` on purpose — SemVer orders a pre-release BEFORE
+    its release, so `0.2.0-rc1` is not evidence that the build emits everything `0.2.0` promises.
+
+    `unknown` and `stale` are **distinct outcomes and MUST NOT be collapsed**: absence of evidence
+    is not evidence of staleness, exactly as it is not evidence of currency. The conformance
+    vectors in `codebase-payload-1.24-fixtures.json` (`scanner_state`) pin all three.
 - The scan is keyed by `(team_id, slug)` for the codebase and `(codebase_id, head_sha)` for the
   metrics point (idempotent: re-pushing the same commit updates in place, no duplicate point).
 - **AEM agent-readiness** fields (`readiness_*`) are **optional and scored scanner-side** against
@@ -1943,8 +2065,8 @@ isolation is enforced in app code, with no DB backstop). Rate limit: 60/min per 
   (`"pass" | "warn" | "fail"`), `dimensions` (a map of short dimension id →
   `{ "passed": int, "total": int }` counts), `failed_invariant_ids` (array of short invariant
   ids), and `measured_at` (ISO-8601 UTC timestamp). The machine-readable contract is
-  [`contract/codebase-payload-1.23.schema.json`](./contract/codebase-payload-1.23.schema.json)
-  (fixtures: [`contract/codebase-payload-1.23-fixtures.json`](./contract/codebase-payload-1.23-fixtures.json)).
+  [`contract/codebase-payload-1.24.schema.json`](./contract/codebase-payload-1.24.schema.json)
+  (fixtures: [`contract/codebase-payload-1.24-fixtures.json`](./contract/codebase-payload-1.24-fixtures.json)).
   Three normative rules:
   - **Additive:** a payload without `codebase_health` remains valid exactly as before 1.15
     (older scanners are unaffected; an older brain ignores the unknown key).
