@@ -217,14 +217,13 @@ try {
       ) {
         throw new Error(`Process cleanup unverified: ${mutation}`);
       }
-      if (
+      const assertion =
+        mutation === "project-denial" ? "MCP_PROJECT_DENIAL:" : "MCP_ITEM_VISIBILITY:";
+      const outcomeFailed =
         mutation === "baseline"
           ? test.code !== 0
-          : test.code === 0 ||
-            !test.output.includes(
-              mutation === "project-denial" ? "MCP_PROJECT_DENIAL:" : "MCP_ITEM_VISIBILITY:"
-            )
-      ) {
+          : test.code === 0 || !test.output.includes(assertion);
+      if (outcomeFailed) {
         throw new Error(`Outcome gate failed: ${mutation}; see ${mutation}-test.log`);
       }
       console.log(`MCP safety: ${mutation}: expected outcome verified`);

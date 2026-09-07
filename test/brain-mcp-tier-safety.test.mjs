@@ -98,7 +98,17 @@ async function startMcp(key, t) {
 }
 
 async function direct(path, key) {
-  const response = await fetch(`${fixture.url}/api/v1${path}`, {
+  const target = new URL(fixture.url);
+  assert.equal(target.protocol, "http:");
+  assert.equal(
+    target.hostname,
+    "127.0.0.1",
+    "acceptance must only contact disposable loopback Brain"
+  );
+  const port = Number(target.port);
+  assert.ok(Number.isInteger(port) && port > 0 && port <= 65535);
+  const response = await fetch(`http://127.0.0.1:${port}/api/v1${path}`, {
+    redirect: "error",
     headers: { Authorization: `Bearer ${key}`, "X-AIOS-Team": fixture.team },
     signal: AbortSignal.timeout(15000),
   });

@@ -113,7 +113,11 @@ export function discoverTestInventory() {
   // is only correct for these paths by accident, and SonarCloud flags it (javascript:S2871).
   // A copy, not an alias, so a caller mutating one cannot silently reorder the other.
   const network = filterTracked(NETWORK_TESTS);
-  return { node, network, all: [...node, ...network].sort() };
+  return {
+    node,
+    network,
+    all: [...node, ...network].sort((a, b) => Number(a > b) - Number(a < b)),
+  };
 }
 
 function parsePositiveInt(raw, label) {

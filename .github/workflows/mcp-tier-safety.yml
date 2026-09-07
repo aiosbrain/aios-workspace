@@ -27,7 +27,7 @@ jobs:
           ref: ${{ env.MCP_BRAIN_SHA }}
           path: .mcp-brain
           persist-credentials: false
-      - run: npm ci
+      - run: npm ci --ignore-scripts
         working-directory: .mcp-brain
       - run: node scripts/test-mcp-tier-safety.mjs
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
