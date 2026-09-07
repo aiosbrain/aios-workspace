@@ -192,12 +192,23 @@ export function diagnosticsJourney(ctx, install) {
   assert.equal(provenance.package.name, ctx.manifest.packageName);
   assert.equal(provenance.package.version, ctx.manifest.packageVersion);
   assert.equal(
+    provenance.build.expectedGitHead,
+    ctx.manifest.candidateSha,
+    "installed diagnostics report the exact packed commit"
+  );
+  assert.equal(
+    provenance.build.gitHead,
+    null,
+    "registry diagnostics never borrow a parent checkout HEAD"
+  );
+  assert.equal(
     provenance.adapters.devtools,
     ctx.manifest.dependencies["@aiosbrain/aios-devtools"],
     "installed devtools must match the exact pin"
   );
   results.provenance = {
     installType: provenance.installType,
+    build: provenance.build,
     adapters: provenance.adapters,
   };
 

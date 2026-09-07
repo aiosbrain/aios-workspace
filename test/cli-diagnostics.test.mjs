@@ -149,7 +149,9 @@ test("provenance reports observable drift instead of a constant clean claim", ()
   const report = collectProvenance({ env: {}, home: "/fixture/home", cwd: "/fixture/workspace" });
   assert.ok([true, false, null].includes(report.drift.workingTreeDirty));
   assert.ok([true, false, null].includes(report.drift.packageHeadMismatch));
-  assert.equal(report.build.expectedGitHead, null);
+  assert.ok(
+    report.build.expectedGitHead === null || /^[0-9a-f]{40}$/.test(report.build.expectedGitHead)
+  );
 });
 
 test("provenance does not inherit Git drift from a registry install's parent checkout", () => {
@@ -287,4 +289,42 @@ test("provenance recognizes a Windows npm bin shim as a registry install", () =>
     }),
     "registry"
   );
+});
+
+test("registry provenance reads validated packed identity and retains legacy metadata support", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "aios-packed-provenance-"));
+  const sha = "a".repeat(40),
+    legacy = "b".repeat(40);
+  const pkg = { name: "@aiosbrain/aios", version: "2.0.0" };
+  const report = () =>
+    collectProvenance({
+      packageRoot: root,
+      executable: path.join(root, "aios"),
+      env: {},
+      home: root,
+      cwd: root,
+    });
+  try {
+    writeFileSync(path.join(root, "package.json"), JSON.stringify(pkg));
+    assert.equal(report().build.expectedGitHead, null);
+    for (const body of [
+      "invalid JSON",
+      JSON.stringify({ sha: "invalid", version: pkg.version }),
+      JSON.stringify({ sha, version: "1.0.0" }),
+    ]) {
+      writeFileSync(path.join(root, "build.json"), body);
+      assert.equal(report().build.expectedGitHead, null);
+    }
+    writeFileSync(path.join(root, "build.json"), JSON.stringify({ sha, version: pkg.version }));
+    assert.deepEqual(report().build, { gitHead: null, expectedGitHead: sha });
+    assert.equal(report().drift.packageHeadMismatch, null, "no checkout HEAD to compare");
+    rmSync(path.join(root, "build.json"));
+    writeFileSync(
+      path.join(root, "package.json"),
+      JSON.stringify({ ...pkg, aiosBuild: { gitHead: legacy } })
+    );
+    assert.equal(report().build.expectedGitHead, legacy);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });

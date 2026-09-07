@@ -144,7 +144,10 @@ export function collectProvenance(options = {}) {
   }
   const candidates = pathCandidates(env);
   const head = gitHead(root);
-  const expectedHead = pkg.aiosBuild?.gitHead ?? null;
+  const packed = readJson(path.join(root, "build.json"));
+  const packedHead =
+    packed?.version === pkg.version && /^[0-9a-f]{40}$/.test(packed?.sha ?? "") ? packed.sha : null;
+  const expectedHead = packedHead ?? pkg.aiosBuild?.gitHead ?? null;
   return {
     schemaVersion: 1,
     command: "provenance",
