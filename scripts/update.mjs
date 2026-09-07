@@ -70,6 +70,20 @@ import {
   selfUpgrade,
 } from "./update/registry-root.mjs";
 
+// Format-2 is a v2 release contract. A legacy child would bypass the stored bases
+// and write a format-1 stamp even though this parent previewed with format-2 rules.
+function assertCompatibleVendor(repo, sourceDir) {
+  const stamp = readStamp(repo);
+  if (!stamp || stamp.format < 2) return;
+  const version = toolkitMeta(sourceDir).version;
+  if (!(Number.parseInt(version?.split(".")[0], 10) >= 2)) {
+    throw new UpdateError(
+      `A format-2 workspace requires a v2-or-newer updater; selected toolkit is ${version ?? "unknown"}. ` +
+        "Use a compatible source, or explicitly run update --rollback before using a legacy updater. --force cannot downgrade the stamp format."
+    );
+  }
+}
+
 const DEFAULT_REPO = "https://github.com/aiosbrain/aios-workspace.git";
 
 // The toolkit checkout this CLI is executing from — <toolkit>/scripts/update.mjs → <toolkit>.
@@ -552,6 +566,7 @@ async function cmdUpdateInner(repo, cfg, args) {
   }
 
   try {
+    if (check || preview || noPull) assertCompatibleVendor(repo, srcDir);
     if (check) {
       // ephemeral (freshly cloned) sources are trivially current — no remote check needed.
       const a = assessReadOnlySource(srcDir, { pullOpts, io, skipRemote: ephemeral, repo, cfg });
@@ -700,6 +715,7 @@ async function cmdUpdateInner(repo, cfg, args) {
     // hand-placed removePinnedSnapshot calls, each covering only the throws above it).
     let resultDir = null;
     try {
+      assertCompatibleVendor(repo, snapshotSource.snapshotDir);
       const entrypoint = path.join(snapshotSource.snapshotDir, "scripts", "aios.mjs");
       if (!existsSync(entrypoint)) {
         throw new UpdateError(
