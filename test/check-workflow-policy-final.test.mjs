@@ -40,7 +40,7 @@ test("CLI drains every diagnostic to a slow pipe before exiting", async () => {
     });
     const [code] = await closed;
     assert.equal(code, 1);
-    assert.equal([...output.matchAll(/^FAIL  /gm)].length, 300);
+    assert.equal([...output.matchAll(/^FAIL {2}/gm)].length, 300);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
