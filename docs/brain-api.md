@@ -1,6 +1,6 @@
 # AIOS Team Brain — API Contract
 
-**Version: 1.24** is the shipped member-facing Brain API (`/api/v1`). **Document revision: 1.24**
+**Version: 1.24** is the shipped member-facing Brain API (`/api/v1`). **Document revision: 1.25**
 also carries the separately negotiated internal Executor gateway contract **1.10**; it does not
 claim unimplemented member-facing v1.10 routes. This document is the single pinned contract between the
 contributor repo (this toolkit's `aios` CLI) and the `aios-team-brain` service. Both
@@ -13,6 +13,19 @@ both repos. **Additive** changes — new endpoints, new item kinds — stay with
 major **only if both directions degrade gracefully**: the server keeps old endpoints, and
 **clients MUST tolerate a `404` on any endpoint they call** (the CLI does this for the
 writeback/registration pulls), so a newer client still works against an older brain.
+
+**Resource-admission exception (stated 2026-09-07).** A **versioned, diagnosed resource-admission
+limit** MAY harden an existing `/api/v1` endpoint without a major bump, provided the endpoint's
+*successful* request/response shape and semantics are unchanged and the ceiling is published as a
+separately versioned supplement under [`contract/`](./contract/) that names the field or boundary,
+the limit, the status/code, and the caller's recovery. This is a narrow, explicit exception to the
+breaking-change rule above — **not** a general licence, and **not** a claim that every previously
+accepted request still succeeds: it deliberately narrows what is *admitted* for oversized callers.
+Two dated precedents already in this document tighten an existing endpoint the same way: the
+2026-06-19 full-raw-metrics requirement on `POST /api/v1/codebases`, and the v1.20 `rows[]` row
+ceiling on `POST /api/v1/items`. A supplement carries its own `revision`, is withdrawn or
+superseded **explicitly** (never rewritten in place), and the endpoint section that adopts it
+carries the coordinated rollback procedure.
 
 *Revisions (additive within v1):*
 - *2026-06-18 — added `GET /api/v1/decisions` (dashboard decision writeback) and
@@ -405,6 +418,39 @@ writeback/registration pulls), so a newer client still works against an older br
   pre-1.24 brain: accepted, the two keys stripped and discarded, no error — the old brain simply
   cannot flag anything, which is the same silence 1.22 shipped into. Wire acceptance is not
   graceful degradation; upgrade the brain before, or with, the scanners.*
+- *2026-09-07 — **request-admission supplement for `POST /api/v1/codebases`** (AUDITFIX-17 /
+  AIO-1136). The endpoint gains two explicit admission bounds — `metrics.recent_commits` at
+  **100 elements** and the whole request body at **2,400,000 bytes** — published as the separately
+  versioned supplement
+  [`contract/codebase-request-limits-v1.json`](./contract/codebase-request-limits-v1.json)
+  (`kind: aios-codebase-request-limits`, `revision: 1`).
+  **No member-facing version bump.** The member API stays **1.24**; only the document revision
+  moves (**1.25**, carrying the deployment-activation clarification below, alongside the
+  supplement's own unchanged `revision: 1`). This is the resource-admission exception stated in the
+  change policy above, exercised for the first time: successful requests keep their existing
+  payload shape and `201` envelope, every historical valid fixture is still accepted, and no new
+  field, negotiation header, or runtime version switch is introduced. The supplement is scoped to
+  `POST /api/v1/codebases` for member API major 1, from **1.23** onward, until explicitly
+  superseded or withdrawn; it does not describe `/api/v2`.
+  **Publication is not deployment.** Publishing this document and the supplement makes the limits
+  canonical; it does not switch enforcement on anywhere. A given brain instance enforces them only
+  once it is running a Brain build that contains the AUDITFIX-17 enforcement, and an instance
+  reporting member API **1.23** or **1.24** has not thereby proved it carries that build. Instances
+  on older builds keep their previous behaviour until upgraded. Normative statement in the endpoint
+  section below.
+  **Compatibility is a deliberate narrowing, stated rather than discovered.** Before this
+  supplement the route bounded only a *declared* `Content-Length` above 2,400,000 bytes, so a
+  chunked request that declared no length was effectively unbounded, and `metrics.recent_commits`
+  had no cardinality bound at all. A direct client that sent more than 100 recent commits, or an
+  oversized body without a usable `Content-Length`, was accepted before and is rejected now. The
+  canonical pusher (the ingestion sidecar `aios-ingest scan`) appends at most 20 recent commits per
+  scan, so it is unaffected; **100 is explicit engineering headroom — five times the current
+  scanner — not a measured fleet maximum**, and it is neither a benchmark, a latency guarantee, nor
+  a bound on total fleet work. Peak memory and latency at 100 commits, the current fleet's payload
+  distribution, and any upstream proxy prebuffering are unmeasured.
+  **Neither rejection is transient and neither is retryable.** Limits, the exact error messages,
+  caller recovery, and the coordinated rollback procedure are normative in the endpoint section
+  below.*
 
 ---
 
@@ -1860,6 +1906,90 @@ The `--include-body` flag passes `include_body=true` to the endpoint (subject to
 Records a point-in-time scan of a repository. **Team-tier only** — an `external`-tier key
 gets `403 forbidden_tier` (codebase analytics never reach external stakeholders; tier
 isolation is enforced in app code, with no DB backstop). Rate limit: 60/min per key.
+
+#### Request limits (normative, since the 2026-09-07 admission supplement)
+
+The executable statement of this table is
+[`contract/codebase-request-limits-v1.json`](./contract/codebase-request-limits-v1.json)
+(`kind: aios-codebase-request-limits`, `revision: 1`), which applies from member API **1.23**
+onward within major 1 until explicitly superseded or withdrawn. It is a **resource-admission
+supplement**, not a payload-shape revision: it is versioned independently of the member API
+version, and the member API remains **1.24** (only this document's revision moved, to **1.25**,
+for the deployment note below).
+
+**Enforcement is per deployed instance.** These bounds are normative for the contract from
+publication, but a brain enforces them only once that instance is running a Brain build that
+contains the AUDITFIX-17 enforcement. Publication of the canonical contract activates nothing by
+itself, and a version handshake is not proof of the patch: an instance reporting member API
+**1.23** or **1.24** is reporting its API version, and "from **1.23** onward" states the *eligible*
+member-API range for this supplement, not that every instance in that range enforces it. An
+instance on an older build retains the previous behaviour — a *declared* `Content-Length` bound
+only, and no `recent_commits` cardinality bound — until it is upgraded. That window is the mirror
+image of the rollback window below, where servers are temporarily *stricter* than the published
+contract. Producers MUST size scans to these limits whichever instance they are talking to, and
+MUST NOT read one instance's acceptance of an oversized request as evidence the limit was
+withdrawn: withdrawal is an explicit canonical act (see the rollback procedure below).
+
+| Boundary | Inclusive limit | Exceeded ⇒ |
+| --- | --- | --- |
+| `metrics.recent_commits[]` length | **100** elements | `422 invalid_payload`, message names the field and the ceiling |
+| whole request body | **2,400,000 bytes** | `413 payload_too_large`, message names the ceiling |
+
+Exact messages, so a caller can act on the first-issue-only error envelope:
+
+- `metrics.recent_commits: at most 100 entries per scan; send a complete scan with a smaller recent-commit window; do not split a snapshot across pushes`
+- `body: at most 2400000 bytes per scan; reduce the scan payload and retry; do not split a snapshot across pushes`
+
+Normative reading of the two bounds:
+
+- **Count before normalization.** All array elements count, including duplicate SHAs and objects
+  the brain would later skip. Downstream de-duplication is not an input-budget escape.
+- **The array stays required and may be empty.** Zero elements is valid; 0, 20 and 100 are
+  admitted, 101 is not. The count applies to the wire; there is no separate uncapped in-process
+  variant of this schema, because there is no in-process reparse of a codebase scan.
+- **Bytes are the bytes on the wire**, including JSON syntax, whitespace and unknown fields, and
+  are measured as the request body is read. **`Content-Length` is not authoritative**: a
+  syntactically valid declaration above the ceiling is rejected early as an optimization, but a
+  missing, invalid, or misleadingly low declaration cannot bypass the measurement. This document
+  states no `Content-Length` *syntax* error contract; an unusable declaration is ignored at
+  application level. An HTTP runtime may still reject malformed wire framing before the
+  application sees it, and a rejection earlier than the application is not this contract's `413`.
+- **Precedence.** `401` / `403` / `429` keep their existing precedence, rate bucket and
+  `Retry-After`, and are returned without reading the body. Once body admission begins, an
+  oversized body outranks malformed JSON and the count check. Invalid JSON, an empty body, or a
+  body-read failure keep the existing `422 invalid_payload` / `body must be JSON`.
+- **First-issue-only.** The exact count message above is what a caller sees when the count is the
+  payload's *only* schema violation. If an array element or another field also violates the
+  schema, the existing first-issue message may win; the response is still `422 invalid_payload`,
+  and still returns before any scan ingest.
+- **Rejection is whole-request.** A rejected scan is never silently truncated and performs **no
+  scan-domain writes**: no metrics upsert, no commit projection, no finding reconciliation, no
+  `codebase.scanned` event, and no `ingest_runs` row — so a rejected scan leaves no run to read
+  in the runs log, which is the same pre-validation boundary this endpoint already had.
+  Authentication (`api_keys.last_used_at`, audit) and the rate-limit bucket are written as before.
+
+**Recovery — reduce the snapshot, do not batch it.** Neither `413` nor `422` is transient, and
+retrying either unchanged will fail identically; the sidecar already raises without retrying these
+statuses, while keeping its `429`/`5xx` retry behaviour. Because the metrics point is keyed
+`(codebase_id, head_sha)` and the upsert **replaces** that row, splitting one scan across two
+pushes destroys the first push's snapshot. A producer over either ceiling MUST send **one complete
+scan** with a smaller recent-commit window (or reduced optional detail / a coherently narrower
+source scope), never two partial ones. The full aggregate metrics stay required, and reducing
+recent-commit detail MUST NOT change the full-window aggregate counts or drop a required field.
+
+**Coordinated rollback (both repos, in this order).** Removing this limit is not a single revert:
+
+1. **Canonical first.** Publish an explicit **withdrawal or superseding revision** of
+   `codebase-request-limits-v1.json` and update this document so the supplement is no longer
+   normatively applicable. `revision: 1` is never rewritten in place. Accept that the servers are
+   temporarily *stricter* than the published contract during this window — that direction is safe.
+2. **Server second.** Revert the brain's enforcement and update its vendored copy and pin to the
+   withdrawn or superseding canonical state.
+
+A standalone emergency revert of the brain is **temporary contract non-conformance**, not a
+completed rollback: it leaves a live normative `100` cap while the server admits `101`. Record it
+and repair it by completing step 1. Removing enforcement reopens the resource exposure this
+supplement closes; no data repair is required for requests that were rejected before ingest.
 
 ```json
 {
