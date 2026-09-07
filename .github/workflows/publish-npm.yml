@@ -178,3 +178,9 @@ jobs:
           gh run download "$MCP_ACCEPTANCE_RUN_ID" --repo aiosbrain/aios-workspace --dir "$MCP_RELEASE_ARTIFACTS"
       - name: Verify exact release tag, candidate, isolated acceptance and publish those bytes
         run: node scripts/verify-mcp-release.mjs --publish
+      - name: Fresh registry installation in a container without an AIOS checkout
+        run: |
+          docker run --rm \
+            --mount "type=bind,source=$MCP_RELEASE_ARTIFACTS/mcp-candidate,target=/candidate,readonly" \
+            --mount "type=bind,source=$GITHUB_WORKSPACE/test/mcp-package,target=/acceptance,readonly" \
+            node:22-bookworm-slim node /acceptance/registry-smoke.mjs /candidate/candidate.json
