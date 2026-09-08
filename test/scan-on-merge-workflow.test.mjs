@@ -6,8 +6,12 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 
-const workflowPath = fileURLToPath(new URL("../.github/workflows/ci.yml", import.meta.url));
+const workflowPath = fileURLToPath(
+  new URL("../.github/workflows/codebase-scan.yml", import.meta.url)
+);
 const workflow = readFileSync(workflowPath, "utf8");
+const ciWorkflowPath = fileURLToPath(new URL("../.github/workflows/ci.yml", import.meta.url));
+const ciWorkflow = readFileSync(ciWorkflowPath, "utf8");
 const removedWorkflowPath = fileURLToPath(
   new URL("../.github/workflows/scan-on-merge.yml", import.meta.url)
 );
@@ -44,7 +48,7 @@ function workflowJob(contents, name) {
 }
 
 const coreScan = workflowJob(workflow, "scan");
-const coverageJob = workflowJob(workflow, "coverage");
+const coverageJob = workflowJob(ciWorkflow, "coverage");
 
 function workflowSteps(contents) {
   const lines = contents.split("\n");
@@ -54,9 +58,9 @@ function workflowSteps(contents) {
   );
 }
 
-test("the same-workflow core scanner grants only read access to repository contents", () => {
-  assert.match(coreScan, /permissions:\n {6}actions: read\n {6}contents: read\n/);
-  assert.doesNotMatch(coreScan, /(?:contents|actions|checks|packages|pull-requests): write/);
+test("the trusted core scanner grants only read access to actions and contents", () => {
+  assert.match(workflow, /^permissions:\n {2}actions: read\n {2}contents: read$/m);
+  assert.doesNotMatch(workflow, /(?:contents|actions|checks|packages|pull-requests): write/);
 });
 
 test("the core scan job and scaffold pin every third-party action to an immutable commit", () => {
@@ -136,14 +140,16 @@ test("Brain secrets are scoped only to the configuration probe and final upload"
   }
 });
 
-test("the core scanner is same-workflow, canonical-repository main-push-only", () => {
+test("the core scanner is isolated from PR-reachable CI and runs only after a main push", () => {
   assert.equal(existsSync(removedWorkflowPath), false);
-  assert.match(workflow, /^on:\n {2}pull_request:\n {2}push:\n {4}branches: \[main\]$/m);
-  assert.match(coreScan, /needs: coverage/);
-  assert.match(coreScan, /always\(\)/);
-  assert.match(coreScan, /github\.event_name == 'push'/);
-  assert.match(coreScan, /github\.ref == 'refs\/heads\/main'/);
+  assert.match(workflow, /^on:\n {2}push:\n {4}branches: \[main\]$/m);
+  assert.doesNotMatch(workflow, /workflow_(?:run|dispatch)|pull_request(?:_target)?:/);
+  assert.doesNotMatch(ciWorkflow, /^ {2}scan:$/m);
+  assert.doesNotMatch(ciWorkflow, /secrets\.AIOS_(?:API_KEY|BRAIN_URL|TEAM)/);
   assert.match(coreScan, /github\.repository == 'aiosbrain\/aios-workspace'/);
+  assert.match(coreScan, /environment: trusted-automation/);
+  assert.match(coreScan, /timeout-minutes: 60/);
+  assert.match(coreScan, /ref: \$\{\{ github\.sha \}\}/);
   assert.match(scaffoldWorkflow, /^on:\n {2}push:\n {4}branches: \[main\]$/m);
   assert.doesNotMatch(scaffoldWorkflow, /workflow_dispatch|pull_request(?:_target)?:/);
 });
@@ -177,7 +183,7 @@ test("scanner dependencies are exact, hashed, binary-only, and scaffolded", () =
   );
 });
 
-test("core coverage is packed only on success and installed only after coverage succeeds", () => {
+test("coverage handoff is bound to the exact trusted producer run", () => {
   assert.match(coverageJob, /node scripts\/coverage-bundle\.mjs pack/);
   assert.match(coverageJob, /--out "\$RUNNER_TEMP\/coverage-bundle"/);
   assert.match(coverageJob, /name: coverage-bundle/);
@@ -188,28 +194,26 @@ test("core coverage is packed only on success and installed only after coverage 
   assert.doesNotMatch(coverageJob, /in the \\`coverage\\` artifact/);
   assert.match(coverageJob, /if-no-files-found: error/);
   assert.doesNotMatch(coverageJob, /if: always\(\)[\s\S]*upload/i);
-  assert.match(
-    coreScan,
-    /name: Download this run's coverage bundle[\s\S]*needs\.coverage\.result == 'success'/
-  );
-  assert.match(
-    coreScan,
-    /name: Install this run's verified coverage bundle[\s\S]*needs\.coverage\.result == 'success'/
-  );
+  assert.match(coreScan, /node scripts\/resolve-coverage-artifact\.mjs/);
+  assert.match(coreScan, /github-token: \$\{\{ github\.token \}\}/);
+  assert.match(coreScan, /run-id: \$\{\{ steps\.coverage\.outputs\.run-id \}\}/);
   assert.match(coreScan, /--repository "\$GITHUB_REPOSITORY"/);
   assert.match(coreScan, /--sha "\$GITHUB_SHA"/);
-  assert.match(coreScan, /--run-id "\$GITHUB_RUN_ID"/);
+  assert.match(coreScan, /--run-id "\$\{\{ steps\.coverage\.outputs\.run-id \}\}"/);
+  assert.doesNotMatch(coreScan, /continue-on-error: true[\s\S]*coverage/i);
+  assert.doesNotMatch(coreScan, /coverage unavailable|scanning with null coverage/);
   assert.doesNotMatch(coreScan, /npm run test:coverage/);
 });
 
-test("coverage failure still reaches the core scanner with no readable coverage", () => {
-  assert.match(coreScan, /name: Start from a coverage-free scanner checkout/);
-  assert.match(coreScan, /(?:^|\s)coverage\/coverage-summary\.json(?:\s|$)/m);
-  assert.match(coreScan, /(?:^|\s)coverage-summary\.json(?:\s|$)/m);
-  assert.match(coreScan, /name: Explain and sanitize unavailable coverage/);
-  assert.match(coreScan, /needs\.coverage\.result != 'success'/);
-  assert.match(coreScan, /scanning with null coverage/);
-  assert.match(coreScan, /name: Scan this repo into the brain/);
+test("coverage resolution, download, and verification fail closed before scanning", () => {
+  const resolveIndex = coreScan.indexOf("Resolve this SHA's trusted CI coverage producer");
+  const downloadIndex = coreScan.indexOf("Download the verified producer's coverage bundle");
+  const installIndex = coreScan.indexOf("Install the bounded exact-run coverage bundle");
+  const scanIndex = coreScan.indexOf("Scan this repo into the brain");
+  assert.ok(resolveIndex < downloadIndex);
+  assert.ok(downloadIndex < installIndex);
+  assert.ok(installIndex < scanIndex);
+  assert.doesNotMatch(coreScan, /\|\| true|continue-on-error: true[\s\S]*coverage/i);
 });
 
 test("scaffold optional coverage is visibly nonblocking and sanitizes every failed output", () => {
