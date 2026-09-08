@@ -168,7 +168,7 @@ export async function commitHostFiles(
       fs.closeSync(fd);
     }
   }
-  function replace(source, bytes) {
+  function replace(source, bytes, onInstalled = () => {}) {
     const temporary = path.join(
       path.dirname(source.file),
       `.${path.basename(source.file)}.aios-${randomUUID()}.tmp`
@@ -187,10 +187,13 @@ export async function commitHostFiles(
       throw error;
     }
     const written = { ...source, bytes, value };
+    const tracked = { source, written };
+    onInstalled(tracked);
     let original = null;
     if (displaced) {
       recoveries.push({ file: displaced });
       original = policy.snapshot(displaced);
+      tracked.source = { ...source, bytes: original.bytes };
       policy.secure(displaced);
       recoveries.at(-1).snapshot = policy.snapshot(displaced, { privateFile: true });
     }
@@ -213,8 +216,7 @@ export async function commitHostFiles(
         backups.push(backup);
       }
       await beforeReplace(source.file);
-      const { written, original } = replace(source, change.bytes);
-      applied.push({ source: original ? { ...source, bytes: original.bytes } : source, written });
+      const { written, original } = replace(source, change.bytes, (entry) => applied.push(entry));
       if (
         original &&
         (!sameIdentity(source.value, original.value) || !source.bytes.equals(original.bytes))
@@ -273,7 +275,7 @@ export async function commitHostFiles(
               .map((row) => row.file)
               .join(", ")}`
           : ""
-      }${conflicts.length ? `; rollback conflicts (preserved): ${conflicts.join(", ")}` : "; previous file contents restored"}`,
+      }${conflicts.length ? `; rollback conflicts (preserved): ${conflicts.join(", ")}` : "; rollback completed for tracked unchanged writes"}`,
       { cause: error }
     );
   }

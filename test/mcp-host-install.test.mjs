@@ -579,3 +579,39 @@ test(
     assert.deepEqual(tree(f.home), before);
   }
 );
+
+test("failure inspecting or securing a displaced file still rolls back the live write", async (t) => {
+  for (const fault of ["permissions", ...(process.platform === "win32" ? [] : ["symlink"])]) {
+    const f = fixture(t);
+    const file = path.join(f.home, "config.json");
+    put(file, "original");
+    const policy = filePolicy();
+    const secure = policy.secure;
+    let armed = false;
+    let injected = false;
+    policy.secure = (target) => {
+      if (armed && !injected && fault === "permissions") {
+        injected = true;
+        throw new Error("injected ACL failure");
+      }
+      secure(target);
+    };
+    await assert.rejects(
+      commitHostFiles([{ source: policy.snapshot(file), bytes: Buffer.from("installer") }], {
+        policy,
+        atomicReplace: (...args) => {
+          const displaced = atomicHostReplace(...args);
+          armed = true;
+          if (fault === "symlink" && !injected) {
+            injected = true;
+            fs.renameSync(displaced, displaced + ".preserved");
+            fs.symlinkSync(displaced + ".preserved", displaced);
+          }
+          return displaced;
+        },
+      }),
+      /ACL failure|regular/
+    );
+    assert.equal(fs.readFileSync(file, "utf8"), "original");
+  }
+});
