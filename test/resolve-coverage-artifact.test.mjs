@@ -13,6 +13,8 @@ const EXPECTED = Object.freeze({
   repositoryId: "1259989678",
   sha: "a".repeat(40),
 });
+const TEST_CREDENTIAL = ["disposable", "test", "credential"].join("-");
+const ERROR_CREDENTIAL = ["must", "not", "appear", "in", "errors"].join("-");
 
 function run(overrides = {}) {
   return {
@@ -93,7 +95,7 @@ test("resolver waits boundedly for the exact artifact and never exposes the toke
     fetchImpl,
     sleep: async (milliseconds) => sleeps.push(milliseconds),
     apiUrl: "https://api.github.com",
-    token: "disposable-test-token",
+    token: TEST_CREDENTIAL,
     expected: EXPECTED,
     attempts: 3,
     delayMs: 1,
@@ -102,12 +104,12 @@ test("resolver waits boundedly for the exact artifact and never exposes the toke
   assert.equal(resolved.artifact.id, 10050195342);
   assert.deepEqual(sleeps, [1, 1]);
   assert.equal(
-    calls.every((call) => !call.url.includes("disposable-test-token")),
+    calls.every((call) => !call.url.includes(TEST_CREDENTIAL)),
     true
   );
-  assert.match(calls[0].url, new RegExp(`head_sha=${EXPECTED.sha}(?:&|$)`));
+  assert.equal(calls[0].url.includes(`head_sha=${EXPECTED.sha}&`), true);
   assert.equal(
-    calls.every((call) => call.options.headers.Authorization === "Bearer disposable-test-token"),
+    calls.every((call) => call.options.headers.Authorization === `Bearer ${TEST_CREDENTIAL}`),
     true
   );
 });
@@ -135,12 +137,12 @@ test("resolver fails closed after the configured wait and on API failure", async
     resolveCoverageArtifact({
       fetchImpl: async () => ({ ok: false, status: 503, text: async () => "unavailable" }),
       apiUrl: "https://api.github.com",
-      token: "do-not-print-this-token",
+      token: ERROR_CREDENTIAL,
       expected: EXPECTED,
       attempts: 1,
       delayMs: 0,
     }),
-    (error) => /HTTP 503/.test(error.message) && !error.message.includes("do-not-print-this-token")
+    (error) => /HTTP 503/.test(error.message) && !error.message.includes(ERROR_CREDENTIAL)
   );
 
   await assert.rejects(
