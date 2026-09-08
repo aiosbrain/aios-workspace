@@ -140,6 +140,25 @@ test("Brain secrets are scoped only to the configuration probe and final upload"
   }
 });
 
+test("authenticated scanner uploads require a non-empty HTTPS Brain URL", () => {
+  const httpsGuard =
+    /case "\$BRAIN_URL" in\n\s+https:\/\/\?\*\) ;;\n\s+\*\) echo "BRAIN_URL must use HTTPS" >&2; exit 1 ;;/;
+  for (const [name, contents] of [
+    ["repository", coreScan],
+    ["scaffold", scaffoldWorkflow],
+  ]) {
+    const uploadStep = workflowSteps(contents).find((step) =>
+      /- name: Scan this (?:repo|workspace) into the brain/.test(step)
+    );
+    assert.ok(uploadStep, `${name}: missing authenticated upload step`);
+    assert.match(uploadStep, httpsGuard, `${name}: missing HTTPS-only Brain URL guard`);
+    assert.ok(
+      uploadStep.indexOf('case "$BRAIN_URL" in') < uploadStep.indexOf("python "),
+      `${name}: HTTPS guard must run before scanner invocation`
+    );
+  }
+});
+
 test("the core scanner is isolated from PR-reachable CI and runs only after a main push", () => {
   assert.equal(existsSync(removedWorkflowPath), false);
   assert.match(workflow, /^on:\n {2}push:\n {4}branches: \[main\]$/m);

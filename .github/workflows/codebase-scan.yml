@@ -122,6 +122,10 @@ jobs:
           AIOS_PUSH_CODEBASE_HEALTH: ${{ vars.AIOS_PUSH_CODEBASE_HEALTH }}
           PYTHONPATH: .brain-scanner/ingestion
         run: |
+          case "$BRAIN_URL" in
+            https://?*) ;;
+            *) echo "BRAIN_URL must use HTTPS" >&2; exit 1 ;;
+          esac
           HEALTH_JSON="$RUNNER_TEMP/codebase-health.contract.json"
           if [ "${AIOS_PUSH_CODEBASE_HEALTH:-}" = "1" ] && [ -s "$HEALTH_JSON" ]; then
             python .github/scripts/scan_with_health.py \
