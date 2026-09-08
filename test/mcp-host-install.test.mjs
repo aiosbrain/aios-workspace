@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
 import { hostTargets } from "../scripts/mcp-hosts.mjs";
 import {
   installMcpHosts,
@@ -23,11 +24,25 @@ const fetchImpl = async () => ({
   ok: true,
   json: async () => ({ tier: "team", actor: "synthetic", role: "member", team: "synthetic" }),
 });
+function fixtureOwner(file) {
+  if (process.platform !== "win32") return;
+  // Elevated Windows CI creates files owned by Administrators by default. These
+  // fixtures model an explicitly user-owned home; do not relax production checks.
+  const script =
+    "$ErrorActionPreference='Stop'; $env:PSModulePath=$PSHOME+'\\Modules'; $p=$env:AIOS_TEST_OWNER_PATH; $a=Get-Acl -LiteralPath $p; $a.SetOwner([System.Security.Principal.WindowsIdentity]::GetCurrent().User); Set-Acl -LiteralPath $p -AclObject $a";
+  execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], {
+    env: { ...process.env, AIOS_TEST_OWNER_PATH: file },
+    stdio: "pipe",
+    timeout: 5000,
+  });
+}
 function fixture(t) {
   const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "mcp-host-test-")));
   t.after(() => fs.rmSync(home, { recursive: true, force: true }));
   const project = path.join(home, "project");
   fs.mkdirSync(project);
+  fixtureOwner(home);
+  fixtureOwner(project);
   return {
     home,
     project,
@@ -43,6 +58,11 @@ function fixture(t) {
 function put(file, text) {
   fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
   fs.writeFileSync(file, text, { mode: 0o600 });
+  if (process.platform === "win32") {
+    fixtureOwner(file);
+    for (let dir = path.dirname(file); dir.includes("mcp-host-test-"); dir = path.dirname(dir))
+      fixtureOwner(dir);
+  }
 }
 function tree(root) {
   const rows = {};
