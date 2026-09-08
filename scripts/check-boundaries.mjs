@@ -54,6 +54,8 @@ import { gitFiles } from "./git-files.mjs";
 
 const SELF_DIR = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = process.cwd();
+// Base-owned rules may describe couplings removed by the candidate. Keep local ratcheting strict.
+const ALLOW_STALE = process.argv.includes("--allow-stale");
 // Rules travel with the script (co-located boundaries.json), independent of the tree being scanned
 // (ROOT = cwd, matching scripts/check-domain-isolation.mjs's convention). Test-only override so
 // test/check-boundaries.test.mjs can point at a small synthetic rules file instead of asserting
@@ -301,7 +303,7 @@ function run() {
   const staleGrandfather = grandfathered.filter(
     (g) => !usedGrandfather.has(buildGrandfatherKey(g.from, g.to))
   );
-  if (staleGrandfather.length > 0) {
+  if (staleGrandfather.length > 0 && !ALLOW_STALE) {
     console.error(
       "✗ stale grandfather entries in scripts/boundaries.json (the coupling no longer exists):\n"
     );
@@ -314,8 +316,12 @@ function run() {
     process.exit(1);
   }
 
+  if (staleGrandfather.length > 0)
+    console.log(
+      `note: ${staleGrandfather.length} unused trusted-base boundary waiver(s); candidate removed the coupling`
+    );
   console.log(
-    `✓ repo-boundary gate clean (${files.length} files scanned, ${grandfathered.length} grandfathered couplings all still in use)`
+    `✓ repo-boundary gate clean (${files.length} files scanned, ${usedGrandfather.size} grandfathered couplings in use)`
   );
 }
 

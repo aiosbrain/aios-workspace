@@ -1,0 +1,5 @@
+on: pull_request
+permissions: {}
+jobs:
+  test:
+    steps: [{ run: echo safe }]
