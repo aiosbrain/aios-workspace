@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
+import { atomicHostReplace } from "./mcp-host-atomic.mjs";
 import { assertWindowsCredentialAcl, readWindowsCredentialAcl } from "./mcp-credentials.mjs";
 
 const sameIdentity = (a, b) => a && b && a.dev === b.dev && a.ino === b.ino;
@@ -64,6 +65,23 @@ export function filePolicy({
   }
   function snapshot(file, { privateFile = false } = {}) {
     const directories = parents(file);
+    if (privateFile) {
+      // Every user-controlled ancestor must resist replacement by another
+      // principal, including ancestors above an existing package subdirectory.
+      for (const dir of directories) {
+        if (platform === "win32") {
+          const acl = readAcl(dir.file);
+          if (acl.owner !== acl.current) break;
+          assertWindowsCredentialAcl(acl);
+        } else {
+          if (dir.value.uid !== uid) break;
+          if (dir.value.mode & 0o022)
+            throw new Error(
+              `Private configuration directory is writable by another principal: ${dir.file}`
+            );
+        }
+      }
+    }
     const before = stat(file);
     if (!before) return { file, bytes: null, value: null, directories, privateFile };
     if (before.isSymbolicLink() || !before.isFile() || before.nlink !== 1)
@@ -112,11 +130,18 @@ export function filePolicy({
 // overwrite any file that no longer has both the identity and bytes we wrote.
 export async function commitHostFiles(
   changes,
-  { policy = filePolicy(), beforeReplace = async () => {}, afterReplace = async () => {} } = {}
+  {
+    policy = filePolicy(),
+    beforeReplace = async () => {},
+    afterReplace = async () => {},
+    beforeCommit = async () => {},
+    atomicReplace = atomicHostReplace,
+  } = {}
 ) {
   const applied = [],
     createdDirs = [],
-    backups = [];
+    backups = [],
+    recoveries = [];
   function createParents(file) {
     const missing = [];
     for (let dir = path.dirname(file); !stat(dir); dir = path.dirname(dir)) missing.unshift(dir);
@@ -148,15 +173,28 @@ export async function commitHostFiles(
       path.dirname(source.file),
       `.${path.basename(source.file)}.aios-${randomUUID()}.tmp`
     );
+    const recovery = `${source.file}.aios-displaced-${randomUUID()}`;
+    privateWrite(temporary, bytes);
+    const value = fs.lstatSync(temporary);
+    let displaced;
     try {
-      privateWrite(temporary, bytes);
-      const value = fs.lstatSync(temporary);
       policy.recheck(source);
-      fs.renameSync(temporary, source.file);
-      return { ...source, bytes, value, privateFile: true };
-    } finally {
-      if (stat(temporary)) fs.unlinkSync(temporary);
+      displaced = atomicReplace(temporary, source.file, recovery, source.value !== null);
+    } catch (error) {
+      // A Windows replacement failure can leave either name in place. Preserve
+      // all existing recovery paths; never guess which inode the OS moved.
+      for (const file of [temporary, recovery]) if (stat(file)) recoveries.push({ file });
+      throw error;
     }
+    const written = { ...source, bytes, value };
+    let original = null;
+    if (displaced) {
+      recoveries.push({ file: displaced });
+      original = policy.snapshot(displaced);
+      policy.secure(displaced);
+      recoveries.at(-1).snapshot = policy.snapshot(displaced, { privateFile: true });
+    }
+    return { written, original };
   }
   try {
     for (const change of changes) policy.recheck(change.source);
@@ -175,19 +213,47 @@ export async function commitHostFiles(
         backups.push(backup);
       }
       await beforeReplace(source.file);
-      const written = replace(source, change.bytes);
-      applied.push({ source, written });
+      const { written, original } = replace(source, change.bytes);
+      applied.push({ source: original ? { ...source, bytes: original.bytes } : source, written });
+      if (
+        original &&
+        (!sameIdentity(source.value, original.value) || !source.bytes.equals(original.bytes))
+      )
+        throw new Error(`Concurrent edit at atomic replacement: ${source.file}`);
       policy.recheck(written);
       await afterReplace(source.file);
     }
+    await beforeCommit();
+    for (const recovery of recoveries) if (recovery.snapshot) policy.recheck(recovery.snapshot);
+    for (const recovery of recoveries) fs.unlinkSync(recovery.file);
     return { backups };
   } catch (error) {
     const conflicts = [];
     for (const { source, written } of applied.reverse()) {
       try {
         policy.recheck(written);
-        if (source.bytes === null) fs.unlinkSync(source.file);
-        else replace(written, source.bytes);
+        if (source.bytes === null) {
+          const removed = `${source.file}.aios-rollback-${randomUUID()}`;
+          fs.renameSync(source.file, removed);
+          recoveries.push({ file: removed });
+          const actual = policy.snapshot(removed);
+          if (!sameIdentity(written.value, actual.value) || !written.bytes.equals(actual.bytes)) {
+            try {
+              fs.linkSync(removed, source.file);
+            } catch {
+              /* Preserve both concurrent names. */
+            }
+            throw new Error("Concurrent edit during rollback removal");
+          }
+        } else {
+          const restored = replace(written, source.bytes);
+          if (
+            restored.original &&
+            (!sameIdentity(written.value, restored.original.value) ||
+              !written.bytes.equals(restored.original.bytes))
+          )
+            throw new Error("Concurrent edit during rollback");
+        }
       } catch {
         conflicts.push(source.file);
       }
@@ -200,7 +266,14 @@ export async function commitHostFiles(
       }
     }
     throw new Error(
-      `MCP installation failed: ${error.message}${conflicts.length ? `; rollback conflicts (preserved): ${conflicts.join(", ")}` : "; previous file contents restored"}`,
+      `MCP installation failed: ${error.message}${
+        recoveries.some((row) => stat(row.file))
+          ? `; recovery files preserved: ${recoveries
+              .filter((row) => stat(row.file))
+              .map((row) => row.file)
+              .join(", ")}`
+          : ""
+      }${conflicts.length ? `; rollback conflicts (preserved): ${conflicts.join(", ")}` : "; previous file contents restored"}`,
       { cause: error }
     );
   }

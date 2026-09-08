@@ -111,6 +111,7 @@
     "@dotenvx/dotenvx": "^2.19.1",
     "ajv": "^8.20.0",
     "better-sqlite3": "^13.0.1",
+    "koffi": "3.2.1",
     "smol-toml": "1.8.0"
   }
 }

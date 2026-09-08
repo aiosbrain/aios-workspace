@@ -11,13 +11,20 @@ import {
   validateInstallerCredential,
   verifyServerCommand,
 } from "../scripts/mcp-host-install.mjs";
-import { filePolicy } from "../scripts/mcp-host-files.mjs";
-import { offerOnboardingMcp } from "../scripts/mcp-host-command.mjs";
+import { filePolicy, commitHostFiles } from "../scripts/mcp-host-files.mjs";
+import { offerOnboardingMcp, cmdMcpHost } from "../scripts/mcp-host-command.mjs";
+import { atomicHostReplace } from "../scripts/mcp-host-atomic.mjs";
+import {
+  installedServerCommand,
+  prepareServerArtifact,
+  decodeServerArtifact,
+} from "../scripts/mcp-host-artifact.mjs";
+import { createServer } from "node:http";
 import { TOOLSETS } from "../packages/mcp-core/capabilities.mjs";
 
 const credential = {
   brain_url: "https://brain.example",
-  api_key: "synthetic-install-key",
+  api_key: "test-key",
   team_id: "synthetic",
 };
 const fetchImpl = async () => ({
@@ -106,7 +113,7 @@ test("install all four, preserve unrelated configuration, repeat, rotate and uni
   put(
     hosts[0].file,
     JSON.stringify({
-      mcpServers: { unrelated: { command: "other", env: { TOKEN: "synthetic-other-value" } } },
+      mcpServers: { unrelated: { command: "other", env: { TOKEN: "other-token" } } },
       preferences: { theme: "dark" },
     })
   );
@@ -124,7 +131,7 @@ test("install all four, preserve unrelated configuration, repeat, rotate and uni
   assert.ok(fs.readFileSync(hosts[2].file, "utf8").startsWith(toml));
   assert.equal(
     JSON.parse(fs.readFileSync(hosts[0].file)).mcpServers.unrelated.env.TOKEN,
-    "synthetic-other-value"
+    "other-token"
   );
   const before = tree(f.home);
   await installMcpHosts({ ...f, hosts: ids });
@@ -137,11 +144,11 @@ test("install all four, preserve unrelated configuration, repeat, rotate and uni
   await installMcpHosts({
     ...f,
     hosts: ids,
-    credential: { ...credential, api_key: "rotated-synthetic-key" },
+    credential: { ...credential, api_key: "rotated-key" },
   });
   assert.equal(
     JSON.parse(fs.readFileSync(path.join(f.home, ".aios/credentials.json"))).default.api_key,
-    "rotated-synthetic-key"
+    "rotated-key"
   );
   const removed = await installMcpHosts({ ...f, hosts: ids, uninstall: true });
   assert.equal(removed.changes.length, 4);
@@ -154,15 +161,12 @@ test("install all four, preserve unrelated configuration, repeat, rotate and uni
 test("dry-run leaves all bytes, permissions and mtimes unchanged, including absent state", async (t) => {
   const f = fixture(t);
   const host = hostTargets(f)[3];
-  put(
-    host.file,
-    '{"mcpServers":{"other":{"command":"other","env":{"TOKEN":"synthetic-other-value"}}}}'
-  );
+  put(host.file, '{"mcpServers":{"other":{"command":"other","env":{"TOKEN":"other-token"}}}}');
   const before = tree(f.home);
   const result = await installMcpHosts({ ...f, hosts: [host.id], dryRun: true });
   assert.deepEqual(tree(f.home), before);
   assert.ok(!JSON.stringify(result).includes(credential.api_key));
-  assert.ok(!JSON.stringify(result).includes("synthetic-other-value"));
+  assert.ok(!JSON.stringify(result).includes("other-token"));
   assert.equal(fs.existsSync(path.join(f.home, ".aios")), false);
 });
 
@@ -403,3 +407,175 @@ test("recorded command verifies exact membership and rejects same-count drift", 
     /did not pass/
   );
 });
+
+test("CLI dry-run, status and uninstall preserve redaction and report command verification", async (t) => {
+  const f = fixture(t),
+    output = [];
+  const log = console.log;
+  console.log = (value) => output.push(value);
+  try {
+    const before = tree(f.home);
+    assert.equal(await cmdMcpHost(["install", "--host=cursor", "--dry-run", "--json"], f), 0);
+    assert.deepEqual(tree(f.home), before);
+    assert.equal(await cmdMcpHost(["install", "--host", "cursor"], f), 0);
+    assert.equal(await cmdMcpHost(["status", "--host=cursor", "--json"], f), 0);
+    const report = JSON.parse(output.at(-1));
+    assert.equal(report.mcp_hosts[0].command_verification.verified, true);
+    assert.equal(
+      await cmdMcpHost(["status", "--host", "cursor"], {
+        ...f,
+        verify: async () => {
+          throw new Error("probe failed");
+        },
+      }),
+      1
+    );
+    assert.match(output.at(-1), /host loading\/restart: unverified/);
+    assert.equal(await cmdMcpHost(["--host=cursor", "--uninstall"], f), 0);
+    assert.ok(!output.join("\n").includes(credential.api_key));
+    for (const args of [
+      ["install", "--host"],
+      ["install", "--unknown"],
+      ["status", "--dry-run"],
+      ["status", "--host=unknown"],
+    ])
+      await assert.rejects(cmdMcpHost(args, f));
+  } finally {
+    console.log = log;
+  }
+});
+
+test(
+  "unsafe private directory permissions fail before any credential write",
+  { skip: process.platform === "win32" },
+  async (t) => {
+    const f = fixture(t);
+    const directory = path.join(f.home, ".aios");
+    fs.mkdirSync(directory);
+    fs.chmodSync(directory, 0o770);
+    const before = tree(f.home);
+    await assert.rejects(
+      installMcpHosts({ ...f, hosts: ["cursor"] }),
+      /writable by another principal/
+    );
+    assert.deepEqual(tree(f.home), before);
+  }
+);
+
+test("atomic replacement preserves edits made at the final syscall boundary", async (t) => {
+  for (const kind of ["in-place", "replacement", "creation"]) {
+    const f = fixture(t);
+    const file = path.join(f.home, "config.json");
+    if (kind !== "creation") put(file, "original");
+    const policy = filePolicy();
+    const source = policy.snapshot(file);
+    let injected = false;
+    await assert.rejects(
+      commitHostFiles([{ source, bytes: Buffer.from("installer") }], {
+        policy,
+        atomicReplace: (...args) => {
+          if (!injected) {
+            injected = true;
+            if (kind === "replacement") {
+              put(file + ".editor", "concurrent");
+              fs.renameSync(file + ".editor", file);
+            } else put(file, "concurrent");
+          }
+          return atomicHostReplace(...args);
+        },
+      }),
+      /Concurrent edit|EEXIST/
+    );
+    assert.equal(fs.readFileSync(file, "utf8"), "concurrent");
+  }
+});
+
+test("published artifact resists project-local package shadowing and detects edits", async (t) => {
+  const f = fixture(t);
+  const marker = path.join(f.home, "shadow-ran");
+  const shadow = path.join(f.project, "node_modules/@aiosbrain/mcp");
+  put(
+    path.join(shadow, "package.json"),
+    JSON.stringify({
+      name: "@aiosbrain/mcp",
+      version: "0.1.0",
+      bin: { "aios-brain-mcp": "evil.cjs" },
+    })
+  );
+  put(
+    path.join(shadow, "evil.cjs"),
+    `require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'executed')`
+  );
+  const server = createServer((_request, response) => {
+    response.setHeader("Content-Type", "application/json");
+    response.end(
+      JSON.stringify({ tier: "team", actor: "synthetic", role: "member", team: "synthetic" })
+    );
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  const options = {
+    ...f,
+    command: undefined,
+    verify: undefined,
+    credential: { ...credential, brain_url: `http://127.0.0.1:${server.address().port}` },
+    hosts: ["cursor"],
+  };
+  const before = tree(f.home);
+  await installMcpHosts({ ...options, dryRun: true });
+  assert.deepEqual(tree(f.home), before);
+  const installed = await installMcpHosts(options);
+  assert.equal(installed.command_verification[0].tools.length, 8);
+  assert.equal(fs.existsSync(marker), false);
+  const entry = installedServerCommand(f);
+  assert.equal(entry.args.length, 1);
+  assert.ok(entry.args[0].includes(path.join(".aios", "mcp", "0.1.0")));
+  const repeated = tree(f.home);
+  await installMcpHosts(options);
+  assert.deepEqual(tree(f.home), repeated);
+  assert.throws(() => decodeServerArtifact(Buffer.from("tampered")), /integrity/);
+  const policy = filePolicy();
+  await assert.rejects(
+    prepareServerArtifact({ ...f, policy, fetchImpl: async () => ({ ok: false }) }),
+    /download/
+  );
+  await assert.rejects(
+    prepareServerArtifact({
+      ...f,
+      policy,
+      fetchImpl: async () => ({
+        ok: true,
+        body: [Buffer.alloc(1024 * 1024 + 1)],
+      }),
+    }),
+    /size limit/
+  );
+  put(entry.args[0], "edited");
+  await assert.rejects(prepareServerArtifact({ ...f, policy, fetchImpl: fetch }), /edited/);
+});
+
+test(
+  "Windows private parent ACL rejects an additional principal before mutation",
+  { skip: process.platform !== "win32" },
+  async (t) => {
+    const f = fixture(t);
+    const directory = path.join(f.home, ".aios");
+    fs.mkdirSync(directory);
+    const policy = filePolicy();
+    policy.secure(directory);
+    const script =
+      "$ErrorActionPreference='Stop'; $env:PSModulePath=$PSHOME+'\\Modules'; " +
+      "$p=$env:AIOS_TEST_OWNER_PATH; $a=Get-Acl -LiteralPath $p; " +
+      "$sid=New-Object System.Security.Principal.SecurityIdentifier('S-1-1-0'); " +
+      "$r=New-Object System.Security.AccessControl.FileSystemAccessRule($sid,'ReadAndExecute','Allow'); " +
+      "$a.AddAccessRule($r); Set-Acl -LiteralPath $p -AclObject $a";
+    execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], {
+      env: { ...process.env, AIOS_TEST_OWNER_PATH: directory },
+      stdio: "pipe",
+      timeout: 5000,
+    });
+    const before = tree(f.home);
+    await assert.rejects(installMcpHosts({ ...f, hosts: ["cursor"] }), /ACL/);
+    assert.deepEqual(tree(f.home), before);
+  }
+);

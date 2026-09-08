@@ -1,4 +1,3 @@
-import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { execFileSync, spawn } from "node:child_process";
@@ -10,6 +9,8 @@ import { filePolicy, commitHostFiles } from "./mcp-host-files.mjs";
 import { resolveBrainConfig } from "./mcp-config.mjs";
 import { validateCredentialTuple, readGlobalCredential } from "./mcp-credentials.mjs";
 import { TOOLSETS } from "../packages/mcp-core/capabilities.mjs";
+import { installedServerCommand, prepareServerArtifact } from "./mcp-host-artifact.mjs";
+export { installedServerCommand } from "./mcp-host-artifact.mjs";
 
 export function runningHostNames(platform = process.platform, exec = execFileSync) {
   if (platform === "win32") {
@@ -47,26 +48,6 @@ function isRunning(host, names) {
       )
     );
   });
-}
-
-export function installedServerCommand({ node = process.execPath, exists = fs.existsSync } = {}) {
-  const candidates = [
-    path.join(path.dirname(node), "node_modules/npm/bin/npm-cli.js"),
-    path.resolve(path.dirname(node), "../lib/node_modules/npm/bin/npm-cli.js"),
-  ];
-  const npm = candidates.find(exists);
-  if (!npm) throw new Error("Cannot locate npm beside Node.js; install Node.js with npm first");
-  return {
-    command: node,
-    args: [
-      npm,
-      "exec",
-      "--yes",
-      `--package=@aiosbrain/mcp@${MCP_PACKAGE_VERSION}`,
-      "--",
-      "aios-brain-mcp",
-    ],
-  };
 }
 
 export async function validateInstallerCredential(value, fetchImpl = fetch) {
@@ -297,7 +278,7 @@ export async function installMcpHosts(options = {}) {
   const names = (options.runningHosts || (() => runningHostNames(options.platform)))();
   const changes = [],
     proposals = [];
-  const command = uninstall ? null : options.command || installedServerCommand();
+  const command = uninstall ? null : options.command || installedServerCommand({ home });
   for (const host of hosts) {
     if (isRunning(host, names))
       throw new Error(
@@ -391,6 +372,10 @@ export async function installMcpHosts(options = {}) {
     source: recordsSource,
     bytes: Buffer.from(JSON.stringify(records, null, 2) + "\n"),
   });
+  if (!uninstall && !options.command) {
+    const artifact = await prepareServerArtifact({ home, policy });
+    changes.unshift(...artifact);
+  }
   if (dryRun)
     return {
       dry_run: true,
@@ -403,24 +388,23 @@ export async function installMcpHosts(options = {}) {
     };
   const verify = options.verify || verifyServerCommand;
   const checks = [];
-  if (!uninstall && changes[0].source.bytes?.equals(changes[0].bytes))
-    checks.push(
-      await verify({ ...command, env: {} }, { home, project, env: options.env || process.env })
-    );
+  async function checkCommand() {
+    if (!uninstall && !checks.length)
+      checks.push(
+        await verify({ ...command, env: {} }, { home, project, env: options.env || process.env })
+      );
+  }
   const transaction = await commitHostFiles(changes, {
     policy,
+    beforeCommit: checkCommand,
     beforeReplace: async (file) => {
+      if (hosts.some((host) => host.file === file)) await checkCommand();
       const currentNames = (options.runningHosts || (() => runningHostNames(options.platform)))();
       if (hosts.some((host) => isRunning(host, currentNames)))
         throw new Error("A selected host started during installation; quit it before retrying");
       await options.beforeReplace?.(file);
     },
     afterReplace: async (file) => {
-      if (!uninstall && file === path.join(home, ".aios", "credentials.json")) {
-        checks.push(
-          await verify({ ...command, env: {} }, { home, project, env: options.env || process.env })
-        );
-      }
       await options.afterReplace?.(file);
     },
   });

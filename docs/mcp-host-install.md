@@ -17,8 +17,10 @@ documented macOS Application Support or Windows AppData JSON file; Claude Code u
 the current project's `.mcp.json`; Codex uses global `~/.codex/config.toml`; Cursor
 uses global `~/.cursor/mcp.json`. Claude Desktop on Linux is unsupported.
 
-The recorded command uses the installed Node executable and its npm CLI, with an
-exact `@aiosbrain/mcp@0.1.0` package selector. Host entries contain a nonsecret
+The installer downloads the published `@aiosbrain/mcp@0.1.0` tarball, verifies its
+pinned SHA-512 integrity, and stores its explicit file closure under owner-controlled
+`~/.aios/mcp/0.1.0`. The recorded command uses the installed Node executable and the
+absolute server entry point; project-local packages cannot shadow it. Host entries contain a nonsecret
 installer marker, not an API key. Installation ownership is recorded separately in
 `~/.aios/mcp-installations.json`.
 
@@ -33,7 +35,12 @@ host. Restart all configured hosts after credential rotation.
 Every selected file is parsed and preflighted before any mutation. Malformed files,
 symlinks, foreign ownership, running hosts, and unowned or edited server entries
 are refused. Existing content receives a restrictive backup. Same-directory temporary
-files are atomically renamed only after source identity and bytes are rechecked.
+files replace existing targets with an OS atomic swap or replace-with-backup operation,
+after source identity and bytes are rechecked. The displaced inode is checked too,
+so an edit made at the final replacement boundary is retained for recovery. New
+files use exclusive creation. Unsupported filesystem operations fail closed.
+The toolkit uses Koffi for these native operations; the standalone MCP package
+retains zero runtime dependencies.
 A partial failure restores prior writes only while their identities and bytes still
 match the installer; conflicting edits are preserved and reported. Backups may remain
 for recovery. Uninstall preserves shared credentials and edited or unowned entries.
