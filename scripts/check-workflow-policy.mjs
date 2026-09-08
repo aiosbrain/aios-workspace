@@ -53,7 +53,7 @@
  *
  * Zero dependencies (runs in a CI job with no `npm ci`, like the other guards in scripts/).
  *
- *   node scripts/check-workflow-policy.mjs [--dir <workflows-dir>] [--allowlist <file>]
+ *   node scripts/check-workflow-policy.mjs [--dir <workflows-dir>] [--allowlist <file>] [--allow-empty]
  *
  * Exit 0 clean, 1 policy violation, 2 bad invocation / unreadable allowlist.
  */
@@ -80,7 +80,7 @@ export {
 const SELF_DIR = path.dirname(fileURLToPath(import.meta.url));
 
 function loadWorkflowFiles(dir, root) {
-  if (!existsSync(dir) || !statSync(dir).isDirectory()) return [];
+  if (!statSync(dir).isDirectory()) throw new Error(`not a workflow directory: ${dir}`);
   return readdirSync(dir)
     .filter((name) => /\.ya?ml$/.test(name))
     .sort()
@@ -102,10 +102,11 @@ function sourceLine(file, line) {
 }
 
 function parseArgs(argv) {
-  const opts = { dir: null, allowlist: null };
+  const opts = { dir: null, allowlist: null, allowEmpty: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
-    if (a === "--dir" || a === "--allowlist") {
+    if (a === "--allow-empty") opts.allowEmpty = true;
+    else if (a === "--dir" || a === "--allowlist") {
       const value = argv[++i];
       if (value === undefined) return { error: `${a} needs a value` };
       opts[a === "--dir" ? "dir" : "allowlist"] = value;
@@ -195,7 +196,7 @@ export function main(
   const parsed = parseArgs(argv);
   if (parsed.help) {
     log(
-      "usage: node scripts/check-workflow-policy.mjs [--dir <workflows-dir>] [--allowlist <file>]"
+      "usage: node scripts/check-workflow-policy.mjs [--dir <workflows-dir>] [--allowlist <file>] [--allow-empty]"
     );
     return 0;
   }
@@ -218,7 +219,18 @@ export function main(
   }
   const { entries, findings: allowlistFindings } = loaded;
 
-  const files = loadWorkflowFiles(dir, cwd);
+  let files;
+  try {
+    files = loadWorkflowFiles(dir, cwd);
+    if (!files.length && !parsed.opts.allowEmpty)
+      throw new Error(
+        `no workflow files in ${dir}; use --allow-empty only for a deliberate standalone audit`
+      );
+  } catch (e) {
+    err(`check-workflow-policy: ${e.message}`);
+    return 2;
+  }
+  if (!files.length) log("Explicit --allow-empty audit: zero workflows in existing directory.");
   const reachable = computeReachability(files);
   const byRel = new Map(files.map((f) => [f.rel, f]));
   const findings = [...allowlistFindings, ...collectFindings(files, reachable)];

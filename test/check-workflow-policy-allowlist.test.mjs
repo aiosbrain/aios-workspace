@@ -97,9 +97,12 @@ test("an unused waiver is a note, never a failure — so a fix in another PR can
       },
     ],
     (file) => {
-      const out = run({ allowlist: file, dir: `${FIXTURES}/../workflow-policy-none` }).out;
+      const out = run({ allowlist: file, dir: "test/__fixtures__/workflow-policy-clean" }).out;
       assert.match(out, /stale {3}\.github\/workflows\/does-not-exist\.yml/);
-      assert.equal(run({ allowlist: file, dir: `${FIXTURES}/../workflow-policy-none` }).code, 0);
+      assert.equal(
+        run({ allowlist: file, dir: "test/__fixtures__/workflow-policy-clean" }).code,
+        0
+      );
     }
   );
 });
