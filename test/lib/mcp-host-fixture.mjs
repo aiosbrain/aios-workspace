@@ -34,7 +34,9 @@ export function fixture(t) {
     home,
     project,
     platform: process.platform === "win32" ? "win32" : "darwin",
-    env: {},
+    // Keep the OS installation path needed by the real Windows credential reader.
+    // Do not inherit ambient Brain credentials into synthetic acceptance launches.
+    env: process.platform === "win32" ? { SystemRoot: process.env.SystemRoot } : {},
     credential,
     fetchImpl,
     runningHosts: () => [],

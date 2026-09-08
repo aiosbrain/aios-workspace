@@ -251,3 +251,35 @@ test("partial native replacement failure restores the displaced original exclusi
       );
   }
 });
+
+test(
+  "non-private host files in shared project directories commit and roll back",
+  {
+    skip: process.platform === "win32",
+  },
+  async (t) => {
+    const f = fixture(t);
+    fs.chmodSync(f.project, 0o770);
+    const file = path.join(f.project, ".mcp.json");
+    put(file, "original");
+    const policy = filePolicy();
+    const result = await commitHostFiles(
+      [{ source: policy.snapshot(file), bytes: Buffer.from("installed") }],
+      { policy }
+    );
+    assert.equal(fs.readFileSync(file, "utf8"), "installed");
+    for (const backup of result.backups) assert.equal(fs.statSync(backup).mode & 0o077, 0);
+    assert.equal(fs.readdirSync(f.project).filter((name) => name.endsWith(".tmp")).length, 0);
+    await assert.rejects(
+      commitHostFiles([{ source: policy.snapshot(file), bytes: Buffer.from("replacement") }], {
+        policy,
+        beforeCommit: async () => {
+          throw new Error("injected final failure");
+        },
+      }),
+      (error) =>
+        /injected final failure/.test(error.message) && !/rollback conflicts/.test(error.message)
+    );
+    assert.equal(fs.readFileSync(file, "utf8"), "installed");
+  }
+);

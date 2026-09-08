@@ -63,7 +63,7 @@ export function filePolicy({
     if (!found.length) throw new Error(`No safe parent directory: ${file}`);
     return found;
   }
-  function snapshot(file, { privateFile = false } = {}) {
+  function snapshot(file, { privateFile = false, privateDirectories = privateFile } = {}) {
     const directories = parents(file);
     const before = stat(file);
     const aclPaths = [...directories.map((dir) => dir.file), ...(before ? [file] : [])];
@@ -74,7 +74,7 @@ export function filePolicy({
           : new Map(aclPaths.map((name) => [name, readAcl(name)]))
         : new Map();
     owner(directories[0].file, directories[0].value, false, acls.get(directories[0].file));
-    if (privateFile) {
+    if (privateDirectories) {
       // Every user-controlled ancestor must resist replacement by another
       // principal, including ancestors above an existing package subdirectory.
       for (const dir of directories) {
@@ -91,7 +91,8 @@ export function filePolicy({
         }
       }
     }
-    if (!before) return { file, bytes: null, value: null, directories, privateFile };
+    if (!before)
+      return { file, bytes: null, value: null, directories, privateFile, privateDirectories };
     if (before.isSymbolicLink() || !before.isFile() || before.nlink !== 1)
       throw new Error(`Not a regular unlinked file: ${file}`);
     if (before.size > 4 * 1024 * 1024) throw new Error(`Configuration file is too large: ${file}`);
@@ -112,7 +113,7 @@ export function filePolicy({
     } finally {
       fs.closeSync(fd);
     }
-    return { file, bytes, value: before, directories, privateFile };
+    return { file, bytes, value: before, directories, privateFile, privateDirectories };
   }
   function recheck(source) {
     for (const dir of source.directories) {
@@ -120,7 +121,10 @@ export function filePolicy({
       if (!current || current.isSymbolicLink() || !sameIdentity(dir.value, current))
         throw new Error(`Directory changed: ${dir.file}`);
     }
-    const current = snapshot(source.file, { privateFile: source.privateFile });
+    const current = snapshot(source.file, {
+      privateFile: source.privateFile,
+      privateDirectories: source.privateDirectories,
+    });
     if (
       (source.value === null) !== (current.value === null) ||
       (source.value && !sameIdentity(source.value, current.value)) ||
@@ -238,7 +242,10 @@ export async function commitHostFiles(
       original = policy.snapshot(displaced);
       tracked.source = { ...source, bytes: original.bytes };
       policy.secure(displaced);
-      recoveries.at(-1).snapshot = policy.snapshot(displaced, { privateFile: true });
+      recoveries.at(-1).snapshot = policy.snapshot(displaced, {
+        privateFile: true,
+        privateDirectories: source.privateFile,
+      });
     }
     return { written, original };
   }

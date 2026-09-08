@@ -233,8 +233,13 @@ export async function verifyServerCommand(
             env: { ...env, ...entry.env },
           }).credential_source,
         });
-      } catch {
-        finish(new Error("Recorded MCP command did not pass initialize and tools/list"));
+      } catch (error) {
+        const reason = ["timeout", "exit", "protocol", "membership"].includes(error.message)
+          ? error.message
+          : "invalid response or credential source";
+        finish(
+          new Error(`Recorded MCP command did not pass initialize and tools/list (${reason})`)
+        );
       }
     });
     child.stdin.on("error", () => {});
