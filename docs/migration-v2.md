@@ -160,3 +160,16 @@ slack whoami                    # same
 
 The release acceptance matrix covers Linux and macOS on Node 22, 24, and 26. Windows
 shim execution is outside this release's validated platform surface.
+
+
+### Connector workspace selection
+
+`aios linear` and `aios slack`, their compatibility bins, and workspace shims accept one
+`--repo PATH` or `--repo=PATH`. The selected workspace supplies workspace credentials,
+Linear templates, and the default activity destination. Environment and user-config
+credential precedence remains unchanged. Missing, option-looking, or duplicate workspace
+selectors fail before configuration or credential access. Nested help is offline.
+
+For activity pulls, a relative `--activity-path` is resolved inside the selected workspace;
+an absolute path remains an explicit absolute destination. Linear query syntax and variables
+are validated before credentials are resolved.

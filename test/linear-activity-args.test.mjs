@@ -46,12 +46,8 @@ globalThis.fetch = (...args) => { writeFileSync(${JSON.stringify(trace)}, "calle
         ["--dry-run", "--dry-run"],
       ]) {
         const r = run(args, configured);
-        // The outer workspace dispatcher rejects a missing --repo before adapter dispatch.
-        assert.equal(r.status, args.includes("--repo") ? 1 : 2, `${args}: ${r.stderr} ${r.stdout}`);
-        assert.match(
-          r.stderr + r.stdout,
-          args.includes("--repo") ? /needs a path/ : /AIOS_E_USAGE/
-        );
+        assert.equal(r.status, 2, `${args}: ${r.stderr} ${r.stdout}`);
+        assert.match(r.stderr + r.stdout, /AIOS_E_USAGE/);
         assert.equal(existsSync(trace), false, "invalid input must never reach provider");
         assert.equal(existsSync(activity), false);
       }

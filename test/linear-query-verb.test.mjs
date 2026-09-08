@@ -100,7 +100,7 @@ test("`aios linear query '<graphql>'` is a raw passthrough printing the data pay
 
 test("an unknown flag is a loud usage failure, not a silent default query", () => {
   const result = runQuery(["--nope"]);
-  assert.equal(result.status, 1);
+  assert.equal(result.status, 2);
   assert.match(result.stderr, /unknown option --nope/);
 });
 

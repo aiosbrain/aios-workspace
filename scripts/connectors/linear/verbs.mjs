@@ -108,7 +108,11 @@ export function linearUsage() {
  * verbs print their own diagnostics and process.exit(1) on provider/usage failures; a
  * completed verb returns 0.
  */
-export async function runLinearVerb(argv, baseDir = process.cwd(), { activityPlan } = {}) {
+export async function runLinearVerb(
+  argv,
+  baseDir = process.cwd(),
+  { activityPlan, queryPlan } = {}
+) {
   const cmd = argv[0];
 
   if (cmd === "get") {
@@ -462,7 +466,7 @@ export async function runLinearVerb(argv, baseDir = process.cwd(), { activityPla
   } else if (cmd === "query") {
     // Raw GraphQL passthrough (AIO-1072) — lazy: most sessions never need it.
     const { cmdQuery } = await import("./query.mjs");
-    await cmdQuery(argv.slice(1));
+    await cmdQuery(argv.slice(1), queryPlan);
   } else if (cmd === "activity") {
     // Operator-loop activity pull (AIO-1072) — lazy for the same reason.
     const { cmdActivity } = await import("./activity.mjs");

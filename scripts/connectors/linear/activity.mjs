@@ -159,7 +159,12 @@ export async function pullLinearActivity({
 
 /** `aios linear activity [pull] …` — argv is everything after `activity`. */
 export async function cmdActivity(argv, baseDir = process.cwd(), plan) {
-  const opts = plan ?? parseLinearActivityArgs(argv, baseDir);
+  const parsed = plan ?? parseLinearActivityArgs(argv);
+  const opts = plan ?? {
+    ...parsed,
+    repo: path.resolve(baseDir),
+    activityPath: parsed.activityPath ? path.resolve(baseDir, parsed.activityPath) : null,
+  };
   let result;
   try {
     result = await pullLinearActivity(opts);

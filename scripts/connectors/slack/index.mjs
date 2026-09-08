@@ -12,6 +12,9 @@
  * through the shared credential broker; `brain` verbs resolve the brain themselves).
  * test/slack-command-parity.test.mjs pins it against the legacy Python surface.
  */
+import { prepareSlackInvocation } from "./invocation.mjs";
+export { prepareSlackInvocation } from "./invocation.mjs";
+import { shownArg } from "./args.mjs";
 import { createOutput, normalizeError } from "../../cli.mjs";
 
 /** verb → { module, credential } — the canonical Slack command surface. */
@@ -84,53 +87,26 @@ export async function cmdSlack(repo, rest, options = {}) {
   // legal (Codex round 2). `--json`/`--help`/`-h` are the ONLY pre-verb globals the Python
   // CLI had; a hoisted --json is re-appended to the verb argv so one parser owns it. Any
   // other leading flag falls through and errors as an unknown verb, which names it.
-  let cursor = 0;
-  let hoistedJson = false;
-  while (rest[cursor] === "--json") {
-    hoistedJson = true;
-    cursor += 1;
-  }
-  const verb = rest[cursor];
-  const verbArgs = [...rest.slice(cursor + 1), ...(hoistedJson ? ["--json"] : [])];
-  if (!verb || verb === "help" || verb === "--help" || verb === "-h") {
-    console.log(slackUsage());
-    return 0;
-  }
-  const { parseVerbArgs, VERB_SPECS, shownArg } = await import("./args.mjs");
-  // Object.hasOwn, not a truthy bracket lookup: `aios slack __proto__`/`constructor`/
-  // `toString` hit INHERITED properties on a plain object, sail past this check, and
-  // crash as AIOS_E_INTERNAL instead of the usage error (Bugbot round 11).
-  if (!Object.hasOwn(VERBS, verb)) {
-    console.log(slackUsage());
-    // shownArg: a pasted credential in the verb slot must not be echoed into logs.
-    output.diagnostic(`error: unknown slack verb: ${shownArg(verb)}`);
-    return 2;
-  }
-  // ROUND-5 STRUCTURAL CONTRACT: the invocation is FULLY parsed and validated before any
-  // credential resolves. Help and every usage error are therefore offline by construction
-  // (no credential resolution, no brain fetch, no network) — and help is decided by the
-  // flag/value-aware parser, so a flag VALUE spelling "--help" (`--message "--help"`) is
-  // data that gets sent, never a help request.
-  let args;
+  let plan;
   try {
-    args = parseVerbArgs(verbArgs, VERB_SPECS[verb]);
+    plan = options.invocationPlan ?? prepareSlackInvocation(rest);
   } catch (error) {
     return output.failure(normalizeError(error));
   }
-  if (args.help) {
+  const { verb, args } = plan;
+  if (plan.help) {
     console.log(slackUsage());
     return 0;
   }
+  if (plan.unknown) {
+    console.log(slackUsage());
+    output.diagnostic(`error: unknown slack verb: ${shownArg(verb)}`);
+    return 2;
+  }
   try {
     const ctx = {
-      // Deliberately the PROCESS cwd, not the dispatch-resolved workspace root: slack.py
-      // anchored workspace containment and brain-config lookup on the working directory,
-      // and the compat bin (repo = null) must behave identically from any subdirectory.
-      cwd: options.cwd ?? process.cwd(),
-      // The dispatch-resolved workspace root, when the canonical route consumed an
-      // explicit `--repo` (dispatch owns that flag; the compat bin leaves it in argv, so
-      // `activity` reads args.repo there). Only `activity` anchors on it (AIO-1072).
-      repo,
+      cwd: plan.repoArg ?? repo ?? options.cwd ?? process.cwd(),
+      repo: plan.repoArg ?? repo ?? options.cwd ?? process.cwd(),
       env: options.env ?? process.env,
       stdin: options.stdin,
       fetch: options.fetch,

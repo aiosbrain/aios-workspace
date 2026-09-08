@@ -177,14 +177,11 @@ export function appendActivity(activityPath, records, { dryRun = false } = {}) {
 export async function cmdActivity(ctx, args) {
   // Flags are already validated offline by VERB_SPECS.activity (args.mjs) before any
   // credential resolved — tier membership and the positive-integer bounds included.
-  // Repo precedence: an explicit --repo that survived to the verb argv (compat bin),
-  // the dispatch-resolved workspace root (canonical route, which consumes --repo),
-  // then the working directory — the descriptor adapter's old default.
-  const repo = path.resolve(args.repo ?? ctx.repo ?? ctx.cwd ?? process.cwd());
+  const repo = path.resolve(ctx.repo ?? ctx.cwd ?? process.cwd());
   const tier = args.tier ?? DEFAULT_TIER;
   const inbox = existsSync(path.join(repo, "1-inbox")) ? "1-inbox" : "01-intake";
   const activityPath = args.activityPath
-    ? path.resolve(args.activityPath)
+    ? path.resolve(repo, args.activityPath)
     : path.join(repo, inbox, ACTIVITY_BASENAME);
   const result = await collectSlackUnread({
     call: (method, params) => slackCall(ctx, method, params),

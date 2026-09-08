@@ -1,9 +1,7 @@
-import path from "node:path";
 import { AiosError } from "../../cli.mjs";
 
 export const DEFAULT_TIER = "admin";
 const VALUE_FLAGS = new Map([
-  ["--repo", "repo"],
   ["--tier", "tier"],
   ["--activity-path", "activityPath"],
 ]);
@@ -15,9 +13,9 @@ const usage = (message) =>
   );
 
 /** Parse the complete activity request before credentials or provider access. */
-export function parseLinearActivityArgs(argv, baseDir = process.cwd()) {
+export function parseLinearActivityArgs(argv) {
   const rest = argv[0] === "pull" ? argv.slice(1) : argv;
-  const result = { repo: baseDir, tier: DEFAULT_TIER, activityPath: null, dryRun: false };
+  const result = { tier: DEFAULT_TIER, activityPath: null, dryRun: false };
   const seen = new Set();
   for (let i = 0; i < rest.length; i++) {
     const flag = rest[i];
@@ -35,6 +33,5 @@ export function parseLinearActivityArgs(argv, baseDir = process.cwd()) {
   }
   if (!["admin", "team", "external"].includes(result.tier))
     throw usage("--tier must be admin|team|external");
-  result.repo = path.resolve(result.repo);
   return Object.freeze(result);
 }

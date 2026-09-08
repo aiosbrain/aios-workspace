@@ -22,7 +22,7 @@ const WRAPPER = path.join(ROOT, "scripts/linear.mjs");
 
 test("the compat bin delegates to the adapter that resolves the credential", () => {
   const wrapper = readFileSync(WRAPPER, "utf8");
-  assert.match(wrapper, /loadLinearAdapter/, "scripts/linear.mjs must route to the adapter");
+  assert.match(wrapper, /await run\(\["linear"/, "scripts/linear.mjs must use canonical dispatch");
   assert.doesNotMatch(wrapper, /api\.linear\.app/, "the bin must not carry its own client");
   const adapter = readFileSync(ADAPTER, "utf8");
   assert.match(adapter, /ensureLinearCredential/, "the adapter preflights the credential");

@@ -141,5 +141,5 @@ test("the compat bin carries no config logic of its own", () => {
   const source = readFileSync(path.join(ROOT, "scripts", "slack.mjs"), "utf8");
   assert.doesNotMatch(source, /process\.env/, "delegate must not read env config");
   assert.doesNotMatch(source, /resolveConnectorEnv|dotenvx|spawnSync|child_process|python3/);
-  assert.match(source, /loadSlackAdapter/);
+  assert.match(source, /await run\(\["slack"/);
 });

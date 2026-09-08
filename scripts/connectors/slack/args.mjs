@@ -73,7 +73,6 @@ export const VERB_SPECS = Object.freeze({
   },
   activity: {
     flags: {
-      repo: "value",
       tier: "value",
       "max-channels": "value",
       "max-messages": "value",

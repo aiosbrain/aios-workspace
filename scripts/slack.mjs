@@ -21,9 +21,8 @@ process.stderr.write(
     "(this bin will be removed no earlier than v3.0.0)\n"
 );
 try {
-  const { loadSlackAdapter } = await import("./connectors.mjs");
-  const { cmdSlack } = await loadSlackAdapter();
-  process.exitCode = await cmdSlack(null, process.argv.slice(2));
+  const { run } = await import("./cli.mjs");
+  await run(["slack", ...process.argv.slice(2)]);
 } catch (error) {
   // Same containment as `aios slack` (dispatch's die): a broken adapter fails as a CLI
   // error line, never an unhandled stack dump.

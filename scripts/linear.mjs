@@ -11,6 +11,5 @@ process.stderr.write(
   "linear: deprecated compatibility command — use `aios linear " +
     `${process.argv[2] ?? "<verb>"} …\` (this bin will be removed no earlier than v3.0.0)\n`
 );
-const { loadLinearAdapter } = await import("./connectors.mjs");
-const { cmdLinear } = await loadLinearAdapter();
-process.exitCode = await cmdLinear(null, process.argv.slice(2));
+const { run } = await import("./cli.mjs");
+await run(["linear", ...process.argv.slice(2)]);
