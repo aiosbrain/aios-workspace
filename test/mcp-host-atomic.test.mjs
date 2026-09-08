@@ -4,6 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { createServer } from "node:http";
+import { hostTargets } from "../scripts/mcp-hosts.mjs";
 import { installMcpHosts } from "../scripts/mcp-host-install.mjs";
 import { filePolicy, commitHostFiles } from "../scripts/mcp-host-files.mjs";
 import { atomicHostReplace } from "../scripts/mcp-host-atomic.mjs";
@@ -82,9 +83,19 @@ test("published artifact resists project-local package shadowing and detects edi
   const entry = installedServerCommand(f);
   assert.equal(entry.args.length, 1);
   assert.ok(entry.args[0].includes(path.join(".aios", "mcp", "0.1.0")));
-  const repeated = tree(f.home);
+  // A real Windows server launch can update PowerShell's own startup profile
+  // cache. Reinstallation must leave every installer-managed file unchanged;
+  // the dry-run assertion above deliberately checks the entire fixture tree.
+  const managedRoots = [path.join(f.home, ".aios"), path.dirname(hostTargets(f)[3].file)];
+  const managedTree = () =>
+    Object.fromEntries(
+      Object.entries(tree(f.home)).filter(([file]) =>
+        managedRoots.some((root) => file === root || file.startsWith(root + path.sep))
+      )
+    );
+  const repeated = managedTree();
   await installMcpHosts(options);
-  assert.deepEqual(tree(f.home), repeated);
+  assert.deepEqual(managedTree(), repeated);
   assert.throws(() => decodeServerArtifact(Buffer.from("tampered")), /integrity/);
   const policy = filePolicy();
   await assert.rejects(
