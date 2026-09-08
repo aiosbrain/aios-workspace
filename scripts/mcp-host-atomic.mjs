@@ -9,7 +9,6 @@ let exchange;
 export function atomicHostReplace(temporary, target, recovery, existed) {
   if (!existed) {
     fs.linkSync(temporary, target); // Exclusive creation: never overwrite a racer.
-    fs.unlinkSync(temporary);
     return null;
   }
   if (!exchange) {
@@ -37,9 +36,12 @@ export function atomicHostReplace(temporary, target, recovery, existed) {
       const replace = lib.func(
         "int __stdcall ReplaceFileW(str16 target, str16 replacement, str16 backup, uint32_t flags, void *exclude, void *reserved)"
       );
+      const lastError = lib.func("uint32_t __stdcall GetLastError()");
       exchange = (from, to, backup) => {
         if (!replace(to, from, backup, 0, null, null))
-          throw new Error(`Atomic file replacement failed; inspect recovery: ${backup}`);
+          throw new Error(
+            `Atomic file replacement failed (${lastError()}); inspect recovery: ${backup}`
+          );
         return backup;
       };
     } else throw new Error("Atomic MCP installation is unsupported on this platform");

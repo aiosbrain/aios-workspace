@@ -5,6 +5,7 @@ on:
       - scripts/mcp-host*.mjs
       - scripts/mcp-credentials.mjs
       - test/mcp-host*.test.mjs
+      - test/lib/mcp-host-fixture.mjs
       - package.json
       - package-lock.json
       - .github/workflows/mcp-host-install.yml
@@ -28,4 +29,4 @@ jobs:
         with:
           node-version: 22
       - run: npm ci --ignore-scripts
-      - run: node --test test/mcp-host-install.test.mjs
+      - run: node --test test/mcp-host-install.test.mjs test/mcp-host-atomic.test.mjs

@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
+import { readWindowsHostAcls } from "./mcp-host-acl.mjs";
 import { atomicHostReplace } from "./mcp-host-atomic.mjs";
 import { assertWindowsCredentialAcl, readWindowsCredentialAcl } from "./mcp-credentials.mjs";
 
@@ -21,9 +22,9 @@ export function filePolicy({
   readAcl = readWindowsCredentialAcl,
   exec = execFileSync,
 } = {}) {
-  function owner(file, value, privateFile = false) {
+  function owner(file, value, privateFile = false, aclValue) {
     if (platform === "win32") {
-      const acl = readAcl(file);
+      const acl = aclValue || readAcl(file);
       if (acl.owner !== acl.current) throw new Error(`Foreign ownership: ${file}`);
       if (privateFile) assertWindowsCredentialAcl(acl);
     } else if (uid === undefined || value.uid !== uid || (privateFile && value.mode & 0o077))
@@ -60,17 +61,25 @@ export function filePolicy({
       if (dir === path.dirname(dir)) break;
     }
     if (!found.length) throw new Error(`No safe parent directory: ${file}`);
-    owner(found[0].file, found[0].value);
     return found;
   }
   function snapshot(file, { privateFile = false } = {}) {
     const directories = parents(file);
+    const before = stat(file);
+    const aclPaths = [...directories.map((dir) => dir.file), ...(before ? [file] : [])];
+    const acls =
+      platform === "win32"
+        ? readAcl === readWindowsCredentialAcl
+          ? readWindowsHostAcls(aclPaths, exec)
+          : new Map(aclPaths.map((name) => [name, readAcl(name)]))
+        : new Map();
+    owner(directories[0].file, directories[0].value, false, acls.get(directories[0].file));
     if (privateFile) {
       // Every user-controlled ancestor must resist replacement by another
       // principal, including ancestors above an existing package subdirectory.
       for (const dir of directories) {
         if (platform === "win32") {
-          const acl = readAcl(dir.file);
+          const acl = acls.get(dir.file);
           if (acl.owner !== acl.current) break;
           assertWindowsCredentialAcl(acl);
         } else {
@@ -82,12 +91,11 @@ export function filePolicy({
         }
       }
     }
-    const before = stat(file);
     if (!before) return { file, bytes: null, value: null, directories, privateFile };
     if (before.isSymbolicLink() || !before.isFile() || before.nlink !== 1)
       throw new Error(`Not a regular unlinked file: ${file}`);
     if (before.size > 4 * 1024 * 1024) throw new Error(`Configuration file is too large: ${file}`);
-    owner(file, before, privateFile);
+    owner(file, before, privateFile, acls.get(file));
     const fd = fs.openSync(file, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0));
     let bytes;
     try {
@@ -181,14 +189,49 @@ export async function commitHostFiles(
       policy.recheck(source);
       displaced = atomicReplace(temporary, source.file, recovery, source.value !== null);
     } catch (error) {
-      // A Windows replacement failure can leave either name in place. Preserve
-      // all existing recovery paths; never guess which inode the OS moved.
+      // ReplaceFileW error 1177 may move the old target to recovery without
+      // installing the new target. Restore only the verified displaced original
+      // into an absent name; exclusive creation preserves any intervening writer.
+      if (!stat(source.file) && stat(recovery)) {
+        try {
+          policy.snapshot(recovery);
+          fs.linkSync(recovery, source.file);
+          fs.unlinkSync(recovery);
+        } catch {
+          /* Recovery paths below explain unresolved OS/concurrent failures. */
+        }
+      }
+      // Discard only the verified unused installer temporary; retain displaced
+      // originals or any changed recovery object for the user.
+      try {
+        const unused = policy.snapshot(temporary);
+        if (sameIdentity(value, unused.value) && bytes.equals(unused.bytes))
+          fs.unlinkSync(temporary);
+      } catch {
+        /* Report any remaining recovery below. */
+      }
+      // Preserve all remaining names; never guess which inode the OS moved.
       for (const file of [temporary, recovery]) if (stat(file)) recoveries.push({ file });
       throw error;
     }
     const written = { ...source, bytes, value };
     const tracked = { source, written };
     onInstalled(tracked);
+    if (!displaced) {
+      // The exclusive link is already a live write. Track it before cleanup,
+      // which can fail independently (for example, a Windows file scanner).
+      try {
+        fs.unlinkSync(temporary);
+      } catch (error) {
+        recoveries.push({ file: temporary });
+        try {
+          fs.unlinkSync(temporary);
+        } catch {
+          /* Rollback will report a conflict. */
+        }
+        throw error;
+      }
+    }
     let original = null;
     if (displaced) {
       recoveries.push({ file: displaced });
@@ -226,6 +269,7 @@ export async function commitHostFiles(
       await afterReplace(source.file);
     }
     await beforeCommit();
+    for (const { written } of applied) policy.recheck(written);
     for (const recovery of recoveries) if (recovery.snapshot) policy.recheck(recovery.snapshot);
     for (const recovery of recoveries) fs.unlinkSync(recovery.file);
     return { backups };
@@ -247,6 +291,7 @@ export async function commitHostFiles(
             }
             throw new Error("Concurrent edit during rollback removal");
           }
+          fs.unlinkSync(removed);
         } else {
           const restored = replace(written, source.bytes);
           if (
