@@ -24,6 +24,7 @@ import { DIAGNOSTIC_COMMANDS } from "./diagnostic-commands.mjs";
 import { LINEAR_COMMANDS as LC } from "./linear-commands.mjs";
 import { SLACK_COMMANDS as SC } from "./slack-commands.mjs";
 import { HIDDEN_COMMANDS } from "./hidden-commands.mjs";
+import { AiosError } from "./errors.mjs";
 
 /** @type {CommandDescriptor[]} Help order; hidden commands (`usage: []`) stay last. */
 export const COMMANDS = [
@@ -176,21 +177,16 @@ export const COMMANDS = [
     loader: () => import("../brain-mcp.mjs"),
     adapt: async (ctx, mod) => {
       const mcpCfg = mod.resolveBrainConfig();
-      if (mcpCfg.missing.length) {
-        // Brain unconfigured: still start IF a workspace resolves (local aios_* tools only).
-        const ws = ctx.local.findRepoRootOffline(process.cwd());
-        if (!ws) {
-          ctx.local.die(
-            `aios mcp: missing brain config: ${mcpCfg.missing.join(", ")} and no workspace at cwd. ` +
-              `Set the brain env (AIOS_BRAIN_URL/AIOS_API_KEY/AIOS_TEAM) or run from a workspace.`
-          );
-        }
-        process.stderr.write(
-          `aios mcp: brain not configured (${mcpCfg.missing.join(", ")}); ` +
-            `starting in local-only mode — aios_* tools available.\n`
+      try {
+        await mod.runStdio(mcpCfg, { argv: ctx.rest });
+      } catch (error) {
+        if (!(error instanceof mod.McpSelectorError)) throw error;
+        throw new AiosError(
+          "AIOS_E_USAGE",
+          error.message,
+          "Use --toolsets brain,board,workspace or --tools <known-tool-name>; all selects every permitted tool."
         );
       }
-      await mod.runStdio(mcpCfg);
       return 0;
     },
     exit: "exit-code",

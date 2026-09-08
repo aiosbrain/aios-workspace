@@ -121,11 +121,9 @@ export const USAGE_LINES = {
     "    [--workspace <p>] [--max-shots N]   repos/tiers/live URLs: .aios/timeline-config.json",
   ],
   mcp: [
-    "  aios mcp                              run the Team Brain MCP server over stdio, for",
-    "                                        GUI-only agents (Claude Desktop/Cowork/claude.ai)",
-    "                                        that can't shell out; env-first, no workspace needed.",
-    "                                        Codex + Conductor DO have a shell — they use this CLI",
-    "                                        directly (see `aios worktree doctor`)",
+    "  aios mcp [--toolsets brain,board,workspace] [--tools <name>]",
+    "    Run the read-only stdio MCP server; available tools follow the startup Brain /me probe.",
+    "    CLI toolsets override AIOS_MCP_TOOLSETS; --tools is additive; all selects every permitted tool.",
   ],
   analyze: [
     "  aios analyze [--since 7d|billing] [--tool x]   agentic-maturity + cost from local session logs",

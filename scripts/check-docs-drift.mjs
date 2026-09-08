@@ -7,6 +7,7 @@
  * this validates enumerable structure only; prose, diagrams, and release judgment stay
  * reviewer-owned.
  */
+import { assertMcpContract } from "./mcp-contract.mjs";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 
@@ -91,12 +92,7 @@ function deriveLoopCommands() {
 }
 
 function deriveMcpTools() {
-  const src = read("scripts/brain-mcp.mjs");
-  const tools = src.match(/export const TOOLS = \[[\s\S]*?\n\];/);
-  const items = new Set();
-  if (!tools) return items;
-  for (const match of tools[0].matchAll(/name:\s*"([^"]+)"/g)) items.add(match[1]);
-  return items;
+  return assertMcpContract(JSON.parse(read("docs/contract/mcp-tools-v1.json")));
 }
 
 function deriveLoopSources() {
@@ -148,12 +144,19 @@ const componentTokens = inlineCodeBlock(
 );
 const documentedComponents = normalizeDocumentedComponents(componentTokens);
 
+const mcpSurfaces = deriveMcpTools();
 const checks = [
   documentedComponents === null
     ? diff("operator-components", deriveComponents(), null)
     : diff("operator-components", deriveComponents(), documentedComponents.items),
   diff("loop-commands", deriveLoopCommands(), inlineCodeBlock(doc, "loop-commands")),
-  diff("mcp-tools", deriveMcpTools(), inlineCodeBlock(doc, "mcp-tools")),
+  diff("mcp-tools", mcpSurfaces.toolkit, inlineCodeBlock(doc, "mcp-tools")),
+  diff("mcp-standalone", mcpSurfaces.standalone, inlineCodeBlock(doc, "mcp-standalone")),
+  diff(
+    "mcp-remote-specification",
+    mcpSurfaces.remoteSpecification,
+    inlineCodeBlock(doc, "mcp-remote-specification")
+  ),
   diff("loop-sources", deriveLoopSources(), inlineCodeBlock(doc, "loop-sources")),
   diff("operator-rubrics", deriveOperatorRubrics(), inlineCodeBlock(doc, "operator-rubrics")),
 ];

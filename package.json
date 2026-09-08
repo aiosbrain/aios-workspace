@@ -22,6 +22,7 @@
     "validation",
     "hooks",
     "dist",
+    "packages/mcp-core",
     "packages/foundation/src",
     "packages/foundation/package.json",
     ".claude/rubrics/spec-readiness.md",

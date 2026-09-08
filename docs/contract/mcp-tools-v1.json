@@ -1,0 +1,57 @@
+{
+  "status": "specification-only",
+  "note": "Reserved for the future remote implementation (AIO-1114). No remote endpoint is implemented or claimed here.",
+  "tools": [
+    {
+      "name": "brain_query",
+      "description": "Ask the AIOS Team Brain a natural-language question across all shared team memory (decisions, deliverables, tasks, transcripts) the caller's access tier may see. Returns a grounded answer with [S#] citation markers and a sources list. Use for 'what did we decide about…', 'what's the status of…', 'who owns…'. Read-only; answers are tier-filtered server-side.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "question": {
+            "type": "string",
+            "description": "The natural-language question."
+          },
+          "project": {
+            "type": "string",
+            "description": "Optional project slug to scope the answer to one project."
+          }
+        },
+        "required": [
+          "question"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "brain_pull_items",
+      "description": "Fetch content items (deliverables, transcripts, decisions, tasks, artifacts, skills) from the Team Brain, tier-filtered server-side. Narrow with project, kinds, or path_prefix; page with cursor. Use to read a deliverable's body or a skill folder. Large result sets are truncated — narrow or paginate. Read-only.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "since": {
+            "type": "string",
+            "description": "Optional ISO-8601 cursor (updated_at)."
+          },
+          "project": {
+            "type": "string",
+            "description": "Optional project slug filter."
+          },
+          "kinds": {
+            "type": "string",
+            "description": "Optional comma list: deliverable,transcript,decision,task,artifact,skill."
+          },
+          "path_prefix": {
+            "type": "string",
+            "description": "Optional path prefix, e.g. '2-work/' or '.claude/skills/<name>/' for a whole skill."
+          },
+          "cursor": {
+            "type": "string",
+            "description": "Opaque pagination cursor from a prior call."
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  ]
+}

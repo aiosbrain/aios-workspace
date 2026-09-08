@@ -80,7 +80,7 @@ brain-mcp.mjs  ─────────────────────�
    • TOOLS[]               brain_status, brain_query,          │
                            brain_list_projects, brain_list_tasks,
                            brain_list_decisions, brain_pull_items,
-                           brain_get_item
+                           brain_get_item, brain_stakeholders, aios_loop_collect
    └───────────────────────────────────────────────────────────┘
    │  Authorization: Bearer aios_<key_id>_<secret> · X-AIOS-Team: <team>
    ▼
@@ -95,7 +95,7 @@ needs, to avoid a risky refactor in the same change).
 
 ## 5. Tool surface (v1, read-only)
 
-All tools are service-prefixed (`brain_*`) to avoid collisions with other connected servers, and
+All tools are service-prefixed (`brain_*` or local `aios_*`) to avoid collisions with other connected servers, and
 carry `readOnlyHint: true`. Payloads are capped at 25 000 chars (paginate/narrow for more).
 
 | Tool | Wraps | Inputs | Returns |
@@ -107,9 +107,32 @@ carry `readOnlyHint: true`. Payloads are capped at 25 000 chars (paginate/narrow
 | `brain_list_decisions` | `GET /decisions` | `since?` | Decision rows (tier-scoped) |
 | `brain_pull_items` | `GET /items` | `since? project? kinds? path_prefix? cursor?` | Items, keyset-paginated |
 | `brain_get_item` | `GET /items/:id` | `id` (req) | One item (404 if above tier) |
+| `brain_stakeholders` | `GET /me`, `/company-graph` or `/items` | Exactly one of `owns`, `who`, `meeting` | Structured people/ownership or meeting participants; team posture required |
+| `aios_loop_collect` | Local injected Operator Loop collector | `cadence?` (`daily` or `weekly`) | Full, untruncated workspace manifest; toolkit surface only |
 
-`brain_status` is the recommended first call: it tells a bad/missing credential apart from a
-legitimately empty result, which is a Desktop user's most common first-run failure.
+The internal core in `packages/mcp-core/` owns descriptors, validation, selectors and handlers.
+The toolkit injects the local collector; the standalone runtime import graph has no Operator Loop dependency.
+`brain` contains status, query, pull-items and get-item (4); `board` contains projects, tasks,
+decisions and stakeholders (4); `workspace` contains loop-collect (1).
+
+Startup makes one `/api/v1/me` probe with a three-second deadline. Missing configuration,
+revoked credentials, unsupported delegated tokens, malformed identities and network failures
+register no Brain tools. External posture enables `brain`; team posture enables `brain` and
+`board`. Availability is immutable until process restart. A stale list grants no access: the
+Brain still checks membership and explicit project grants on every call.
+
+`--toolsets brain,board` overrides `AIOS_MCP_TOOLSETS`; repeated `--tools <name>` adds tools.
+Explicit selections form a union, intersected with surface and capability permissions. `all`
+selects every permitted tool; unknown names fail startup. With no selectors, surface defaults
+apply. A toolkit with no Brain config lists only `aios_loop_collect`.
+
+Initialize always responds with protocol `2025-11-25`, independently of the requested version,
+uses the invoking package version, and includes read-only instructions. Loop-collect advertises
+`anthropic/maxResultSizeChars: 100000` as metadata; its output is never truncated.
+The remote two-tool fixture is specification-only, reserved for AIO-1114.
+
+`brain_status` remains a diagnostic call after successful registration; startup probe failures
+are reported on stderr.
 
 **Error semantics:** brain/tool failures return MCP **in-band** results with `isError: true` (so the
 model can react and retry); only malformed protocol calls return JSON-RPC errors
@@ -165,8 +188,8 @@ the connector stores nothing and logs no secret. **stdout is protocol-only; all 
 
 | Phase | Deliverable | State |
 |---|---|---|
-| **P0 — Server + CLI seam** | `scripts/brain-mcp.mjs` (7 read tools incl. `brain_status` probe, zero-dep stdio), `scripts/brain-mcp.test.mjs` (16 protocol tests), `aios mcp` command + usage, `npm test` wiring | **Done** in this change |
-| **P0.5 — Tier-safety integration test** | One test against a staging brain with an **external-tier** key asserting AC4 (403/422 → `isError`, never widened data). **Blocking gate before any non-engineer pilot** — protocol unit tests don't prove the core safety claim (G4). | Proposed (do before P1 pilot) |
+| **P0 — Server + CLI seam** | `scripts/brain-mcp.mjs` (9 read tools incl. `brain_status` probe, zero-dep stdio), `scripts/brain-mcp.test.mjs` (offline protocol tests), `aios mcp` command + usage, `npm test` wiring | **Done** in this change |
+| **P0.5 — Tier-safety integration test** | Disposable real Brain/Postgres acceptance with direct parity, membership grants/revocation, stale-board 403 and two mutation controls. | AIO-1109; release gate before publication |
 | **P1 — Packaging** | `.mcpb` bundle + user-config manifest; `npx @aios/team-brain-mcp` entry; README + install GIF; submit to private/team distribution. **Unblocks the G1 persona** (no-terminal Desktop install). | Proposed |
 | **P2 — Shared client refactor** | Extract `scripts/brain-client.mjs` (HTTP + auth + config) shared by `aios.mjs` and `brain-mcp.mjs`; delete the duplicated slice | Proposed |
 | **P3 — Writes (gated)** | `brain_push_note` into a single `team`-tier inbox path, behind `AIOS_MCP_WRITES=1`, never `external`; resolves §9 | Proposed, needs design sign-off |
@@ -211,17 +234,20 @@ the connector stores nothing and logs no secret. **stdout is protocol-only; all 
 
 - **AC1 (protocol).** `initialize` → correct `protocolVersion` + tools capability; `tools/list`
   returns all read tools with JSON-Schema `inputSchema`; notifications get no reply; unknown
-  method/tool → correct JSON-RPC error codes. *(Covered by `brain-mcp.test.mjs` — 16 tests passing.)*
+  method/tool → correct JSON-RPC error codes. *(Covered by the offline protocol and capability suites.)*
 - **AC2 (stdout hygiene).** Over a real `aios mcp` process, stdout contains only JSON-RPC frames;
   the startup banner and all diagnostics appear only on stderr. *(Verified via piped handshake.)*
-- **AC3 (config).** Missing any of the three required vars exits 1 naming them; env beats `.env`
-  beats `aios.yaml`; trailing slash on the URL is trimmed. *(Covered by tests.)*
-- **AC4 (tier safety) — P0.5, blocking before any non-engineer pilot.** An `external`-tier key
-  calling `brain_list_projects` receives the brain's `403/422` surfaced as an `isError` tool result —
-  never a widened view; and an `external`-tier `brain_pull_items` returns only `external`-audience
-  items. This is the core safety claim (G4) — the protocol unit tests do **not** prove it. Assert it
-  with one integration test against a staging brain using a real external-tier key, **before** P1 ships
-  to anyone non-technical (not deferred to P1's end).
+- **AC3 (config).** Missing Brain configuration starts the toolkit with only the workspace tool.
+  Environment beats `.env`, which beats `aios.yaml`; team is optional because the key identifies
+  the team. The mandatory `/me` probe fails closed within three seconds.
+- **AC4 (tier safety) — AIO-1109, blocking before publication.** Use the pinned production Brain
+  HTTP harness with disposable Postgres and synthetic members. Initialize with team posture,
+  demote through canonical membership helpers, verify external posture, and call the stale listed
+  board tool: the Brain's 403 must surface as `isError`. External members without project grants
+  see external-shared items; explicit grants and revocations retain direct Brain parity. Require
+  nonempty visible fixtures, separate project-denial/item-visibility mutation controls, and
+  verified principal/key/process/database cleanup on success and failure. The offline protocol
+  suite remains independent; it cannot prove the network authorization boundary.
 - **AC5 (end-to-end, P1).** From a clean Claude Desktop with the `.mcpb` installed and three values
   entered, `brain_query` returns a grounded, cited answer. *(Manual acceptance — the one step not
   coverable by unit tests; gate P1 on it.)*
@@ -232,7 +258,7 @@ the connector stores nothing and logs no secret. **stdout is protocol-only; all 
 |---|---|
 | MCP protocol drift (we hand-rolled JSON-RPC, no SDK) | Pin `PROTOCOL_VERSION`; AC1 protocol tests; revisit if Anthropic bumps the stdio framing |
 | Context bloat from large pulls (per-call) | 25 000-char cap + keyset pagination + `path_prefix`/`project` narrowing |
-| **`tools/list` fixed per-turn tax** — the seven rich tool descriptions are excellent for tool selection but are resident context every turn (the very MCP cost the strategy cites as a CLI advantage) | Track total `tools/list` token footprint; keep descriptions information-dense but trim if Anthropic/host context limits bite; this is also *why* shell agents are pushed to the CLI, where the schema isn't resident |
+| **`tools/list` fixed per-turn tax** — the nine rich tool descriptions are excellent for tool selection but are resident context every turn (the very MCP cost the strategy cites as a CLI advantage) | Track total `tools/list` token footprint; keep descriptions information-dense but trim if Anthropic/host context limits bite; this is also *why* shell agents are pushed to the CLI, where the schema isn't resident |
 | Secret leakage via stdout | Hard rule: stdout = protocol only; secrets never logged; `.mcpb` marks key sensitive (keychain) |
 | Scope creep into writes | N1 + P3 gating; writes require explicit env + design sign-off |
 | Two HTTP clients diverging (CLI vs MCP) | P2 shared-client refactor folds them back together |
