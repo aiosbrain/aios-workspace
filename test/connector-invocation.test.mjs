@@ -72,6 +72,64 @@ globalThis.fetch = async (url, init = {}) => {
   throw new Error("unexpected mock request");
 };`;
 
+test("relative Slack uploads preserve caller bytes across workspace selection and delegation", () => {
+  const f = fixture();
+  try {
+    const subdir = path.join(f.a, "reports");
+    mkdirSync(subdir);
+    writeFileSync(path.join(subdir, "report.txt"), "the caller's intended report");
+    for (const ws of [f.a, f.b]) writeFileSync(path.join(ws, "report.txt"), "wrong root file");
+    const preload = path.join(f.root, "upload-mock.mjs");
+    writeFileSync(
+      preload,
+      `
+import assert from "node:assert/strict";
+const json = (value) => Response.json(value);
+globalThis.fetch = async (url, init = {}) => {
+  const target = new URL(String(url));
+  if (target.hostname === "uploads.example.test") {
+    assert.equal(Buffer.from(init.body).toString(), "the caller's intended report");
+    return new Response("ok");
+  }
+  assert.equal(target.hostname, "slack.com");
+  assert.equal(init.headers.Authorization, "Bearer xoxp-synthetic-parity-token-not-real");
+  if (target.pathname.endsWith("files.getUploadURLExternal")) return json({ ok: true, file_id: "FMOCK", upload_url: "https://uploads.example.test/file" });
+  if (target.pathname.endsWith("files.completeUploadExternal")) return json({ ok: true, files: [{ id: "FMOCK" }] });
+  throw new Error("unexpected mocked request");
+};`
+    );
+    for (const route of ["canonical", "compatibility", "shim"])
+      for (const repoArgs of [[], ["--repo", f.b]]) {
+        const r = spawnSync(
+          process.execPath,
+          [
+            ...command(f, "slack", route),
+            "file",
+            "--target",
+            "C0GENERAL",
+            "--path",
+            "report.txt",
+            "--json",
+            ...repoArgs,
+          ],
+          {
+            cwd: subdir,
+            env: {
+              ...f.env,
+              NODE_OPTIONS: `--import ${preload}`,
+              SLACK_USER_TOKEN: "xoxp-synthetic-parity-token-not-real",
+            },
+            encoding: "utf8",
+          }
+        );
+        assert.equal(r.status, 0, `${route}/${repoArgs}: ${r.stderr}`);
+        assert.equal(JSON.parse(r.stdout).files[0].id, "FMOCK");
+      }
+  } finally {
+    rmSync(f.root, { recursive: true, force: true });
+  }
+});
+
 test("one target supplies credentials and activity output through canonical, compatibility and real shim routes", () => {
   const f = fixture();
   try {

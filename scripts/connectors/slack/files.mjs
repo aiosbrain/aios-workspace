@@ -206,7 +206,7 @@ export async function cmdFile(ctx, args) {
   // Read and validate FIRST: a refusal must not have spoken to Slack at all.
   const { data, filename } = readUploadCandidate(args.path, {
     allowOutside: args.allowOutsideWorkspace === true,
-    cwd: ctx.cwd,
+    cwd: ctx.invocationCwd ?? ctx.cwd,
   });
   const channel = args.member
     ? await resolveMemberChannel(ctx, args.member)

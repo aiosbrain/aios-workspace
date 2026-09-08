@@ -164,6 +164,9 @@ shim execution is outside this release's validated platform surface.
 
 ### Connector workspace selection
 
+Relative Slack upload paths remain relative to the caller's current directory, including
+when `--repo` selects the workspace used for credentials and activity output.
+
 `aios linear` and `aios slack`, their compatibility bins, and workspace shims accept one
 `--repo PATH` or `--repo=PATH`. The selected workspace supplies workspace credentials,
 Linear templates, and the default activity destination. Environment and user-config

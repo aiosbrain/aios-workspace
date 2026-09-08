@@ -153,11 +153,12 @@ const hasRepo = args.some((a) => a === "--repo" || a.startsWith("--repo="));
 const installationMode = args[0] === "update" && args.includes("--self");
 const forwarded = hasRepo || installationMode ? args : [...args, "--repo", workspaceRoot];
 
+// --repo carries workspace identity; keep caller-relative file arguments unchanged.
 const result = delegate.bin
-  ? spawnSync(delegate.bin, forwarded, { stdio: "inherit", cwd: workspaceRoot, env: childEnv })
+  ? spawnSync(delegate.bin, forwarded, { stdio: "inherit", cwd: process.cwd(), env: childEnv })
   : spawnSync(process.execPath, [delegate.entry, ...forwarded], {
       stdio: "inherit",
-      cwd: workspaceRoot,
+      cwd: process.cwd(),
       env: childEnv,
     });
 

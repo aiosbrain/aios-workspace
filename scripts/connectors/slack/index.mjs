@@ -107,6 +107,9 @@ export async function cmdSlack(repo, rest, options = {}) {
     const ctx = {
       cwd: plan.repoArg ?? repo ?? options.cwd ?? process.cwd(),
       repo: plan.repoArg ?? repo ?? options.cwd ?? process.cwd(),
+      // Workspace selection governs credentials/activity; caller-spelled upload paths
+      // keep their original directory, including when a shim supplies --repo implicitly.
+      invocationCwd: options.cwd ?? process.cwd(),
       env: options.env ?? process.env,
       stdin: options.stdin,
       fetch: options.fetch,
