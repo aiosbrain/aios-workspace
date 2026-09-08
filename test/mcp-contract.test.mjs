@@ -75,7 +75,7 @@ test("configuration preserves workspace, dotenv and environment compatibility wi
       [new URL("../scripts/brain-mcp.mjs", import.meta.url).pathname],
       {
         cwd: dir,
-        env: { PATH: process.env.PATH },
+        env: { PATH: process.env.PATH, HOME: dir, USERPROFILE: dir },
         input: stdin,
         encoding: "utf8",
         stdio: ["pipe", "pipe", "pipe"],
@@ -99,7 +99,7 @@ test("public CLI reports selector mistakes as actionable usage errors", () => {
         [new URL("../scripts/aios.mjs", import.meta.url).pathname, "mcp", ...args],
         {
           cwd: dir,
-          env: { PATH: process.env.PATH },
+          env: { PATH: process.env.PATH, HOME: dir, USERPROFILE: dir },
           input: "",
           encoding: "utf8",
           timeout: 10000,

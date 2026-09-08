@@ -43,7 +43,9 @@ export function resolveBrainConfig({ cwd = process.cwd(), env = process.env, hom
   const dotenv = loadDotEnv(cwd);
   const ws = findWorkspaceConfig(cwd);
   const keyEnv = ws.api_key_env || "AIOS_API_KEY";
-  const envKey = env[keyEnv] || env.AIOS_API_KEY || "";
+  // A configured custom key in .env precedes the generic environment fallback.
+  // Preserve that binding so an ambient AIOS_API_KEY cannot replace its workspace key.
+  const envKey = env[keyEnv] || (dotenv[keyEnv] ? "" : env.AIOS_API_KEY) || "";
   const localKey = dotenv[keyEnv] || dotenv.AIOS_API_KEY || "";
   const localUrl = dotenv.AIOS_BRAIN_URL || ws.brain_url || "";
   const brain_url = (env.AIOS_BRAIN_URL || localUrl).replace(/\/$/, "");

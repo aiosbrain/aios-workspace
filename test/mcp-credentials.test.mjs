@@ -79,6 +79,20 @@ test("credential sources stay paired to their origins and environment/workspace 
       /differs from the workspace credential origin/
     );
     assert.equal(resolve().credential_source, "workspace");
+    const ambient = resolve({ AIOS_API_KEY: "ambient-key" });
+    assert.equal(ambient.api_key, "synthetic-workspace-key");
+    assert.equal(ambient.brain_url, "https://workspace.example");
+    assert.equal(ambient.credential_source, "workspace");
+    assert.equal(
+      resolve({ AIOS_API_KEY: "ambient-key", WORKSPACE_KEY: "custom-env-key" }).api_key,
+      "custom-env-key"
+    );
+    assert.throws(
+      () => resolve({ AIOS_API_KEY: "ambient-key", AIOS_BRAIN_URL: "https://different.example" }),
+      /differs from the workspace credential origin/
+    );
+    rmSync(path.join(home, ".env"));
+    assert.equal(resolve({ AIOS_API_KEY: "ambient-key" }).api_key, "ambient-key");
   }));
 
 test("malformed documents and credential tuples fail without echoing their values", () =>
