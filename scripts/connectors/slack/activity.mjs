@@ -17,9 +17,11 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { slackCall } from "./web.mjs";
+import { AiosError } from "../../cli.mjs";
 
 export const DEFAULT_TIER = "admin";
 export const ACTIVITY_BASENAME = path.join("comms", "activity.jsonl");
+const MAX_CONVERSATION_PAGES = 1000;
 // Tier membership is validated offline in args.mjs VERB_SPECS.activity (round-5 contract).
 
 const print = (line) => process.stdout.write(`${line}\n`);
@@ -100,7 +102,9 @@ export async function collectSlackUnread({
     throw new Error("Slack auth response missing user_id");
 
   const conversations = [];
+  const seen = new Set();
   let cursor = "";
+  let pages = 0;
   while (conversations.length < maxChannels) {
     const page = await call("conversations.list", {
       types: "public_channel,private_channel,mpim,im",
@@ -111,6 +115,16 @@ export async function collectSlackUnread({
     conversations.push(...(Array.isArray(page?.channels) ? page.channels : []));
     cursor = page?.response_metadata?.next_cursor || "";
     if (!cursor) break;
+    // Empty pages with a fresh cursor are valid Slack responses. Cycles and an
+    // unbounded stream of empty pages are not allowed to hang a direct CLI pull.
+    if (seen.has(cursor) || ++pages >= MAX_CONVERSATION_PAGES) {
+      throw new AiosError(
+        "AIOS_E_PROVIDER",
+        "Slack unread pagination stalled or exceeded its page limit.",
+        "Retry the activity pull; report persistent pagination failures to Slack."
+      );
+    }
+    seen.add(cursor);
   }
 
   const records = [];

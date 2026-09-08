@@ -8,6 +8,7 @@
 import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process";
 import { existsSync } from "node:fs";
 import path from "node:path";
+import { ownConnector } from "./connector-processes.js";
 
 export type DailyConnectorName = "granola" | "gog" | "slack" | "linear";
 export type DailyConnectorStatus = "ok" | "failed" | "timed_out" | "skipped";
@@ -151,11 +152,13 @@ function runConnector(
     let child: ChildProcess;
     let settled = false;
     let timer: NodeJS.Timeout | undefined;
+    let release = () => {};
 
     const finish = (status: DailyConnectorStatus, detail?: string) => {
       if (settled) return;
       settled = true;
       if (timer) clearTimeout(timer);
+      release();
       resolve({ name: spec.name, status, durationMs: Date.now() - started, detail });
     };
 
@@ -166,6 +169,7 @@ function runConnector(
         stdio: "ignore",
         detached: process.platform !== "win32",
       });
+      release = ownConnector(child);
     } catch {
       finish("failed", "adapter could not start");
       return;
@@ -185,12 +189,6 @@ function runConnector(
       // POSIX adapters own a process group: the workspace shim delegates synchronously,
       // so killing only its leader leaves the provider process writing after the deadline.
       // Send the hard deadline signal before settling; no unref'd cleanup timer can be lost.
-      try {
-        if (process.platform !== "win32" && child.pid) process.kill(-child.pid, "SIGKILL");
-        else child.kill("SIGKILL");
-      } catch {
-        // The group may already be gone. Preserve the bounded, non-secret timeout result.
-      }
       child.unref?.();
       finish("timed_out", `timed out after ${timeoutMs}ms`);
     }, timeoutMs);
