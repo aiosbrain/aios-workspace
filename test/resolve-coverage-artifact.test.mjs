@@ -242,3 +242,33 @@ test("resolver fails closed after the configured wait and on API failure", async
     /exceeds 2 MiB/
   );
 });
+
+test("resolver stops immediately when the exact producer terminates without an artifact", async () => {
+  const calls = [];
+  const sleeps = [];
+  const responses = [
+    { workflow_runs: [run({ status: "completed", conclusion: "cancelled" })] },
+    { artifacts: [] },
+  ];
+  await assert.rejects(
+    resolveCoverageArtifact({
+      fetchImpl: async (url) => {
+        calls.push(url);
+        return {
+          ok: true,
+          status: 200,
+          text: async () => JSON.stringify(responses.shift()),
+        };
+      },
+      sleep: async (milliseconds) => sleeps.push(milliseconds),
+      apiUrl: "https://api.github.com",
+      token: TEST_CREDENTIAL,
+      expected: EXPECTED,
+      attempts: 90,
+      delayMs: 30_000,
+    }),
+    /producer completed \(cancelled\) without coverage-bundle/
+  );
+  assert.equal(calls.length, 2);
+  assert.deepEqual(sleeps, []);
+});

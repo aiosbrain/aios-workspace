@@ -172,6 +172,10 @@ export async function resolveCoverageArtifact({
       );
       const artifact = selectExactArtifact(artifacts, run, expected);
       if (artifact) return { artifact, run };
+      if (run.status === "completed") {
+        const conclusion = typeof run.conclusion === "string" ? run.conclusion : "unknown";
+        fail(`exact-SHA coverage producer completed (${conclusion}) without coverage-bundle`);
+      }
     }
     if (attempt < attempts) await sleep(delayMs);
   }
