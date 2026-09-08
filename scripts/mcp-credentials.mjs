@@ -15,7 +15,24 @@ export function assertWindowsCredentialAcl(acl) {
     throw new Error("Credential ACL does not grant the owner access");
 }
 
-export function readWindowsCredentialAcl(file, exec = execFileSync) {
+// OS installation paths are trusted process configuration; cwd and PATH are not.
+export function windowsSystemExecutable(name, env = process.env) {
+  const root = env.SystemRoot || env.SYSTEMROOT || env.windir;
+  if (
+    typeof root !== "string" ||
+    !/^[a-z]:[\\/]/i.test(root) ||
+    root.split(/[\\/]/).some((part) => part === ".." || part === ".")
+  )
+    throw new Error("Windows system directory could not be verified");
+  const executables = {
+    powershell: ["WindowsPowerShell", "v1.0", "powershell.exe"],
+    taskkill: ["taskkill.exe"],
+  };
+  if (!Object.hasOwn(executables, name)) throw new Error("Unknown Windows system executable");
+  return path.win32.join(root, "System32", ...executables[name]);
+}
+
+export function readWindowsCredentialAcl(file, exec = execFileSync, env = process.env) {
   // The path is passed as an environment value, never interpolated into PowerShell code.
   // Node can inherit PowerShell 7 module paths; use this process's bundled Windows modules.
   const script =
@@ -26,12 +43,16 @@ export function readWindowsCredentialAcl(file, exec = execFileSync) {
     "$allow=@($a.Access | Where-Object {$_.AccessControlType -eq 'Allow'} | ForEach-Object {$_.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value}); " +
     "@{owner=$owner;current=$current;allow=$allow} | ConvertTo-Json -Compress";
   return JSON.parse(
-    exec("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], {
-      env: { ...process.env, AIOS_CREDENTIAL_ACL_PATH: file },
-      encoding: "utf8",
-      timeout: 5000,
-      windowsHide: true,
-    })
+    exec(
+      windowsSystemExecutable("powershell", env),
+      ["-NoProfile", "-NonInteractive", "-Command", script],
+      {
+        env: { ...env, AIOS_CREDENTIAL_ACL_PATH: file },
+        encoding: "utf8",
+        timeout: 5000,
+        windowsHide: true,
+      }
+    )
   );
 }
 

@@ -3,7 +3,7 @@
 Read-only access to an AIOS Team Brain from an MCP host. Requires Node.js 22 or newer;
 no AIOS checkout, global toolkit installation, native modules or runtime dependencies.
 
-Start with `npx -y @aiosbrain/mcp@0.1.0`. Configure `AIOS_BRAIN_URL` and `AIOS_API_KEY`,
+Start with `npx -y @aiosbrain/mcp@0.1.1`. Configure `AIOS_BRAIN_URL` and `AIOS_API_KEY`,
 or use the owner-only default tuple in `~/.aios/credentials.json`:
 
 ```json
