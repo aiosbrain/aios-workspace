@@ -15,8 +15,10 @@ export const LINEAR_COMMANDS = {
     // `aios linear` must work from ANY directory (an empty HOME included) — credential
     // resolution is the adapter's own job, not the workspace resolver's.
     cwdFallback: () => true,
+    prepareInvocation: async (rest) =>
+      (await (await import("../connectors.mjs")).loadLinearAdapter()).prepareLinearInvocation(rest),
     loader: async () => (await import("../connectors.mjs")).loadLinearAdapter(),
-    adapt: (ctx, mod) => mod.cmdLinear(ctx.repo, ctx.rest),
+    adapt: (ctx, mod) => mod.cmdLinear(ctx.repo, ctx.rest, { invocationPlan: ctx.invocationPlan }),
     exit: "exit-code",
     usage: U.linear,
   },

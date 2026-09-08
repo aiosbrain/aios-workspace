@@ -73,6 +73,62 @@ const TEAM_FIELDS = new Set([
 
 const normalizeFieldName = (k) => k.toLowerCase().replace(/[^a-z]/g, "");
 
+/**
+ * TARGET CLASSIFIER v2 (AIO-1072). Version 1 regex-scanned the WHOLE serialized payload
+ * for `AIO-<n>` — so a customer issue whose description merely said "similar to AIO-976"
+ * was hard-blocked, the exact false-positive class the team-marker scoping above already
+ * eliminated for its own signal. v2 scopes the issue-identifier signal the same way:
+ * only VALUES of identifier-bearing fields classify a payload as AIOS-targeted; prose
+ * fields (title, description, body, comments) never do. Nested and reordered payloads
+ * classify identically — the walk is field-NAME keyed, not position or order keyed.
+ * `.aios/connector-routing.json` may set `classifier: 1` to restore the legacy
+ * full-payload behavior; `mode: "off"` still disables the guard entirely.
+ */
+export const TARGET_CLASSIFIER_VERSION = 2;
+
+/** Fields whose VALUES name the work item a call targets. Deliberately NOT title/description. */
+const TARGET_FIELDS = new Set([
+  "id",
+  "ids",
+  "issue",
+  "issueid",
+  "issueids",
+  "identifier",
+  "identifiers",
+  "issueidentifier",
+  "parentid",
+  "parentissueid",
+  "ticketid",
+]);
+
+/**
+ * String values of target-identifying fields, walked recursively.
+ *
+ * ONLY the declared identifier slots classify — a primitive whose OWN field name is a
+ * target field, or the elements of an ARRAY held by a target field (`issueIds: [...]`).
+ * An OBJECT under a target-named wrapper (`issue: { id, description }`) is NOT harvested
+ * wholesale: it is recursed like any other object, so its `id` counts and its
+ * `description` prose never does. Harvesting every primitive under the wrapper was the
+ * Bugbot-caught false positive — a customer payload whose nested description merely
+ * mentioned an AIO issue read as AIOS-targeted, the exact class this guard must allow.
+ */
+export function targetIdentifyingValues(input, depth = 0) {
+  if (!input || typeof input !== "object" || depth > 6) return [];
+  const out = [];
+  for (const [k, v] of Object.entries(input)) {
+    const isTarget = TARGET_FIELDS.has(normalizeFieldName(k));
+    if (v && typeof v === "object") {
+      if (isTarget && Array.isArray(v)) {
+        for (const el of v) if (el != null && typeof el !== "object") out.push(String(el));
+      }
+      out.push(...targetIdentifyingValues(v, depth + 1));
+    } else if (isTarget && v != null) {
+      out.push(String(v));
+    }
+  }
+  return out;
+}
+
 /** Lower-cased VALUES of team-identifying fields only, walked recursively. */
 export function teamIdentifyingValues(input, depth = 0) {
   if (!input || typeof input !== "object" || depth > 4) return [];
@@ -124,7 +180,21 @@ const LINEAR_GRAPHQL_HOST = /\bapi\.linear\.app\b/i;
  * its `slack connect` expects its own env var, so reaching for it fails in a way that reads as
  * "Slack is broken" rather than "wrong copy".
  */
-const DEFAULT_STALE = ["/.claude/skills/slack-cli/"];
+export const DEFAULT_STALE = [
+  "/.claude/skills/slack-cli/",
+  // Retired at v2.0.0 (AIO-1072): the skill-local Linear delegate and the descriptor
+  // provider-client copies are gone — the built-in `aios linear` / `aios slack` adapter
+  // is the one route. Kept in LOCKSTEP with scripts/check-retired-routes.mjs (the
+  // repo-side gate) by test/connector-routing-guard.test.mjs — this hook ships into
+  // workspaces standalone, so the two lists cannot share an import.
+  "/.claude/skills/aios-linear/linear.mjs",
+  "/.claude/skills/linear-direct/",
+  "/.claude/descriptors/skills/linear-direct/",
+  "/.claude/skills/slack-personal/slack.py",
+  "/.claude/descriptors/skills/slack-personal/slack.py",
+  "/.claude/skills/slack-personal/slack-activity-pull.mjs",
+  "/.claude/descriptors/skills/slack-personal/slack-activity-pull.mjs",
+];
 
 /**
  * Classify a Bash command. ADVISORY ONLY — this never blocks, and that is a deliberate retreat.
@@ -160,7 +230,7 @@ export function classifyBash(command, opts = {}) {
       return {
         decision: "warn",
         reason: `names a stale connector copy (${needle})`,
-        fix: "Use the workspace's own .claude/skills/ copy, or the `slack`/`linear` commands the toolkit installs.",
+        fix: "Use the built-in adapter instead: `aios slack …` / `aios linear …`.",
       };
     }
   }
@@ -169,7 +239,7 @@ export function classifyBash(command, opts = {}) {
     return {
       decision: "warn",
       reason: "mentions Linear's API alongside an AIOS issue",
-      fix: "If this is a request against the AIOS board, use the aios-linear CLI — it carries the description guards raw GraphQL loses.",
+      fix: "If this is a request against the AIOS board, use `aios linear …` — it carries the description guards raw GraphQL loses.",
     };
   }
 
@@ -193,7 +263,7 @@ export function classifyMcp(toolName, toolInput, opts = {}) {
     return {
       decision: "block",
       reason: "generic Linear MCP call whose input could not be inspected",
-      fix: "Re-issue through the aios-linear CLI, or narrow the call so it can be inspected.",
+      fix: "Re-issue through `aios linear …`, or narrow the call so it can be inspected.",
     };
   }
 
@@ -211,20 +281,28 @@ export function classifyMcp(toolName, toolInput, opts = {}) {
     return {
       decision: "block",
       reason: `generic Linear MCP call carrying a configured AIOS team marker ('${marker}')`,
-      fix: "AIOS's board goes through the aios-linear CLI. The MCP bypasses the description guards and the brain projection.",
+      fix: "AIOS's board goes through the built-in adapter (`aios linear …`). The MCP bypasses the description guards and the brain projection.",
     };
   }
 
-  if (AIOS_MARKER.test(blob)) {
+  // Classifier v2 (default): only identifier-bearing FIELD VALUES make a payload
+  // AIOS-targeted. Customer prose that merely mentions an AIO issue stays allowed.
+  // `classifier: 1` restores the legacy whole-payload scan for a workspace that wants it.
+  const classifier = opts.classifier === 1 ? 1 : TARGET_CLASSIFIER_VERSION;
+  const targeted =
+    classifier === 1
+      ? AIOS_MARKER.test(blob)
+      : targetIdentifyingValues(toolInput).some((v) => AIOS_MARKER.test(v));
+  if (targeted) {
     return {
       decision: "block",
-      reason: "generic Linear MCP call naming an AIOS issue",
-      fix: "AIOS's board goes through the aios-linear CLI: `linear get AIO-<n>`. The MCP bypasses the description guards and the brain projection.",
+      reason: `generic Linear MCP call targeting an AIOS issue (classifier v${classifier})`,
+      fix: "AIOS's board goes through the built-in adapter: `aios linear get AIO-<n>`. The MCP bypasses the description guards and the brain projection.",
     };
   }
   return {
     decision: "warn",
-    reason: "generic Linear MCP call (no AIOS issue named — assumed customer work, allowed)",
+    reason: "generic Linear MCP call (no AIOS issue targeted — assumed customer work, allowed)",
   };
 }
 
@@ -320,6 +398,8 @@ async function main() {
   } else if (LINEAR_MCP_TOOL.test(toolName)) {
     verdict = classifyMcp(toolName, input, {
       teamMarkers: [...DEFAULT_TEAM_MARKERS, ...listOrDefault(cfg.teamMarkers, [])],
+      // `classifier: 1` is the ONLY accepted downgrade value — anything else runs v2.
+      classifier: cfg.classifier === 1 ? 1 : TARGET_CLASSIFIER_VERSION,
     });
   }
 

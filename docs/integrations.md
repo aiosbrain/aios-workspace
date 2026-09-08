@@ -21,16 +21,17 @@ resolver:
 ```bash
 npm install --global @aiosbrain/aios
 aios --help
-slack --help
-linear template aios
+aios slack --help
+aios linear template aios
 ```
 
 `aios` remains repo-scoped for sync commands (`status`, `push`, and `pull`); use `--repo` when
 working outside a stamped workspace. Account-scoped commands such as `aios query` and
-`aios connect` may use the explicit `AIOS_AGENT_WORKSPACE` environment variable. The global
-`slack` and `linear` launchers resolve credentials from the current environment, the current
-repository, or the toolkit's encrypted `.env`; Slack then fetches the member's personal token
-from the Team Brain when no local token is present.
+`aios connect` may use the explicit `AIOS_AGENT_WORKSPACE` environment variable. The built-in
+`aios slack` and `aios linear` adapters resolve credentials from the current environment, the
+current repository, or the toolkit's encrypted `.env`; Slack then fetches the member's personal
+token from the Team Brain when no local token is present. (The bare `slack`/`linear` bins are
+deprecated compat delegates to the same adapters, removed no earlier than v3.0.0.)
 
 ## How to wire an MCP integration
 
@@ -161,13 +162,13 @@ copied around and slowly growing.
 
 | Scope | Needed for | Slack method |
 |---|---|---|
-| `chat:write` | `slack send`, `slack dm` | `chat.postMessage` |
+| `chat:write` | `aios slack send`, `aios slack dm` | `chat.postMessage` |
 | `im:write` | opening a DM before the first message | `conversations.open` |
-| `im:read`, `channels:read`, `groups:read`, `mpim:read` | `slack channels` | `conversations.list` |
-| `im:history`, `channels:history`, `groups:history`, `mpim:history` | `slack read`, the daily unread scan | `conversations.history`, `conversations.replies` |
+| `im:read`, `channels:read`, `groups:read`, `mpim:read` | `aios slack channels` | `conversations.list` |
+| `im:history`, `channels:history`, `groups:history`, `mpim:history` | `aios slack read`, the daily unread scan (`aios slack activity pull`) | `conversations.history`, `conversations.replies` |
 | `users:read` | resolving a teammate's name or id | `users.list`, `users.info` |
-| `users:read.email` | `slack resolve <email>` | `users.lookupByEmail` |
-| `reactions:write` | `slack react` | `reactions.add` |
+| `users:read.email` | `aios slack resolve <email>` | `users.lookupByEmail` |
+| `reactions:write` | `aios slack react` | `reactions.add` |
 | `files:write` | uploading a file or deck to a DM or channel | `files.getUploadURLExternal`, `files.completeUploadExternal` |
 
 The four `*:read` and four `*:history` scopes come in matched sets on purpose: read
@@ -197,8 +198,8 @@ justify. Add one when a method needs it, not in advance.
 #### Verifying
 
 ```bash
-slack whoami            # expect your own user id + workspace, not a bot
-slack channels          # public + private + DMs; if private channels are missing, groups:* is absent
+aios slack whoami       # expect your own user id + workspace, not a bot
+aios slack channels     # public + private + DMs; if private channels are missing, groups:* is absent
 ```
 
 If Slack reports `missing_scope`, compare the app's User Token Scopes with the
@@ -219,9 +220,11 @@ transport — swap deliberately). To wire it manually, copy the `atlassian` bloc
 → API tokens. Set `ATLASSIAN_URL` (e.g. `https://your-org.atlassian.net`),
 `ATLASSIAN_EMAIL`, `ATLASSIAN_API_TOKEN`. One server covers both Jira and Confluence.
 
-### Linear (direct API skill + Team Brain PM sync)
+### Linear (built-in `aios linear` adapter + Team Brain PM sync)
 The shipped workspace connector uses a personal Linear API key (`LINEAR_API_KEY`)
-and the `linear-direct` skill, because Linear's official MCP is OAuth-oriented.
+and the built-in `aios linear` adapter (raw GraphQL via `aios linear query`; the
+installed `linear-direct` skill is routing documentation), because Linear's
+official MCP is OAuth-oriented.
 Team Brain can also store a Linear integration with non-secret mapping hints
 (`teamId`, `projectId`, `doneStateName`) and an encrypted token so merged AIOS
 work can move linked Linear issues to a completed workflow state.

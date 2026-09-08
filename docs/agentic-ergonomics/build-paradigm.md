@@ -40,7 +40,7 @@ Linear issue bodies and local spec files. At minimum:
 6. **Deps** — which slices must land first.
 
 Author with `aios spec init`, grade with `aios spec eval`, push to Linear with
-`linear.mjs set-desc` or `create --template aios`.
+`aios linear set-desc` or `aios linear create --template aios`.
 
 The test: an agent with no conversation history can read the issue and start correctly. If the
 issue needs a human to explain it, it is not done being written.

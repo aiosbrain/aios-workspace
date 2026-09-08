@@ -119,6 +119,27 @@ globalThis.fetch = async (_url, init) => {
     };
   } else if (query.includes("team(id:$key){ id }") || query.includes("team(id:$key){ id }")) {
     data = { team: { id: "team-1" } };
+  } else if (query.includes("assignedIssues")) {
+    // `aios linear query` default + `aios linear activity pull` (AIO-1072).
+    data = {
+      viewer: {
+        name: "Mock Viewer",
+        assignedIssues: page([
+          {
+            id: "issue-a",
+            identifier: "AIO-73",
+            title: "Alpha",
+            updatedAt: "2026-01-02T00:00:00.000Z",
+            state: { name: "Backlog", type: "backlog" },
+            priorityLabel: "High",
+            url: "https://linear.example/AIO-73",
+          },
+        ]),
+      },
+    };
+  } else if (query.includes("teams")) {
+    // Generic raw-GraphQL passthrough exercise for `aios linear query '<graphql>'`.
+    data = { teams: page([{ name: "AIOS", key: "AIO" }]) };
   } else if (query.includes("issueCreate")) {
     storedDescription = variables.input.description ?? "";
     data = {

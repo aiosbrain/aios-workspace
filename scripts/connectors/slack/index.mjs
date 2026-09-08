@@ -12,6 +12,9 @@
  * through the shared credential broker; `brain` verbs resolve the brain themselves).
  * test/slack-command-parity.test.mjs pins it against the legacy Python surface.
  */
+import { prepareSlackInvocation } from "./invocation.mjs";
+export { prepareSlackInvocation } from "./invocation.mjs";
+import { shownArg } from "./args.mjs";
 import { createOutput, normalizeError } from "../../cli.mjs";
 
 /** verb → { module, credential } — the canonical Slack command surface. */
@@ -25,6 +28,7 @@ export const VERBS = Object.freeze({
   react: { module: "scripts/connectors/slack/verbs.mjs", credential: "provider" },
   file: { module: "scripts/connectors/slack/files.mjs", credential: "provider" },
   "file-delete": { module: "scripts/connectors/slack/files.mjs", credential: "provider" },
+  activity: { module: "scripts/connectors/slack/activity.mjs", credential: "provider" },
   connect: { module: "scripts/connectors/slack/setup.mjs", credential: "brain" },
   status: { module: "scripts/connectors/slack/setup.mjs", credential: "brain" },
   disconnect: { module: "scripts/connectors/slack/setup.mjs", credential: "brain" },
@@ -40,6 +44,7 @@ const HANDLERS = {
   react: async () => (await import("./verbs.mjs")).cmdReact,
   file: async () => (await import("./files.mjs")).cmdFile,
   "file-delete": async () => (await import("./files.mjs")).cmdFileDelete,
+  activity: async () => (await import("./activity.mjs")).cmdActivity,
   connect: async () => (await import("./setup.mjs")).cmdConnect,
   status: async () => (await import("./setup.mjs")).cmdStatus,
   disconnect: async () => (await import("./setup.mjs")).cmdDisconnect,
@@ -50,7 +55,7 @@ export function slackUsage() {
   return [
     "aios slack — send/read Slack as the authenticated user (xoxp user token)",
     "",
-    "verbs: {whoami,resolve,channels,read,send,dm,react,file,file-delete,connect,status,disconnect}",
+    "verbs: {whoami,resolve,channels,read,send,dm,react,file,file-delete,activity,connect,status,disconnect}",
     "",
     "  aios slack whoami [--json]                    auth.test → your user id / name / team",
     "  aios slack resolve <email> | --member <m>     users.lookupByEmail / brain handle → U-id",
@@ -62,6 +67,9 @@ export function slackUsage() {
     "  aios slack file (--target T | --member E) --path P [--message M]",
     "    [--allow-outside-workspace]                 upload a workspace-contained local file",
     "  aios slack file-delete <FILE_ID>              delete an uploaded file (cleanup)",
+    "  aios slack activity pull [--repo PATH] [--tier admin|team|external]",
+    "    [--max-channels N] [--max-messages N] [--activity-path PATH] [--dry-run]",
+    "                                                unread scan → 1-inbox/comms/activity.jsonl",
     "  aios slack connect [xoxp-…|--stdin]           store YOUR user token in the Team Brain",
     "  aios slack status [--json]                    connection state (never token values)",
     "  aios slack disconnect                         remove the brain-held token",
@@ -79,49 +87,29 @@ export async function cmdSlack(repo, rest, options = {}) {
   // legal (Codex round 2). `--json`/`--help`/`-h` are the ONLY pre-verb globals the Python
   // CLI had; a hoisted --json is re-appended to the verb argv so one parser owns it. Any
   // other leading flag falls through and errors as an unknown verb, which names it.
-  let cursor = 0;
-  let hoistedJson = false;
-  while (rest[cursor] === "--json") {
-    hoistedJson = true;
-    cursor += 1;
-  }
-  const verb = rest[cursor];
-  const verbArgs = [...rest.slice(cursor + 1), ...(hoistedJson ? ["--json"] : [])];
-  if (!verb || verb === "help" || verb === "--help" || verb === "-h") {
-    console.log(slackUsage());
-    return 0;
-  }
-  const { parseVerbArgs, VERB_SPECS, shownArg } = await import("./args.mjs");
-  // Object.hasOwn, not a truthy bracket lookup: `aios slack __proto__`/`constructor`/
-  // `toString` hit INHERITED properties on a plain object, sail past this check, and
-  // crash as AIOS_E_INTERNAL instead of the usage error (Bugbot round 11).
-  if (!Object.hasOwn(VERBS, verb)) {
-    console.log(slackUsage());
-    // shownArg: a pasted credential in the verb slot must not be echoed into logs.
-    output.diagnostic(`error: unknown slack verb: ${shownArg(verb)}`);
-    return 2;
-  }
-  // ROUND-5 STRUCTURAL CONTRACT: the invocation is FULLY parsed and validated before any
-  // credential resolves. Help and every usage error are therefore offline by construction
-  // (no credential resolution, no brain fetch, no network) — and help is decided by the
-  // flag/value-aware parser, so a flag VALUE spelling "--help" (`--message "--help"`) is
-  // data that gets sent, never a help request.
-  let args;
+  let plan;
   try {
-    args = parseVerbArgs(verbArgs, VERB_SPECS[verb]);
+    plan = options.invocationPlan ?? prepareSlackInvocation(rest);
   } catch (error) {
     return output.failure(normalizeError(error));
   }
-  if (args.help) {
+  const { verb, args } = plan;
+  if (plan.help) {
     console.log(slackUsage());
     return 0;
   }
+  if (plan.unknown) {
+    console.log(slackUsage());
+    output.diagnostic(`error: unknown slack verb: ${shownArg(verb)}`);
+    return 2;
+  }
   try {
     const ctx = {
-      // Deliberately the PROCESS cwd, not the dispatch-resolved workspace root: slack.py
-      // anchored workspace containment and brain-config lookup on the working directory,
-      // and the compat bin (repo = null) must behave identically from any subdirectory.
-      cwd: options.cwd ?? process.cwd(),
+      cwd: plan.repoArg ?? repo ?? options.cwd ?? process.cwd(),
+      repo: plan.repoArg ?? repo ?? options.cwd ?? process.cwd(),
+      // Workspace selection governs credentials/activity; caller-spelled upload paths
+      // keep their original directory, including when a shim supplies --repo implicitly.
+      invocationCwd: options.cwd ?? process.cwd(),
       env: options.env ?? process.env,
       stdin: options.stdin,
       fetch: options.fetch,

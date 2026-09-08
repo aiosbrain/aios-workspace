@@ -1,0 +1,113 @@
+/**
+ * update/base-store.mjs — the workspace-local content-addressed merge-base store
+ * (`.aios/toolkit-bases/`, AIO-635 Decision 1).
+ *
+ * A registry-installed package cannot ship historical git bases, so bases are persisted at
+ * sync time instead: every successful `aios update` apply writes each managed file's
+ * just-synced content into `.aios/toolkit-bases/<sha256>` plus an index
+ * `.aios/toolkit-bases/index.json` mapping `dest → { hash, src, packageVersion }` — the
+ * per-file base identity. The next update resolves `base` for `decideMerge` from the store
+ * by `dest`; `gitShow` against a checkout is the fallback for v1-stamped workspaces only.
+ *
+ * The store and index are COMMITTED to the workspace repo (same reason stamp line 1 is a
+ * full sha: the merge base must survive a re-clone). Immutable generation indices are named by their manifest digest. Updates retain prior
+ * generations so an old live stamp stays resolvable across an interrupted publication. Governance files are small text, so the store stays
+ * in the tens of kilobytes.
+ *
+ * Write ordering (owned by the caller, cmdVendorApplyOnly): managed-file writes → base
+ * store entries → immutable generation → compatibility index → stamp LAST. Readers use
+ * the generation named by the live stamp, even if the compatibility index has advanced. All index writes go through
+ * `atomicWrite` (scripts/cli/atomic-file.mjs).
+ */
+
+import path from "node:path";
+import { mkdirSync, readFileSync, readdirSync, rmSync, existsSync } from "node:fs";
+import { atomicWrite } from "../cli.mjs";
+import { assertDestPathSafe } from "./manifest-walk.mjs";
+
+import { BASE_STORE_DIR, sha256hex, verifiedBaseIndex } from "../toolkit-state.mjs";
+export {
+  BASE_STORE_DIR,
+  sha256hex,
+  readBaseIndex,
+  baseFromStore,
+  baseDestsUnder,
+  verifiedBaseIndex,
+} from "../toolkit-state.mjs";
+const INDEX_FILE = "index.json";
+
+/**
+ * Persist the post-apply base set: one blob per unique content hash + the index, atomically,
+ * pruning unreferenced blobs. `files` is [{ destRel, srcRel, content }] — the just-synced
+ * managed set. Returns the index object written.
+ *
+ * CONTAINMENT: every path this function writes or deletes passes the SAME
+ * `assertDestPathSafe` guard the managed-destination writes use — a symlinked
+ * `.aios`/`toolkit-bases` directory (mkdirSync would follow it) or a symlinked
+ * blob/index entry can never redirect store writes, or the pruning loop's deletes,
+ * outside the workspace. Refusal is loud (UpdateError), never a silent skip.
+ */
+export async function writeBaseStore(repo, files, { packageVersion, prune = true } = {}) {
+  // Validate the store root BEFORE mkdir: the parent walk rejects a symlinked `.aios`
+  // or `toolkit-bases` component, so nothing below can follow a planted link.
+  assertDestPathSafe(repo, BASE_STORE_DIR, "write the base store");
+  const storeAbs = path.join(repo, BASE_STORE_DIR);
+  mkdirSync(storeAbs, { recursive: true });
+  const entries = {};
+  const wanted = new Set([INDEX_FILE]);
+  for (const f of files) {
+    const hash = sha256hex(f.content);
+    entries[f.destRel] = { hash, src: f.srcRel, packageVersion: packageVersion ?? null };
+    wanted.add(hash);
+    const blobRel = `${BASE_STORE_DIR}/${hash}`;
+    assertDestPathSafe(repo, blobRel, "write a base-store blob");
+    const blobAbs = path.join(storeAbs, hash);
+    // Content-addressed, but VERIFIED: an existing blob only counts when its bytes
+    // still match the hash — a truncated/corrupted blob is repaired here instead of
+    // leaving every later update stuck surfacing no-base fallbacks for that file.
+    let needsWrite = true;
+    try {
+      needsWrite = sha256hex(readFileSync(blobAbs)) !== hash;
+    } catch {
+      needsWrite = true; // absent or unreadable — (re)write it
+    }
+    if (needsWrite) await atomicWrite(blobAbs, f.content);
+  }
+  assertDestPathSafe(repo, `${BASE_STORE_DIR}/${INDEX_FILE}`, "write the base-store index");
+  const index = { schemaVersion: 1, packageVersion: packageVersion ?? null, entries };
+  const generation = `${manifestDigest(files).slice(7)}.json`;
+  wanted.add(generation);
+  assertDestPathSafe(repo, `${BASE_STORE_DIR}/${generation}`, "write the base-store generation");
+  if (existsSync(path.join(storeAbs, generation))) {
+    // Identical managed bytes can span package versions. Preserve the original generation;
+    // its content identity is stable even when compatibility-index version metadata changes.
+    verifiedBaseIndex(repo, { manifestDigest: manifestDigest(files) });
+  } else {
+    await atomicWrite(path.join(storeAbs, generation), `${JSON.stringify(index, null, 2)}\n`);
+  }
+  await atomicWrite(path.join(storeAbs, INDEX_FILE), `${JSON.stringify(index, null, 2)}\n`);
+  // Prune anything the fresh index no longer references (old blobs; stray temp files are
+  // handled by atomicWrite itself). Best-effort — a leftover blob is waste, not corruption
+  // — but each delete still passes the containment guard: a name that fails it (e.g. a
+  // planted symlink entry) is left alone rather than followed.
+  for (const name of prune ? readdirSync(storeAbs) : []) {
+    if (!wanted.has(name) && !name.endsWith(".tmp")) {
+      try {
+        assertDestPathSafe(repo, `${BASE_STORE_DIR}/${name}`, "prune a base-store blob");
+        rmSync(path.join(storeAbs, name));
+      } catch {
+        /* best-effort prune — never follow or force a suspicious entry */
+      }
+    }
+  }
+  return index;
+}
+
+/**
+ * The manifest digest recorded in the format-2 stamp: sha256 over the sorted
+ * `(dest, src, sha256(content))` tuples of every managed src in the applied set.
+ */
+export function manifestDigest(files) {
+  const tuples = files.map((f) => `${f.destRel}\0${f.srcRel}\0${sha256hex(f.content)}`).sort();
+  return `sha256:${sha256hex(tuples.join("\n"))}`;
+}

@@ -67,6 +67,7 @@ export async function runMigration(options) {
       await assertNotSymlink(configPath, { fs: io });
       const live = await io.readFile(configPath);
       if (sha256(live) !== journal.committedSha256) throw new Error("committed digest mismatch");
+      await options.validate(live);
       await assertNotSymlink(stagedPath, { fs: io });
       try {
         const staged = await io.readFile(stagedPath);
@@ -120,6 +121,7 @@ export async function runMigration(options) {
       await assertNotSymlink(configPath, { fs: io });
       const staged = await io.readFile(stagedPath);
       if (sha256(staged) !== journal.stagedSha256) throw new Error("staged digest mismatch");
+      await options.validate(staged);
       const live = await io.readFile(configPath);
       const liveSha256 = sha256(live);
       if (liveSha256 === journal.sourceSha256) {

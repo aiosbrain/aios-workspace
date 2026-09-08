@@ -1,3 +1,4 @@
+import { isDistributionRoot } from "./cli.mjs";
 /**
  * aios.mjs — AIOS Team Brain sync client for aios-workspace repos.
  *
@@ -113,10 +114,7 @@ function findRepoRoot(start) {
 // finder: that would let `aios update` treat gui/ or an unrelated repo as a workspace and
 // re-vendor governance into it.
 function isUpdateRoot(dir) {
-  return (
-    existsSync(path.join(dir, "aios.yaml")) ||
-    (existsSync(path.join(dir, "scaffold")) && existsSync(path.join(dir, "scripts", "aios.mjs")))
-  );
+  return existsSync(path.join(dir, "aios.yaml")) || isDistributionRoot(dir);
 }
 
 /** Walk up from `start` for the nearest workspace/toolkit root, or null. */

@@ -23,7 +23,9 @@ function makeToolkitFixture() {
   mkdirSync(path.join(dir, "scripts"), { recursive: true });
   mkdirSync(path.join(dir, "scaffold"), { recursive: true });
   writeFileSync(path.join(dir, "scripts", "aios.mjs"), "// stub CLI\n");
-  writeFileSync(path.join(dir, "package.json"), "{}\n");
+  // AIO-635 Decision-3 markers: the manifest module + a package.json NAMED @aiosbrain/aios.
+  writeFileSync(path.join(dir, "scripts", "toolkit-manifest.mjs"), "// marker\n");
+  writeFileSync(path.join(dir, "package.json"), '{"name":"@aiosbrain/aios","version":"0.0.0"}\n');
   return dir;
 }
 
@@ -77,7 +79,7 @@ test("explicit env pointing at a non-toolkit is a hard error, never a silent fal
   try {
     assert.throws(
       () => locateToolkit({ argv: [], env: { AIOS_TOOLKIT_DIR: notToolkit } }),
-      /via AIOS_TOOLKIT_DIR.*missing.*scripts\/aios\.mjs/s
+      /via AIOS_TOOLKIT_DIR.*missing.*scripts\/toolkit-manifest\.mjs/s
     );
   } finally {
     rmSync(notToolkit, { recursive: true, force: true });

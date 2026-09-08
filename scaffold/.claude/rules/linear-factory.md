@@ -20,7 +20,7 @@ failing one either.
 ## Triage inbox
 
 - Capture raw work (screenshot, one-liner) into **Triage** — do not interrupt active agent batches.
-- `linear.mjs create "<title>" --template aios --state Triage`
+- `aios linear create "<title>" --template aios --state Triage`
 - Intake: fill all template sections → `aios spec eval` → `set-state Backlog` when `SPEC_READY`.
 - **Post-merge findings** (consolidate-findings output, `code-review-<slug>.md` artifacts) use
   the finding shape instead: `create "<title>" --template finding` with the classification
@@ -36,7 +36,7 @@ Use `docs/agentic-ergonomics/aios-issue-template.md` (or `aios spec init`). The 
 
 - Parent issues = outcomes/epics; children = shippable slices.
 - Title in outcome language ("Operator sees unified inbox timeline"), not implementation jargon.
-- Dependencies via `linear.mjs blocks <blocker> <blocked>`.
+- Dependencies via `aios linear blocks <blocker> <blocked>`.
 
 ## Workstream batches
 

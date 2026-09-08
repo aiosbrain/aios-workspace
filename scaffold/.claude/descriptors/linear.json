@@ -2,11 +2,11 @@
   "id": "linear",
   "name": "Linear",
   "category": "issue-tracking",
-  "descriptor_version": "1.0.0",
+  "descriptor_version": "2.0.0",
   "transport": "skill",
   "auth_mode": "token",
   "status": "available",
-  "summary": "Query and update issues, projects, and cycles via a personal API key — our own connector (Linear's MCP is OAuth-only).",
+  "summary": "Query and update issues, projects, and cycles through the built-in `aios linear` adapter (personal API key — Linear's MCP is OAuth-only). The installed skill is routing documentation; the client lives in the aios CLI.",
   "secrets": [
     { "env": "LINEAR_API_KEY", "label": "Personal API key", "required": true, "placeholder": "lin_api_…" }
   ],
@@ -15,7 +15,7 @@
   "docs": {
     "token_create_url": "https://linear.app/settings/api",
     "scopes_url": "https://linear.app/developers/graphql",
-    "instructions": "Linear → Settings → API → Personal API keys → Create key (copy it — shown once).",
+    "instructions": "Linear → Settings → API → Personal API keys → Create key (copy it — shown once). Connect with `aios connect linear`; every operation then runs through `aios linear <verb>` (see the installed linear-direct SKILL.md).",
     "verified_against_docs": "2026-06-14"
   },
   "skill": {

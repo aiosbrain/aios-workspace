@@ -14,21 +14,17 @@ Before executing, verify these tool dependencies exist. If any check fails, the 
 # Required: check:v1-linear npm script
 npm run check:v1-linear --help >/dev/null 2>&1 || echo "check:v1-linear script not found"
 
-# Required: aios-linear CLI (Node.js script for Linear API access)
-test -f ~/.claude/skills/aios-linear/linear.mjs || echo "aios-linear not installed"
+# Required: the aios CLI with the built-in Linear adapter
+command -v aios >/dev/null 2>&1 || echo "aios not installed"
 
-# Required: dotenvx CLI for secure env loading
-command -v dotenvx >/dev/null 2>&1 || echo "dotenvx not found"
-
-# Required: .env file with LINEAR_API_KEY
-test -f .env && grep -q 'LINEAR_API_KEY=' .env || echo "LINEAR_API_KEY not set in .env"
+# Required: a resolvable Linear credential (env, workspace vault, or `aios connect linear`)
+aios linear status || echo "Linear not connected — run `aios connect linear`"
 ```
 
 If `npm run check:v1-linear` is not a defined script: the operator must add it to `package.json` before CQ3 can be executed.
 
-If `~/.claude/skills/aios-linear/linear.mjs` is missing: the operator must install the `aios-linear` skill. The builder cannot install it.
-
-If `dotenvx` is missing: install via `npm install -g @dotenvx/dotenvx`.
+If `aios` is missing: install via `npm install -g @aiosbrain/aios`. If no Linear
+credential resolves, run `aios connect linear`.
 
 If `.env` is missing or lacks `LINEAR_API_KEY`: the operator provides the token; the builder writes:
 ```bash
@@ -44,7 +40,7 @@ echo 'LINEAR_API_KEY=<operator-provided token>' >> .env
    inverse `blocks` relations and fails if that relation remains.
 
 ```bash
-LIN="dotenvx run --quiet -f .env -- node ~/.claude/skills/aios-linear/linear.mjs"
+LIN="aios linear"
 npm run check:v1-linear   # must exit 0 before Linear edits
 # Mark C1–C8 done per README checklist (example — adjust issue IDs from check output):
 # $LIN set-state <C-issue-id> done
@@ -70,7 +66,7 @@ Record `check:v1-linear exit: <N>` in PR comment or triage log.
 
 - `scripts/check-v1-linear-drift.mjs`
 - `docs/v1-operator-loop/README.md`
-- `~/.claude/skills/aios-linear/linear.mjs` (Linear CLI)
+- the built-in `aios linear` adapter (Linear CLI)
 
 ## Deps
 

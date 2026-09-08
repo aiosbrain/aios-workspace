@@ -1960,14 +1960,14 @@
       "id": "bin.npm.linear",
       "kind": "published-bin",
       "bin": "linear",
-      "route": "linear …",
+      "route": "linear \u2026",
       "status": "current",
       "source": "package.json#bin.linear",
       "futureOwner": "adapter.linear",
       "disposition": "delegate",
       "releaseBoundary": "v2.0.0",
       "removalBoundary": "v3.0.0-earliest",
-      "replacement": "aios linear …",
+      "replacement": "aios linear \u2026",
       "rollback": "Reinstall the exact pre-v2 @aiosbrain/aios package recorded by update and atomically restore the last-known-good config snapshot.",
       "evidence": [
         "package.json",
@@ -1990,14 +1990,14 @@
       "id": "bin.npm.slack",
       "kind": "published-bin",
       "bin": "slack",
-      "route": "slack …",
+      "route": "slack \u2026",
       "status": "current",
       "source": "package.json#bin.slack",
       "futureOwner": "adapter.slack",
       "disposition": "delegate",
       "releaseBoundary": "v2.0.0",
       "removalBoundary": "v3.0.0-earliest",
-      "replacement": "aios slack …",
+      "replacement": "aios slack \u2026",
       "rollback": "Reinstall the exact pre-v2 @aiosbrain/aios package recorded by update and atomically restore the last-known-good config snapshot.",
       "evidence": [
         "package.json",
@@ -2019,14 +2019,14 @@
     {
       "id": "bin.devtools.aios-devtools",
       "kind": "external-published-bin",
-      "route": "aios-devtools …",
+      "route": "aios-devtools \u2026",
       "status": "current",
       "source": "@aiosbrain/aios-devtools/package.json#bin.aios-devtools",
       "futureOwner": "adapter.devtools",
       "disposition": "delete",
       "releaseBoundary": "v2.0.0",
       "removalBoundary": "v2.0.0",
-      "replacement": "aios build|spec|consolidate-findings|ship|roadmap-run …",
+      "replacement": "aios build|spec|consolidate-findings|ship|roadmap-run \u2026",
       "rollback": "Reinstall the exact pre-v2 @aiosbrain/aios package recorded by update and atomically restore the last-known-good config snapshot.",
       "evidence": [
         "@aiosbrain/aios-devtools@4a9ddb41fc4370338ad271301e6babd3d05a3f69",
@@ -2048,14 +2048,14 @@
     {
       "id": "entrypoint.node.scripts-aios",
       "kind": "direct-entrypoint",
-      "route": "node scripts/aios.mjs …",
+      "route": "node scripts/aios.mjs \u2026",
       "status": "current",
       "source": "scripts/aios.mjs",
       "futureOwner": "core.cli",
       "disposition": "migrate",
       "releaseBoundary": "v2.0.0",
       "removalBoundary": "v3.0.0-earliest",
-      "replacement": "aios …",
+      "replacement": "aios \u2026",
       "rollback": "Reinstall the exact pre-v2 @aiosbrain/aios package recorded by update and atomically restore the last-known-good config snapshot.",
       "evidence": [
         "scripts/aios.mjs",
@@ -2077,14 +2077,14 @@
     {
       "id": "entrypoint.npm-run-aios",
       "kind": "npm-script",
-      "route": "npm run aios -- …",
+      "route": "npm run aios -- \u2026",
       "status": "current",
       "source": "package.json#scripts.aios",
       "futureOwner": "core.cli",
       "disposition": "migrate",
       "releaseBoundary": "v2.0.0",
       "removalBoundary": "v3.0.0-earliest",
-      "replacement": "aios …",
+      "replacement": "aios \u2026",
       "rollback": "Reinstall the exact pre-v2 @aiosbrain/aios package recorded by update and atomically restore the last-known-good config snapshot.",
       "evidence": [
         "package.json#scripts.aios"
@@ -2191,14 +2191,14 @@
     {
       "id": "linear.wrapper",
       "kind": "connector-wrapper",
-      "route": "node scripts/linear.mjs …",
+      "route": "node scripts/linear.mjs \u2026",
       "status": "current",
       "source": "scripts/linear.mjs",
       "futureOwner": "adapter.linear",
       "disposition": "delegate",
       "releaseBoundary": "v2.0.0",
       "removalBoundary": "v3.0.0-earliest",
-      "replacement": "aios linear …",
+      "replacement": "aios linear \u2026",
       "rollback": "Reinstall the exact pre-v2 @aiosbrain/aios package recorded by update and atomically restore the last-known-good config snapshot.",
       "evidence": [
         "scripts/linear.mjs",
@@ -2220,18 +2220,18 @@
     {
       "id": "linear.skill-toolkit-copy",
       "kind": "skill-executable",
-      "route": "node .claude/skills/aios-linear/linear.mjs …",
-      "status": "current",
+      "route": "aios linear \u2026 (skill retains routing documentation only)",
+      "status": "migrated",
       "source": ".claude/skills/aios-linear/",
       "futureOwner": "adapter.linear",
       "disposition": "delegate",
       "releaseBoundary": "v2.0.0",
       "removalBoundary": "v2.0.0",
-      "replacement": "aios linear …; skill retains routing instructions only",
+      "replacement": "aios linear \u2026; skill retains routing instructions only",
       "rollback": "Reinstall the exact pre-v2 @aiosbrain/aios package recorded by update and atomically restore the last-known-good config snapshot.",
       "evidence": [
-        ".claude/skills/aios-linear/linear.mjs",
-        "test/aios-linear-pagination.test.mjs"
+        ".claude/skills/aios-linear/SKILL.md",
+        "test/linear-documented-invocation.test.mjs"
       ],
       "metadata": {
         "owner": "adapter.linear",
@@ -2249,17 +2249,17 @@
     {
       "id": "linear.skill-scaffold-copy",
       "kind": "scaffolded-skill-executable",
-      "route": "node .claude/skills/aios-linear/linear.mjs … in a stamped workspace",
-      "status": "current",
+      "route": "aios linear \u2026 in a stamped workspace (scaffolded skill retains routing documentation only)",
+      "status": "migrated",
       "source": "scaffold/.claude/skills/aios-linear/",
       "futureOwner": "adapter.linear",
       "disposition": "delegate",
       "releaseBoundary": "v2.0.0",
       "removalBoundary": "v2.0.0",
-      "replacement": "aios linear …; scaffolded skill retains routing instructions only",
+      "replacement": "aios linear \u2026; scaffolded skill retains routing instructions only",
       "rollback": "Reinstall the exact pre-v2 @aiosbrain/aios package recorded by update and atomically restore the last-known-good config snapshot.",
       "evidence": [
-        "scaffold/.claude/skills/aios-linear/linear.mjs",
+        "scaffold/.claude/skills/aios-linear/SKILL.md",
         "scripts/toolkit-manifest.mjs"
       ],
       "metadata": {
@@ -2278,14 +2278,14 @@
     {
       "id": "linear.skill-workstream-update",
       "kind": "skill-internal-call",
-      "route": "workstream-update -> sibling aios-linear/linear.mjs",
-      "status": "current",
+      "route": "workstream-update -> aios linear list|get \u2026",
+      "status": "migrated",
       "source": "scaffold/.claude/skills/workstream-update/workstream-update.mjs",
       "futureOwner": "adapter.linear",
       "disposition": "migrate",
       "releaseBoundary": "v2.0.0",
       "removalBoundary": "v2.0.0",
-      "replacement": "aios linear list|get …",
+      "replacement": "aios linear list|get \u2026",
       "rollback": "Reinstall the exact pre-v2 @aiosbrain/aios package recorded by update and atomically restore the last-known-good config snapshot.",
       "evidence": [
         "scaffold/.claude/skills/workstream-update/workstream-update.mjs"
@@ -2306,18 +2306,19 @@
     {
       "id": "linear.descriptor-query",
       "kind": "descriptor-skill-executable",
-      "route": "linear-direct/linear-query.mjs",
-      "status": "current",
-      "source": "scaffold/.claude/descriptors/skills/linear-direct/linear-query.mjs",
+      "route": "aios linear query \u2026",
+      "status": "migrated",
+      "source": "scripts/connectors/linear/query.mjs",
       "futureOwner": "adapter.linear",
       "disposition": "migrate",
       "releaseBoundary": "v2.0.0",
       "removalBoundary": "v2.0.0",
-      "replacement": "aios linear query …",
+      "replacement": "aios linear query \u2026",
       "rollback": "Reinstall the exact pre-v2 @aiosbrain/aios package recorded by update and atomically restore the last-known-good config snapshot.",
       "evidence": [
-        "scaffold/.claude/descriptors/linear.json",
-        "scaffold/.claude/descriptors/skills/linear-direct/linear-query.mjs"
+        "scripts/connectors/linear/query.mjs",
+        "test/linear-query-verb.test.mjs",
+        "scaffold/.claude/descriptors/linear.json"
       ],
       "metadata": {
         "owner": "adapter.linear",
@@ -2327,7 +2328,7 @@
         "outputMode": "human-or-json",
         "startupPolicy": "offline",
         "implementation": {
-          "module": "scripts/connectors/linear/index.mjs",
+          "module": "scripts/connectors/linear/query.mjs",
           "lazy": true
         }
       }
@@ -2335,17 +2336,19 @@
     {
       "id": "linear.descriptor-activity",
       "kind": "descriptor-activity-executable",
-      "route": "linear-direct/linear-activity-pull.mjs",
-      "status": "current",
-      "source": "scaffold/.claude/descriptors/skills/linear-direct/linear-activity-pull.mjs",
+      "route": "aios linear activity pull \u2026",
+      "status": "migrated",
+      "source": "scripts/connectors/linear/activity.mjs",
       "futureOwner": "adapter.linear",
       "disposition": "migrate",
       "releaseBoundary": "v2.0.0",
       "removalBoundary": "v2.0.0",
-      "replacement": "aios linear activity pull …",
+      "replacement": "aios linear activity pull \u2026",
       "rollback": "Reinstall the exact pre-v2 @aiosbrain/aios package recorded by update and atomically restore the last-known-good config snapshot.",
       "evidence": [
-        "scaffold/.claude/descriptors/skills/linear-direct/linear-activity-pull.mjs"
+        "scripts/connectors/linear/activity.mjs",
+        "test/connector-activity-verbs.test.mjs",
+        "test/linear-activity.test.mjs"
       ],
       "metadata": {
         "owner": "adapter.linear",
@@ -2355,7 +2358,7 @@
         "outputMode": "human-or-json",
         "startupPolicy": "offline",
         "implementation": {
-          "module": "scripts/connectors/linear/index.mjs",
+          "module": "scripts/connectors/linear/activity.mjs",
           "lazy": true
         }
       }
@@ -2363,14 +2366,14 @@
     {
       "id": "slack.wrapper",
       "kind": "connector-wrapper",
-      "route": "node scripts/slack.mjs …",
+      "route": "node scripts/slack.mjs \u2026",
       "status": "current",
       "source": "scripts/slack.mjs",
       "futureOwner": "adapter.slack",
       "disposition": "delegate",
       "releaseBoundary": "v2.0.0",
       "removalBoundary": "v3.0.0-earliest",
-      "replacement": "aios slack …",
+      "replacement": "aios slack \u2026",
       "rollback": "Reinstall the exact pre-v2 @aiosbrain/aios package recorded by update and atomically restore the last-known-good config snapshot.",
       "evidence": [
         "scripts/slack.mjs",
@@ -2392,18 +2395,18 @@
     {
       "id": "slack.skill-python",
       "kind": "descriptor-skill-executable",
-      "route": "slack-personal/slack.py",
-      "status": "current",
-      "source": "scaffold/.claude/descriptors/skills/slack-personal/slack.py",
+      "route": "aios slack \u2026 using the built-in Node adapter (Python client deleted)",
+      "status": "migrated",
+      "source": "scaffold/.claude/descriptors/skills/slack-personal/",
       "futureOwner": "adapter.slack",
       "disposition": "migrate",
       "releaseBoundary": "v2.0.0",
       "removalBoundary": "v2.0.0",
-      "replacement": "aios slack … using the built-in Node adapter",
+      "replacement": "aios slack \u2026 using the built-in Node adapter",
       "rollback": "Reinstall the exact pre-v2 @aiosbrain/aios package recorded by update and atomically restore the last-known-good config snapshot.",
       "evidence": [
-        "scaffold/.claude/descriptors/skills/slack-personal/slack.py",
-        "scaffold/.claude/descriptors/skills/slack-personal/slack.py.sha256"
+        "scaffold/.claude/descriptors/skills/slack-personal/SKILL.md",
+        "test/slack-cli-sync.test.mjs"
       ],
       "metadata": {
         "owner": "adapter.slack",
@@ -2421,17 +2424,19 @@
     {
       "id": "slack.descriptor-activity",
       "kind": "descriptor-activity-executable",
-      "route": "slack-personal/slack-activity-pull.mjs",
-      "status": "current",
-      "source": "scaffold/.claude/descriptors/skills/slack-personal/slack-activity-pull.mjs",
+      "route": "aios slack activity pull \u2026",
+      "status": "migrated",
+      "source": "scripts/connectors/slack/activity.mjs",
       "futureOwner": "adapter.slack",
       "disposition": "migrate",
       "releaseBoundary": "v2.0.0",
       "removalBoundary": "v2.0.0",
-      "replacement": "aios slack activity pull …",
+      "replacement": "aios slack activity pull \u2026",
       "rollback": "Reinstall the exact pre-v2 @aiosbrain/aios package recorded by update and atomically restore the last-known-good config snapshot.",
       "evidence": [
-        "scaffold/.claude/descriptors/skills/slack-personal/slack-activity-pull.mjs"
+        "scripts/connectors/slack/activity.mjs",
+        "test/connector-activity-verbs.test.mjs",
+        "test/operator-loop/connector-pull.test.mjs"
       ],
       "metadata": {
         "owner": "adapter.slack",
@@ -2441,7 +2446,7 @@
         "outputMode": "human-or-json",
         "startupPolicy": "offline",
         "implementation": {
-          "module": "scripts/connectors/slack/index.mjs",
+          "module": "scripts/connectors/slack/activity.mjs",
           "lazy": true
         }
       }
@@ -2450,7 +2455,7 @@
       "id": "slack.descriptor-mcp",
       "kind": "descriptor-config",
       "route": "Slack descriptor MCP server",
-      "status": "current",
+      "status": "migrated",
       "source": "scaffold/.claude/descriptors/slack.json",
       "futureOwner": "adapter.slack",
       "disposition": "migrate",
@@ -2459,7 +2464,8 @@
       "replacement": "built-in aios slack adapter metadata and connect flow",
       "rollback": "Reinstall the exact pre-v2 @aiosbrain/aios package recorded by update and atomically restore the last-known-good config snapshot.",
       "evidence": [
-        "scaffold/.claude/descriptors/slack.json"
+        "scaffold/.claude/descriptors/slack.json",
+        "scripts/connectors/slack/index.mjs"
       ],
       "metadata": {
         "owner": "adapter.slack",
@@ -2477,8 +2483,8 @@
     {
       "id": "update.linear-skill-overlay",
       "kind": "update-path",
-      "route": "aios update -> .claude/skills/aios-linear executable overlay",
-      "status": "current",
+      "route": "aios update -> .claude/skills/aios-linear routing-only skill metadata",
+      "status": "migrated",
       "source": "scripts/toolkit-manifest.mjs",
       "futureOwner": "adapter.linear",
       "disposition": "migrate",

@@ -145,12 +145,95 @@ export function upgradeJourney(ctx) {
   assert.equal(stagedVersion.command, "version");
   assert.ok(stagedVersion.label.startsWith(`v${ctx.manifest.packageVersion} `));
 
+  // Exercise the real workspace migration while the recorded 0.12.0 package still
+  // exists. Replacing npm first would destroy the v1 source-content merge bases.
+  const workspace = path.join(upgradeRoot, "workspace");
+  ctx.runWithAmbientEnv(
+    "bash",
+    [
+      path.join(path.dirname(livePkg), "scripts", "scaffold-project.sh"),
+      "--context",
+      "consultant",
+      "--slug",
+      "upgrade-sample",
+      "--owner",
+      "alex",
+      "--stakeholder",
+      "Sample Co",
+      "--team",
+      "alex,sam",
+      "--org",
+      "your-github-org",
+      "--currency",
+      "USD",
+      "--output",
+      workspace,
+    ],
+    { label: "scaffold-legacy-workspace" }
+  );
+  const stampPath = path.join(workspace, ".aios-toolkit-version");
+  const legacyStamp = readFileSync(stampPath, "utf8");
+  assert.doesNotMatch(legacyStamp, /stamp-format 2/);
+  const customPath = path.join(workspace, ".claude", "rules", "frontmatter.md");
+  writeFileSync(
+    customPath,
+    `${readFileSync(customPath, "utf8")}\n<!-- acceptance customization -->\n`
+  );
+  ctx.runWithAmbientEnv("git", ["add", "-A"], { cwd: workspace, label: "record-customization" });
+  ctx.runWithAmbientEnv(
+    "git",
+    [
+      "-c",
+      "user.name=Fixture",
+      "-c",
+      "user.email=fixture@example.invalid",
+      "commit",
+      "-qm",
+      "customize workspace",
+    ],
+    { cwd: workspace, label: "commit-customization" }
+  );
+  const workspaceEnv = ctx.cliEnv({ AIOS_UPDATE_OFFLINE: "1" });
+  ctx.run(stagedBin, ["update", "--repo", workspace], {
+    cwd: workspace,
+    env: workspaceEnv,
+    label: "migrate-workspace-before-replacement",
+  });
+  assert.match(readFileSync(stampPath, "utf8"), /^stamp-format 2$/m);
+  assert.match(readFileSync(customPath, "utf8"), /acceptance customization/);
+  const rollbackRecord = JSON.parse(
+    readFileSync(path.join(workspace, ".aios", "rollback.json"), "utf8")
+  );
+  assert.equal(rollbackRecord.stampSnapshot, legacyStamp);
+  assert.equal(rollbackRecord.previousPackage, UPGRADE_BASELINE);
+
   // Only after staged verification does the live install get replaced — with the exact
   // digest-verified tarball, not a registry range.
   runNpmInstall(ctx, { spec: ctx.tarball, cwd: livePrefix, label: "upgrade-live" });
   const upgraded = JSON.parse(readFileSync(livePkg, "utf8"));
   assert.equal(upgraded.version, ctx.manifest.packageVersion, "live install runs the candidate");
   const liveBin = path.join(livePrefix, "node_modules", ".bin", "aios");
+  const rubricPath = path.join(workspace, ".claude/rubrics/spec-readiness.md");
+  const rubricBefore = readFileSync(rubricPath, "utf8");
+  const beforeRepeat = readFileSync(stampPath, "utf8").replace(
+    /^synced-at .+$/m,
+    "synced-at MASKED"
+  );
+  ctx.run(liveBin, ["update", "--repo", workspace], {
+    cwd: workspace,
+    env: workspaceEnv,
+    label: "repeat-workspace-after-replacement",
+  });
+  assert.equal(
+    readFileSync(stampPath, "utf8").replace(/^synced-at .+$/m, "synced-at MASKED"),
+    beforeRepeat
+  );
+  assert.equal(
+    readFileSync(rubricPath, "utf8"),
+    rubricBefore,
+    "repeat update retains required exact-file rubric"
+  );
+  assert.match(readFileSync(customPath, "utf8"), /acceptance customization/);
   const liveDoctor = JSON.parse(
     ctx.run(liveBin, ["doctor", "--json"], {
       cwd: livePrefix,
@@ -168,12 +251,23 @@ export function upgradeJourney(ctx) {
     stagedVerification: "version semantics verified in staging prefix before replacement",
     upgradedVersion: upgraded.version,
     postUpgradeDoctorOk: liveDoctor.ok,
+    workspaceMigration:
+      "v1 to v2 before in-place replacement; customization preserved; repeat stamp stable",
   });
-  return { livePrefix, livePkg, snapshot };
+  return { livePrefix, livePkg, snapshot, workspace, legacyStamp };
 }
 
 /** Roll the live install back to the recorded 0.12.0 package + config snapshot. */
 export async function rollbackJourney(ctx, install, upgrade) {
+  const liveBin = path.join(upgrade.livePrefix, "node_modules", ".bin", "aios");
+  ctx.run(liveBin, ["update", "--rollback"], {
+    cwd: upgrade.workspace,
+    label: "rollback-workspace-stamp",
+  });
+  assert.equal(
+    readFileSync(path.join(upgrade.workspace, ".aios-toolkit-version"), "utf8"),
+    upgrade.legacyStamp
+  );
   const { rollbackMigration } = await importInstalled(install, "scripts/cli/migration.mjs");
   // Simulate post-upgrade config drift the user wants to abandon.
   writeFileSync(upgrade.snapshot.configPath, '{"schemaVersion":2,"drifted":true}\n');

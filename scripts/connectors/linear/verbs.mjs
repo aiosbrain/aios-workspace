@@ -51,6 +51,10 @@
 //                             (--force downgrades the lint to a warning)
 //   users <TEAMKEY>           list assignable users
 //   assign <IDENT> <name-or-email>
+//   query ['<graphql>'] [--vars <json>]
+//                             raw GraphQL passthrough; no query = your open assigned issues
+//   activity pull [--repo PATH] [--tier admin|team|external] [--activity-path PATH] [--dry-run]
+//                             assigned open issues → 1-inbox/comms/activity.jsonl (operator loop)
 import { readFileSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { applyDescriptionPatch, resolveLinearTemplate } from "./template.mjs";
@@ -93,6 +97,8 @@ export function linearUsage() {
     'create "<title>" [--desc <file>] [--force] [--template aios|finding] [--label <name>]... [--state Backlog] ' +
     "[--parent <IDENT>] [--assignee <name-or-email>] [--project <name>] [--priority <level>] | " +
     "users <TEAMKEY> | assign <IDENT> <name-or-email> | " +
+    "query ['<graphql>'] [--vars <json>] | " +
+    "activity pull [--repo PATH] [--tier admin|team|external] [--activity-path PATH] [--dry-run] | " +
     "status [--json]  (setup: aios connect linear · aios disconnect linear)"
   );
 }
@@ -102,7 +108,11 @@ export function linearUsage() {
  * verbs print their own diagnostics and process.exit(1) on provider/usage failures; a
  * completed verb returns 0.
  */
-export async function runLinearVerb(argv, baseDir = process.cwd()) {
+export async function runLinearVerb(
+  argv,
+  baseDir = process.cwd(),
+  { activityPlan, queryPlan } = {}
+) {
   const cmd = argv[0];
 
   if (cmd === "get") {
@@ -453,6 +463,14 @@ export async function runLinearVerb(argv, baseDir = process.cwd()) {
     console.log(`assigned ${n.identifier} → ${u.name}`);
   } else if (cmd === "create") {
     await cmdCreate(argv.slice(1), baseDir);
+  } else if (cmd === "query") {
+    // Raw GraphQL passthrough (AIO-1072) — lazy: most sessions never need it.
+    const { cmdQuery } = await import("./query.mjs");
+    await cmdQuery(argv.slice(1), queryPlan);
+  } else if (cmd === "activity") {
+    // Operator-loop activity pull (AIO-1072) — lazy for the same reason.
+    const { cmdActivity } = await import("./activity.mjs");
+    await cmdActivity(argv.slice(1), baseDir, activityPlan);
   } else {
     console.log(linearUsage());
   }

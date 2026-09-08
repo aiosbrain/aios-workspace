@@ -39,7 +39,7 @@ type: finding
 <!-- Applied as LABELS at file time — one per dimension; repeat fence:* if several
      apply. Canonical vocabulary + queries: aios monorepo docs/finding-taxonomy.md.
      File with:
-       linear.mjs create "<title>" --template finding \
+       aios linear create "<title>" --template finding \
          --label finding --label repo:<r> --label defect:<c> \
          --label sev:<s> --label det:<d> --label fence:<f>
      sev:* maps 1:1 onto the consolidate-findings vocabulary

@@ -1,18 +1,20 @@
-#!/usr/bin/env node
-/**
- * linear-activity-pull.mjs — assigned Linear issues → operator-loop activity.
- *
- * Reuses linear-query.mjs for API/auth, then performs only normalization and idempotent append.
- * Records are owner-private by default and intentionally carry no communication direction.
- */
-
+// `aios linear activity [pull]` — assigned Linear issues → operator-loop activity
+// (AIO-1072, ported from the retired linear-direct descriptor adapter).
+//
+// Reuses the adapter's own query verb (query.mjs → core.mjs gql, credential resolved by
+// the index.mjs preflight) and performs only normalization and idempotent append.
+// Records are owner-private (`admin`) by default and intentionally carry no
+// communication direction. CLI flags and the output line keep the shape the descriptor
+// adapter had, so operator-loop parsing is unchanged:
+//
+//   aios linear activity pull [--repo PATH] [--tier admin|team|external]
+//                             [--activity-path PATH] [--dry-run]
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
-import { queryAssignedOpenIssuesForRepo } from "./linear-query.mjs";
+import { fail } from "./core.mjs";
+import { queryAssignedOpenIssues } from "./query.mjs";
 
-const DEFAULT_TIER = "admin";
-const TIERS = new Set(["admin", "team", "external"]);
+import { DEFAULT_TIER, parseLinearActivityArgs } from "./activity-args.mjs";
 
 function oneLine(value, max = 300) {
   const text = String(value ?? "")
@@ -134,16 +136,12 @@ function tombstonesForMissing(activityPath, current, observedAt, tier) {
   });
 }
 
-export function runLinearQuery(repo) {
-  return queryAssignedOpenIssuesForRepo(repo);
-}
-
 export async function pullLinearActivity({
   repo,
   activityPath,
   tier = DEFAULT_TIER,
   dryRun = false,
-  query = runLinearQuery,
+  query = queryAssignedOpenIssues,
   now = new Date(),
 }) {
   const root = path.resolve(repo);
@@ -151,7 +149,7 @@ export async function pullLinearActivity({
   const target = activityPath
     ? path.resolve(activityPath)
     : path.join(root, inbox, "comms", "activity.jsonl");
-  const data = await query(root);
+  const data = await query();
   const observedAt = now.toISOString();
   const current = normalizeLinearIssues(data, { tier, observedAt });
   const records = [...current, ...tombstonesForMissing(target, current, observedAt, tier)];
@@ -159,33 +157,22 @@ export async function pullLinearActivity({
   return { records, ...append, activityPath: target };
 }
 
-function parseArgs(argv) {
-  const value = (name, fallback = null) => {
-    const index = argv.indexOf(name);
-    return index >= 0 ? argv[index + 1] : fallback;
+/** `aios linear activity [pull] …` — argv is everything after `activity`. */
+export async function cmdActivity(argv, baseDir = process.cwd(), plan) {
+  const parsed = plan ?? parseLinearActivityArgs(argv);
+  const opts = plan ?? {
+    ...parsed,
+    repo: path.resolve(baseDir),
+    activityPath: parsed.activityPath ? path.resolve(baseDir, parsed.activityPath) : null,
   };
-  return {
-    repo: path.resolve(value("--repo", process.cwd())),
-    tier: value("--tier", DEFAULT_TIER),
-    activityPath: value("--activity-path"),
-    dryRun: argv.includes("--dry-run"),
-  };
-}
-
-export async function main(argv = process.argv.slice(2), { pull = pullLinearActivity } = {}) {
-  const opts = parseArgs(argv);
-  if (!TIERS.has(opts.tier)) throw new Error("--tier must be admin|team|external");
-  const result = await pull(opts);
+  let result;
+  try {
+    result = await pullLinearActivity(opts);
+  } catch (error) {
+    fail(`linear-activity-pull: ${error instanceof Error ? error.message : "failed"}`);
+  }
   console.log(
     `linear-activity-pull: ${opts.dryRun ? "would write" : "wrote"} ${result.written}, skipped ${result.skipped} -> ${path.relative(opts.repo, result.activityPath)}`
   );
-  return result;
-}
-
-const isMain = process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href;
-if (isMain) {
-  main().catch((error) => {
-    console.error(`linear-activity-pull: ${error instanceof Error ? error.message : "failed"}`);
-    process.exitCode = 1;
-  });
+  return 0;
 }

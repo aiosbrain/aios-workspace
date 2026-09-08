@@ -8,6 +8,7 @@
 import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process";
 import { existsSync } from "node:fs";
 import path from "node:path";
+import { ownConnector } from "./connector-processes.js";
 
 export type DailyConnectorName = "granola" | "gog" | "slack" | "linear";
 export type DailyConnectorStatus = "ok" | "failed" | "timed_out" | "skipped";
@@ -40,6 +41,7 @@ export interface DailyConnectorCredentials {
 export interface ConnectorCommand {
   name: DailyConnectorName;
   file: string;
+  cwd?: string;
   command: string;
   args: string[];
 }
@@ -74,13 +76,19 @@ function positiveMs(value: string | undefined): number | null {
   return Number.isSafeInteger(n) && n > 0 ? n : null;
 }
 
-/** The shipped manual adapters, expressed as the automatic daily command set. */
+/**
+ * The shipped manual adapters, expressed as the automatic daily command set.
+ *
+ * Slack and Linear route through the workspace's own `scripts/aios.mjs` (the delegating
+ * shim in a stamped workspace, the real CLI in the toolkit checkout) into the built-in
+ * connector activity verbs — the descriptor-vendored activity clients are retired
+ * (AIO-1072). Granola and gog remain descriptor-skill adapters.
+ */
 export function dailyConnectorCommands(root: string, now = new Date()): ConnectorCommand[] {
   const skillRoot = path.join(root, ".claude", "descriptors", "skills");
   const granola = path.join(skillRoot, "granola-direct", "granola-pull.mjs");
   const gog = path.join(skillRoot, "gog-activity", "gog-activity-pull.mjs");
-  const slack = path.join(skillRoot, "slack-personal", "slack-activity-pull.mjs");
-  const linear = path.join(skillRoot, "linear-direct", "linear-activity-pull.mjs");
+  const aios = path.join(root, "scripts", "aios.mjs");
   return [
     {
       name: "granola",
@@ -96,15 +104,17 @@ export function dailyConnectorCommands(root: string, now = new Date()): Connecto
     },
     {
       name: "slack",
-      file: slack,
+      file: aios,
+      cwd: root,
       command: process.execPath,
-      args: [slack, "--repo", root],
+      args: [aios, "slack", "activity", "pull", "--repo", root],
     },
     {
       name: "linear",
-      file: linear,
+      file: aios,
+      cwd: root,
       command: process.execPath,
-      args: [linear, "--repo", root],
+      args: [aios, "linear", "activity", "pull", "--repo", root],
     },
   ];
 }
@@ -142,20 +152,24 @@ function runConnector(
     let child: ChildProcess;
     let settled = false;
     let timer: NodeJS.Timeout | undefined;
+    let release = () => {};
 
     const finish = (status: DailyConnectorStatus, detail?: string) => {
       if (settled) return;
       settled = true;
       if (timer) clearTimeout(timer);
+      release();
       resolve({ name: spec.name, status, durationMs: Date.now() - started, detail });
     };
 
     try {
       child = spawnConnector(spec.command, spec.args, {
-        cwd: path.dirname(spec.file),
+        cwd: spec.cwd ?? path.dirname(spec.file),
         env,
         stdio: "ignore",
+        detached: process.platform !== "win32",
       });
+      release = ownConnector(child);
     } catch {
       finish("failed", "adapter could not start");
       return;
@@ -172,24 +186,10 @@ function runConnector(
     });
 
     timer = setTimeout(() => {
-      // Resolve immediately after requesting termination: even a wedged/unkillable child must never
-      // hold the daily renderer. A short, unref'd SIGKILL backstop cleans up ordinary stragglers.
-      try {
-        child.kill("SIGTERM");
-        // If the OS refuses both signals, the dead adapter still must not keep the CLI event loop
-        // alive after the daily has rendered.
-        child.unref?.();
-        const killTimer = setTimeout(() => {
-          try {
-            if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
-          } catch {
-            // Best-effort cleanup only; the fail-open result has already settled.
-          }
-        }, 250);
-        killTimer.unref();
-      } catch {
-        // The process may already be gone; timeout status remains the honest bounded result.
-      }
+      // POSIX adapters own a process group: the workspace shim delegates synchronously,
+      // so killing only its leader leaves the provider process writing after the deadline.
+      // Send the hard deadline signal before settling; no unref'd cleanup timer can be lost.
+      child.unref?.();
       finish("timed_out", `timed out after ${timeoutMs}ms`);
     }, timeoutMs);
   });

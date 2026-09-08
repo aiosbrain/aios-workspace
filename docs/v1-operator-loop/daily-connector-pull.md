@@ -53,8 +53,8 @@ commands/scripts remain supported and unchanged.
   <today>`. It keeps its dual-auth behavior and writes transcripts with its existing tier contract.
 - GOG: `.claude/descriptors/skills/gog-activity/gog-activity-pull.mjs --repo <root>`. It keeps
   idempotent `cal:` / `gmail:` writes to `<inbox>/comms/activity.jsonl`, admin-tier by default.
-- Slack: `.claude/descriptors/skills/slack-personal/slack-activity-pull.mjs --repo <root>`. The
-  dependency-free manual script resolves the existing user token from `SLACK_USER_TOKEN`, or from
+- Slack: `aios slack activity pull --repo <root>` (the built-in adapter verb, AIO-1072). The
+  dependency-free scan resolves the existing user token from `SLACK_USER_TOKEN`, or from
   `GET /api/v1/me/slack-token` using the scheduled process's AIOS brain environment. It requests
   Slack conversation objects, considers only conversations exposing a user `last_read` marker and
   evidence of newer/unread content, fetches messages strictly newer than that marker, excludes the
@@ -99,8 +99,8 @@ pulls; outbound messages; sync/push.
 
 1. Add the typed loop-core connector runner with injectable spawn/timeouts and non-secret results.
 2. Add the dependency-free Slack activity writer beside the existing manual Slack CLI; update its
-   skill/descriptor scope documentation without modifying the pinned
-   `scaffold/.claude/descriptors/skills/slack-personal/slack.py` copy.
+   skill/descriptor scope documentation. (Since AIO-1072 the unread scan is the built-in
+   `aios slack activity pull` verb — the Python descriptor copy is retired.)
 3. Wire the phase immediately before `runDaily` on the recording owner live path and render concise
    failures to stderr only.
 4. Update C4 and communication domain docs from manual-only to recording-daily behavior.
@@ -128,5 +128,5 @@ pulls; outbound messages; sync/push.
    passes; `npm run format:check` passes; `git diff origin/main -- package.json` is empty unless a
    genuine test-chain change was required.
 7. Existing `node --test test/gog-activity.test.mjs` and `node test/slack-cli-sync.test.mjs` pass,
-   demonstrating the manual GOG writer remains usable and the pinned manual
-   `scaffold/.claude/descriptors/skills/slack-personal/slack.py` is unchanged.
+   demonstrating the manual GOG writer remains usable and the retired Python Slack client
+   stays deleted (the scan now lives in the built-in `aios slack` adapter, AIO-1072).

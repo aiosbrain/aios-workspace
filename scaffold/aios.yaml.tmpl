@@ -36,7 +36,8 @@ agent_personality: "aios"
 # template. `clickup`/`none` skip all three, so no Linear-specific governance enters the
 # agent's context — the spec-readiness rubric stays either way, since grading a spec is
 # PM-tool-agnostic. Only the seam exists today; there is no ClickUp implementation yet.
-# Add a provider by following this same gating pattern, never by branching inside linear.mjs.
+# Add a provider by following this same gating pattern, never by branching inside the
+# built-in `aios linear` adapter.
 # Written by the scaffolder (and back-filled by `aios update` on a pre-pm_tool workspace) —
 # change it here by hand and every later `aios update` respects it.
 #

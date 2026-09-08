@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import { normalizeBrainOrigin } from "./brain-origin.mjs";
 import { parseFlatYaml } from "./flat-yaml.mjs";
 import { toolkitMeta } from "./toolkit-meta.mjs";
+import { isDistributionRoot, resolveDistributionRoot } from "./cli.mjs";
 
 const MODULE_TOOLKIT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const SKIP_DIRS = new Set([
@@ -111,14 +112,10 @@ function brainState(dir, yaml, env) {
   };
 }
 
-function looksLikeToolkit(dir) {
-  return (
-    existsSync(path.join(dir, "scripts", "aios.mjs")) && existsSync(path.join(dir, "scaffold"))
-  );
-}
-
+// Toolkit detection is the ONE classifier from cli/distribution-root.mjs (AIO-635
+// Decision 3) — the old local two-marker looksLikeToolkit() copy is gone.
 function looksLikeCandidate(dir) {
-  if (looksLikeToolkit(dir)) return false;
+  if (isDistributionRoot(dir)) return false;
   const present = CORE_MARKERS.filter((marker) => existsSync(path.join(dir, marker)));
   return present.includes("aios.yaml") || present.length >= 3;
 }
@@ -158,7 +155,22 @@ function collectCandidates(root, maxDepth, out, seen) {
 }
 
 function toolkitState(dir) {
-  if (!dir || !looksLikeToolkit(dir)) return null;
+  if (!dir || !isDistributionRoot(dir)) return null;
+  const distribution = resolveDistributionRoot(dir);
+  if (distribution?.kind === "registry") {
+    const meta = toolkitMeta(dir);
+    return {
+      path: distribution.dir,
+      version: meta.version,
+      brain_api: meta.brainApi || null,
+      head: distribution.sha,
+      upstream: null,
+      relation: "immutable",
+      git: { available: false, dirty: null },
+      recommended_strategy: "vendor-installed-package",
+      fresh_checkout_path: null,
+    };
+  }
   const gitInfo = gitState(dir);
   const meta = toolkitMeta(dir);
   const head = git(dir, ["rev-parse", "HEAD"]);
@@ -248,7 +260,7 @@ export function inspectOnboarding({
     MODULE_TOOLKIT,
     path.join(os.homedir(), "Projects", "aios", "aios-workspace"),
   ].filter(Boolean);
-  const toolkit = toolkitState(toolkitCandidates.find(looksLikeToolkit));
+  const toolkit = toolkitState(toolkitCandidates.find(isDistributionRoot));
   const searchRoots =
     roots ||
     [
@@ -296,7 +308,7 @@ export function formatInspection(report) {
   }
   if (report.toolkit) {
     lines.push(
-      `  Toolkit: ${report.toolkit.path} (v${report.toolkit.version}, ${report.toolkit.relation}, ${report.toolkit.git.dirty ? "dirty" : "clean"})`
+      `  Toolkit: ${report.toolkit.path} (v${report.toolkit.version}, ${report.toolkit.relation}, ${report.toolkit.relation === "immutable" ? "npm package" : report.toolkit.git.dirty ? "dirty" : "clean"})`
     );
   }
   lines.push(

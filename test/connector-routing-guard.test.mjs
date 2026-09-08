@@ -55,7 +55,7 @@ test("a generic Linear MCP call naming an AIO issue is blocked with the right co
   const r = await runHook(mcp("mcp__plugin_linear_linear__get_issue", { id: "AIO-976" }));
   assert.equal(r.status, 2, r.stderr);
   assert.match(r.stderr, /BLOCKED/);
-  assert.match(r.stderr, /aios-linear/, "a refusal must name the tool to use instead");
+  assert.match(r.stderr, /aios linear/, "a refusal must name the canonical command to use instead");
 });
 
 test("a stale connector copy is flagged, advisory like every other Bash verdict", async () => {

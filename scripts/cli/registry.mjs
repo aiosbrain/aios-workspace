@@ -16,6 +16,7 @@
  * @property {string[]} usage
  */
 
+import { parseUpdateArgs } from "../update-args.mjs";
 import { USAGE_HEADER, USAGE_FOOTER, USAGE_LINES as U } from "./usage.mjs";
 import { DEVTOOLS_COMMANDS as DT } from "./devtools-commands.mjs";
 import { commandMetadata as M } from "./command-contract.mjs";
@@ -348,12 +349,14 @@ export const COMMANDS = [
   },
   {
     name: "update",
+    parseArgs: parseUpdateArgs,
     metadata: M`update core.cli user-or-workspace none required human-or-json offline`,
     // Resolves a workspace OR the toolkit checkout — never a bare dir; --repo validated same
     // way. cmdUpdate returns a structured result (never exits; callers read .applyAllowed).
     resolution: "update-root",
     loader: () => import("../update.mjs"),
-    adapt: async (ctx, mod) => (await mod.cmdUpdate(ctx.repo, ctx.cfg, ctx.rest)).exitStatus,
+    adapt: async (ctx, mod) =>
+      (await mod.cmdUpdate(ctx.repo, ctx.cfg, ctx.rest, ctx.parsedArgs)).exitStatus,
     exit: "exit-status",
     usage: U.update,
   },

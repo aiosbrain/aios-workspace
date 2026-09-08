@@ -18,6 +18,8 @@
  * This module imports nothing from scripts/aios.mjs — the resolvers and the inline handlers are
  * injected — so it stays a leaf and adding it costs no cold-start time.
  */
+import { AiosError } from "./errors.mjs";
+import { UpdateError } from "../cli-common.mjs";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { consumeDevtoolsDirArg } from "../devtools-dispatch.mjs";
@@ -59,6 +61,45 @@ export async function dispatch({ argv, local, resolvers, contextLoader }) {
     );
   }
 
+  let parsedArgs;
+  try {
+    parsedArgs = desc.parseArgs?.(rest);
+  } catch (error) {
+    if (!(error instanceof UpdateError)) throw error;
+    throw new AiosError(
+      "AIOS_E_USAGE",
+      error.message,
+      "Run aios help and select one update mode with its supported flags."
+    );
+  }
+  if (parsedArgs?.mode === "self") {
+    const mod = await desc.loader();
+    return finish(
+      desc,
+      await desc.adapt(
+        { repo: null, cfg: null, patterns: null, rest, local: null, parsedArgs },
+        mod
+      )
+    );
+  }
+
+  let invocationPlan;
+  try {
+    invocationPlan = desc.prepareInvocation ? await desc.prepareInvocation(rest) : undefined;
+  } catch (error) {
+    if (error instanceof AiosError) {
+      if (desc.invocationFailure) return finish(desc, desc.invocationFailure(error));
+      throw error;
+    }
+    console.error(`error: ${error.message}`);
+    process.exitCode = 1;
+    return;
+  }
+  if (invocationPlan?.help || invocationPlan?.unknown) {
+    const mod = await desc.loader();
+    return finish(desc, await desc.adapt({ repo: null, rest, invocationPlan }, mod));
+  }
+
   if (!local || !resolvers) {
     if (!contextLoader) throw new Error(`aios ${cmd}: runtime context is unavailable`);
     ({ local, resolvers } = await contextLoader(desc));
@@ -74,8 +115,8 @@ export async function dispatch({ argv, local, resolvers, contextLoader }) {
   // NOT the workspace path. `timeline` owns it too — repeatable TARGET repo paths (its
   // workspace root comes from the cwd walk-up or its own `--workspace`). Don't consume it
   // here, or the command never sees the target-repo override.
-  let repoArg = null;
-  if (!desc.ownsRepoFlag) {
+  let repoArg = invocationPlan?.repoArg ?? null;
+  if (!invocationPlan && !desc.ownsRepoFlag) {
     const i = rest.indexOf("--repo");
     if (i !== -1) {
       repoArg = rest[i + 1];
@@ -100,7 +141,10 @@ export async function dispatch({ argv, local, resolvers, contextLoader }) {
 
   try {
     const mod = desc.loader ? await desc.loader() : null;
-    return finish(desc, await desc.adapt({ repo, cfg, patterns, rest, local }, mod));
+    return finish(
+      desc,
+      await desc.adapt({ repo, cfg, patterns, rest, local, parsedArgs, invocationPlan }, mod)
+    );
   } catch (e) {
     die(e.message);
   }
