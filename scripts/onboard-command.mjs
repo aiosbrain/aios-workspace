@@ -247,6 +247,7 @@ export async function cmdOnboard(repo, cfg, args = [], { connectFlow, nextAction
   });
 
   let brainIdentity = null;
+  let mcpCredential = null;
   if (selection.includes(TEAM_BRAIN_PSEUDO_ID)) {
     let origin = safeConfiguredOrigin;
     let enteredOrigin = false;
@@ -303,11 +304,26 @@ export async function cmdOnboard(repo, cfg, args = [], { connectFlow, nextAction
             ? [{ name: "AIOS_API_KEY", ok: true, detail: "encrypted into .env (dotenvx)" }]
             : []),
         ]);
+        mcpCredential = { brain_url: origin, api_key: key, team_id: cfg.team_id || "" };
       } catch (error) {
         reportValidation([{ name: "Team Brain", ok: false, detail: error.message }]);
       }
     } else if (!key && origin) {
       clack.log.warn("AIOS_API_KEY: no key entered — skipped.");
+    }
+  }
+
+  if (onboardingPath !== "personal" && brainIdentity && mcpCredential) {
+    try {
+      const { offerOnboardingMcp } = await import("./mcp-host-command.mjs");
+      const result = await offerOnboardingMcp(mcpCredential, { project: repo });
+      clack.log.info(
+        result.declined
+          ? "MCP setup skipped. You can run aios mcp install later."
+          : "MCP configuration saved and server command verified. Restart the selected hosts; host loading is not yet verified."
+      );
+    } catch (error) {
+      clack.log.warn(`MCP setup did not complete: ${error.message}`);
     }
   }
 

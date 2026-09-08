@@ -9,6 +9,7 @@ import { normalizeBrainOrigin } from "./brain-origin.mjs";
 import { parseFlatYaml } from "./flat-yaml.mjs";
 import { toolkitMeta } from "./toolkit-meta.mjs";
 import { isDistributionRoot, resolveDistributionRoot } from "./cli.mjs";
+import { hostTargets } from "./mcp-hosts.mjs";
 
 const MODULE_TOOLKIT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const SKIP_DIRS = new Set([
@@ -286,6 +287,16 @@ export function inspectOnboarding({
     live_state: true,
     workspace_candidates: workspaces,
     toolkit,
+    mcp_hosts: hostTargets({ project: repo || startDir, env }).map((host) => ({
+      id: host.id,
+      label: host.label,
+      supported: host.supported,
+      detected: host.detected,
+      file: host.file,
+      configuration_exists: !!host.file && existsSync(host.file),
+      host_loading: "unverified",
+      restart_state: "unverified",
+    })),
     recommended_action: recommended.action,
     recommendation_reason: recommended.reason,
   };

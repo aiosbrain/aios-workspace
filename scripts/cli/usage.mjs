@@ -121,6 +121,8 @@ export const USAGE_LINES = {
     "    [--workspace <p>] [--max-shots N]   repos/tiers/live URLs: .aios/timeline-config.json",
   ],
   mcp: [
+    "  aios mcp install --host claude-desktop,claude-code,codex,cursor [--dry-run] [--uninstall]",
+    "  aios mcp status [--host <names>] [--json]  verify configuration and the recorded server command",
     "  aios mcp [--toolsets brain,board,workspace] [--tools <name>]",
     "    Run the read-only stdio MCP server; available tools follow the startup Brain /me probe.",
     "    CLI toolsets override AIOS_MCP_TOOLSETS; --tools is additive; all selects every permitted tool.",
