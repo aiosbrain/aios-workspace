@@ -76,6 +76,87 @@ test("artifact selection binds run, repository, SHA, branch, expiry, and byte ce
   }
 });
 
+test("selectors reject malformed, duplicate, empty, and invalid-identifier responses", () => {
+  assert.throws(() => selectExactRun({}, EXPECTED), /runs response is malformed/);
+  assert.throws(
+    () => selectExactRun({ workflow_runs: [run({ id: "invalid" })] }, EXPECTED),
+    /workflow run id/
+  );
+  assert.throws(
+    () => selectExactRun({ workflow_runs: [run()] }, { ...EXPECTED, repository: "invalid" }),
+    /owner\/repository/
+  );
+  assert.throws(
+    () => selectExactRun({ workflow_runs: [run()] }, { ...EXPECTED, sha: "not-a-sha" }),
+    /40-character/
+  );
+  assert.throws(
+    () => selectExactRun({ workflow_runs: [run()] }, { ...EXPECTED, repositoryId: 0 }),
+    /repositoryId/
+  );
+  assert.equal(selectExactArtifact({ artifacts: [] }, run(), EXPECTED), null);
+  assert.throws(() => selectExactArtifact({}, run(), EXPECTED), /artifacts response is malformed/);
+  assert.throws(
+    () => selectExactArtifact({ artifacts: [artifact(), artifact({ id: 2 })] }, run(), EXPECTED),
+    /multiple coverage-bundle/
+  );
+  assert.throws(
+    () => selectExactArtifact({ artifacts: [artifact({ size_in_bytes: 0 })] }, run(), EXPECTED),
+    /positive safe integer/
+  );
+  assert.throws(
+    () => selectExactArtifact({ artifacts: [artifact({ id: "invalid" })] }, run(), EXPECTED),
+    /artifact id/
+  );
+});
+
+test("resolver bounds streamed API bodies and rejects invalid transport input", async () => {
+  const encoded = new TextEncoder().encode(JSON.stringify({ workflow_runs: [] }));
+  const midpoint = Math.floor(encoded.byteLength / 2);
+  const streamedFetch = async () =>
+    new Response(
+      new ReadableStream({
+        start(controller) {
+          controller.enqueue(encoded.slice(0, midpoint));
+          controller.enqueue(encoded.slice(midpoint));
+          controller.close();
+        },
+      }),
+      { status: 200, headers: { "content-length": String(encoded.byteLength) } }
+    );
+  await assert.rejects(
+    resolveCoverageArtifact({
+      fetchImpl: streamedFetch,
+      apiUrl: "https://api.github.com/",
+      token: TEST_CREDENTIAL,
+      expected: EXPECTED,
+      attempts: 1,
+      delayMs: 0,
+    }),
+    /did not become available/
+  );
+
+  for (const [overrides, pattern] of [
+    [{ apiUrl: "http://api.github.com" }, /apiUrl/],
+    [{ token: "" }, /token is missing/],
+    [{ attempts: 0 }, /attempts/],
+    [{ delayMs: 60_001 }, /delayMs/],
+  ]) {
+    await assert.rejects(
+      resolveCoverageArtifact({
+        fetchImpl: streamedFetch,
+        apiUrl: "https://api.github.com",
+        token: TEST_CREDENTIAL,
+        expected: EXPECTED,
+        attempts: 1,
+        delayMs: 0,
+        ...overrides,
+      }),
+      pattern
+    );
+  }
+});
+
 test("resolver waits boundedly for the exact artifact and never exposes the token", async () => {
   const responses = [
     { workflow_runs: [] },
