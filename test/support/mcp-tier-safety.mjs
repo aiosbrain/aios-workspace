@@ -8,6 +8,7 @@ import { resolve, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHash, randomUUID } from "node:crypto";
 import { createServer } from "node:net";
+import { startPackageLlm } from "./mcp-package-llm.mjs";
 
 const workspace = resolve(fileURLToPath(new URL("../..", import.meta.url)));
 const brain = resolve(process.env.MCP_BRAIN_DIR || "../aios-team-brain");
@@ -28,6 +29,10 @@ const env = {
   SECRETS_KEY: Buffer.alloc(32, 7).toString("base64"),
   LLM_BASE_URL: "",
 };
+const packageArtifact = process.env.MCP_PACKAGE_ARTIFACT
+  ? resolve(process.env.MCP_PACKAGE_ARTIFACT)
+  : null;
+let llm;
 const children = new Set();
 let cancelled = false;
 for (const signal of ["SIGINT", "SIGTERM"])
@@ -102,11 +107,14 @@ const report = {
 let failed;
 try {
   await run("docker", ["info"]);
+  if (packageArtifact) llm = await startPackageLlm();
   const resolved = (
     await run("git", ["rev-parse", `${sha}^{commit}`], { cwd: brain })
   ).output.trim();
   if (resolved !== sha) throw new Error("Brain pin mismatch");
-  for (const mutation of ["baseline", "project-denial", "item-visibility"]) {
+  for (const mutation of packageArtifact
+    ? ["baseline"]
+    : ["baseline", "project-denial", "item-visibility"]) {
     const directory = join(scratch, mutation);
     await mkdir(directory);
     const archive = join(scratch, `${mutation}.tar`);
@@ -138,6 +146,7 @@ try {
       mutationDigest = digest(modified);
     }
     const container = `aios-mcp-${randomUUID()}`;
+    const acceptanceContainer = `aios-mcp-package-${randomUUID()}`;
     let created = false;
     let primaryError;
     const result = { mutation, mutationDigest, cleanup: false };
@@ -187,6 +196,18 @@ try {
         APP_URL: `http://127.0.0.1:${httpPort}`,
         MCP_WORKSPACE_DIR: workspace,
         MCP_HTTP_ATTACHED: "1",
+        ...(packageArtifact
+          ? {
+              MCP_PACKAGE_ARTIFACT: packageArtifact,
+              MCP_ACCEPTANCE_CONTAINER_NAME: acceptanceContainer,
+              MCP_ACCEPTANCE_IMAGE: process.env.MCP_ACCEPTANCE_IMAGE || "node:22-bookworm-slim",
+              MCP_PACKAGE_LOCAL: process.env.MCP_PACKAGE_LOCAL || "0",
+              MCP_REGISTRY_ACCEPTANCE: process.env.MCP_REGISTRY_ACCEPTANCE || "0",
+              LLM_BASE_URL: llm.url,
+              MCP_PACKAGE_LLM_URL: llm.url,
+              LLM_MODEL: "synthetic-package-acceptance",
+            }
+          : {}),
       };
       const schema = await run(process.execPath, ["scripts/pg-load-schema.mjs"], {
         cwd: directory,
@@ -198,9 +219,20 @@ try {
         cwd: directory,
         extraEnv,
         allowFailure: true,
+        timeout: 300000,
       });
       await writeFile(join(evidence, `${mutation}-build.log`), build.output);
       if (build.code !== 0) throw new Error(`Brain build failed; see ${mutation}-build.log`);
+      if (packageArtifact) {
+        await writeFile(
+          join(directory, "test/http/mcp-package.acceptance.ts"),
+          await readFile(join(workspace, "test/support/mcp-package.acceptance.ts"))
+        );
+        await writeFile(
+          join(directory, "vitest.mcp.config.ts"),
+          'import { defineConfig } from "vitest/config";\nimport httpConfig from "./vitest.http.config";\nprocess.env.LLM_BASE_URL = process.env.MCP_PACKAGE_LLM_URL;\nexport default defineConfig({ ...httpConfig, test: { ...httpConfig.test, include: ["test/http/mcp-package.acceptance.ts"] } });\n'
+        );
+      }
       console.log(`MCP safety: ${mutation}: running live stdio outcome assertions`);
       const test = await run(
         process.execPath,
@@ -214,7 +246,7 @@ try {
         throw new Error(`Fixture cleanup unverified: ${mutation}`);
       if (
         !test.output.includes("HTTP_SERVER_CLEANUP_OK") ||
-        test.output.split("MCP_PROCESS_CLEANUP_OK").length !== 3
+        test.output.split("MCP_PROCESS_CLEANUP_OK").length !== (packageArtifact ? 2 : 3)
       ) {
         throw new Error(`Process cleanup unverified: ${mutation}`);
       }
@@ -227,27 +259,43 @@ try {
       if (outcomeFailed) {
         throw new Error(`Outcome gate failed: ${mutation}; see ${mutation}-test.log`);
       }
+      if (packageArtifact) {
+        assert.ok(llm.groundedRequests > 0, "No grounded synthetic LLM request observed");
+        result.groundedRequests = llm.groundedRequests;
+        result.isolation =
+          process.env.MCP_PACKAGE_LOCAL === "1" ? "local-import-guard" : "docker-no-checkout";
+        result.candidate = JSON.parse(
+          await readFile(join(packageArtifact, "candidate.json"), "utf8")
+        );
+      }
       console.log(`MCP safety: ${mutation}: expected outcome verified`);
     } catch (error) {
       primaryError = error;
       result.error = String(error);
     }
     try {
-      if (created) {
-        const existing = await run(
-          "docker",
-          ["ps", "-a", "--filter", `name=^${container}$`, "--format", "{{.Names}}"],
-          { cleanup: true }
-        );
-        if (existing.output.trim())
-          await run("docker", ["rm", "-f", "-v", container], { cleanup: true });
-        const remaining = await run(
-          "docker",
-          ["ps", "-a", "--filter", `name=^${container}$`, "--format", "{{.Names}}"],
-          { cleanup: true }
-        );
-        assert.equal(remaining.output.trim(), "", "Isolated database cleanup failed");
+      const cleanupErrors = [];
+      for (const ownedContainer of created ? [acceptanceContainer, container] : []) {
+        try {
+          const existing = await run(
+            "docker",
+            ["ps", "-a", "--filter", `name=^${ownedContainer}$`, "--format", "{{.Names}}"],
+            { cleanup: true }
+          );
+          if (existing.output.trim())
+            await run("docker", ["rm", "-f", "-v", ownedContainer], { cleanup: true });
+          const remaining = await run(
+            "docker",
+            ["ps", "-a", "--filter", `name=^${ownedContainer}$`, "--format", "{{.Names}}"],
+            { cleanup: true }
+          );
+          assert.equal(remaining.output.trim(), "", "Isolated container cleanup failed");
+        } catch (error) {
+          cleanupErrors.push(error);
+        }
       }
+      if (cleanupErrors.length)
+        throw new AggregateError(cleanupErrors, cleanupErrors.map(String).join("; "));
       result.cleanup = true;
     } catch (error) {
       result.cleanupError = String(error);
@@ -269,6 +317,7 @@ try {
       /* process already exited */
     }
   }
+  if (llm) await llm.close();
   await rm(scratch, { recursive: true, force: true });
   report.finishedAt = new Date().toISOString();
   await writeFile(join(evidence, "evidence.json"), JSON.stringify(report, null, 2) + "\n");

@@ -1,0 +1,27 @@
+{
+  "name": "@aiosbrain/mcp",
+  "version": "0.1.0",
+  "description": "Read-only AIOS Team Brain MCP server with zero runtime dependencies",
+  "type": "module",
+  "license": "AGPL-3.0-only",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aiosbrain/aios-workspace.git",
+    "directory": "packages/mcp"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "bin": {
+    "aios-brain-mcp": "bin/aios-brain-mcp.mjs"
+  },
+  "files": [
+    "bin",
+    "lib",
+    "README.md",
+    "LICENSE"
+  ]
+}

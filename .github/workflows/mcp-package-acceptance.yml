@@ -1,0 +1,105 @@
+name: MCP package acceptance
+on:
+  pull_request:
+    paths:
+      - "packages/mcp/**"
+      - "packages/mcp-core/**"
+      - "packages/foundation/src/**"
+      - "scripts/mcp-*.mjs"
+      - "scripts/brain-client.mjs"
+      - "scripts/flat-yaml.mjs"
+      - "packages/mcp-build/build.mjs"
+      - "packages/mcp-build/pack.mjs"
+      - "test/mcp-package/**"
+      - "test/support/mcp-package*"
+      - "test/support/mcp-tier-safety.mjs"
+      - ".github/workflows/mcp-package-acceptance.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  pack:
+    name: Pack frozen MCP candidate once
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+      - run: npm ci --ignore-scripts
+      - run: node packages/mcp-build/pack.mjs --out mcp-candidate-artifact
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: mcp-candidate
+          path: mcp-candidate-artifact
+          if-no-files-found: error
+          retention-days: 30
+  windows-credentials:
+    name: Installed Windows credential ACLs
+    needs: pack
+    runs-on: windows-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: mcp-candidate
+          path: mcp-candidate-artifact
+      - run: node test/mcp-package/windows-credentials.mjs
+        env:
+          MCP_PACKAGE_ARTIFACT: ${{ github.workspace }}/mcp-candidate-artifact
+  live:
+    name: Eight live tools (isolated Node ${{ matrix.node }})
+    needs: pack
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [22, 24, 26]
+    env:
+      MCP_BRAIN_SHA: 1a2ca61fd39003f3a72b5cdf4beb39ae5dfe32f7
+      MCP_BRAIN_DIR: ${{ github.workspace }}/.mcp-brain
+      MCP_EVIDENCE_DIR: ${{ github.workspace }}/.tmp/mcp-package-evidence
+      MCP_PACKAGE_ARTIFACT: ${{ github.workspace }}/mcp-candidate-artifact
+      MCP_ACCEPTANCE_IMAGE: node:${{ matrix.node }}-bookworm-slim
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: aiosbrain/aios-team-brain
+          ref: ${{ env.MCP_BRAIN_SHA }}
+          path: .mcp-brain
+          persist-credentials: false
+      - run: npm ci --ignore-scripts
+        working-directory: .mcp-brain
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: mcp-candidate
+          path: mcp-candidate-artifact
+      - name: Pull isolated acceptance runtime
+        run: docker pull "$MCP_ACCEPTANCE_IMAGE"
+      - run: node test/support/mcp-tier-safety.mjs
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: mcp-package-evidence-node-${{ matrix.node }}
+          path: .tmp/mcp-package-evidence
+          if-no-files-found: error
+          retention-days: 30

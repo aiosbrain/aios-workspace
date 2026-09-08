@@ -32,6 +32,8 @@ on:
       # plus npm's always-included root files.
       - "scripts/**"
       - "packages/foundation/**"
+      - "packages/mcp-core/**"
+      - "packages/mcp/**"
       - "validation/**"
       - "hooks/**"
       - "scaffold/**"
