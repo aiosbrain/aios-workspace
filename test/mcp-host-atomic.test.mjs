@@ -219,8 +219,9 @@ test("partial native replacement failure restores the displaced original exclusi
       commitHostFiles([{ source: policy.snapshot(file), bytes: Buffer.from("installer") }], {
         policy,
         atomicReplace: (_temporary, target, recovery) => {
+          if (concurrent === "displaced") put(target, "concurrent");
           fs.renameSync(target, recovery);
-          if (concurrent) put(target, "concurrent");
+          if (concurrent === true) put(target, "concurrent");
           throw new Error("native failure 1177");
         },
       }),
