@@ -459,3 +459,18 @@ test("check-context.mjs exits 0 for this repo's own root", () => {
   const out = execFileSync("node", [checkContextScript], { cwd: repoRoot, encoding: "utf8" });
   assert.match(out, /Context health ok/);
 });
+
+test("pinned contract-first versions validate without claiming runtime shipment", () => {
+  const files = {
+    "brain-api.md": BRAIN_API_LABELS.replace("shipped member-facing", "pinned member-facing"),
+    "CLAUDE.md": CANONICAL_CLAUDE_PIN,
+    "ENGINEERING-CONSTITUTION.md": CANONICAL_CONSTITUTION_PIN,
+  };
+  const read = (file) => files[path.basename(file)];
+  assert.equal(checkVersionLabels("/synthetic", read).ok, true);
+  files["CLAUDE.md"] = CANONICAL_CLAUDE_PIN.replace(
+    "document revision **1.17**",
+    "document revision **1.16**"
+  );
+  assert.equal(checkVersionLabels("/synthetic", read).ok, false);
+});
