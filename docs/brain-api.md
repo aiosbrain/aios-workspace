@@ -2737,7 +2737,7 @@ stored encrypted at rest (`member_secrets`) and every response carries `Cache-Co
 20/min per key, `DELETE` none.
 
 
-## POST /api/v1/codebases/:slug/debt-intake-events (contract reservation)
+## POST /api/v1/codebases/:slug/debt-intake-events
 
 **Availability:** the storage/endpoint increment is implemented in [Team Brain PR709](https://github.com/aiosbrain/aios-team-brain/pull/709), merged at `87be1293dd8338dde953020c757bad336f2da9b4`. Deployment and activation are environment-specific: before enabling upload, verify the target environment’s exact deployed commit, successful schema loader, installed constraints, narrowly bound uploader grant, and ingest/replay/revocation evidence. A merged implementation or isolated test does not establish staging or production availability, and this contract makes no production availability claim. AIO-1102 supplies the publisher; AIO-1103 supplies readers; AIO-1104 owns activation. Existing snapshot ingest and scanner debt are unchanged.
 
