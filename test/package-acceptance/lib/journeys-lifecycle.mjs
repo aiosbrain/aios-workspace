@@ -8,7 +8,7 @@
  *  - user rollback to the recorded 0.12.0 package/config snapshot.
  */
 import assert from "node:assert/strict";
-import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { sha256Hex } from "./context.mjs";
@@ -42,7 +42,9 @@ const INTERRUPTIBLE_STATES = ["discovered", "snapshotted", "staged", "validated"
 function interruptedUpdateJourney(ctx, { workspace, stagedBin, stagingPrefix, workspaceEnv }) {
   const results = [];
   const moduleUrl = pathToFileURL(
-    path.join(stagingPrefix, "node_modules", "@aiosbrain", "aios", "scripts/cli/migration.mjs")
+    realpathSync(
+      path.join(stagingPrefix, "node_modules", "@aiosbrain", "aios", "scripts/cli/migration.mjs")
+    )
   ).href;
   for (const interruptAt of [...INTERRUPTIBLE_STATES, "committed"]) {
     const fixture = `${workspace}-interrupt-${interruptAt}`;
