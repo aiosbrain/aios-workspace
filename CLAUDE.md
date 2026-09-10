@@ -136,20 +136,16 @@ they don't recognize.
   before claiming a scaffold/template change works. The secrets validator (`check-secrets.sh` +
   `leak-gate.sh` + the `team-ops-guard` hook) is a hard gate — **never commit secrets**, and never
   weaken the gate to make a commit pass.
-- **Current-head cloud review is sufficient; Local Bugbot is optional.**
-  `hooks/local-bugbot-gate.mjs` still runs from the native Claude, Codex, Cursor, and OpenCode
-  lifecycle adapters, but at Stop/idle it only performs a cheap non-blocking advisory probe
-  (AIO-567). For a pushed PR, green required CI plus at least one substantive current-head cloud
-  Bugbot or CodeRabbit review with no unresolved findings satisfies the review gate. `aios build`
-  / `aios ship` may still run local code + security review as an operator-workflow stage, and the
-  manual diagnostic remains
-  `node hooks/local-bugbot-gate.mjs --runtime <rt> --json --check-exit`; neither makes Local
-  Bugbot a repository-wide merge prerequisite. Address substantive Medium-or-higher findings
-  from any reviewer, but a Local Bugbot outage, protocol error, or unrelated-worktree failure does
-  not by itself block an otherwise clear PR.
-- **CodeRabbit is current-head and label-gated.** Standard PRs use it only when selected; safety
-  PRs require it and the `ready-for-review` label. After any fix push, request a fresh review with
-  `@coderabbitai review`. A successful check run without substantive review text is not evidence.
+- **Independent Astra/Fable review is sufficient.** A substantive adversarial Codex Astra or
+  Claude Fable review from a separate review session/agent, bound to the exact base/head,
+  satisfies model review for all PRs, including safety changes, with required CI green.
+  Retain model identity, scope, verification, findings and verdict; re-review changed heads
+  and resolve blocking findings before MERGE_READY. Bugbot and CodeRabbit are supplementary
+  automated review providers, not required approval providers. Disposition concrete findings;
+  rate limits/outages alone do not block. Keep executable tests, secret/NDA checks, provenance
+  and exact-head evidence gates, and separately specified human release sign-offs.
+  Lifecycle Local Bugbot probes remain advisory. Published build/ship workflows may still
+  have explicit operator stages: this policy does not claim those binaries have changed.
 - **Harnesses must stay trustworthy.** Skills under `scaffold/.claude/skills/` are dynamic multi-agent
   workflows with **adversarial verification + rubric-gated self-correction** (`scaffold/.claude/rubrics/`).
   When you change a harness, keep its rubric honest — the rubric is what makes the output trustworthy.

@@ -3,6 +3,22 @@
 **Status:** blocking. **Protected context:** `review-evidence` (a commit status, not a job name).
 **Task:** AIO-777.
 
+## Adversarial review policy
+
+An independent adversarial **Codex Astra or Claude Fable** review is sufficient model
+review evidence for a pull request, including safety-sensitive changes, when required
+executable CI passes. Use a separate review session/agent from the implementer. Retain a
+substantive report naming the model, exact base and head commits, inspected scope,
+verification, findings and verdict. Re-review after a changed head; resolve every blocking
+finding before an exact-head MERGE_READY attestation.
+
+Bugbot and CodeRabbit are supplementary automated review at scale, not mandatory approval
+providers. Their absence, rate limits or usage limits do not block a qualifying Astra/Fable
+review. Their concrete findings still require disposition; a green check without substantive
+review is not approval. Do not disable executable tests, secret/NDA checks, provenance gates,
+or exact-head evidence validation. Separately specified human release sign-offs remain in
+force unless the owner explicitly changes them.
+
 ## The failure this exists for
 
 Two pull requests merged while their adversarial review was still running. Both reviews came
