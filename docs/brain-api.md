@@ -499,9 +499,11 @@ server read ceiling. In particular, an external collaborator granted a project c
 its `access: team` items through the collection/query surfaces. Other endpoints retain the
 additional restrictions listed in the membership contract.
 
-For legacy wire compatibility, `GET /me.tier` and handler `memberTier` mean **posture**:
+For legacy wire compatibility, `GET /me.tier` and ordinary member-key `memberTier` mean **posture**:
 `team` when the person belongs to the built-in `everyone` group, otherwise `external`.
-They do not read `members.tier` to grant access. Roster/identity responses still expose
+This describes ordinary member API keys. Delegated-token authentication retains its
+stored-`members.tier` eligibility check and passes that value as delegated `memberTier`;
+it still requires the launcher/represented-person/project intersection. Roster/identity responses still expose
 that stored tier field as metadata; neither that field nor a caller-supplied tier grants a
 project. Role gates (admin/lead/member) remain distinct from membership and posture.
 

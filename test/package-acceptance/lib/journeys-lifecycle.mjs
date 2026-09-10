@@ -84,7 +84,7 @@ function interruptedUpdateJourney(ctx, { workspace, stagedBin, stagingPrefix, wo
     });
     assert.equal(stableStamp(), before);
     assert.match(
-      readFileSync(path.join(fixture, ".claude/rules/frontmatter.md"), "utf8"),
+      readFileSync(path.join(fixture, ".claude/rules/acceptance-custom.md"), "utf8"),
       /acceptance customization/
     );
     results.push({
@@ -185,10 +185,13 @@ export function upgradeJourney(ctx) {
   const stampPath = path.join(workspace, ".aios-toolkit-version");
   const legacyStamp = readFileSync(stampPath, "utf8");
   assert.doesNotMatch(legacyStamp, /stamp-format 2/);
-  const customPath = path.join(workspace, ".claude", "rules", "frontmatter.md");
+  // A user-owned rule must survive migration. Do not customize frontmatter.md here:
+  // that template legitimately changes with the membership contract, causing a preflight
+  // merge conflict before any durable-journal interruption boundary is reached.
+  const customPath = path.join(workspace, ".claude", "rules", "acceptance-custom.md");
   writeFileSync(
     customPath,
-    `${readFileSync(customPath, "utf8")}\n<!-- acceptance customization -->\n`
+    "# Local acceptance rule\n\nPreserve this acceptance customization.\n"
   );
   ctx.runWithAmbientEnv("git", ["add", "-A"], { cwd: workspace, label: "record-customization" });
   ctx.runWithAmbientEnv(

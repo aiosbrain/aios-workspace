@@ -21,15 +21,22 @@ permissions, deployment, endpoint shape or API version. The API change policy in
    person's visibility when different, and the explicit project scope. An empty scope
    means no projects. Only the items collection and natural-language query accept these
    tokens; the other member API routes reject their credential format. The current
-   delegated-token implementation also refuses external-posture delegation.
+   delegated-token implementation still reads the stored member tier for eligibility and
+   refuses external stored-tier delegation. This is a retained exception: it does not
+   resolve ordinary member posture from the `everyone` group.
 5. People and organizational structure are intentionally shared with authenticated
    members of the team. The roster, identity resolver and company graph do not require
    team posture or project grants. They do not grant access to project content.
 
-`GET /me.tier` and handler `memberTier` retain the wire words `team`/`external`, but now
+`GET /me.tier` and ordinary member-key handler `memberTier` retain the wire words `team`/`external`, but now
 represent **posture**: membership in the built-in `everyone` group yields `team`, otherwise
 `external`. Roster and identity payloads retain the stored tier as metadata. Role
 (`admin`/`lead`/`member`), posture, project membership, and document `access` are distinct.
+Delegated-token `memberTier` is the retained stored-tier result, not this posture resolver.
+For example, an active agent with stored tier `team`, custom project grants and no
+`everyone` membership can pass delegated eligibility even though its ordinary member
+posture is external; the project intersection still prevents wider access. Conversely,
+stored tier `external` blocks delegation even when ordinary member posture is team.
 
 Workspace publication rules are unchanged: `admin`/`private` content never syncs, missing
 access is denied, and aliases normalize to canonical `admin`, `team`, `external`. An

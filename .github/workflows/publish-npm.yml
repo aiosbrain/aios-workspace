@@ -172,7 +172,7 @@ jobs:
             import { execFileSync } from "node:child_process";
             const version = readFileSync(".npm-version", "utf8").trim();
             if (!/^\d+\.\d+\.\d+$/.test(version)) throw new Error("Invalid npm version pin");
-            execFileSync("npm", ["install", "--global", `npm@${version}`, "--ignore-scripts"], { stdio: "inherit" });
+            execFileSync("npm", ["install", "--global", "npm@" + version, "--ignore-scripts"], { stdio: "inherit" });
           '
       - name: Download the previously accepted artifact and every live cell evidence
         run: |
@@ -199,7 +199,7 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       WORKSPACE_ACCEPTANCE_RUN_ID: ${{ inputs.acceptance_run_id }}
       WORKSPACE_RELEASE_VERSION: ${{ inputs.version }}
-      WORKSPACE_RELEASE_ARTIFACTS: ${{ runner.temp }}/workspace-release
+      WORKSPACE_RELEASE_ARTIFACTS: ${{ github.workspace }}/.release-artifacts
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -215,7 +215,7 @@ jobs:
             import { execFileSync } from "node:child_process";
             const version = readFileSync(".npm-version", "utf8").trim();
             if (!/^\d+\.\d+\.\d+$/.test(version)) throw new Error("Invalid npm pin");
-            execFileSync("npm", ["install", "--global", `npm@${version}`, "--ignore-scripts"], { stdio: "inherit" });
+            execFileSync("npm", ["install", "--global", "npm@" + version, "--ignore-scripts"], { stdio: "inherit" });
           '
       - name: Download the accepted candidate and all six evidence cells
         run: |
