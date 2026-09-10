@@ -1,8 +1,7 @@
-import { hostTargets } from "./mcp-hosts.mjs";
+import { hostTargets, MCP_SERVER_KEY } from "./mcp-hosts.mjs";
 import { installMcpHosts, inspectMcpHosts, verifyServerCommand } from "./mcp-host-install.mjs";
 import { filePolicy } from "./mcp-host-files.mjs";
 import { readHostDocument } from "./mcp-host-formats.mjs";
-import { MCP_SERVER_KEY } from "./mcp-hosts.mjs";
 import os from "node:os";
 
 export async function chooseMcpHosts({ optional = false } = {}) {

@@ -45,8 +45,11 @@ export function decodeServerArtifact(compressed) {
   for (let offset = 0; offset + 512 <= tar.length;) {
     const header = tar.subarray(offset, offset + 512);
     if (header.every((byte) => byte === 0)) break;
-    const field = (start, end) =>
-      header.subarray(start, end).toString("utf8").replace(/\0.*$/s, "");
+    const field = (start, end) => {
+      const bytes = header.subarray(start, end);
+      const terminator = bytes.indexOf(0);
+      return bytes.subarray(0, terminator < 0 ? bytes.length : terminator).toString("utf8");
+    };
     const name = field(0, 100);
     const size = Number.parseInt(field(124, 136).trim(), 8);
     const relative = name.startsWith("package/") ? name.slice(8) : "";

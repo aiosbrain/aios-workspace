@@ -46,7 +46,7 @@ function isRunning(host, names, platform = process.platform) {
   const normalize = (value) =>
     platform === "win32" ? value.toLowerCase().replace(/\.exe$/, "") : value;
   return names.some((raw) => {
-    const name = raw.replace(/\\/g, "/");
+    const name = raw.replaceAll("\\", "/");
     const first = name.match(/^"([^"]+)"|^(\S+)/);
     const executable = first?.[1] || first?.[2] || name;
     return (
@@ -234,8 +234,15 @@ export async function verifyServerCommand(
           tools.some((tool) => tool.annotations?.readOnlyHint !== true)
         )
           throw new Error("protocol");
-        const expected = [...TOOLSETS.brain, ...(tools.length === 8 ? TOOLSETS.board : [])].sort();
-        if (!isDeepStrictEqual(tools.map((tool) => tool.name).sort(), expected))
+        const expected = [...TOOLSETS.brain, ...(tools.length === 8 ? TOOLSETS.board : [])].sort(
+          (a, b) => a.localeCompare(b)
+        );
+        if (
+          !isDeepStrictEqual(
+            tools.map((tool) => tool.name).sort((a, b) => a.localeCompare(b)),
+            expected
+          )
+        )
           throw new Error("membership");
         finish(null, {
           verified: true,

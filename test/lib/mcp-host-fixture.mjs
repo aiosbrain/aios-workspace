@@ -2,6 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
+import { windowsSystemExecutable } from "../../scripts/mcp-credentials.mjs";
 export const credential = {
   brain_url: "https://brain.example",
   api_key: "test-key",
@@ -17,11 +18,15 @@ function fixtureOwner(file) {
   // fixtures model an explicitly user-owned home; do not relax production checks.
   const script =
     "$ErrorActionPreference='Stop'; $env:PSModulePath=$PSHOME+'\\Modules'; $p=$env:AIOS_TEST_OWNER_PATH; $a=Get-Acl -LiteralPath $p; $a.SetOwner([System.Security.Principal.WindowsIdentity]::GetCurrent().User); Set-Acl -LiteralPath $p -AclObject $a";
-  execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], {
-    env: { ...process.env, AIOS_TEST_OWNER_PATH: file },
-    stdio: "pipe",
-    timeout: 5000,
-  });
+  execFileSync(
+    windowsSystemExecutable("powershell"),
+    ["-NoProfile", "-NonInteractive", "-Command", script],
+    {
+      env: { ...process.env, AIOS_TEST_OWNER_PATH: file },
+      stdio: "pipe",
+      timeout: 5000,
+    }
+  );
 }
 export function fixture(t) {
   const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "mcp-host-test-")));
