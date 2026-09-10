@@ -1,6 +1,6 @@
 # AIOS Team Brain — API Contract
 
-**Version: 1.24** is the shipped member-facing Brain API (`/api/v1`). **Document revision: 1.25**
+**Version: 1.24** is the shipped member-facing Brain API (`/api/v1`). **Document revision: 1.26**
 also carries the separately negotiated internal Executor gateway contract **1.10**; it does not
 claim unimplemented member-facing v1.10 routes. This document is the single pinned contract between the
 contributor repo (this toolkit's `aios` CLI) and the `aios-team-brain` service. Both
@@ -454,6 +454,21 @@ carries the coordinated rollback procedure.
 
 ---
 
+## Membership correction — document revision 1.26 (2026-09-10)
+
+This revision reconciles the contract with the existing projects, membership and people
+model implemented by Brain API **1.24** after PRET-4/PRET-6. It does not introduce a new
+endpoint or change the implementation's request/response behavior. The member API stays
+1.24; the internal gateway stays 1.10; the document revision advances to 1.26. The earlier
+claim that member tiers alone determine every read was stale. This correction is not an
+exception permitting future unversioned authorization changes: the change policy above
+still applies to new changes in behavior.
+
+The complete rules, endpoint exceptions and client limits are in
+[Project membership access](contract/project-membership-access.md). This is the current
+normative interpretation of the access terminology below; dated version-history entries
+record historical behavior. No particular hosted Brain deployment is attested by this document.
+
 ## Vocabulary (normative)
 
 ### Access tiers
@@ -469,6 +484,26 @@ Canonical values: **`admin` | `team` | `external`**.
   `422`.
 - Files with **no `access` frontmatter do not sync** (client-side default-deny). The
   CLI reports them as `blocked` with the reason.
+
+### People, membership and project visibility
+
+A person receives project access through **person → group membership → project grant**.
+Content is visible through an active item context unit with a current `include` membership
+in an accessible project. All edges and reads stay within the authenticated team. An item’s
+`project` response field names its source container; access may instead come through its
+membership in a curated project. A source slug alone grants nothing.
+
+The canonical `access` values above still govern what a workspace may publish; `admin`
+content and files without a resolvable access value remain blocked. They are not a universal
+server read ceiling. In particular, an external collaborator granted a project can read
+its `access: team` items through the collection/query surfaces. Other endpoints retain the
+additional restrictions listed in the membership contract.
+
+For legacy wire compatibility, `GET /me.tier` and handler `memberTier` mean **posture**:
+`team` when the person belongs to the built-in `everyone` group, otherwise `external`.
+They do not read `members.tier` to grant access. Roster/identity responses still expose
+that stored tier field as metadata; neither that field nor a caller-supplied tier grants a
+project. Role gates (admin/lead/member) remain distinct from membership and posture.
 
 ### Item kinds
 
@@ -558,8 +593,9 @@ X-AIOS-Team: <team_uuid_or_slug>  # optional
 Returns the calling key's own member identity, role, and tier — no secrets. Lets a client
 tailor its behavior without keeping a parallel roster: e.g. only `lead`/`admin` roles see the
 team-blueprint publish surface (§ "Team blueprint" above), and `aios stakeholders` probes this
-first and rejects **every** mode up front for a non-`team`-tier key, so a partial answer can
-never leak from a later `/company-graph` or `/items` call.
+first and retains a **client-side** non-`team` posture restriction for every mode. That
+legacy CLI restriction is narrower than the Brain's all-member company-graph endpoint;
+it is not evidence of a server-side tier gate.
 
 **Request:** no body.
 
@@ -747,8 +783,11 @@ team/external-tier item.
 
 ## `GET /api/v1/items?since=<ISO8601>&project=<slug>&kinds=a,b&path_prefix=<p>` — pull
 
-Returns items the calling key's member tier may see (tier filtering is re-applied
-server-side in SQL), updated strictly after `since`. Keyset-paginated.
+Returns membership-visible items updated strictly after `since`, filtered server-side
+through accessible projects and active/current included item context units. There is no
+additional external-posture `access: external` ceiling on this collection route. Delegated
+tokens use the intersection of launcher, represented person (if any), and explicit project
+scope; they cannot widen the launcher's project access. Keyset-paginated.
 
 Query params: `since`, `cursor`, `project`, `kinds` (comma list), and **`path_prefix`**
 — restrict to items whose `path` begins with the prefix (used for on-demand fetches:
@@ -773,10 +812,11 @@ spine stays a deliberate human act.
 
 ## `GET /api/v1/items/<id>` — fetch one item
 
-Returns a single item by id, tier-filtered (an external-tier key gets `404` for a
-team item). Same object shape as one element of the `items[]` array above. `404
-not_found` if the id doesn't exist or is above the caller's tier. Used by on-demand
-pulls and dashboard detail views.
+Returns a single item by id only when membership permits it **and** the remaining posture
+filter permits it (an external-posture key gets `404` for a team item even when the collection
+route can return it). Same object shape as one element of `items[]`. Missing and denied
+items both return `404 not_found`. This is a retained endpoint exception, not a universal
+read rule; the CLI's named skill/deliverable pulls use collection path-prefix queries.
 
 ## On-demand pull (client commands)
 
@@ -795,11 +835,13 @@ The CLI exposes these over the endpoints above:
 
 Returns task rows created or modified **in the dashboard UI** since the cursor, so the
 CLI can merge them into the local `3-log/tasks-team.md` (or the legacy `3-log/tasks.md`
-for a workspace that hasn't migrated to the three-home split — AIO-364). **Tier-scoped:** an `external`-tier key
-receives only `audience: "external"` rows — via the `visibleTasks` choke-point in
-`lib/auth/visibility.ts`, the same file and pattern as the `visibleDecisions` choke-point that
-gates `GET /api/v1/decisions` below, applied to the `tasks` table's inherited `audience` column
-(sourced from the task's originating item's `access`).
+for a workspace that hasn't migrated to the three-home split — AIO-364). **Membership/provenance
+scoped, with an additional posture ceiling:** sourced rows require a membership-visible
+source item. Hand-authored rows without a source require a recorded author and a member
+with team posture; source-less rows with no author are denied. An external-posture key
+receives only `audience: "external"` rows and cannot use the hand-authored exception.
+`taskFeedWindow` applies provenance, audience and mode filters in SQL before the row limit.
+A project filter narrows this set; it does not grant access.
 
 This plain endpoint is the dashboard **writeback feed**, not a complete task-table read. Pass
 `?all=1` for the explicit tier-filtered full read (up to the endpoint's 500-row bound). The
@@ -851,7 +893,7 @@ which case it merges nothing and pull still succeeds).
   its own project's table. An unknown slug returns an **empty feed**, not an error.
 - Rows are `origin='sync'` only — dashboard-origin rows stay the writeback feed's job, so the two
   feeds never double-merge one row.
-- **Tier-scoped identically** to the writeback feed (`visibleTasks`): an `external`-tier key
+- **Scoped identically** to the writeback feed (membership/provenance plus posture): an `external`-tier key
   receives only `audience: "external"` rows; `admin` content never exists on the brain (422 at the
   push boundary).
 - **Paged.** `since` is the caller's cursor over `updated_at` (rows come back oldest-first, 500 per
@@ -975,8 +1017,10 @@ is null only before the first projection. An `external`-tier key gets `403 forbi
 ## `GET /api/v1/decisions?since=<ISO8601>` — decision writeback
 
 Returns decision rows created or edited **in the dashboard UI** since the cursor, so the
-CLI can merge them into the local `3-log/decision-log.md`. **Tier-scoped:** an
-`external`-tier key receives only `audience: "external"` rows.
+CLI can merge them into the local `3-log/decision-log.md`. The same sourced-item and
+hand-authored provenance rules as the task feed apply before the limit. An external-posture
+key additionally receives only `audience: "external"` rows; team posture does not bypass
+source-item membership.
 
 ```json
 {
@@ -1009,6 +1053,9 @@ Lets `aios pull` register **brain-created** projects (created in the dashboard, 
 pushed from a repo) as local marker files under `1-inbox/from-brain/_projects/`. An
 `external`-tier key gets `403 forbidden_tier`. The CLI writes a marker only for
 `brain_only` projects it doesn't already have; full local scaffolding is deferred.
+The server also requires row visibility through a project grant or visible item/task/decision
+content and excludes system containers (`general`, `external-shared`). Team posture is not
+an unrestricted project inventory.
 
 ```json
 {
@@ -1019,7 +1066,7 @@ pushed from a repo) as local marker files under `1-inbox/from-brain/_projects/`.
 }
 ```
 
-## `GET /api/v1/company-graph` — structured stakeholder map (team-tier only)
+## `GET /api/v1/company-graph` — structured stakeholder map (all authenticated members)
 
 Projects the brain's structured **Company-Graph** (the `graph_entities` / `graph_relationships`
 Postgres tables) as a queryable people + ownership view for the workspace stakeholder-map surface
@@ -1027,10 +1074,11 @@ Postgres tables) as a queryable people + ownership view for the workspace stakeh
 **"who reports to / about whom."** It is the structured-graph counterpart to `POST /api/v1/query`
 (the NL Graphiti memory) — a *different* subsystem: this endpoint returns typed rows, not prose.
 
-**Team-tier only** — an `external`-tier key gets `403 forbidden_tier`. The graph tables carry a
-`team_id` but **no per-row tier column and there is no RLS backstop** on the Postgres target, so the
-tier boundary is an **app-code gate** (same posture as `/metrics`, `/costs`, `/codebases`,
-`/projects`). Rate limit: 60/min per key. Clients **MUST tolerate a `404`** from an older brain that
+**All authenticated members**, including external collaborators, can read their team’s
+people and ownership structure. This endpoint has no posture rejection or per-project
+filter. The graph tables carry `team_id` and are explicitly team-scoped by the handler;
+there is no per-row tier column or RLS backstop. This is an intentional structure-sharing
+rule, not permission to read every project’s content. Rate limit: 60/min per key. Clients **MUST tolerate a `404`** from an older brain that
 predates this endpoint (the forward-compat rule).
 
 **Request:** no body. Team-scoped by the authenticated key; the optional compatibility header,
@@ -1137,15 +1185,15 @@ Unlike the summary, a drill-down database failure is `500 internal`; a non-UUID 
 `unattributed` is `400 bad_request`. Other errors: `401 unauthorized`; `403 forbidden`; `429
 rate_limited`. **Rate limit:** 60/min per key.
 
-### `GET /api/v1/timeline` — tier-scoped seven-day work ledger
+### `GET /api/v1/timeline` — member-visible seven-day work ledger
 
-Returns the Brain's cached seven-day day → person → work ledger. The authenticated key's tier is
-applied at the item/task/decision visibility choke-points: an `external` key sees only `external`
-work, while a `team` key is unfiltered within its authenticated team and can see every stored access
-level, including an internal `admin` row. Normal member-facing ingest rejects `admin`/`private`
-content before it can cross the boundary; the broader team-tier read also covers admin rows created
-inside the Brain. There is no separate RLS backstop, so this application-level filter is the
-isolation boundary.
+Returns the Brain's cached seven-day day → person → work ledger for the authenticated
+member's visibility. Item/task/decision evidence is membership/provenance filtered;
+source-less authored rows have the explicit team-posture exception described in the
+membership contract. Team posture does not expose every stored item. Cache variants bind
+to the member visibility scope and posture; a read without a principal fails closed.
+Normal member-facing ingest still rejects `admin`/`private` content. There is no RLS
+backstop, so these application-level checks remain load-bearing.
 
 ```json
 {
@@ -1727,7 +1775,11 @@ Response is an SSE stream (`text/event-stream`):
   `{"sources":[{"id":"S1","item_id":"uuid","project":"...","path":"...","kind":"decision"}]}`
 - `event: done` — `{"input_tokens":n,"output_tokens":n,"cost_usd":n}`
 
-Answers are grounded only in tier-visible items; citations use `[S#]` inline markers
+Answers are grounded in the caller’s membership-visible content and the explicit
+structured-row provenance rules, not an unrestricted team-tier view. Delegated queries
+remain stateless and project-attenuated; supplied conversation IDs are rejected for them.
+Stored conversation history is not reused for grounding while visibility revalidation is
+pending. Citations use `[S#]` inline markers
 that map to the `sources` trailer. The CLI's `aios query` prints the answer followed by
 a numbered source list.
 
@@ -1868,7 +1920,7 @@ X-AIOS-Team: <team_uuid_or_slug>  # optional compatibility header
 2. `GET /okf-bundle` returns the same graph regardless of extraction timing.
 3. Links are document-relative paths (same format the client writes). The server does not validate them — broken or cross-project links are preserved so clients can report them.
 4. `include_body=false` is the primary mode for graph hydration. `include_body=true` is rate-limited at 10/min per key because it returns full text.
-5. **Tier filtering:** The same SQL tier filter as `GET /items` applies. `links[]` is also filtered: links pointing to documents above the caller's tier ceiling are redacted.
+5. **Membership plus posture:** The page requires membership-visible items and the effective posture ceiling. Unlike `GET /items`, an external-posture caller cannot obtain team items here. Existing link targets must pass both membership and posture checks or the link is redacted; genuinely missing targets are preserved. Visibility resolution failures return `500`, not an unfiltered bundle.
 
 **Rate limits:** `GET /okf-bundle`: 30/min per key. Page size 500 nodes (keyset-paginated by `updated_at`).
 
@@ -2463,13 +2515,15 @@ Body accepts `query` (1–2000 chars, required) and `maxFacts` (1–100, optiona
 
 **Server semantics (normative):**
 
-1. Tier-enforced by scoping to the `group_id`s the caller's tier may see
-   (`visibleGroupIds(teamSlug, memberTier)`) — Graphiti itself has no tier awareness, so this
-   scoping is the **sole** isolation boundary (same posture as `/company-graph`, `/metrics`,
-   `/costs`, `/codebases`, `/projects`: app-code gate, no DB/RLS backstop).
+1. Resolve the member’s accessible projects, then their **stored graph partition pointers**
+   with `selectEnforcedGraphPartitions`. Only those groups reach Graphiti search. This is
+   membership scoping, not `visibleGroupIds(teamSlug, memberTier)` tier-group synthesis.
+   A legitimate empty scope returns `{ "facts": [] }`; a visible system project that resolves
+   to zero partitions fails `500 internal` instead of disguising broken pointers as no facts.
 2. `503 not_configured` if `GRAPHITI_URL` is unset — this is an optional subsystem, not a
    contract requirement.
-3. Every query is audit-logged (`graph.query`) with tier, group count, and result count.
+3. Successful nonempty-scope searches are audit-logged (`graph.query`) with posture, group
+   count and result count; the early empty-scope response does not perform a search.
 
 **Response `200`:**
 
@@ -2504,8 +2558,9 @@ wired); `502` on a Graphiti request failure; `429` rate-limited. **Rate limit:**
 
 ### `GET /api/v1/members` — team roster with cross-tool identities
 
-**Team-tier only** — an `external`-tier key gets `403 forbidden_tier` (the roster is team
-metadata). Optional query filters: `?email=<addr>` (exact roster email), `?handle=<handle>`
+**All authenticated members**, including external collaborators, can read this team-scoped
+people directory. Disabled members and connectors are excluded; returned identities and
+email aliases are part of the shared structure. Optional query filters: `?email=<addr>` (exact roster email), `?handle=<handle>`
 (exact `actor_handle`), `?provider=<p>` (only members with an identity for that provider,
 narrowing each member's `identities` to that provider).
 
@@ -2527,11 +2582,11 @@ narrowing each member's `identities` to that provider).
 `github_login`/`avatar_url` are populated by the admin GitHub sync (used by e.g. `aios
 timeline` to resolve avatars from the brain before falling back to GitHub's public CDN).
 
-**Errors:** `401`; `403 forbidden_tier` (non-team key); `429`. **Rate limit:** 60/min per key.
+**Errors:** `401`; `500 internal`; `429`. **Rate limit:** 60/min per key.
 
 ### `GET /api/v1/identities/resolve` — resolve an external identifier to a member
 
-**Team-tier only.** Exactly one resolution input is required:
+**All authenticated members.** Supply a resolution input:
 `?provider=<p>&external_id=<id>` (a provider user id, e.g. `provider=slack&external_id=U…`),
 `?email=<addr>` (roster email or alias), or `?handle=<handle>` (`actor_handle`).
 
@@ -2552,8 +2607,11 @@ timeline` to resolve avatars from the brain before falling back to GitHub's publ
 `slack_id` is a convenience field (the Slack identity's `externalId`, or `null`) for the
 `slack` CLI's resolver.
 
-**Errors:** `401`; `403 forbidden_tier` (non-team key); `400 bad_request` (no/ambiguous
-resolution input, or `external_id` without `provider`); `404 not_found` (nothing resolves);
+Provider plus external ID is tried first; email/handle can be used as fallback when supplied.
+All resolution remains within the authenticated team.
+
+**Errors:** `401`; `400 bad_request` (no resolution input, or `external_id` without
+`provider`); `404 not_found` (nothing resolves); `500 internal`;
 `429`. **Rate limit:** 120/min per key.
 
 ---
