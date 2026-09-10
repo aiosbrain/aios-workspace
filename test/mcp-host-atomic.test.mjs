@@ -2,10 +2,14 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { createServer } from "node:http";
 import { hostTargets } from "../scripts/mcp-hosts.mjs";
-import { installMcpHosts, runningHostNames } from "../scripts/mcp-host-install.mjs";
+import {
+  installMcpHosts,
+  runningHostNames,
+  verifyServerCommand,
+} from "../scripts/mcp-host-install.mjs";
 import { filePolicy, commitHostFiles } from "../scripts/mcp-host-files.mjs";
 import { readWindowsHostAcls } from "../scripts/mcp-host-acl.mjs";
 import { atomicHostReplace } from "../scripts/mcp-host-atomic.mjs";
@@ -72,7 +76,37 @@ test("published artifact resists project-local package shadowing and detects edi
     ...f,
     env: { ...f.env, AIOS_MCP_TOOLSETS: "workspace" },
     command: undefined,
-    verify: undefined,
+    verify: async (entry, options) => {
+      try {
+        return await verifyServerCommand(entry, options);
+      } catch (error) {
+        // Diagnostic replay only in this synthetic, credential-isolated fixture.
+        // Preserve the original failure even if the replay starts successfully.
+        await new Promise((resolve) => {
+          const child = spawn(entry.command, entry.args, {
+            cwd: f.project,
+            env: { ...f.env, ...entry.env, HOME: f.home, USERPROFILE: f.home },
+            stdio: ["pipe", "ignore", "pipe"],
+            timeout: 20000,
+            windowsHide: true,
+          });
+          let stderr = "";
+          child.stderr.on("data", (chunk) => {
+            stderr = (stderr + chunk).slice(-4000);
+          });
+          child.on("error", () => resolve());
+          child.on("close", (code, signal) => {
+            t.diagnostic(
+              `Synthetic server replay: code=${code}, signal=${signal}, stderr=${stderr.replaceAll(credential.api_key, "[synthetic-key]")}`
+            );
+            resolve();
+          });
+          child.stdin.on("error", () => {});
+          child.stdin.end();
+        });
+        throw error;
+      }
+    },
     credential: { ...credential, brain_url: `http://127.0.0.1:${server.address().port}` },
     hosts: ["cursor"],
   };

@@ -24,7 +24,8 @@ function fixtureOwner(file) {
     {
       env: { ...process.env, AIOS_TEST_OWNER_PATH: file },
       stdio: "pipe",
-      timeout: 5000,
+      // Fixture ownership setup may cold-start PowerShell on a busy CI runner.
+      timeout: 30000,
     }
   );
 }
