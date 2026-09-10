@@ -327,6 +327,19 @@ test("1.25 compatibility snapshot pins corrected coverage without advertising in
   );
   assert.equal(snapshot.version, "1.25");
   assert.equal(snapshot.debtIntakeEventsContract, undefined);
+  // Restore precisely the two corrected digests and require byte identity to merged
+  // 396833f's canonical fixture. This forbids silently changing any other 1.25 content.
+  const previous = structuredClone(snapshot);
+  previous.contentHash = "f46873c773f759512966a1e0f7b8d2efbdb0797a99d184d83bc9b2f23005040b";
+  previous.codebasePayloadContract.fixtures.sha256 =
+    "22bc99241032d38578be67a3130af08404efe4588cf678046fb687a00ab91d5a";
+  assert.equal(
+    createHash("sha256")
+      .update(JSON.stringify(previous, null, 2) + "\n")
+      .digest("hex"),
+    "6dcc19c13073012b39daef0ccce4ebf60616d0f3caa628b95cd0eed0e23ea8c9"
+  );
+
   assert.deepEqual(snapshot.codebasePayloadContract, fixture.codebasePayloadContract);
   for (const key of [
     "tierAliases",
