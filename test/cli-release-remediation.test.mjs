@@ -27,7 +27,7 @@ test("malformed credentials remain value-free through canonical, bare and real s
     preload,
     `import fs from 'node:fs';fs.appendFileSync(process.env.TRACE,'fixture\\n');globalThis.fetch=async()=>{throw Error('fetch must not run')};`
   );
-  const secret = "synthetic-key\ninvalid";
+  const syntheticHeader = "synthetic-key\ninvalid";
   for (const [bin, args] of [
     ["scripts/aios.mjs", ["linear", "get", "FIX-1"]],
     ["scripts/linear.mjs", ["get", "FIX-1"]],
@@ -37,14 +37,14 @@ test("malformed credentials remain value-free through canonical, bare and real s
       cwd: dir,
       encoding: "utf8",
       env: env(dir, {
-        LINEAR_API_KEY: secret,
+        LINEAR_API_KEY: syntheticHeader,
         AIOS_TOOLKIT_DIR: ROOT,
         NODE_OPTIONS: `--import=${preload}`,
         TRACE: trace,
       }),
     });
     assert.equal(result.status, 3);
-    assert.equal((result.stdout + result.stderr).includes(secret), false);
+    assert.equal((result.stdout + result.stderr).includes(syntheticHeader), false);
     assert.match(result.stderr, /AIOS_E_CREDENTIAL_INCOMPLETE/);
   }
   assert.ok(
