@@ -152,3 +152,27 @@ test("strict parsing vectors would pass structure under permissive JSON parsing"
   assert.notEqual(late.events[0].predecessor_event_id, null);
   assert.notDeepEqual(late, cases.find((c) => c.name === "sequence-fork").requests[0]);
 });
+
+test("concurrent and historical-cycle scenarios isolate their intended requirements", () => {
+  const cases = json(ref.fixtures.path).cases;
+  const concurrent = cases.find((c) => c.name === "concurrent-replay");
+  assert.equal(concurrent.expected.status, undefined);
+  for (const completionOrder of [
+    [201, 200],
+    [200, 201],
+  ]) {
+    assert.deepEqual([...completionOrder].sort(), [...concurrent.expected.statusMultiset].sort());
+  }
+  const cycle = cases.find((c) => c.name === "historical-duplicate-cycle");
+  assert.equal(cycle.requests.length, 1);
+  assert.ok(request(cycle.requests[0]));
+  const event = cycle.requests[0].events[0];
+  const history = sets.flatMap((s) => s.records);
+  const prior = history.find((r) => r.event_id === event.predecessor_event_id);
+  const reverse = history.find(
+    (r) => r.candidate_id === event.duplicate_target && r.duplicate_target === event.candidate_id
+  );
+  assert.ok(prior && reverse);
+  assert.equal(event.sequence, prior.sequence + 1);
+  assert.notEqual(event.producer.run_id, prior.producer.run_id);
+});

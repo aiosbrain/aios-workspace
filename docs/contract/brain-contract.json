@@ -112,7 +112,7 @@
       "sha256": "d053f4aa12e9afb5d4b8c7a636f399b177ba51f1871f9c2472cab713b4f76b7e"
     }
   },
-  "contentHash": "e4e1222a5af551a50e4126303679bd37c67c3b6c2b6ede3af05b9c8088025748",
+  "contentHash": "22e8b27c0409d56acd7aff72a2da165f3c3b2e9a068c54443a3fa56e93b3f7aa",
   "debtIntakeEventsContract": {
     "version": "1.26",
     "requestVersion": "debt-intake-events.v1",
@@ -182,7 +182,8 @@
     },
     "fixtures": {
       "path": "debt-intake-events-v1-fixtures.json",
-      "sha256": "3877b33174f3dbcdb90623d282fc65e42dd021e6e4e1585def55d194ed744968"
-    }
+      "sha256": "bafd991a3bd7071e021b7b4bb1be202a82522c07dfefdb1918405cd4249f5d05"
+    },
+    "schemaRegistration": "Before compiling the request schema, register canonicalSchema by its unchanged $id urn:aios:finding-observations:v1. The request $ref resolves to this exact locally vendored schema; do not fetch or substitute a remote schema."
   }
 }
