@@ -175,25 +175,18 @@ test("unknown top-level payload key is rejected (top level is closed)", () => {
   assert.equal(verdict(p), false);
 });
 
-test("schema stays in lockstep with docs/brain-api.md's documented header revision", () => {
-  const doc = readFileSync(path.join(ROOT, "docs/brain-api.md"), "utf8");
-  const m = doc.match(/\*\*Version:\s*([0-9]+\.[0-9]+)\*\*/);
-  assert.ok(m, "brain-api.md must state **Version: X.Y**");
-  // Commit debt observations entered at 1.23 and scanner identity at 1.24; the doc revision
-  // may move past them but never behind.
-  // This is what makes a version bump that forgets THIS file fail loudly — the gap AIO-995
-  // shipped through once already, when only the hash fixture was bumped and the executable
-  // contract stayed at 1.15, licensing payloads the brain then rejected. Moving THIS bound is
-  // therefore part of every bump: leaving it at 23 would let 1.25 ship against a 1.23 schema
-  // exactly as 1.22 shipped against a 1.15 one.
-  const [major, minor] = m[1].split(".").map(Number);
-  assert.ok(major > 1 || (major === 1 && minor >= 25), `doc version ${m[1]} predates 1.24`);
-  assert.match(schema.$id, /\/1\.25\//, "schema $id must be pinned at its own revision");
-  assert.equal(
-    fixtures.version,
-    m[1],
-    "fixtures, schema $id and brain-api.md must state one revision"
+test("schema and fixtures track the independently pinned codebase payload revision", () => {
+  const contract = JSON.parse(
+    readFileSync(path.join(ROOT, "docs/contract/brain-contract.json"), "utf8")
   );
+  // AIO-1101 changes only intake. Scanner payload1.25 remains the exact coverage contract;
+  // the reference must still agree with the executable schema and fixture, preventing drift.
+  const ref = contract.codebasePayloadContract;
+  assert.equal(ref.version, "1.25");
+  assert.match(schema.$id, /\/1\.25\//);
+  assert.equal(fixtures.version, ref.version);
+  assert.equal(ref.schema.path, "codebase-payload-1.25.schema.json");
+  assert.equal(ref.fixtures.path, "codebase-payload-1.25-fixtures.json");
 });
 
 // ---------------------------------------------------------------------------------------
@@ -311,4 +304,15 @@ test("legacy unknown coverage remains distinct from measured v3 zero", () => {
   const legacy = fixtures.valid.find((f) => f.name === "valid-v2-unchanged");
   assert.equal(legacy.payload.metrics.codebase_health.check_coverage, undefined);
   assert.equal(verdict(legacy.payload), true);
+});
+
+test("valid and coverage-only invalid fixtures bind to the same scan head", () => {
+  // JSON Schema cannot express this sibling equality. Brain requires it before persistence;
+  // canonical positives must not pass the schema while contradicting that identity boundary.
+  for (const row of [...fixtures.valid, ...fixtures.coverage_invalid]) {
+    const metrics = row.payload.metrics;
+    if (metrics.codebase_health) {
+      assert.equal(metrics.codebase_health.head_sha, metrics.head_sha, row.name);
+    }
+  }
 });

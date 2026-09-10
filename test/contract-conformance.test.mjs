@@ -38,6 +38,7 @@ test("fixture contentHash is intact (no out-of-band edit)", () => {
     gatewayContract,
     itemPayloadContract,
     codebasePayloadContract,
+    debtIntakeEventsContract,
   } = fixture;
   const recomputed = createHash("sha256")
     .update(
@@ -50,6 +51,7 @@ test("fixture contentHash is intact (no out-of-band edit)", () => {
           gatewayContract,
           itemPayloadContract,
           codebasePayloadContract,
+          debtIntakeEventsContract,
         })
       )
     )
@@ -146,7 +148,11 @@ test("client SSE parser round-trips every contract frame (incl. the forward-comp
 test("codebase payload contract is content-addressed and declares a scanner minimum", () => {
   const c = fixture.codebasePayloadContract;
   assert.ok(c, "brain-contract.json must carry a codebasePayloadContract block");
-  assert.equal(c.version, fixture.version, "codebase payload tracks the document revision");
+  assert.equal(
+    c.version,
+    "1.25",
+    "intake increment preserves the independently versioned codebase payload"
+  );
   for (const key of ["schema", "fixtures"]) {
     const ref = c[key];
     const bytes = readFileSync(path.join(ROOT, "docs/contract", ref.path));
@@ -313,4 +319,45 @@ test("reference classifier: unknown is never stale, and stale is still reachable
   // everything to `unknown` instead — the opposite failure, equally wrong.
   assert.equal(classifyScanner("0.1.0", min), "stale");
   assert.equal(classifyScanner(min, min), "current");
+});
+
+test("1.25 compatibility snapshot pins corrected coverage without advertising intake", () => {
+  const snapshot = JSON.parse(
+    readFileSync(path.join(ROOT, "docs/contract/brain-contract-1.25.json"), "utf8")
+  );
+  assert.equal(snapshot.version, "1.25");
+  assert.equal(snapshot.debtIntakeEventsContract, undefined);
+  // Restore precisely the two corrected digests and require byte identity to merged
+  // 396833f's canonical fixture. This forbids silently changing any other 1.25 content.
+  const previous = structuredClone(snapshot);
+  previous.contentHash = "f46873c773f759512966a1e0f7b8d2efbdb0797a99d184d83bc9b2f23005040b";
+  previous.codebasePayloadContract.fixtures.sha256 =
+    "22bc99241032d38578be67a3130af08404efe4588cf678046fb687a00ab91d5a";
+  assert.equal(
+    createHash("sha256")
+      .update(JSON.stringify(previous, null, 2) + "\n")
+      .digest("hex"),
+    "6dcc19c13073012b39daef0ccce4ebf60616d0f3caa628b95cd0eed0e23ea8c9"
+  );
+
+  assert.deepEqual(snapshot.codebasePayloadContract, fixture.codebasePayloadContract);
+  for (const key of [
+    "tierAliases",
+    "sse",
+    "provisioningTools",
+    "gatewayContract",
+    "itemPayloadContract",
+  ]) {
+    assert.deepEqual(snapshot[key], fixture[key], key);
+  }
+  const dir = mkdtempSync(path.join(tmpdir(), "aios-brain-compat-"));
+  try {
+    const target = path.join(dir, "brain-contract.json");
+    const source = path.join(ROOT, "docs/contract/brain-contract-1.25.json");
+    copyFileSync(source, target);
+    execFileSync(process.execPath, [path.join(ROOT, "scripts/gen-contract-fixture.mjs"), target]);
+    assert.equal(readFileSync(target, "utf8"), readFileSync(source, "utf8"));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
