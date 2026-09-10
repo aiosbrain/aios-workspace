@@ -305,3 +305,14 @@ test("legacy unknown coverage remains distinct from measured v3 zero", () => {
   assert.equal(legacy.payload.metrics.codebase_health.check_coverage, undefined);
   assert.equal(verdict(legacy.payload), true);
 });
+
+test("valid and coverage-only invalid fixtures bind to the same scan head", () => {
+  // JSON Schema cannot express this sibling equality. Brain requires it before persistence;
+  // canonical positives must not pass the schema while contradicting that identity boundary.
+  for (const row of [...fixtures.valid, ...fixtures.coverage_invalid]) {
+    const metrics = row.payload.metrics;
+    if (metrics.codebase_health) {
+      assert.equal(metrics.codebase_health.head_sha, metrics.head_sha, row.name);
+    }
+  }
+});

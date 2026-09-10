@@ -109,10 +109,10 @@
     },
     "fixtures": {
       "path": "codebase-payload-1.25-fixtures.json",
-      "sha256": "22bc99241032d38578be67a3130af08404efe4588cf678046fb687a00ab91d5a"
+      "sha256": "d053f4aa12e9afb5d4b8c7a636f399b177ba51f1871f9c2472cab713b4f76b7e"
     }
   },
-  "contentHash": "9686d9b8aecf40a5f7708b2fe40357d1769a2c21df47a28fbd9835ef21b21e2b",
+  "contentHash": "e4e1222a5af551a50e4126303679bd37c67c3b6c2b6ede3af05b9c8088025748",
   "debtIntakeEventsContract": {
     "version": "1.26",
     "requestVersion": "debt-intake-events.v1",
