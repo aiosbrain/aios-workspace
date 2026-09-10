@@ -1,6 +1,6 @@
 # AIOS Team Brain — API Contract
 
-**Version: 1.24** is the shipped member-facing Brain API (`/api/v1`). **Document revision: 1.25**
+**Version: 1.25** is the pinned member-facing Brain API (`/api/v1`). **Document revision: 1.26**
 also carries the separately negotiated internal Executor gateway contract **1.10**; it does not
 claim unimplemented member-facing v1.10 routes. This document is the single pinned contract between the
 contributor repo (this toolkit's `aios` CLI) and the `aios-team-brain` service. Both
@@ -28,6 +28,12 @@ superseded **explicitly** (never rewritten in place), and the endpoint section t
 carries the coordinated rollback procedure.
 
 *Revisions (additive within v1):*
+- *2026-09-09 — **v1.25**, document revision **1.26** (AIO-1095): defines optional
+  `codebase_health` v3 configured-check coverage. This is a contract-first reservation;
+  consumer acceptance/persistence is AIO-1096 and producer computation is AIO-1097.
+  Contract conformance does not claim deployed runtime support. Scanner identity and all
+  AIO-1011 fixtures remain unchanged; minimum scanner version stays 0.2.0 because this
+  optional extension does not require new output from legacy scanners.*
 - *2026-06-18 — added `GET /api/v1/decisions` (dashboard decision writeback) and
   `GET /api/v1/projects` (brain-project registration). Newer CLIs call these but tolerate a
   `404` from an older brain, so they remain backward-compatible.*
@@ -1914,7 +1920,7 @@ The executable statement of this table is
 (`kind: aios-codebase-request-limits`, `revision: 1`), which applies from member API **1.23**
 onward within major 1 until explicitly superseded or withdrawn. It is a **resource-admission
 supplement**, not a payload-shape revision: it is versioned independently of the member API
-version, and the member API remains **1.24** (only this document's revision moved, to **1.25**,
+version, and the member API remained **1.24** at that activation (only this document's revision moved, to **1.25**,
 for the deployment note below).
 
 **Enforcement is per deployed instance.** These bounds are normative for the contract from
@@ -2195,8 +2201,8 @@ supplement closes; no data repair is required for requests that were rejected be
   (`"pass" | "warn" | "fail"`), `dimensions` (a map of short dimension id →
   `{ "passed": int, "total": int }` counts), `failed_invariant_ids` (array of short invariant
   ids), and `measured_at` (ISO-8601 UTC timestamp). The machine-readable contract is
-  [`contract/codebase-payload-1.24.schema.json`](./contract/codebase-payload-1.24.schema.json)
-  (fixtures: [`contract/codebase-payload-1.24-fixtures.json`](./contract/codebase-payload-1.24-fixtures.json)).
+  [`contract/codebase-payload-1.25.schema.json`](./contract/codebase-payload-1.25.schema.json)
+  (fixtures: [`contract/codebase-payload-1.25-fixtures.json`](./contract/codebase-payload-1.25-fixtures.json)).
   Three normative rules:
   - **Additive:** a payload without `codebase_health` remains valid exactly as before 1.15
     (older scanners are unaffected; an older brain ignores the unknown key).
@@ -2220,6 +2226,26 @@ supplement closes; no data repair is required for requests that were rejected be
     `quality_gate` MUST be `unknown` whenever required evidence is not complete, and
     `automation_eligible` is a producer admission verdict—not authority for the brain to mutate
     a repository. V1 objects remain accepted without coercion.
+  - **V3 configured-check census (member API 1.25):** `schema_version: "3"` retains
+    every v2 field and requires closed `check_coverage: {all, required}` objects.
+    Each bucket requires nonnegative integer `configured`, `complete`, `partial`,
+    `missing`, `stale`, and `error` counts. Each configured check belongs to exactly one
+    evidence status. For each bucket, `configured = complete + partial + missing + stale + error`.
+    Required checks are a subset of all configured checks: each required status count,
+    including `required.configured`, MUST be no greater than the corresponding all count.
+    `findings.length` counts emitted findings, never configured checks; a check can emit
+    zero or multiple findings. Zero is measured evidence; absent coverage in unchanged
+    v1/v2 shapes is unknown and MUST NOT become zero or a fabricated census.
+    No check names, file paths, source text, prompts, transcripts, secrets, or contributor
+    identity may be added to coverage. Unknown keys are rejected at every new object.
+    JSON Schema enforces shape; the consumer MUST also enforce the sibling sums and
+    subset comparisons, returning whole-request `422` on any failure, without stripping
+    fields or partially accepting a scan. Canonical `coverage_invalid` fixtures represent
+    schema-valid semantic failures. This does not alter authentication: unauthenticated
+    callers receive `401`, external-tier callers receive `403 forbidden_tier`, and only
+    authenticated team-tier callers reach validation. Older consumers may reject v3;
+    producers MUST wait for AIO-1096 activation before sending it, while preserving
+    v1/v2 compatibility. AIO-1095 performs no deployment.
 - Optional `contributions[]` and `issues[]` arrays carry per-author/day rollups and GitHub issues.
 
 **Response:** `201 { "status": "ok", "codebase_id": "uuid", "metrics_id": "uuid", ... }`

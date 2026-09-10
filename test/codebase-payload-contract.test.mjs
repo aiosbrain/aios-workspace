@@ -5,9 +5,9 @@
 // optional scanner identity at 1.24).
 //
 // Pattern mirrors test/item-payload-contract.test.mjs + test/item-payload-schema-parity.test.mjs:
-//   1. docs/contract/codebase-payload-1.24.schema.json — the machine-readable contract
+//   1. docs/contract/codebase-payload-1.25.schema.json — the machine-readable contract
 //      (draft 2020-12, compiled here with ajv), referenced normatively from docs/brain-api.md.
-//   2. docs/contract/codebase-payload-1.24-fixtures.json — canonical fixtures, both buckets
+//   2. docs/contract/codebase-payload-1.25-fixtures.json — canonical fixtures, both buckets
 //      cross-checked against the compiled schema.
 //
 // Unlike the item-payload suite there is no second, hand-written client-side validator to
@@ -35,10 +35,10 @@ import Ajv2020 from "ajv/dist/2020.js";
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const schema = JSON.parse(
-  readFileSync(path.join(ROOT, "docs/contract/codebase-payload-1.24.schema.json"), "utf8")
+  readFileSync(path.join(ROOT, "docs/contract/codebase-payload-1.25.schema.json"), "utf8")
 );
 const fixtures = JSON.parse(
-  readFileSync(path.join(ROOT, "docs/contract/codebase-payload-1.24-fixtures.json"), "utf8")
+  readFileSync(path.join(ROOT, "docs/contract/codebase-payload-1.25-fixtures.json"), "utf8")
 );
 
 // No `format` keywords appear anywhere in the schema (measured_at is pinned by `pattern`),
@@ -50,8 +50,8 @@ function verdict(payload) {
   return Boolean(validate(structuredClone(payload)));
 }
 
-test("fixtures file tracks the 1.24 contract revision", () => {
-  assert.equal(fixtures.version, "1.24");
+test("fixtures file tracks the 1.25 contract revision", () => {
+  assert.equal(fixtures.version, "1.25");
   assert.ok(fixtures.valid.length >= 3, "expected at least 3 valid fixtures");
   assert.ok(fixtures.invalid.length >= 3, "expected at least 3 invalid fixtures");
 });
@@ -187,8 +187,8 @@ test("schema stays in lockstep with docs/brain-api.md's documented header revisi
   // therefore part of every bump: leaving it at 23 would let 1.25 ship against a 1.23 schema
   // exactly as 1.22 shipped against a 1.15 one.
   const [major, minor] = m[1].split(".").map(Number);
-  assert.ok(major > 1 || (major === 1 && minor >= 24), `doc version ${m[1]} predates 1.24`);
-  assert.match(schema.$id, /\/1\.24\//, "schema $id must be pinned at its own revision");
+  assert.ok(major > 1 || (major === 1 && minor >= 25), `doc version ${m[1]} predates 1.24`);
+  assert.match(schema.$id, /\/1\.25\//, "schema $id must be pinned at its own revision");
   assert.equal(
     fixtures.version,
     m[1],
@@ -256,4 +256,59 @@ test("scanner identity carries no `pattern` — shape is the scanner's promise, 
     assert.equal(props[key].pattern, undefined, `${key} must not pin a pattern`);
     assert.deepEqual(props[key].type, ["string", "null"]);
   }
+});
+
+// Reference only: production acceptance belongs to AIO-1096. JSON Schema cannot
+// compare sibling numbers, so this executable oracle accompanies the wire fixtures.
+function coverageCoherent(payload) {
+  const health = payload.metrics.codebase_health;
+  if (health?.schema_version !== "3") return true;
+  const { all, required } = health.check_coverage;
+  const statuses = ["complete", "partial", "missing", "stale", "error"];
+  return (
+    [all, required].every(
+      (bucket) => bucket.configured === statuses.reduce((sum, key) => sum + bucket[key], 0)
+    ) && ["configured", ...statuses].every((key) => required[key] <= all[key])
+  );
+}
+
+test("v3 canonical coverage reconciles and semantic-invalid vectors require whole-request rejection", () => {
+  assert.ok(fixtures.coverage_invalid.length >= 14);
+  for (const fixture of fixtures.valid) {
+    assert.equal(coverageCoherent(fixture.payload), true, fixture.name);
+  }
+  for (const fixture of fixtures.coverage_invalid) {
+    assert.equal(verdict(fixture.payload), true, `${fixture.name}: shape remains valid`);
+    assert.equal(coverageCoherent(fixture.payload), false, fixture.name);
+  }
+});
+
+test("1.25 preserves all 1.24 vectors and the closed v2 schema byte-equivalent structure", () => {
+  const previous = JSON.parse(
+    readFileSync(path.join(ROOT, "docs/contract/codebase-payload-1.24-fixtures.json"), "utf8")
+  );
+  for (const bucket of ["valid", "invalid", "brain_invalid"]) {
+    assert.deepEqual(fixtures[bucket].slice(0, previous[bucket].length), previous[bucket]);
+  }
+  assert.deepEqual(fixtures.scanner_state, previous.scanner_state);
+  const legacy = JSON.parse(
+    readFileSync(path.join(ROOT, "docs/contract/codebase-health-v2.schema.json"), "utf8")
+  );
+  delete legacy.$id;
+  delete legacy.$schema;
+  const embedded = JSON.parse(
+    JSON.stringify(schema.$defs.codebaseHealthV2).replaceAll(
+      "#/$defs/codebaseHealthV2/$defs/evidenceStatus",
+      "#/$defs/evidenceStatus"
+    )
+  );
+  assert.deepEqual(embedded, legacy);
+});
+
+test("legacy unknown coverage remains distinct from measured v3 zero", () => {
+  const zero = fixtures.valid.find((f) => f.name === "valid-v3-zero");
+  assert.equal(zero.payload.metrics.codebase_health.check_coverage.all.configured, 0);
+  const legacy = fixtures.valid.find((f) => f.name === "valid-v2-unchanged");
+  assert.equal(legacy.payload.metrics.codebase_health.check_coverage, undefined);
+  assert.equal(verdict(legacy.payload), true);
 });
