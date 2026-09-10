@@ -168,10 +168,10 @@ export class CellContext {
     const spawnError = result.error?.code ?? null;
     this.recordCommand({ cmd, args, status, stdout, stderr, label, started, spawnError });
     if (status !== 0 && !expectFailure) {
-      throw new Error(
-        `command failed (exit ${status}${spawnError ? `, ${spawnError}` : ""}): ` +
-          `${redact(`${cmd} ${args.join(" ")}`)}\n${redact(`${stdout}${stderr}`)}`
-      );
+      const failureStatus = spawnError ? `${status}, ${spawnError}` : String(status);
+      const command = redact([cmd, ...args].join(" "));
+      const output = redact(String(stdout) + String(stderr));
+      throw new Error(`command failed (exit ${failureStatus}): ${command}\n${output}`);
     }
     return { stdout, stderr, status, spawnError };
   }

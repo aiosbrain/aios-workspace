@@ -17,7 +17,7 @@ const CONTROLS = [
   "unknown-internal-error",
   "digest-tamper",
   "sentinel-scan-control",
-].sort();
+].sort((a, b) => a.localeCompare(b));
 const SECTIONS = [
   "fresh-install",
   "isolation-probes",
@@ -86,7 +86,7 @@ export function verifyWorkspaceRelease({ directory, run, jobs, sha, version, ref
       assert.equal(evidence.ok, true);
       assert.deepEqual(evidence.sentinelHits, []);
       assert.equal(evidence.cell.platform, platform);
-      assert.match(evidence.cell.node, new RegExp(`^v${node}\\.`));
+      assert.match(evidence.cell.node, new RegExp(String.raw`^v${node}\.`));
       for (const section of SECTIONS) assert.ok(evidence.sections[section], `Missing ${section}`);
       const s = evidence.sections;
       assert.equal(s["fresh-install"].verifiedSha256, candidate.sha256);
@@ -125,7 +125,10 @@ export function verifyWorkspaceRelease({ directory, run, jobs, sha, version, ref
 
       const controls = s["fault-controls"];
       assert.equal(controls.allRed, true);
-      assert.deepEqual(controls.controls.map((c) => c.id).sort(), CONTROLS);
+      assert.deepEqual(
+        controls.controls.map((c) => c.id).sort((a, b) => a.localeCompare(b)),
+        CONTROLS
+      );
       assert.ok(controls.controls.every((c) => c.red === true));
       assert.ok(Array.isArray(evidence.commands) && evidence.commands.length > 0);
     }
@@ -134,9 +137,18 @@ export function verifyWorkspaceRelease({ directory, run, jobs, sha, version, ref
 }
 
 if (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url) {
+  // This entrypoint belongs to the Ubuntu OIDC publisher. Verification above is portable.
+  // Never discover release executables from an artifact-controlled search path.
+  assert.equal(process.platform, "linux", "Run the publication entrypoint in its Ubuntu workflow");
+  const npmCli = path.resolve(
+    path.dirname(process.execPath),
+    "../lib/node_modules/npm/bin/npm-cli.js"
+  );
+  assert.ok(lstatSync(npmCli).isFile(), "Pinned Node installation must carry npm");
   const id = process.env.WORKSPACE_ACCEPTANCE_RUN_ID;
   assert.match(id || "", /^\d+$/);
-  const api = (endpoint) => JSON.parse(execFileSync("gh", ["api", endpoint], { encoding: "utf8" }));
+  const api = (endpoint) =>
+    JSON.parse(execFileSync("/usr/bin/gh", ["api", endpoint], { encoding: "utf8" }));
   const run = api(`repos/${REPOSITORY}/actions/runs/${id}`);
   const jobResponse = api(
     `repos/${REPOSITORY}/actions/runs/${id}/attempts/${run.run_attempt}/jobs?per_page=100`
@@ -146,7 +158,7 @@ if (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === imp
     jobResponse.jobs.length,
     "Do not silently truncate job evidence"
   );
-  const sha = execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+  const sha = execFileSync("/usr/bin/git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim();
   const manifest = readJson("package.json");
   assert.equal(manifest.name, "@aiosbrain/aios");
   assert.equal(process.env.WORKSPACE_RELEASE_VERSION, manifest.version);
@@ -159,20 +171,30 @@ if (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === imp
     ref: process.env.GITHUB_REF,
   });
   const packed = JSON.parse(
-    execFileSync("tar", ["-xOf", verified.tarball, "package/package.json"], { encoding: "utf8" })
+    execFileSync("/usr/bin/tar", ["-xOf", verified.tarball, "package/package.json"], {
+      encoding: "utf8",
+    })
   );
   for (const key of ["name", "version", "bin", "engines", "dependencies"])
     assert.deepEqual(packed[key], manifest[key], `Packed ${key} must match the release source`);
   if (process.argv.includes("--publish")) {
     execFileSync(
-      "npm",
-      ["publish", verified.tarball, "--access", "public", "--provenance", "--ignore-scripts"],
+      process.execPath,
+      [
+        npmCli,
+        "publish",
+        verified.tarball,
+        "--access",
+        "public",
+        "--provenance",
+        "--ignore-scripts",
+      ],
       { stdio: "inherit" }
     );
     const integrity = JSON.parse(
       execFileSync(
-        "npm",
-        ["view", `@aiosbrain/aios@${manifest.version}`, "dist.integrity", "--json"],
+        process.execPath,
+        [npmCli, "view", `@aiosbrain/aios@${manifest.version}`, "dist.integrity", "--json"],
         { encoding: "utf8" }
       )
     );

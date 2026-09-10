@@ -255,8 +255,12 @@ export function normalizeForCompare(md) {
     // Restrict to simple valid destinations; complex/escaped links still fail closed.
     normalized = mapOutsideCodeSpans(normalized, (prose) =>
       prose.replace(
-        /(?<!\\)\[([^[\]\\]+)\]\(<([^\s<>()\\]+)>(?=\s*(?:"[^"]*"|'[^']*')?\))/g,
-        "[$1]($2"
+        /(?<!\\)\[([^[\]\\]+)\]\(<([^\s<>()\\]+)>/g,
+        (match, label, destination, offset) => {
+          const ending = prose.slice(offset + match.length);
+          if (!/^\s*(?:"[^"]*"|'[^']*')?\)/.test(ending)) return match;
+          return `[${label}](${destination}`;
+        }
       )
     );
     // Linear canonicalises unordered-list markers to `*`.
