@@ -38,6 +38,7 @@ test("fixture contentHash is intact (no out-of-band edit)", () => {
     gatewayContract,
     itemPayloadContract,
     codebasePayloadContract,
+    debtIntakeEventsContract,
   } = fixture;
   const recomputed = createHash("sha256")
     .update(
@@ -50,6 +51,7 @@ test("fixture contentHash is intact (no out-of-band edit)", () => {
           gatewayContract,
           itemPayloadContract,
           codebasePayloadContract,
+          debtIntakeEventsContract,
         })
       )
     )
@@ -146,7 +148,11 @@ test("client SSE parser round-trips every contract frame (incl. the forward-comp
 test("codebase payload contract is content-addressed and declares a scanner minimum", () => {
   const c = fixture.codebasePayloadContract;
   assert.ok(c, "brain-contract.json must carry a codebasePayloadContract block");
-  assert.equal(c.version, fixture.version, "codebase payload tracks the document revision");
+  assert.equal(
+    c.version,
+    "1.25",
+    "intake increment preserves the independently versioned codebase payload"
+  );
   for (const key of ["schema", "fixtures"]) {
     const ref = c[key];
     const bytes = readFileSync(path.join(ROOT, "docs/contract", ref.path));
