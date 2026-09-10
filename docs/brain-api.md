@@ -1,6 +1,6 @@
 # AIOS Team Brain — API Contract
 
-**Version: 1.26** is the pinned member-facing Brain API (`/api/v1`). **Document revision: 1.27**
+**Version: 1.26** is the pinned member-facing Brain API (`/api/v1`). **Document revision: 1.28**
 also carries the separately negotiated internal Executor gateway contract **1.10**; it does not
 claim unimplemented member-facing v1.10 routes. This document is the single pinned contract between the
 contributor repo (this toolkit's `aios` CLI) and the `aios-team-brain` service. Both
@@ -28,6 +28,7 @@ superseded **explicitly** (never rewritten in place), and the endpoint section t
 carries the coordinated rollback procedure.
 
 *Revisions (additive within v1):*
+- *2026-09-10 — document revision **1.28** (AIO-1101): records the implemented Team Brain intake endpoint at commit `87be1293dd8338dde953020c757bad336f2da9b4`. Availability still requires verified deployment and activation in each target environment; this editorial status update makes no production availability claim. Member API 1.26, scanner payload 1.25 and gateway 1.10 are unchanged.*
 - *2026-09-10 — **v1.26**, document revision **1.27** (AIO-1101): reserves append-only debt intake events. Contract only; endpoint/storage/publisher remain future increments. Codebase payload stays pinned at 1.25 and gateway at 1.10.*
 - *2026-09-09 — **v1.25**, document revision **1.26** (AIO-1095): defines optional
   `codebase_health` v3 configured-check coverage. This is a contract-first reservation;
@@ -2736,9 +2737,9 @@ stored encrypted at rest (`member_secrets`) and every response carries `Cache-Co
 20/min per key, `DELETE` none.
 
 
-## POST /api/v1/codebases/:slug/debt-intake-events (contract reservation)
+## POST /api/v1/codebases/:slug/debt-intake-events
 
-**Availability:** member API 1.26 defines this contract; it does not claim a deployed endpoint. The ordered Team Brain storage/endpoint increment of AIO-1101 must merge, rehearse and deploy before producers enable upload. AIO-1102 supplies the publisher; AIO-1103 supplies readers; AIO-1104 owns activation. Existing snapshot ingest and scanner debt are unchanged.
+**Availability:** the storage/endpoint increment is implemented in [Team Brain PR709](https://github.com/aiosbrain/aios-team-brain/pull/709), merged at `87be1293dd8338dde953020c757bad336f2da9b4`. Deployment and activation are environment-specific: before enabling upload, verify the target environment’s exact deployed commit, successful schema loader, installed constraints, narrowly bound uploader grant, and ingest/replay/revocation evidence. A merged implementation or isolated test does not establish staging or production availability, and this contract makes no production availability claim. AIO-1102 supplies the publisher; AIO-1103 supplies readers; AIO-1104 owns activation. Existing snapshot ingest and scanner debt are unchanged.
 
 Content-addressed `debtIntakeEventsContract` in [brain-contract.json](contract/brain-contract.json) pins the request, acknowledgment, canonical union, source commit and fixtures. The [vendored canonical contract](contract/finding-observations-v1.md) is normative alongside this section. The existing codebase payload stays independently pinned at 1.25. A [corrected 1.25 compatibility snapshot](contract/brain-contract-1.25.json) lets coverage-only consumers retain their implemented API version while consuming the corrected fixture identities. It is the prior 1.25 contract with only the codebase fixture digest and its parent content hash regenerated; it contains no intake reservation. Five new valid v2/v3 vectors and fourteen coverage-only invalid vectors now bind health.head_sha to metrics.head_sha. Schema bytes, legacy vectors and intentional identity-conflict negatives remain unchanged.
 
