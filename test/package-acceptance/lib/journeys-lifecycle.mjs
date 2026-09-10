@@ -189,10 +189,7 @@ export function upgradeJourney(ctx) {
   // that template legitimately changes with the membership contract, causing a preflight
   // merge conflict before any durable-journal interruption boundary is reached.
   const customPath = path.join(workspace, ".claude", "rules", "acceptance-custom.md");
-  writeFileSync(
-    customPath,
-    "# Local acceptance rule\n\nPreserve this acceptance customization.\n"
-  );
+  writeFileSync(customPath, "# Local acceptance rule\n\nPreserve this acceptance customization.\n");
   ctx.runWithAmbientEnv("git", ["add", "-A"], { cwd: workspace, label: "record-customization" });
   ctx.runWithAmbientEnv(
     "git",
