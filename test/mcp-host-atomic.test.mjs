@@ -5,8 +5,9 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { createServer } from "node:http";
 import { hostTargets } from "../scripts/mcp-hosts.mjs";
-import { installMcpHosts } from "../scripts/mcp-host-install.mjs";
+import { installMcpHosts, runningHostNames } from "../scripts/mcp-host-install.mjs";
 import { filePolicy, commitHostFiles } from "../scripts/mcp-host-files.mjs";
+import { readWindowsHostAcls } from "../scripts/mcp-host-acl.mjs";
 import { atomicHostReplace } from "../scripts/mcp-host-atomic.mjs";
 import {
   installedServerCommand,
@@ -51,7 +52,7 @@ test("published artifact resists project-local package shadowing and detects edi
     path.join(shadow, "package.json"),
     JSON.stringify({
       name: "@aiosbrain/mcp",
-      version: "0.1.0",
+      version: "0.1.1",
       bin: { "aios-brain-mcp": "evil.cjs" },
     })
   );
@@ -82,7 +83,7 @@ test("published artifact resists project-local package shadowing and detects edi
   assert.equal(fs.existsSync(marker), false);
   const entry = installedServerCommand(f);
   assert.equal(entry.args.length, 1);
-  assert.ok(entry.args[0].includes(path.join(".aios", "mcp", "0.1.0")));
+  assert.ok(entry.args[0].includes(path.join(".aios", "mcp", "0.1.1")));
   // A real Windows server launch can update PowerShell's own startup profile
   // cache. Reinstallation must leave every installer-managed file unchanged;
   // the dry-run assertion above deliberately checks the entire fixture tree.
@@ -281,5 +282,45 @@ test(
         /injected final failure/.test(error.message) && !/rollback conflicts/.test(error.message)
     );
     assert.equal(fs.readFileSync(file, "utf8"), "installed");
+  }
+);
+
+test(
+  "Windows installer ACL and process checks resist cwd and PATH executable shadows",
+  { skip: process.platform !== "win32" },
+  async (t) => {
+    const f = fixture(t);
+    const file = path.join(f.home, "private.json");
+    put(file, "synthetic");
+    fs.copyFileSync(process.execPath, path.join(f.project, "powershell.exe"));
+    const originalCwd = process.cwd();
+    const originalPath = process.env.PATH;
+    const originalNoCwd = process.env.NoDefaultCurrentDirectoryInExePath;
+    try {
+      delete process.env.NoDefaultCurrentDirectoryInExePath;
+      for (const mode of ["cwd", "path"]) {
+        process.chdir(mode === "cwd" ? f.project : f.home);
+        process.env.PATH =
+          mode === "path" ? f.project + path.delimiter + originalPath : originalPath;
+        assert.equal(
+          execFileSync("powershell.exe", ["-e", "process.stdout.write('shadow-control')"], {
+            encoding: "utf8",
+            timeout: 30000,
+          }),
+          "shadow-control"
+        );
+        filePolicy().secure(file);
+        const acl = readWindowsHostAcls([file]).get(file);
+        assert.equal(acl.owner, acl.current);
+        assert.deepEqual(acl.allow, [acl.current]);
+        assert.ok(runningHostNames().length > 0);
+      }
+    } finally {
+      process.chdir(originalCwd);
+      if (originalPath === undefined) delete process.env.PATH;
+      else process.env.PATH = originalPath;
+      if (originalNoCwd === undefined) delete process.env.NoDefaultCurrentDirectoryInExePath;
+      else process.env.NoDefaultCurrentDirectoryInExePath = originalNoCwd;
+    }
   }
 );

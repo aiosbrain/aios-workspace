@@ -4,10 +4,10 @@ import { createHash } from "node:crypto";
 import { gunzipSync } from "node:zlib";
 import { MCP_PACKAGE_VERSION } from "./mcp-hosts.mjs";
 
-// Published and independently accepted AIO-1111 artifact. Updating the version
+// Published and independently accepted AIO-1164 artifact. Updating the version
 // requires updating this integrity and repeating package acceptance.
 export const MCP_PACKAGE_INTEGRITY =
-  "sha512-5bhbsgMiy/wNXEXAaA671Lk29HOiVfO+YNDbOGgkYqz7Mxak5Rn7Q/uWVnfUNdSGmcPojHucgtaY7vy4hktOug==";
+  "sha512-6IDfKK/Ml7eMrzhO1JLrkGh8XbeWqJXlxHaJ90o8TIN0yrI5ipFZTcBN14/yq9gxAht5LKO5fZ+q3rFamnoXBg==";
 const files = [
   "LICENSE",
   "package.json",

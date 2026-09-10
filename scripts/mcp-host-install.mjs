@@ -7,7 +7,11 @@ import { hostTargets, MCP_PACKAGE_VERSION, MCP_SERVER_KEY } from "./mcp-hosts.mj
 import { readHostDocument, editHostDocument } from "./mcp-host-formats.mjs";
 import { filePolicy, commitHostFiles } from "./mcp-host-files.mjs";
 import { resolveBrainConfig } from "./mcp-config.mjs";
-import { validateCredentialTuple, readGlobalCredential } from "./mcp-credentials.mjs";
+import {
+  validateCredentialTuple,
+  readGlobalCredential,
+  windowsSystemExecutable,
+} from "./mcp-credentials.mjs";
 import { TOOLSETS } from "../packages/mcp-core/capabilities.mjs";
 import { installedServerCommand, prepareServerArtifact } from "./mcp-host-artifact.mjs";
 export { installedServerCommand } from "./mcp-host-artifact.mjs";
@@ -17,11 +21,15 @@ export function runningHostNames(platform = process.platform, exec = execFileSyn
     const script =
       "$ErrorActionPreference='Stop'; $env:PSModulePath=$PSHOME+'\\Modules'; $items=@(Get-CimInstance Win32_Process | ForEach-Object { if ($_.CommandLine) { $_.CommandLine } else { $_.Name } }); ConvertTo-Json -InputObject $items -Compress";
     const parsed = JSON.parse(
-      exec("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], {
-        encoding: "utf8",
-        windowsHide: true,
-        timeout: 5000,
-      })
+      exec(
+        windowsSystemExecutable("powershell"),
+        ["-NoProfile", "-NonInteractive", "-Command", script],
+        {
+          encoding: "utf8",
+          windowsHide: true,
+          timeout: 5000,
+        }
+      )
     );
     if (!Array.isArray(parsed) || parsed.some((value) => typeof value !== "string"))
       throw new Error("Cannot verify running hosts");
@@ -172,11 +180,15 @@ export async function verifyServerCommand(
       try {
         if (!child.pid) return;
         if (process.platform === "win32")
-          execFileSync("taskkill.exe", ["/PID", String(child.pid), "/T", "/F"], {
-            stdio: "pipe",
-            windowsHide: true,
-            timeout: 5000,
-          });
+          execFileSync(
+            windowsSystemExecutable("taskkill"),
+            ["/PID", String(child.pid), "/T", "/F"],
+            {
+              stdio: "pipe",
+              windowsHide: true,
+              timeout: 5000,
+            }
+          );
         else process.kill(-child.pid, "SIGKILL");
       } catch (error) {
         if (error.code !== "ESRCH") finish(new Error("MCP server process cleanup failed"));

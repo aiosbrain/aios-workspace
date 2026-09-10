@@ -318,7 +318,7 @@ test(
 test("recorded command verifies exact membership and rejects same-count drift", async (t) => {
   const f = fixture(t);
   const script = (names) =>
-    `process.stdin.resume();process.stdin.on('end',()=>{console.log(JSON.stringify({id:1,result:{protocolVersion:'2025-11-25',serverInfo:{version:'0.1.0'}}}));console.log(JSON.stringify({id:2,result:{tools:${JSON.stringify(names)}.map(name=>({name,annotations:{readOnlyHint:true}}))}}))})`;
+    `process.stdin.resume();process.stdin.on('end',()=>{console.log(JSON.stringify({id:1,result:{protocolVersion:'2025-11-25',serverInfo:{version:'0.1.1'}}}));console.log(JSON.stringify({id:2,result:{tools:${JSON.stringify(names)}.map(name=>({name,annotations:{readOnlyHint:true}}))}}))})`;
   const entry = { command: process.execPath, args: ["-e", script(TOOLSETS.brain)], env: {} };
   const good = await verifyServerCommand(entry, { ...f, timeoutMs: 2000 });
   assert.equal(good.verified, true);

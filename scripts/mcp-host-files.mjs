@@ -4,7 +4,11 @@ import { randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { readWindowsHostAcls } from "./mcp-host-acl.mjs";
 import { atomicHostReplace } from "./mcp-host-atomic.mjs";
-import { assertWindowsCredentialAcl, readWindowsCredentialAcl } from "./mcp-credentials.mjs";
+import {
+  assertWindowsCredentialAcl,
+  readWindowsCredentialAcl,
+  windowsSystemExecutable,
+} from "./mcp-credentials.mjs";
 
 const sameIdentity = (a, b) => a && b && a.dev === b.dev && a.ino === b.ino;
 function stat(file) {
@@ -40,12 +44,16 @@ export function filePolicy({
         "foreach($r in @($a.Access)){$a.RemoveAccessRuleSpecific($r)}; $a.SetOwner($sid); " +
         "$rule=New-Object System.Security.AccessControl.FileSystemAccessRule($sid,'FullControl','Allow'); " +
         "$a.AddAccessRule($rule); Set-Acl -LiteralPath $p -AclObject $a";
-      exec("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], {
-        env: { ...process.env, AIOS_MCP_PRIVATE_PATH: file },
-        windowsHide: true,
-        timeout: 5000,
-        stdio: "pipe",
-      });
+      exec(
+        windowsSystemExecutable("powershell"),
+        ["-NoProfile", "-NonInteractive", "-Command", script],
+        {
+          env: { ...process.env, AIOS_MCP_PRIVATE_PATH: file },
+          windowsHide: true,
+          timeout: 5000,
+          stdio: "pipe",
+        }
+      );
     }
     owner(file, fs.lstatSync(file), true);
   }

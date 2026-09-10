@@ -3,7 +3,7 @@ import path from "node:path";
 import os from "node:os";
 import { existsSync } from "node:fs";
 
-export const MCP_PACKAGE_VERSION = "0.1.0";
+export const MCP_PACKAGE_VERSION = "0.1.1";
 export const MCP_SERVER_KEY = "aios-brain";
 export const MCP_HOSTS = Object.freeze([
   {
