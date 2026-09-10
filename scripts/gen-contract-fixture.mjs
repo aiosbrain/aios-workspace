@@ -49,6 +49,7 @@ const {
   gatewayContract,
   itemPayloadContract,
   codebasePayloadContract,
+  debtIntakeEventsContract,
 } = fixture;
 const contentHash = createHash("sha256")
   .update(
@@ -65,6 +66,7 @@ const contentHash = createHash("sha256")
         // `scanner_version` against — so it is contract content, not commentary, and an
         // out-of-band edit to it must break the hash like any other.
         codebasePayloadContract,
+        debtIntakeEventsContract,
       })
     )
   )
