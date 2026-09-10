@@ -607,7 +607,8 @@
             "recordRef": "46871fdd6b6e360eadede25f9f592212be65856d798f14b9fa27d5087d7ad5c4"
           }
         ],
-        "principal": "authorized-uploader"
+        "principal": "authorized-uploader",
+        "isolation": "Same child is valid against the candidate history before summary; rejection must be due to frozen producer run."
       },
       "requests": [
         {
@@ -627,7 +628,7 @@
               "disposition": "open",
               "duplicate_target": null,
               "episode": 0,
-              "event_id": "f9ef51a416ecd760e879a0a3cb886e6ee83e44f5398c80f10d8a0ffb0fe6f43f",
+              "event_id": "ee4bf89e0bc6b7327c2b0daae17bf78069e92c4d9c1c1388bc308937c28b405b",
               "evidence_status": "complete",
               "identity": {
                 "original_run_id": "0682c5f2076f099c34cfdd15a9e063849ed437a49677e6fcc5b4198c76575be5",
@@ -640,14 +641,18 @@
                 "version": "discovery.v1"
               },
               "links": {
-                "linear": null,
+                "linear": {
+                  "type": "linear",
+                  "team": "AIO",
+                  "number": 1101
+                },
                 "merge": null,
                 "pull_request": null,
                 "resolution": null,
                 "scanner": null
               },
-              "observed_at": "2026-09-01T00:00:00Z",
-              "predecessor_event_id": null,
+              "observed_at": "2026-08-29T10:00:00Z",
+              "predecessor_event_id": "2dc43ea54ec8d0f35eea3bed0e8332127d3b74138411b67f218bbafa4fa8a718",
               "producer": {
                 "name": "harness",
                 "run_id": "0682c5f2076f099c34cfdd15a9e063849ed437a49677e6fcc5b4198c76575be5",
@@ -655,8 +660,8 @@
               },
               "record_type": "candidate",
               "schema_version": "finding-observations.v1",
-              "sequence": 0,
-              "state": "discovered",
+              "sequence": 2,
+              "state": "filed",
               "taxonomy": {
                 "defect_class": "logic",
                 "determinism": "unverified",
@@ -1603,7 +1608,7 @@
       },
       "requests": [
         {
-          "rawUtf8": "{\"schema_version\":\"debt-intake-events.v1\",\"events\":[],\"events\":[]}"
+          "rawUtf8": "{\"schema_version\":\"debt-intake-events.v1\",\"schema_version\":\"debt-intake-events.v1\",\"events\":[{\"attribution\":{\"attempt\":1,\"issue\":null,\"program_id\":\"1310ca2c8932dbd118668bd97442558a3e1f546b5e15c69699dfbd6024f548d8\",\"run_id\":\"0682c5f2076f099c34cfdd15a9e063849ed437a49677e6fcc5b4198c76575be5\"},\"capture_status\":\"complete\",\"counts\":{\"emitted_candidates\":0,\"incomplete\":0,\"malformed\":0,\"raw_candidates\":0,\"terminal_stage\":0},\"detector_completed\":true,\"detector_evidence_sha256\":\"59b8b697ba4f4a8c7b4c577871d07e3da4d4e206e5b2c96b04c4d99a177a1870\",\"emission_gap_reason\":\"none\",\"event_id\":\"660b2ea1105a45b5dde50195829b63b16ec122ce6ca320defd42bb854c08d9fc\",\"evidence_status\":\"complete\",\"observed_at\":\"2026-08-29T10:00:00Z\",\"producer\":{\"name\":\"harness\",\"run_id\":\"0682c5f2076f099c34cfdd15a9e063849ed437a49677e6fcc5b4198c76575be5\",\"version\":\"1.0.0\"},\"record_type\":\"run_summary\",\"schema_version\":\"finding-observations.v1\",\"stage\":\"discovery\",\"visibility_tier\":\"team\"}]}"
         }
       ],
       "expected": {
@@ -1620,7 +1625,7 @@
       },
       "requests": [
         {
-          "rawUtf8": "\ufeff{}"
+          "rawUtf8": "\ufeff{\"schema_version\":\"debt-intake-events.v1\",\"events\":[{\"attribution\":{\"attempt\":1,\"issue\":null,\"program_id\":\"1310ca2c8932dbd118668bd97442558a3e1f546b5e15c69699dfbd6024f548d8\",\"run_id\":\"0682c5f2076f099c34cfdd15a9e063849ed437a49677e6fcc5b4198c76575be5\"},\"capture_status\":\"complete\",\"counts\":{\"emitted_candidates\":0,\"incomplete\":0,\"malformed\":0,\"raw_candidates\":0,\"terminal_stage\":0},\"detector_completed\":true,\"detector_evidence_sha256\":\"59b8b697ba4f4a8c7b4c577871d07e3da4d4e206e5b2c96b04c4d99a177a1870\",\"emission_gap_reason\":\"none\",\"event_id\":\"660b2ea1105a45b5dde50195829b63b16ec122ce6ca320defd42bb854c08d9fc\",\"evidence_status\":\"complete\",\"observed_at\":\"2026-08-29T10:00:00Z\",\"producer\":{\"name\":\"harness\",\"run_id\":\"0682c5f2076f099c34cfdd15a9e063849ed437a49677e6fcc5b4198c76575be5\",\"version\":\"1.0.0\"},\"record_type\":\"run_summary\",\"schema_version\":\"finding-observations.v1\",\"stage\":\"discovery\",\"visibility_tier\":\"team\"}]}"
         }
       ],
       "expected": {
@@ -1637,7 +1642,7 @@
       },
       "requests": [
         {
-          "rawUtf8": "{\"events\":[1.0]}"
+          "rawUtf8": "{\"schema_version\":\"debt-intake-events.v1\",\"events\":[{\"attribution\":{\"attempt\":1,\"issue\":null,\"program_id\":\"1310ca2c8932dbd118668bd97442558a3e1f546b5e15c69699dfbd6024f548d8\",\"run_id\":\"0682c5f2076f099c34cfdd15a9e063849ed437a49677e6fcc5b4198c76575be5\"},\"capture_status\":\"complete\",\"counts\":{\"emitted_candidates\":0,\"incomplete\":0,\"malformed\":0,\"raw_candidates\":0.0,\"terminal_stage\":0},\"detector_completed\":true,\"detector_evidence_sha256\":\"59b8b697ba4f4a8c7b4c577871d07e3da4d4e206e5b2c96b04c4d99a177a1870\",\"emission_gap_reason\":\"none\",\"event_id\":\"660b2ea1105a45b5dde50195829b63b16ec122ce6ca320defd42bb854c08d9fc\",\"evidence_status\":\"complete\",\"observed_at\":\"2026-08-29T10:00:00Z\",\"producer\":{\"name\":\"harness\",\"run_id\":\"0682c5f2076f099c34cfdd15a9e063849ed437a49677e6fcc5b4198c76575be5\",\"version\":\"1.0.0\"},\"record_type\":\"run_summary\",\"schema_version\":\"finding-observations.v1\",\"stage\":\"discovery\",\"visibility_tier\":\"team\"}]}"
         }
       ],
       "expected": {
@@ -1654,7 +1659,7 @@
       },
       "requests": [
         {
-          "rawUtf8": "{\"events\":[1e0]}"
+          "rawUtf8": "{\"schema_version\":\"debt-intake-events.v1\",\"events\":[{\"attribution\":{\"attempt\":1,\"issue\":null,\"program_id\":\"1310ca2c8932dbd118668bd97442558a3e1f546b5e15c69699dfbd6024f548d8\",\"run_id\":\"0682c5f2076f099c34cfdd15a9e063849ed437a49677e6fcc5b4198c76575be5\"},\"capture_status\":\"complete\",\"counts\":{\"emitted_candidates\":0,\"incomplete\":0,\"malformed\":0,\"raw_candidates\":0e0,\"terminal_stage\":0},\"detector_completed\":true,\"detector_evidence_sha256\":\"59b8b697ba4f4a8c7b4c577871d07e3da4d4e206e5b2c96b04c4d99a177a1870\",\"emission_gap_reason\":\"none\",\"event_id\":\"660b2ea1105a45b5dde50195829b63b16ec122ce6ca320defd42bb854c08d9fc\",\"evidence_status\":\"complete\",\"observed_at\":\"2026-08-29T10:00:00Z\",\"producer\":{\"name\":\"harness\",\"run_id\":\"0682c5f2076f099c34cfdd15a9e063849ed437a49677e6fcc5b4198c76575be5\",\"version\":\"1.0.0\"},\"record_type\":\"run_summary\",\"schema_version\":\"finding-observations.v1\",\"stage\":\"discovery\",\"visibility_tier\":\"team\"}]}"
         }
       ],
       "expected": {
@@ -1671,7 +1676,7 @@
       },
       "requests": [
         {
-          "rawUtf8": "{\"events\":[NaN]}"
+          "rawUtf8": "{\"schema_version\":\"debt-intake-events.v1\",\"events\":[{\"attribution\":{\"attempt\":1,\"issue\":null,\"program_id\":\"1310ca2c8932dbd118668bd97442558a3e1f546b5e15c69699dfbd6024f548d8\",\"run_id\":\"0682c5f2076f099c34cfdd15a9e063849ed437a49677e6fcc5b4198c76575be5\"},\"capture_status\":\"complete\",\"counts\":{\"emitted_candidates\":0,\"incomplete\":0,\"malformed\":0,\"raw_candidates\":NaN,\"terminal_stage\":0},\"detector_completed\":true,\"detector_evidence_sha256\":\"59b8b697ba4f4a8c7b4c577871d07e3da4d4e206e5b2c96b04c4d99a177a1870\",\"emission_gap_reason\":\"none\",\"event_id\":\"660b2ea1105a45b5dde50195829b63b16ec122ce6ca320defd42bb854c08d9fc\",\"evidence_status\":\"complete\",\"observed_at\":\"2026-08-29T10:00:00Z\",\"producer\":{\"name\":\"harness\",\"run_id\":\"0682c5f2076f099c34cfdd15a9e063849ed437a49677e6fcc5b4198c76575be5\",\"version\":\"1.0.0\"},\"record_type\":\"run_summary\",\"schema_version\":\"finding-observations.v1\",\"stage\":\"discovery\",\"visibility_tier\":\"team\"}]}"
         }
       ],
       "expected": {
@@ -1688,7 +1693,7 @@
       },
       "requests": [
         {
-          "rawHex": "ff"
+          "rawHex": "ff7b22736368656d615f76657273696f6e223a22646562742d696e74616b652d6576656e74732e7631222c226576656e7473223a5b7b226174747269627574696f6e223a7b22617474656d7074223a312c226973737565223a6e756c6c2c2270726f6772616d5f6964223a2231333130636132633839333264626431313836363862643937343432353538613365316635343662356531356336393639396466626436303234663534386438222c2272756e5f6964223a2230363832633566323037366630393963333463666464313561396530363338343965643433376134393637376536666363356234313938633736353735626535227d2c22636170747572655f737461747573223a22636f6d706c657465222c22636f756e7473223a7b22656d69747465645f63616e64696461746573223a302c22696e636f6d706c657465223a302c226d616c666f726d6564223a302c227261775f63616e64696461746573223a302c227465726d696e616c5f7374616765223a307d2c226465746563746f725f636f6d706c65746564223a747275652c226465746563746f725f65766964656e63655f736861323536223a2235396238623639376261346634613863376234633537373837316430376533646134643465323036653562326339366230346334643939613137376131383730222c22656d697373696f6e5f6761705f726561736f6e223a226e6f6e65222c226576656e745f6964223a2236363062326561313130356134356235646465353031393538323962363362313665633132326365366361333230646566643432626238353463303864396663222c2265766964656e63655f737461747573223a22636f6d706c657465222c226f627365727665645f6174223a22323032362d30382d32395431303a30303a30305a222c2270726f6475636572223a7b226e616d65223a226861726e657373222c2272756e5f6964223a2230363832633566323037366630393963333463666464313561396530363338343965643433376134393637376536666363356234313938633736353735626535222c2276657273696f6e223a22312e302e30227d2c227265636f72645f74797065223a2272756e5f73756d6d617279222c22736368656d615f76657273696f6e223a2266696e64696e672d6f62736572766174696f6e732e7631222c227374616765223a22646973636f76657279222c227669736962696c6974795f74696572223a227465616d227d5d7d"
         }
       ],
       "expected": {
@@ -1728,6 +1733,57 @@
         "incoming": "B duplicates A with valid hashes and predecessors"
       },
       "requests": [],
+      "expected": {
+        "status": 422,
+        "code": "invalid_events",
+        "newRecords": 0
+      }
+    },
+    {
+      "name": "invalid-calendar",
+      "proofOwner": "future-brain",
+      "setup": {
+        "stored": [],
+        "principal": "authorized-uploader"
+      },
+      "requests": [
+        {
+          "schema_version": "debt-intake-events.v1",
+          "events": [
+            {
+              "attribution": {
+                "attempt": 1,
+                "issue": null,
+                "program_id": "1310ca2c8932dbd118668bd97442558a3e1f546b5e15c69699dfbd6024f548d8",
+                "run_id": "0682c5f2076f099c34cfdd15a9e063849ed437a49677e6fcc5b4198c76575be5"
+              },
+              "capture_status": "complete",
+              "counts": {
+                "emitted_candidates": 0,
+                "incomplete": 0,
+                "malformed": 0,
+                "raw_candidates": 0,
+                "terminal_stage": 0
+              },
+              "detector_completed": true,
+              "detector_evidence_sha256": "59b8b697ba4f4a8c7b4c577871d07e3da4d4e206e5b2c96b04c4d99a177a1870",
+              "emission_gap_reason": "none",
+              "event_id": "8b7150ed8b9e7fb61e75284e11106195dd99a7d41983bd39032fb6e2909cec21",
+              "evidence_status": "complete",
+              "observed_at": "2026-02-30T00:00:00Z",
+              "producer": {
+                "name": "harness",
+                "run_id": "0682c5f2076f099c34cfdd15a9e063849ed437a49677e6fcc5b4198c76575be5",
+                "version": "1.0.0"
+              },
+              "record_type": "run_summary",
+              "schema_version": "finding-observations.v1",
+              "stage": "discovery",
+              "visibility_tier": "team"
+            }
+          ]
+        }
+      ],
       "expected": {
         "status": 422,
         "code": "invalid_events",

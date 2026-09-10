@@ -139,3 +139,16 @@ test("future semantic fixtures retain disjoint ordered acknowledgments and hones
   ])
     assert.ok(fx.cases.some((c) => c.name === name));
 });
+
+test("strict parsing vectors would pass structure under permissive JSON parsing", () => {
+  const cases = json(ref.fixtures.path).cases;
+  for (const name of ["duplicate-keys", "bom", "decimal-token", "exponent-token"]) {
+    const raw = cases.find((c) => c.name === name).requests[0].rawUtf8;
+    assert.ok(request(JSON.parse(raw.replace(/^\uFEFF/, ""))), name);
+  }
+  const late = cases.find((c) => c.name === "late-new-record-after-finalization").requests[0];
+  assert.ok(request(late));
+  assert.equal(late.events[0].sequence, 2);
+  assert.notEqual(late.events[0].predecessor_event_id, null);
+  assert.notDeepEqual(late, cases.find((c) => c.name === "sequence-fork").requests[0]);
+});

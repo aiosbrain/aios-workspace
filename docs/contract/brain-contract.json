@@ -112,7 +112,7 @@
       "sha256": "22bc99241032d38578be67a3130af08404efe4588cf678046fb687a00ab91d5a"
     }
   },
-  "contentHash": "462630d8d538644c97696bcff314645db7b671faeebce56e5d179eff0d4ab402",
+  "contentHash": "9686d9b8aecf40a5f7708b2fe40357d1769a2c21df47a28fbd9835ef21b21e2b",
   "debtIntakeEventsContract": {
     "version": "1.26",
     "requestVersion": "debt-intake-events.v1",
@@ -182,7 +182,7 @@
     },
     "fixtures": {
       "path": "debt-intake-events-v1-fixtures.json",
-      "sha256": "acf02d04b7cefa26e26ec910e7984f09974bfe4c22ecd8f10ea47b542d8ad890"
+      "sha256": "3877b33174f3dbcdb90623d282fc65e42dd021e6e4e1585def55d194ed744968"
     }
   }
 }
