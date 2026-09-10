@@ -6,14 +6,19 @@ boundary, the pinned `docs/brain-api.md` sync contract, and the do-not list.
 
 ## Review evidence
 
-Local Bugbot is optional and is not a repository-wide completion or merge prerequisite. For a
-pushed PR, green required CI plus at least one substantive current-head cloud Bugbot or CodeRabbit
-review with no unresolved findings is sufficient review evidence. The lifecycle adapters may still
-run `hooks/local-bugbot-gate.mjs` as an advisory local check, and `aios build` / `aios ship` may run
-local review as part of their own operator workflow; neither makes Local Bugbot mandatory for a PR
-that already has qualifying cloud review. Address every substantive Medium-or-higher finding from
-any reviewer, but do not block an otherwise clear PR solely because Local Bugbot is unavailable,
-returns a protocol error, or cannot review an unrelated worktree.
+An independent adversarial **Codex Astra or Claude Fable** review is sufficient model
+review evidence for a pull request, including safety-sensitive changes, when required
+executable CI passes. Use a separate review session/agent from the implementer. Retain a
+substantive report naming the model, exact base and head commits, inspected scope,
+verification, findings and verdict. Re-review after a changed head; resolve every blocking
+finding before an exact-head MERGE_READY attestation.
+
+Bugbot and CodeRabbit are supplementary automated review at scale, not mandatory approval
+providers. Their absence, rate limits or usage limits do not block a qualifying Astra/Fable
+review. Their concrete findings still require disposition; a green check without substantive
+review is not approval. Do not disable executable tests, secret/NDA checks, provenance gates,
+or exact-head evidence validation. Separately specified human release sign-offs remain in
+force unless the owner explicitly changes them.
 
 Error ledger (2026-08-10): loop-model routing changes must be reviewed against the separately
 published `@aiosbrain/aios-devtools` runtime; core tests alone cannot prove `spec eval`/`ship`

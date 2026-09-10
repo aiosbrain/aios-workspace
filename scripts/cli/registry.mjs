@@ -177,6 +177,14 @@ export const COMMANDS = [
     resolution: "pre-config",
     loader: () => import("../brain-mcp.mjs"),
     adapt: async (ctx, mod) => {
+      if (
+        ["install", "status", "uninstall"].includes(ctx.rest[0]) ||
+        ctx.rest.includes("--uninstall") ||
+        ctx.rest.includes("--dry-run")
+      ) {
+        const { cmdMcpHost } = await import("../mcp-host-command.mjs");
+        return cmdMcpHost(ctx.rest);
+      }
       const mcpCfg = mod.resolveBrainConfig();
       try {
         await mod.runStdio(mcpCfg, { argv: ctx.rest });

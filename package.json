@@ -110,6 +110,8 @@
     "@clack/prompts": "^1.7.0",
     "@dotenvx/dotenvx": "^2.19.1",
     "ajv": "^8.20.0",
-    "better-sqlite3": "^13.0.1"
+    "better-sqlite3": "^13.0.1",
+    "koffi": "2.16.3",
+    "smol-toml": "1.8.0"
   }
 }
