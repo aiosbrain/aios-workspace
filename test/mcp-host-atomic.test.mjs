@@ -70,6 +70,7 @@ test("published artifact resists project-local package shadowing and detects edi
   t.after(() => new Promise((resolve) => server.close(resolve)));
   const options = {
     ...f,
+    env: { ...f.env, AIOS_MCP_TOOLSETS: "workspace" },
     command: undefined,
     verify: undefined,
     credential: { ...credential, brain_url: `http://127.0.0.1:${server.address().port}` },
@@ -82,7 +83,7 @@ test("published artifact resists project-local package shadowing and detects edi
   assert.equal(installed.command_verification[0].tools.length, 8);
   assert.equal(fs.existsSync(marker), false);
   const entry = installedServerCommand(f);
-  assert.equal(entry.args.length, 1);
+  assert.deepEqual(entry.args.slice(1), ["--toolsets", "brain,board"]);
   assert.ok(entry.args[0].includes(path.join(".aios", "mcp", "0.1.1")));
   // A real Windows server launch can update PowerShell's own startup profile
   // cache. Reinstallation must leave every installer-managed file unchanged;

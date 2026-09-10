@@ -29,7 +29,11 @@ const files = [
 export function installedServerCommand({ node = process.execPath, home = os.homedir() } = {}) {
   return {
     command: node,
-    args: [path.join(home, ".aios", "mcp", MCP_PACKAGE_VERSION, "bin/aios-brain-mcp.mjs")],
+    args: [
+      path.join(home, ".aios", "mcp", MCP_PACKAGE_VERSION, "bin/aios-brain-mcp.mjs"),
+      "--toolsets",
+      "brain,board",
+    ],
   };
 }
 
