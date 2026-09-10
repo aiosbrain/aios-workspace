@@ -4,7 +4,10 @@ import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from "nod
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { createHash } from "node:crypto";
-import { verifyWorkspaceRelease } from "../scripts/verify-workspace-release.mjs";
+import {
+  verifyWorkspaceRelease,
+  runWorkspaceRelease,
+} from "../scripts/verify-workspace-release.mjs";
 
 const sha = "a".repeat(40),
   version = "2.0.0";
@@ -288,3 +291,92 @@ for (const [name, mutate] of [
     mutateJson(args.directory, cell, (e) => mutate(e.sections));
     assert.throws(() => verifyWorkspaceRelease(args));
   });
+
+function orchestrationFixture(t) {
+  const args = setup(t);
+  const source = {
+    name: "@aiosbrain/aios",
+    version,
+    bin: { aios: "scripts/aios.mjs" },
+    engines: { node: "22.x || 24.x || 26.x" },
+    dependencies: {},
+  };
+  writeFileSync(path.join(args.directory, "package.json"), JSON.stringify(source));
+  const expected = verifyWorkspaceRelease(args);
+  const calls = [];
+  const command = (executable, argv) => {
+    calls.push([executable, ...argv]);
+    if (executable === "/usr/bin/gh")
+      return JSON.stringify(
+        argv[1].includes("/jobs?")
+          ? { total_count: args.jobs.length, jobs: args.jobs }
+          : { ...args.run, run_attempt: 2 }
+      );
+    if (executable === "/usr/bin/git") return sha;
+    if (executable === "/usr/bin/tar") return JSON.stringify(source);
+    if (executable === process.execPath && argv[1] === "publish") return "";
+    if (executable === process.execPath && argv[1] === "view")
+      return JSON.stringify(expected.integrity);
+    throw new Error("Unexpected release command");
+  };
+  return {
+    args,
+    source,
+    expected,
+    calls,
+    options: {
+      platform: "linux",
+      root: args.directory,
+      env: {
+        WORKSPACE_ACCEPTANCE_RUN_ID: "123",
+        WORKSPACE_RELEASE_ARTIFACTS: args.directory,
+        WORKSPACE_RELEASE_VERSION: version,
+        GITHUB_REF: args.ref,
+      },
+      command,
+    },
+  };
+}
+
+test("publication orchestration verifies the latest attempt and never publishes in verification mode", (t) => {
+  const f = orchestrationFixture(t);
+  assert.deepEqual(runWorkspaceRelease(f.options), f.expected);
+  assert.ok(f.calls.some((c) => c[2]?.includes("/attempts/2/jobs?")));
+  assert.ok(f.calls.every((c) => c[0] !== process.execPath));
+});
+
+test("publication orchestration passes only the accepted bytes to npm and checks registry integrity", (t) => {
+  const f = orchestrationFixture(t);
+  runWorkspaceRelease({ ...f.options, publish: true });
+  const publishCalls = f.calls.filter((c) => c[0] === process.execPath && c[2] === "publish");
+  assert.equal(publishCalls.length, 1);
+  assert.equal(publishCalls[0][3], f.expected.tarball);
+  assert.ok(publishCalls[0].includes("--ignore-scripts"));
+  assert.ok(publishCalls[0].includes("--provenance"));
+  assert.ok(f.calls.some((c) => c[0] === process.execPath && c[2] === "view"));
+});
+
+test("packed metadata mismatch refuses publication before npm runs", (t) => {
+  const f = orchestrationFixture(t);
+  const command = (exe, args) =>
+    exe === "/usr/bin/tar"
+      ? JSON.stringify({ ...f.source, version: "9.0.0" })
+      : f.options.command(exe, args);
+  assert.throws(
+    () => runWorkspaceRelease({ ...f.options, command, publish: true }),
+    /Packed version/
+  );
+  assert.ok(f.calls.every((c) => c[0] !== process.execPath));
+});
+
+test("registry integrity mismatch cannot return success after the simulated publish", (t) => {
+  const f = orchestrationFixture(t);
+  const command = (exe, args) =>
+    exe === process.execPath && args[1] === "view"
+      ? JSON.stringify("wrong")
+      : f.options.command(exe, args);
+  assert.throws(
+    () => runWorkspaceRelease({ ...f.options, command, publish: true }),
+    /Registry bytes differ/
+  );
+});

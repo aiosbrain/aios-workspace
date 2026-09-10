@@ -136,19 +136,26 @@ export function verifyWorkspaceRelease({ directory, run, jobs, sha, version, ref
   return { tarball, candidate, integrity };
 }
 
-if (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url) {
+/** Publication orchestration; injected command runner permits offline no-publish verification. */
+export function runWorkspaceRelease({
+  env = process.env,
+  platform = process.platform,
+  root = process.cwd(),
+  command = execFileSync,
+  publish = false,
+} = {}) {
   // This entrypoint belongs to the Ubuntu OIDC publisher. Verification above is portable.
   // Never discover release executables from an artifact-controlled search path.
-  assert.equal(process.platform, "linux", "Run the publication entrypoint in its Ubuntu workflow");
+  assert.equal(platform, "linux", "Run the publication entrypoint in its Ubuntu workflow");
   const npmCli = path.resolve(
     path.dirname(process.execPath),
     "../lib/node_modules/npm/bin/npm-cli.js"
   );
   assert.ok(lstatSync(npmCli).isFile(), "Pinned Node installation must carry npm");
-  const id = process.env.WORKSPACE_ACCEPTANCE_RUN_ID;
+  const id = env.WORKSPACE_ACCEPTANCE_RUN_ID;
   assert.match(id || "", /^\d+$/);
   const api = (endpoint) =>
-    JSON.parse(execFileSync("/usr/bin/gh", ["api", endpoint], { encoding: "utf8" }));
+    JSON.parse(command("/usr/bin/gh", ["api", endpoint], { encoding: "utf8", cwd: root }));
   const run = api(`repos/${REPOSITORY}/actions/runs/${id}`);
   const jobResponse = api(
     `repos/${REPOSITORY}/actions/runs/${id}/attempts/${run.run_attempt}/jobs?per_page=100`
@@ -158,27 +165,30 @@ if (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === imp
     jobResponse.jobs.length,
     "Do not silently truncate job evidence"
   );
-  const sha = execFileSync("/usr/bin/git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim();
-  const manifest = readJson("package.json");
+  const sha = command("/usr/bin/git", ["rev-parse", "HEAD"], {
+    encoding: "utf8",
+    cwd: root,
+  }).trim();
+  const manifest = readJson(path.join(root, "package.json"));
   assert.equal(manifest.name, "@aiosbrain/aios");
-  assert.equal(process.env.WORKSPACE_RELEASE_VERSION, manifest.version);
+  assert.equal(env.WORKSPACE_RELEASE_VERSION, manifest.version);
   const verified = verifyWorkspaceRelease({
-    directory: process.env.WORKSPACE_RELEASE_ARTIFACTS,
+    directory: env.WORKSPACE_RELEASE_ARTIFACTS,
     run,
     jobs: jobResponse.jobs,
     sha,
     version: manifest.version,
-    ref: process.env.GITHUB_REF,
+    ref: env.GITHUB_REF,
   });
   const packed = JSON.parse(
-    execFileSync("/usr/bin/tar", ["-xOf", verified.tarball, "package/package.json"], {
+    command("/usr/bin/tar", ["-xOf", verified.tarball, "package/package.json"], {
       encoding: "utf8",
     })
   );
   for (const key of ["name", "version", "bin", "engines", "dependencies"])
     assert.deepEqual(packed[key], manifest[key], `Packed ${key} must match the release source`);
-  if (process.argv.includes("--publish")) {
-    execFileSync(
+  if (publish) {
+    command(
       process.execPath,
       [
         npmCli,
@@ -192,13 +202,18 @@ if (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === imp
       { stdio: "inherit" }
     );
     const integrity = JSON.parse(
-      execFileSync(
+      command(
         process.execPath,
         [npmCli, "view", `@aiosbrain/aios@${manifest.version}`, "dist.integrity", "--json"],
-        { encoding: "utf8" }
+        { encoding: "utf8", cwd: root }
       )
     );
     assert.equal(integrity, verified.integrity, "Registry bytes differ from accepted artifact");
   }
-  console.log(JSON.stringify(verified, null, 2));
+  return verified;
 }
+
+if (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url)
+  console.log(
+    JSON.stringify(runWorkspaceRelease({ publish: process.argv.includes("--publish") }), null, 2)
+  );
