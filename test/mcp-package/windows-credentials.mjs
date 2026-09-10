@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -18,7 +18,13 @@ const directory = path.join(home, ".aios");
 const file = path.join(directory, "credentials.json");
 const powershell = (script, target) =>
   execFileSync(
-    "powershell.exe",
+    path.win32.join(
+      process.env.SystemRoot,
+      "System32",
+      "WindowsPowerShell",
+      "v1.0",
+      "powershell.exe"
+    ),
     [
       "-NoProfile",
       "-NonInteractive",
@@ -77,6 +83,43 @@ try {
     assert.deepEqual(acl.allow, [acl.current], "A single native ACE must remain a JSON array");
   }
   assert.equal(readGlobalCredential({ home }).api_key, "test-win-key");
+  // A renamed Node executable is a harmless control for Windows executable lookup.
+  // Exercise both project cwd and PATH shadowing against the installed tarball.
+  const shadow = path.join(scratch, "untrusted-project");
+  mkdirSync(shadow);
+  copyFileSync(process.execPath, path.join(shadow, "powershell.exe"));
+  const originalCwd = process.cwd();
+  const originalPath = process.env.PATH;
+  const originalNoCwd = process.env.NoDefaultCurrentDirectoryInExePath;
+  try {
+    delete process.env.NoDefaultCurrentDirectoryInExePath;
+    for (const mode of ["cwd", "path"]) {
+      process.chdir(mode === "cwd" ? shadow : home);
+      process.env.PATH = mode === "path" ? shadow + path.delimiter + originalPath : originalPath;
+      const control = execFileSync(
+        "powershell.exe",
+        ["-e", "process.stdout.write('shadow-control')"],
+        { encoding: "utf8", timeout: 30000, windowsHide: true }
+      );
+      assert.equal(
+        control,
+        "shadow-control",
+        `Legacy ${mode} lookup must execute the shadow control`
+      );
+      assert.equal(
+        readGlobalCredential({ home }).api_key,
+        "test-win-key",
+        `Installed reader must use actual system PowerShell despite ${mode} shadowing`
+      );
+    }
+  } finally {
+    process.chdir(originalCwd);
+    if (originalPath === undefined) delete process.env.PATH;
+    else process.env.PATH = originalPath;
+    if (originalNoCwd === undefined) delete process.env.NoDefaultCurrentDirectoryInExePath;
+    else process.env.NoDefaultCurrentDirectoryInExePath = originalNoCwd;
+  }
+  console.log("Installed Windows reader: cwd and PATH executable-shadow controls passed");
   const grantEveryone =
     "$ErrorActionPreference='Stop'; $p=$env:MCP_ACL_TARGET; $acl=Get-Acl -LiteralPath $p; " +
     "$sid=[System.Security.Principal.SecurityIdentifier]::new('S-1-1-0'); " +

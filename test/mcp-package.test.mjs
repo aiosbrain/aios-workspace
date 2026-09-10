@@ -59,7 +59,7 @@ test("standalone build copies the canonical modules and rejects package inventor
     ...MCP_MODULES.map((file) => `lib/${file}`),
   ].map((file) => ({ path: file }));
   const manifest = assertMcpPackageInventory({ directory: target, files });
-  assert.equal(manifest.version, "0.1.0");
+  assert.equal(manifest.version, "0.1.1");
   assert.deepEqual(manifest.bin, { "aios-brain-mcp": "bin/aios-brain-mcp.mjs" });
   assert.throws(
     () =>

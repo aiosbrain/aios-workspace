@@ -8,6 +8,7 @@ import {
   validateCredentialTuple,
   assertWindowsCredentialAcl,
   readWindowsCredentialAcl,
+  windowsSystemExecutable,
 } from "../scripts/mcp-credentials.mjs";
 import { resolveBrainConfig } from "../scripts/mcp-config.mjs";
 
@@ -176,12 +177,16 @@ test("Windows ACL verification accepts owner/SYSTEM/admin only and passes paths 
       tuple.api_key
     );
     const suspiciousPath = "C:\\synthetic '; Write-Output surprise;\\credentials.json";
-    const actual = readWindowsCredentialAcl(suspiciousPath, (command, args, options) => {
-      assert.equal(command, "powershell.exe");
-      assert.ok(!args.join(" ").includes(suspiciousPath));
-      assert.equal(options.env.AIOS_CREDENTIAL_ACL_PATH, suspiciousPath);
-      return JSON.stringify(acl);
-    });
+    const actual = readWindowsCredentialAcl(
+      suspiciousPath,
+      (command, args, options) => {
+        assert.equal(command, "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe");
+        assert.ok(!args.join(" ").includes(suspiciousPath));
+        assert.equal(options.env.AIOS_CREDENTIAL_ACL_PATH, suspiciousPath);
+        return JSON.stringify(acl);
+      },
+      { SystemRoot: "C:\\Windows" }
+    );
     assert.deepEqual(actual, acl);
   }));
 
@@ -198,5 +203,21 @@ test("new global tuples reject remote plaintext HTTP while allowing loopback fix
     validateCredentialTuple({ brain_url: "http://127.0.0.1:12345", api_key: "synthetic-secret" })
       .brain_url,
     "http://127.0.0.1:12345"
+  );
+});
+
+test("Windows executable paths never fall back to cwd or PATH", () => {
+  assert.equal(
+    windowsSystemExecutable("taskkill", { SystemRoot: "D:\\Windows" }),
+    "D:\\Windows\\System32\\taskkill.exe"
+  );
+  for (const root of [undefined, "Windows", "C:Windows", "\\Windows", "C:\\Windows\\..\\project"])
+    assert.throws(
+      () => windowsSystemExecutable("powershell", { SystemRoot: root }),
+      /system directory/
+    );
+  assert.throws(
+    () => windowsSystemExecutable("constructor", { SystemRoot: "C:\\Windows" }),
+    /Unknown/
   );
 });
