@@ -159,12 +159,14 @@ test("brain-api.md adopts this supplement by name and repeats its literals", () 
 });
 
 test("adopting the supplement did NOT bump the member-facing API version", () => {
-  // The supplement is versioned on its own `revision`. Bumping the member API to 1.25 here would
-  // silently claim the 1.24 scanner-identity semantics this change does not implement. Only the
-  // DOCUMENT revision moves, which is what a doc-only clarification is allowed to move.
-  assert.match(brainApi, /\*\*Version: 1\.24\*\* is the shipped member-facing Brain API/);
-  assert.match(brainApi, /\*\*Document revision: 1\.25\*\*/);
-  assert.equal(brainApi.includes("**Version: 1.25**"), false);
+  // Historical activation must remain explicit without freezing subsequent additive revisions.
+  const activation = brainApi.match(
+    /2026-09-07 — \*\*request-admission supplement[\s\S]*?\*\*Publication is not deployment\.\*\*/
+  )?.[0];
+  assert.ok(activation, "the dated supplement activation remains documented");
+  const prose = activation.replace(/\s+/g, " ");
+  assert.match(prose, /\*\*No member-facing version bump\.\*\* The member API stays \*\*1\.24\*\*/);
+  assert.match(prose, /only the document revision moves \(\*\*1\.25\*\*/);
 });
 
 test("enforcement is documented as per-deployment, not implied by publication or version", () => {

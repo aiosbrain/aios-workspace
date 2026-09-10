@@ -95,7 +95,7 @@ export function checkVersionLabels(repoPath, readFile = readFileSync) {
   const constitutionText = stripInertMarkdown((constitution.text || "").replace(/\r\n?/g, "\n"));
 
   const header = brainApiText.match(
-    /^# AIOS Team Brain — API Contract\n\n\*\*Version: ([0-9]+\.[0-9]+)\*\* is the shipped member-facing Brain API \(`\/api\/v1`\)\. \*\*Document revision: ([0-9]+\.[0-9]+)\*\*\nalso carries the separately negotiated internal Executor gateway contract \*\*([0-9]+\.[0-9]+)\*\*;/
+    /^# AIOS Team Brain — API Contract\n\n\*\*Version: ([0-9]+\.[0-9]+)\*\* is the (?:shipped|pinned) member-facing Brain API \(`\/api\/v1`\)\. \*\*Document revision: ([0-9]+\.[0-9]+)\*\*\nalso carries the separately negotiated internal Executor gateway contract \*\*([0-9]+\.[0-9]+)\*\*;/
   );
   const docRevs = [...brainApiText.matchAll(/\*\*Document revision:\s*([0-9]+\.[0-9]+)\*\*/g)].map(
     (match) => match[1]
