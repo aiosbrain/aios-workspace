@@ -2740,7 +2740,7 @@ stored encrypted at rest (`member_secrets`) and every response carries `Cache-Co
 
 **Availability:** member API 1.26 defines this contract; it does not claim a deployed endpoint. The ordered Team Brain storage/endpoint increment of AIO-1101 must merge, rehearse and deploy before producers enable upload. AIO-1102 supplies the publisher; AIO-1103 supplies readers; AIO-1104 owns activation. Existing snapshot ingest and scanner debt are unchanged.
 
-Content-addressed `debtIntakeEventsContract` in [brain-contract.json](contract/brain-contract.json) pins the request, acknowledgment, canonical union, source commit and fixtures. The [vendored canonical contract](contract/finding-observations-v1.md) is normative alongside this section. The existing codebase payload stays independently pinned at 1.25.
+Content-addressed `debtIntakeEventsContract` in [brain-contract.json](contract/brain-contract.json) pins the request, acknowledgment, canonical union, source commit and fixtures. The [vendored canonical contract](contract/finding-observations-v1.md) is normative alongside this section. The existing codebase payload stays independently pinned at 1.25. A [corrected 1.25 compatibility snapshot](contract/brain-contract-1.25.json) lets coverage-only consumers retain their implemented API version while consuming the corrected fixture identities. It is the prior 1.25 contract with only the codebase fixture digest and its parent content hash regenerated; it contains no intake reservation. Five new valid v2/v3 vectors and fourteen coverage-only invalid vectors now bind health.head_sha to metrics.head_sha. Schema bytes, legacy vectors and intentional identity-conflict negatives remain unchanged.
 
 ### Canonical records and completeness
 

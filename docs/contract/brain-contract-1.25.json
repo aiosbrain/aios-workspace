@@ -1,0 +1,116 @@
+{
+  "$schema": "aios-brain-contract/v1",
+  "_note": "Canonical conformance fixture for the workspace<->brain seam (AIO-314). Home: aios-workspace/docs/contract. Vendored into aios-team-brain/test/fixtures/contract. contentHash pins the content; /docs-sync compares the two copies. Regenerate: node scripts/gen-contract-fixture.mjs.",
+  "version": "1.25",
+  "tierAliases": {
+    "shared": {
+      "team": "team",
+      "external": "external",
+      "client": "external",
+      "company": "external"
+    },
+    "divergent": {
+      "private": {
+        "client": "admin",
+        "server": null
+      },
+      "admin": {
+        "client": "admin",
+        "server": null
+      },
+      "unknown-tier": {
+        "client": "unknown-tier",
+        "server": null
+      }
+    }
+  },
+  "sse": {
+    "frames": [
+      {
+        "name": "delta",
+        "event": "delta",
+        "data": {
+          "text": "Here is the answer."
+        },
+        "raw": "event: delta\ndata: {\"text\":\"Here is the answer.\"}\n\n"
+      },
+      {
+        "name": "sources",
+        "event": "sources",
+        "data": {
+          "sources": [
+            {
+              "id": "S1",
+              "item_id": "item_abc",
+              "project": "acme",
+              "path": "2-work/notes.md",
+              "kind": "note"
+            }
+          ]
+        },
+        "raw": "event: sources\ndata: {\"sources\":[{\"id\":\"S1\",\"item_id\":\"item_abc\",\"project\":\"acme\",\"path\":\"2-work/notes.md\",\"kind\":\"note\"}]}\n\n"
+      },
+      {
+        "name": "done",
+        "event": "done",
+        "data": {
+          "input_tokens": 1200,
+          "output_tokens": 340,
+          "cost_usd": 0.0123
+        },
+        "raw": "event: done\ndata: {\"input_tokens\":1200,\"output_tokens\":340,\"cost_usd\":0.0123}\n\n"
+      },
+      {
+        "name": "conversation",
+        "event": "conversation",
+        "data": {
+          "id": "conv_123"
+        },
+        "raw": "event: conversation\ndata: {\"id\":\"conv_123\"}\n\n"
+      },
+      {
+        "name": "forward-compat",
+        "event": "reasoning",
+        "data": {
+          "note": "an event kind the client does not know; per brain-api it MUST be ignored, not crash"
+        },
+        "raw": "event: reasoning\ndata: {\"note\":\"an event kind the client does not know; per brain-api it MUST be ignored, not crash\"}\n\n"
+      }
+    ]
+  },
+  "provisioningTools": [
+    "linear",
+    "slack",
+    "github"
+  ],
+  "gatewayContract": {
+    "path": "gateway-v1.10.json",
+    "version": "1.10",
+    "sha256": "4ddd6495fa505b76118080865d60255bfba94a9ccda249defe428babb3d0c205"
+  },
+  "itemPayloadContract": {
+    "version": "1.12",
+    "schema": {
+      "path": "item-payload-1.12.schema.json",
+      "sha256": "c380f811d20c0cfc0879c2b2d8299000b8f0eddfe0601581974c702f60415a28"
+    },
+    "fixtures": {
+      "path": "item-payload-1.12-fixtures.json",
+      "sha256": "9862e47581b9bdd68ecfd7aa92216011a6b56bc9dc7abaee3bd5e301240bfbea"
+    }
+  },
+  "codebasePayloadContract": {
+    "version": "1.25",
+    "minScannerVersion": "0.2.0",
+    "_minScannerVersionNote": "The oldest ingestion-package build (aios_ingest.__version__) that emits everything this contract revision asks a scanner for. A scan whose metrics.scanner_version is PARSEABLE and orders below this is STALE. Absent, null or unparseable is UNKNOWN, which is a DIFFERENT outcome and must never be reported as stale: 'the scan did not tell us' is not 'the scan told us it is old', and collapsing the two is the exact error this field exists to remove. Three states, no fourth: unknown | stale | current (see the truth table in docs/brain-api.md, and the scanner_state conformance vectors in codebase-payload-1.24-fixtures.json). PARSEABLE is narrow and normative: exactly three dotted non-negative integers, nothing else, so a leading v, a two-part version, a channel name and any SemVer pre-release or build suffix are UNREADABLE and therefore unknown - a pre-release sorts before its release and is not evidence the build emits what the release promises. Note too that unknown is NOT a synonym for 'predates 1.24': a current scanner that cannot determine its own build is required to send null rather than guess. Either way the brain says so at the point of confusion rather than rendering an unexplained '(scope unknown)'. Deliberately a declared minimum and NOT a commit distance: commit distance is undefined across branches and forks, needs a git history the brain does not hold at runtime, stops existing when the scanner ships as a package, and says nothing about whether anything the contract needs actually changed. The cost of the choice, stated so it is not forgotten: RAISE THIS in the same PR as any revision that requires new scanner output, or staleness detection is silently off for that field. The brain mirrors this value in lib/codebases/scanner-version.ts and a guard asserts the two agree.",
+    "schema": {
+      "path": "codebase-payload-1.25.schema.json",
+      "sha256": "79cd93c4b46b7ded3af73ac0e320498036bc1e39d7677cad18a6554b1d620d66"
+    },
+    "fixtures": {
+      "path": "codebase-payload-1.25-fixtures.json",
+      "sha256": "d053f4aa12e9afb5d4b8c7a636f399b177ba51f1871f9c2472cab713b4f76b7e"
+    }
+  },
+  "contentHash": "e9d81bb9873d09e2f15964f1f99cf6108eba862a411999dea1a2a08310c16e1e"
+}

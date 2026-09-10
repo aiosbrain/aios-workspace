@@ -320,3 +320,31 @@ test("reference classifier: unknown is never stale, and stale is still reachable
   assert.equal(classifyScanner("0.1.0", min), "stale");
   assert.equal(classifyScanner(min, min), "current");
 });
+
+test("1.25 compatibility snapshot pins corrected coverage without advertising intake", () => {
+  const snapshot = JSON.parse(
+    readFileSync(path.join(ROOT, "docs/contract/brain-contract-1.25.json"), "utf8")
+  );
+  assert.equal(snapshot.version, "1.25");
+  assert.equal(snapshot.debtIntakeEventsContract, undefined);
+  assert.deepEqual(snapshot.codebasePayloadContract, fixture.codebasePayloadContract);
+  for (const key of [
+    "tierAliases",
+    "sse",
+    "provisioningTools",
+    "gatewayContract",
+    "itemPayloadContract",
+  ]) {
+    assert.deepEqual(snapshot[key], fixture[key], key);
+  }
+  const dir = mkdtempSync(path.join(tmpdir(), "aios-brain-compat-"));
+  try {
+    const target = path.join(dir, "brain-contract.json");
+    const source = path.join(ROOT, "docs/contract/brain-contract-1.25.json");
+    copyFileSync(source, target);
+    execFileSync(process.execPath, [path.join(ROOT, "scripts/gen-contract-fixture.mjs"), target]);
+    assert.equal(readFileSync(target, "utf8"), readFileSync(source, "utf8"));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
