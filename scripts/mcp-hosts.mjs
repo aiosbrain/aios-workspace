@@ -72,7 +72,7 @@ export const MCP_HOSTS = Object.freeze([
     serverKeyPath: "mcpServers",
     commandEncoding: "typed-stdio",
     restartText: "Quit and reopen Cursor",
-    processes: ["Cursor", "Cursor.exe"],
+    processes: ["Cursor", "cursor", "Cursor.exe"],
     processPaths: ["/Cursor.app/Contents/"],
     detectPaths: ["/Applications/Cursor.app", "{home}/Applications/Cursor.app"],
     binaries: ["cursor", "cursor.exe", "cursor.cmd"],

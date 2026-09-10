@@ -1,7 +1,7 @@
 # MCP host installation
 
 Release candidate for AIO-1112. Installer availability is gated on the toolkit release;
-the standalone `@aiosbrain/mcp@0.1.0` package is already published separately.
+the standalone `@aiosbrain/mcp@0.1.1` package is already published separately.
 
 `aios mcp install` offers host selection. Noninteractive use requires an explicit list:
 
@@ -17,9 +17,9 @@ documented macOS Application Support or Windows AppData JSON file; Claude Code u
 the current project's `.mcp.json`; Codex uses global `~/.codex/config.toml`; Cursor
 uses global `~/.cursor/mcp.json`. Claude Desktop on Linux is unsupported.
 
-The installer downloads the published `@aiosbrain/mcp@0.1.0` tarball, verifies its
+The installer downloads the published `@aiosbrain/mcp@0.1.1` tarball, verifies its
 pinned SHA-512 integrity, and stores its explicit file closure under owner-controlled
-`~/.aios/mcp/0.1.0`. The recorded command uses the installed Node executable and the
+`~/.aios/mcp/0.1.1`. The recorded command uses the installed Node executable and the
 absolute server entry point; project-local packages cannot shadow it. Host entries contain a nonsecret
 installer marker, not an API key. Installation ownership is recorded separately in
 `~/.aios/mcp-installations.json`.

@@ -436,3 +436,28 @@ test(
     );
   }
 );
+
+test(
+  "Linux lowercase Cursor blocks preflight and a mid-transaction launch",
+  { skip: process.platform === "win32" },
+  async (t) => {
+    const f = { ...fixture(t), platform: "linux" };
+    const processLine = "/opt/cursor/cursor --no-sandbox";
+    const before = tree(f.home);
+    await assert.rejects(
+      installMcpHosts({ ...f, hosts: ["cursor"], runningHosts: () => [processLine] }),
+      /Cursor is running/
+    );
+    assert.deepEqual(tree(f.home), before);
+    let calls = 0;
+    await assert.rejects(
+      installMcpHosts({
+        ...f,
+        hosts: ["cursor"],
+        runningHosts: () => (++calls === 1 ? [] : [processLine]),
+      }),
+      /started during/
+    );
+    assert.equal(fs.existsSync(hostTargets(f)[3].file), false);
+  }
+);
