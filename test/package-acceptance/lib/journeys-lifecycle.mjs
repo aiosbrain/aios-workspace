@@ -8,8 +8,7 @@
  *  - user rollback to the recorded 0.12.0 package/config snapshot.
  */
 import assert from "node:assert/strict";
-import { cpSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import fs from "node:fs/promises";
+import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { sha256Hex } from "./context.mjs";
@@ -39,58 +38,66 @@ export function runNpmInstall(ctx, { spec, cwd, label, legacy = false }) {
 
 const INTERRUPTIBLE_STATES = ["discovered", "snapshotted", "staged", "validated"];
 
-async function importInstalled(install, rel) {
-  return import(pathToFileURL(path.join(install.pkgDir, rel)).href);
-}
-
-/** Interrupt the journal at each state, resume to committed, prove byte-stable repeat. */
-export async function migrationJourney(ctx, install) {
-  const { runMigration, MIGRATION_STATES } = await importInstalled(
-    install,
-    "scripts/cli/migration.mjs"
-  );
-  assert.deepEqual(
-    MIGRATION_STATES,
-    ["discovered", "snapshotted", "staged", "validated", "committed"],
-    "the AIO-1066 journal states are the contract this journey walks"
-  );
-  const root = path.join(ctx.base, "migration");
-  mkdirSync(root, { recursive: true });
+/** Drive the real installed update command through abrupt process termination and re-entry. */
+function interruptedUpdateJourney(ctx, { workspace, stagedBin, stagingPrefix, workspaceEnv }) {
   const results = [];
-  for (const interruptAt of INTERRUPTIBLE_STATES) {
-    const configPath = path.join(root, `config-${interruptAt}.json`);
-    await fs.writeFile(configPath, "legacy-config-bytes\n", { mode: 0o600 });
-    const options = {
-      configPath,
-      packageRecord: { name: ctx.manifest.packageName, version: "0.12.0" },
-      stage: async (source) => Buffer.concat([source, Buffer.from("migrated\n")]),
-      validate: async () => {},
-    };
-    let interrupted = false;
-    try {
-      await runMigration({
-        ...options,
-        interrupt: (state) => {
-          if (state === interruptAt) throw new Error(`interrupt at ${state}`);
-        },
-      });
-    } catch (error) {
-      assert.equal(error.code, "AIOS_E_MIGRATION", `interruption surfaces as AIOS_E_MIGRATION`);
-      interrupted = true;
-    }
-    assert.equal(interrupted, true, `journal must be interruptible at '${interruptAt}'`);
-    const resumed = await runMigration(options);
-    assert.equal(resumed.journal.state, "committed", `resume from '${interruptAt}' commits`);
-    assert.equal(resumed.resumed, true, "resume must report it continued a journal");
-    const afterFirst = await fs.readFile(configPath);
-    assert.equal(afterFirst.toString(), "legacy-config-bytes\nmigrated\n", "staged bytes commit");
-    const repeat = await runMigration(options);
-    const afterSecond = await fs.readFile(configPath);
-    assert.equal(repeat.journal.state, "committed", "repeat run stays committed");
-    assert.ok(afterFirst.equals(afterSecond), "repeat migration is a byte-stable no-op");
-    results.push({ interruptAt, resumed: true, committed: true, byteStable: true });
+  const moduleUrl = pathToFileURL(
+    path.join(stagingPrefix, "node_modules", "@aiosbrain", "aios", "scripts/cli/migration.mjs")
+  ).href;
+  for (const interruptAt of [...INTERRUPTIBLE_STATES, "committed"]) {
+    const fixture = `${workspace}-interrupt-${interruptAt}`;
+    cpSync(workspace, fixture, { recursive: true, verbatimSymlinks: true });
+    const marker = path.join(ctx.base, `interrupt-${interruptAt}.json`);
+    const args = ["update", "--repo", fixture];
+    const interrupted = ctx.run(stagedBin, args, {
+      cwd: fixture,
+      env: {
+        ...workspaceEnv,
+        NODE_OPTIONS: `--import=${pathToFileURL(path.join(ctx.artifactDir, "helpers", "interrupt-migration.mjs")).href}`,
+        AIOS_ACCEPTANCE_MIGRATION_MODULE: moduleUrl,
+        AIOS_ACCEPTANCE_INTERRUPT_STATE: interruptAt,
+        AIOS_ACCEPTANCE_INTERRUPT_MARKER: marker,
+      },
+      expectFailure: true,
+      label: `interrupt-cli-${interruptAt}`,
+    });
+    assert.equal(interrupted.status, 86, "the actual CLI must reach the intended crash boundary");
+    assert.deepEqual(JSON.parse(readFileSync(marker, "utf8")), { loaded: moduleUrl, interruptAt });
+    const stamp = path.join(fixture, ".aios-toolkit-version");
+    assert.equal(JSON.parse(readFileSync(`${stamp}.migration.json`, "utf8")).state, interruptAt);
+    ctx.run(stagedBin, args, {
+      cwd: fixture,
+      env: workspaceEnv,
+      label: `resume-cli-${interruptAt}`,
+    });
+    assert.match(readFileSync(stamp, "utf8"), /^stamp-format 2$/m);
+    assert.equal(existsSync(`${stamp}.migration.json`), false);
+    const stableStamp = () =>
+      readFileSync(stamp, "utf8").replace(/^synced-at .+$/m, "synced-at MASKED");
+    const before = stableStamp();
+    ctx.run(stagedBin, args, {
+      cwd: fixture,
+      env: workspaceEnv,
+      label: `repeat-cli-${interruptAt}`,
+    });
+    assert.equal(stableStamp(), before);
+    assert.match(
+      readFileSync(path.join(fixture, ".claude/rules/frontmatter.md"), "utf8"),
+      /acceptance customization/
+    );
+    results.push({
+      interruptAt,
+      actualCli: true,
+      exitCode: 86,
+      resumed: true,
+      committed: true,
+      byteStable: true,
+    });
   }
-  ctx.record("migration-journey", { states: results });
+  ctx.record("migration-journey", {
+    mechanism: "installed CLI process exit after durable journal write; unmodified CLI re-entry",
+    states: results,
+  });
 }
 
 /** Install registry 0.12.0, record a snapshot, stage-and-verify the candidate, upgrade. */
@@ -112,7 +119,9 @@ export function upgradeJourney(ctx) {
   assert.equal(JSON.parse(readFileSync(livePkg, "utf8")).version, "0.12.0");
 
   // Recorded rollback snapshot: exact package identity + exact config bytes.
-  const configPath = path.join(upgradeRoot, "user-config.json");
+  const configDir = path.join(upgradeRoot, "config");
+  mkdirSync(configDir, { recursive: true });
+  const configPath = path.join(configDir, "config.json");
   const configBytes = '{"schemaVersion":2,"defaultWorkspace":"/fixture/workspace"}\n';
   writeFileSync(configPath, configBytes, { mode: 0o600 });
   const snapshotDir = path.join(upgradeRoot, "snapshot-0.12.0");
@@ -193,7 +202,8 @@ export function upgradeJourney(ctx) {
     ],
     { cwd: workspace, label: "commit-customization" }
   );
-  const workspaceEnv = ctx.cliEnv({ AIOS_UPDATE_OFFLINE: "1" });
+  const workspaceEnv = ctx.cliEnv({ AIOS_UPDATE_OFFLINE: "1", AIOS_CONFIG_DIR: configDir });
+  interruptedUpdateJourney(ctx, { workspace, stagedBin, stagingPrefix, workspaceEnv });
   ctx.run(stagedBin, ["update", "--repo", workspace], {
     cwd: workspace,
     env: workspaceEnv,
@@ -254,47 +264,56 @@ export function upgradeJourney(ctx) {
     workspaceMigration:
       "v1 to v2 before in-place replacement; customization preserved; repeat stamp stable",
   });
-  return { livePrefix, livePkg, snapshot, workspace, legacyStamp };
+  return { livePrefix, livePkg, snapshot, workspace, legacyStamp, workspaceEnv };
 }
 
 /** Roll the live install back to the recorded 0.12.0 package + config snapshot. */
-export async function rollbackJourney(ctx, install, upgrade) {
+export async function rollbackJourney(ctx, upgrade) {
   const liveBin = path.join(upgrade.livePrefix, "node_modules", ".bin", "aios");
-  ctx.run(liveBin, ["update", "--rollback"], {
+  const stampPath = path.join(upgrade.workspace, ".aios-toolkit-version");
+  const migratedStamp = readFileSync(stampPath, "utf8");
+  const configBefore = readFileSync(upgrade.snapshot.configPath, "utf8");
+  const drift = '{"schemaVersion":2,"drifted":true}\n';
+  writeFileSync(upgrade.snapshot.configPath, drift);
+  const refused = ctx.run(liveBin, ["update", "--rollback", "--repo", upgrade.workspace], {
     cwd: upgrade.workspace,
-    label: "rollback-workspace-stamp",
+    env: upgrade.workspaceEnv,
+    expectFailure: true,
+    label: "rollback-cli-config-drift-refused",
   });
-  assert.equal(
-    readFileSync(path.join(upgrade.workspace, ".aios-toolkit-version"), "utf8"),
-    upgrade.legacyStamp
-  );
-  const { rollbackMigration } = await importInstalled(install, "scripts/cli/migration.mjs");
-  // Simulate post-upgrade config drift the user wants to abandon.
-  writeFileSync(upgrade.snapshot.configPath, '{"schemaVersion":2,"drifted":true}\n');
-  // Reinstalling the recorded 0.12.0 baseline hits the same registry fact as the
-  // upgrade journey's legacy install, so it gets the identical scoped relaxation.
-  const result = await rollbackMigration(upgrade.snapshot, {
-    installPackage: async (spec) => {
-      runNpmInstall(ctx, {
-        spec,
-        cwd: upgrade.livePrefix,
-        label: "rollback-install-legacy-relaxed",
-        legacy: true,
-      });
-    },
+  assert.notEqual(refused.status, 0);
+  assert.match(refused.stderr, /configuration changed after the migration snapshot/);
+  assert.equal(readFileSync(stampPath, "utf8"), migratedStamp);
+  assert.equal(readFileSync(upgrade.snapshot.configPath, "utf8"), drift);
+  // Preserve drift before the user explicitly reconciles to the recorded snapshot.
+  writeFileSync(path.join(ctx.base, "preserved-config-drift.json"), drift);
+  writeFileSync(upgrade.snapshot.configPath, configBefore);
+  const restored = ctx.run(liveBin, ["update", "--rollback", "--repo", upgrade.workspace], {
+    cwd: upgrade.workspace,
+    env: upgrade.workspaceEnv,
+    label: "rollback-cli-after-reconcile",
   });
-  assert.equal(result.package, UPGRADE_BASELINE, "rollback reinstalls the exact recorded package");
-  assert.equal(result.configSha256, upgrade.snapshot.configSha256, "exact config bytes restored");
-  const rolledBack = JSON.parse(readFileSync(upgrade.livePkg, "utf8"));
-  assert.equal(rolledBack.version, "0.12.0", "live install is 0.12.0 again");
-  assert.equal(
-    sha256Hex(readFileSync(upgrade.snapshot.configPath)),
-    upgrade.snapshot.configSha256,
-    "live config matches the snapshot digest"
-  );
+  assert.match(restored.stdout, /@aiosbrain\/aios@0\.12\.0/);
+  assert.match(restored.stdout, /restored the pre-upgrade stamp\/config snapshots/);
+  assert.equal(readFileSync(stampPath, "utf8"), upgrade.legacyStamp);
+  assert.equal(readFileSync(upgrade.snapshot.configPath, "utf8"), configBefore);
+  // Noninteractive rollback prints the exact reinstall command. Execute the recorded
+  // exact package through the scoped legacy installer after verifying CLI restoration.
+  runNpmInstall(ctx, {
+    spec: UPGRADE_BASELINE,
+    cwd: upgrade.livePrefix,
+    label: "rollback-install-legacy-relaxed",
+    legacy: true,
+  });
+  assert.equal(JSON.parse(readFileSync(upgrade.livePkg, "utf8")).version, "0.12.0");
+  assert.equal(sha256Hex(readFileSync(upgrade.snapshot.configPath)), upgrade.snapshot.configSha256);
   ctx.record("rollback-journey", {
-    restoredPackage: result.package,
-    restoredConfigSha256: result.configSha256,
+    actualCli: true,
+    configDriftRefused: true,
+    driftPreserved: true,
+    reconciledConfigRestored: true,
+    restoredPackage: UPGRADE_BASELINE,
+    restoredConfigSha256: upgrade.snapshot.configSha256,
     legacyReinstall: LEGACY_ENGINE_RELAXATION,
   });
 }

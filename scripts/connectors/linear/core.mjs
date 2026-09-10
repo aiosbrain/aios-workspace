@@ -1,3 +1,5 @@
+import { AiosError } from "../../cli.mjs";
+
 const API = "https://api.linear.app/graphql";
 const REQUEST_TIMEOUT_MS = 30_000;
 
@@ -8,7 +10,7 @@ export function fail(message) {
   process.exit(1);
 }
 
-export async function gql(query, variables, { throwOnError = false } = {}) {
+export async function gql(query, variables) {
   const key = process.env.LINEAR_API_KEY;
   if (!key) {
     // Backstop only: `aios linear` resolves the credential in index.mjs before any verb
@@ -19,8 +21,14 @@ export async function gql(query, variables, { throwOnError = false } = {}) {
         "Do not dotenvx-run the whole toolkit .env; that decrypts unrelated secrets (AIO-790)."
     );
   }
-  // throwOnError lets a caller that MUST report state after a one-shot mutation (e.g. create's
-  // "the issue may already exist" path) handle the failure instead of exiting mid-flight.
+  if (!/^[\x21-\x7e]+$/.test(key)) {
+    throw new AiosError(
+      "AIOS_E_CREDENTIAL_INCOMPLETE",
+      "The Linear credential contains invalid characters.",
+      "Replace the configured credential with a valid Linear API key."
+    );
+  }
+  // Throw so mutation callers can retain identity/readback guidance after an uncertain result.
   let response;
   try {
     response = await fetch(API, {
@@ -29,18 +37,23 @@ export async function gql(query, variables, { throwOnError = false } = {}) {
       body: JSON.stringify({ query, variables }),
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
-  } catch (error) {
-    const message = `Linear request failed: ${error.message}`;
-    if (throwOnError) throw new Error(message);
-    fail(message);
+  } catch {
+    throw new AiosError(
+      "AIOS_E_NETWORK",
+      "Linear request failed before a response was received.",
+      "Check connectivity. For a mutation, verify its outcome before retrying."
+    );
   }
   const payload = await response.json().catch(() => null);
   if (!response.ok || !payload || payload.errors) {
     const message =
       "Linear error: " +
       (payload?.errors?.map((error) => error.message).join("; ") || `HTTP ${response.status}`);
-    if (throwOnError) throw new Error(message);
-    fail(message);
+    throw new AiosError(
+      "AIOS_E_PROVIDER",
+      message,
+      "Check the Linear request and permissions; read back mutations before retrying."
+    );
   }
   return payload.data;
 }

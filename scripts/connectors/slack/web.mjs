@@ -20,6 +20,22 @@ import { shownArg } from "./args.mjs";
 
 export const API = "https://slack.com/api/";
 const RETRIES = 4;
+// Unknown methods are mutations until explicitly classified as safe reads.
+const RETRYABLE_READS = new Set([
+  "auth.test",
+  "users.lookupByEmail",
+  "users.info",
+  "conversations.info",
+  "conversations.list",
+  "conversations.history",
+  "conversations.replies",
+]);
+const uncertainMutation = () =>
+  new AiosError(
+    "AIOS_E_NETWORK",
+    "Slack did not confirm the mutation outcome; it may have succeeded.",
+    "Read back the target before retrying to avoid duplicate writes."
+  );
 const AUTH_ERRORS = new Set(["invalid_auth", "not_authed", "token_revoked", "account_inactive"]);
 const RETRY_STATUS = new Set([429, 500, 502, 503, 504]);
 
@@ -64,6 +80,7 @@ export async function slackCall(ctx, method, params = {}) {
       });
     } catch (error) {
       if (error instanceof AiosError) throw error;
+      if (!RETRYABLE_READS.has(method)) throw uncertainMutation();
       if (attempt < RETRIES) {
         await wait(retryDelayMs(null, attempt));
         continue;
@@ -75,6 +92,7 @@ export async function slackCall(ctx, method, params = {}) {
       );
     }
     if (RETRY_STATUS.has(response.status)) {
+      if (response.status !== 429 && !RETRYABLE_READS.has(method)) throw uncertainMutation();
       if (attempt < RETRIES) {
         await wait(retryDelayMs(response.headers.get("retry-after"), attempt));
         continue;

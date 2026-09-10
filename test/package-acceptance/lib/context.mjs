@@ -12,7 +12,7 @@
  *  - Raw stdout/stderr is scanned for sentinels BEFORE redaction; the evidence file
  *    only ever stores redacted text.
  */
-import { execFileSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, readdirSync, lstatSync, realpathSync } from "node:fs";
 import { writeFileSync } from "node:fs";
@@ -155,30 +155,24 @@ export class CellContext {
   run(cmd, args, opts = {}) {
     const { expectFailure = false, label = null, ...execOpts } = opts;
     const started = Date.now();
-    let stdout = "";
-    let stderr = "";
-    let status = 0;
-    let spawnError = null;
-    try {
-      stdout = execFileSync(cmd, args, {
-        encoding: "utf8",
-        ...execOpts,
-        env: execOpts.env ?? this.cliEnv(),
-      });
-    } catch (error) {
-      status = error.status ?? 1;
-      stdout = error.stdout ?? "";
-      stderr = error.stderr ?? "";
-      spawnError = error.code ?? null;
-      if (!expectFailure) {
-        this.recordCommand({ cmd, args, status, stdout, stderr, label, started, spawnError });
-        throw new Error(
-          `command failed (exit ${status}${spawnError ? `, ${spawnError}` : ""}): ` +
-            `${cmd} ${args.join(" ")}\n${redact(`${stdout}${stderr}`)}`
-        );
-      }
-    }
+    const result = spawnSync(cmd, args, {
+      encoding: "utf8",
+      ...execOpts,
+      // Never let callers bypass raw output capture.
+      stdio: ["pipe", "pipe", "pipe"],
+      env: execOpts.env ?? this.cliEnv(),
+    });
+    const stdout = result.stdout ?? "";
+    const stderr = result.stderr ?? "";
+    const status = result.status ?? 1;
+    const spawnError = result.error?.code ?? null;
     this.recordCommand({ cmd, args, status, stdout, stderr, label, started, spawnError });
+    if (status !== 0 && !expectFailure) {
+      throw new Error(
+        `command failed (exit ${status}${spawnError ? `, ${spawnError}` : ""}): ` +
+          `${redact(`${cmd} ${args.join(" ")}`)}\n${redact(`${stdout}${stderr}`)}`
+      );
+    }
     return { stdout, stderr, status, spawnError };
   }
 

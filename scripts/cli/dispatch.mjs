@@ -6,7 +6,7 @@
  * The four behaviors that are easy to break and are parity-tested in test/cli-registry.test.mjs:
  *
  *   1. help  — no command, `-h`, `--help`, `help` → print help, exit 0 (works with no repo).
- *   2. unknown command → print help, exit 1.
+ *   2. unknown command → structured usage failure, exit 2.
  *   3. `--repo` is consumed here for every command EXCEPT the descriptors that own the flag
  *      themselves (pr / consolidate-findings / timeline).
  *   4. resolution mode decides repo + cfg, and nothing else may:
@@ -41,15 +41,12 @@ export async function dispatch({ argv, local, resolvers, contextLoader }) {
 
   const desc = findCommand(cmd);
   if (!desc) {
-    // The help still goes to stdout (it is the useful payload), but the DIAGNOSTIC goes to stderr
-    // and names what was actually wrong. Before, `aios bogus 2>err.log` captured nothing and the
-    // user got 176 lines of help with no line saying which word was unknown (audit S6-4).
     const near = nearestCommand(cmd);
-    console.log(renderUsage());
-    console.error(
-      `error: unknown command: ${cmd}` + (near ? ` — did you mean \`aios ${near}\`?` : "")
+    throw new AiosError(
+      "AIOS_E_USAGE",
+      `Unknown command: ${cmd}`,
+      near ? `Run aios ${near} --help.` : "Run aios help."
     );
-    process.exit(1);
   }
 
   if (desc.metadata?.startupPolicy === "diagnostic") {
@@ -146,6 +143,7 @@ export async function dispatch({ argv, local, resolvers, contextLoader }) {
       await desc.adapt({ repo, cfg, patterns, rest, local, parsedArgs, invocationPlan }, mod)
     );
   } catch (e) {
+    if (e instanceof AiosError) throw e;
     die(e.message);
   }
 }

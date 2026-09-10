@@ -96,5 +96,9 @@ export async function cmdLinear(repo, rest, options = {}) {
       return output.failure(normalizeError(error));
     }
   }
-  return runLinearVerb(rest, base, { activityPlan, queryPlan: plan.query });
+  try {
+    return await runLinearVerb(rest, base, { activityPlan, queryPlan: plan.query });
+  } catch (error) {
+    return output.failure(normalizeError(error));
+  }
 }

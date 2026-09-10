@@ -42,23 +42,23 @@ test("every registered verb resolves to itself", () => {
   for (const name of commandNames()) assert.equal(nearestCommand(name), name);
 });
 
-test("an unknown command names itself on stderr and still exits 1", () => {
+test("an unknown command names itself on stderr and exits with usage code 2", () => {
   const r = run(["bogusquux"]);
-  assert.equal(r.code, 1);
-  assert.match(r.stderr, /unknown command: bogusquux/);
+  assert.equal(r.code, 2);
+  assert.match(r.stderr, /Unknown command: bogusquux/);
 });
 
 test("a near-miss suggests the real verb", () => {
   const r = run(["statu"]);
-  assert.equal(r.code, 1);
-  assert.match(r.stderr, /unknown command: statu/);
-  assert.match(r.stderr, /did you mean `aios status`\?/);
+  assert.equal(r.code, 2);
+  assert.match(r.stderr, /Unknown command: statu/);
+  assert.match(r.stderr, /Run aios status --help/);
 });
 
-test("the help itself stays on stdout — the diagnostic is the only stderr line", () => {
+test("unknown commands keep stdout empty and provide an error plus remediation", () => {
   const r = run(["bogusquux"]);
-  assert.ok(r.stdout.includes("aios — AIOS Team Brain sync client"));
-  assert.equal(r.stderr.trim().split("\n").length, 1);
+  assert.equal(r.stdout, "");
+  assert.equal(r.stderr.trim().split("\n").length, 2);
 });
 
 test("`aios inbox` is discoverable from the help (it used to be hidden)", () => {
