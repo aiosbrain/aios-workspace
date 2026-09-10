@@ -41,8 +41,10 @@ export function runningHostNames(platform = process.platform, exec = execFileSyn
     .filter(Boolean);
 }
 
-function isRunning(host, names) {
-  const normalize = (value) => value.toLowerCase().replace(/\.exe$/, "");
+function isRunning(host, names, platform = process.platform) {
+  // POSIX executable names distinguish Claude Desktop (Claude) from Claude Code (claude).
+  const normalize = (value) =>
+    platform === "win32" ? value.toLowerCase().replace(/\.exe$/, "") : value;
   return names.some((raw) => {
     const name = raw.replace(/\\/g, "/");
     const first = name.match(/^"([^"]+)"|^(\S+)/);
@@ -297,7 +299,7 @@ export async function installMcpHosts(options = {}) {
     proposals = [];
   const command = uninstall ? null : options.command || installedServerCommand({ home });
   for (const host of hosts) {
-    if (isRunning(host, names))
+    if (isRunning(host, names, options.platform))
       throw new Error(
         `${host.label} is running. ${host.restartText} after installation; quit it now before retrying.`
       );
@@ -417,7 +419,7 @@ export async function installMcpHosts(options = {}) {
     beforeReplace: async (file) => {
       if (hosts.some((host) => host.file === file)) await checkCommand();
       const currentNames = (options.runningHosts || (() => runningHostNames(options.platform)))();
-      if (hosts.some((host) => isRunning(host, currentNames)))
+      if (hosts.some((host) => isRunning(host, currentNames, options.platform)))
         throw new Error("A selected host started during installation; quit it before retrying");
       await options.beforeReplace?.(file);
     },

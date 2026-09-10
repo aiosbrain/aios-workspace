@@ -391,3 +391,48 @@ test(
     assert.deepEqual(tree(f.home), before);
   }
 );
+
+test(
+  "macOS Desktop installation distinguishes Claude Code and the browser bridge",
+  { skip: process.platform === "win32" },
+  async (t) => {
+    const f = fixture(t);
+    const otherProcesses = [
+      "/Users/example/.local/bin/claude",
+      "/Applications/Claude.app/Contents/Helpers/chrome-native-host",
+    ];
+    const before = tree(f.home);
+    const result = await installMcpHosts({
+      ...f,
+      hosts: ["claude-desktop"],
+      dryRun: true,
+      runningHosts: () => otherProcesses,
+    });
+    assert.equal(result.dry_run, true);
+    assert.deepEqual(tree(f.home), before);
+    for (const desktop of [
+      "Claude",
+      "/Applications/Claude.app/Contents/MacOS/Claude",
+      '"/Applications/Claude.app/Contents/MacOS/Claude"',
+    ]) {
+      await assert.rejects(
+        installMcpHosts({
+          ...f,
+          hosts: ["claude-desktop"],
+          dryRun: true,
+          runningHosts: () => [...otherProcesses, desktop],
+        }),
+        /Claude Desktop is running/
+      );
+    }
+    await assert.rejects(
+      installMcpHosts({
+        ...f,
+        hosts: ["claude-code"],
+        dryRun: true,
+        runningHosts: () => otherProcesses,
+      }),
+      /Claude Code is running/
+    );
+  }
+);

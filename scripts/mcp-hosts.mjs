@@ -15,7 +15,8 @@ export const MCP_HOSTS = Object.freeze([
     commandEncoding: "stdio",
     restartText: "Quit and reopen Claude Desktop",
     processes: ["Claude", "Claude.exe"],
-    processPaths: ["/Claude.app/Contents/"],
+    // The browser native host can outlive Desktop and does not own its MCP configuration.
+    processPaths: ["/Claude.app/Contents/MacOS/Claude"],
     detectPaths: ["/Applications/Claude.app", "{home}/Applications/Claude.app", "{appdata}/Claude"],
     binaries: [],
     candidatePaths: {
