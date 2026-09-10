@@ -14,7 +14,7 @@
 // The GraphQL `data` payload is printed as JSON on stdout (machine surface);
 // diagnostics go to stderr with a non-zero exit, matching the adapter's verbs.
 import { parseLinearQueryArgs } from "./query-args.mjs";
-import { fail, gql, paginate } from "./core.mjs";
+import { gql, paginate } from "./core.mjs";
 
 export const ASSIGNED_OPEN_QUERY = `query AssignedOpen($first: Int!, $after: String) {
   viewer {
@@ -77,16 +77,7 @@ export async function queryAssignedOpenIssues({
 /** Execute only a validated query plan; direct callers receive the same pure parser. */
 export async function cmdQuery(argv, plan) {
   const { query, variables } = plan ?? parseLinearQueryArgs(argv);
-  let data;
-  if (query) {
-    data = await gql(query, variables, { throwOnError: true }).catch((error) => {
-      fail(`linear query failed: ${error.message}`);
-    });
-  } else {
-    data = await queryAssignedOpenIssues().catch((error) => {
-      fail(`linear query failed: ${error.message}`);
-    });
-  }
+  const data = query ? await gql(query, variables) : await queryAssignedOpenIssues();
   console.log(JSON.stringify(data, null, 2));
   return 0;
 }

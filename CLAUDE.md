@@ -88,10 +88,12 @@ Every scaffolded workspace uses the same six-folder spine, each with a default a
 5-personal/  private scratch                                       tier: admin
 ```
 
-**Access tiers are the safety boundary.** Canonical values: **`admin`** (never syncs — owner only),
+**Access tiers are the local publishing safety boundary.** Canonical values: **`admin`** (never syncs — owner only),
 **`team`** (syncs to the brain), **`external`** (syncs outward to stakeholders). **Default-deny:**
 content with no resolvable `access:` frontmatter is **not** pushed. The brain rejects `admin`-tier
-at the boundary (422). Never weaken this. Full vocabulary (aliases, spine defaults, isolation
+at the boundary (422). Never weaken this. Brain reads use project membership and people/group grants, with
+endpoint-specific posture/role checks; a content label is not a universal server read ceiling.
+See `docs/contract/project-membership-access.md`. Full vocabulary (aliases, spine defaults, isolation
 invariants): `../docs/tier-vocabulary.md` — the scaffold's self-contained copy is
 `scaffold/.claude/rules/frontmatter.md`; change both together.
 
@@ -99,7 +101,7 @@ invariants): `../docs/tier-vocabulary.md` — the scaffold's self-contained copy
 
 ## 4. The pinned sync contract — do not drift ⚠️
 
-**`docs/brain-api.md` is the single pinned contract (document revision **1.25**, member-facing API **1.24**, internal gateway **1.10**, major `/api/v1`)** between this toolkit and
+**`docs/brain-api.md` is the single pinned contract (document revision **1.26**, member-facing API **1.24**, internal gateway **1.10**, major `/api/v1`)** between this toolkit and
 the Team Brain. Both sides build against it. **Any change to the sync protocol is a versioned change
 in that file first** — bump the version and make the matching change in `aios-team-brain`. A silent
 drift breaks `aios push`/`aios pull` for everyone. Forward-compat rule: clients MUST ignore item kinds

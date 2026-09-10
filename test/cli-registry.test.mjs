@@ -8,7 +8,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-import { COMMANDS, findCommand, renderUsage } from "../scripts/cli/registry.mjs";
+import { COMMANDS, findCommand } from "../scripts/cli/registry.mjs";
 import { finish } from "../scripts/cli/dispatch.mjs";
 
 const DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -308,7 +308,7 @@ test("registry: every adapt hands its module the EXACT argument signature (table
     "gen-catalog": ["mod", "generate", R],
     catalog: ["mod", "cmdCatalog", R, A],
     connector: ["mod", "cmdConnector", R, A],
-    linear: ["mod", "cmdLinear", R, A, { invocationPlan: undefined }],
+    linear: ["mod", "cmdLinear", R, A, { invocationPlan: undefined, json: false }],
     slack: ["mod", "cmdSlack", R, A, { invocationPlan: undefined }],
     disconnect: ["mod", "cmdDisconnect", R, A],
     transcripts: ["mod", "cmdTranscripts", R, C, A],
@@ -426,12 +426,13 @@ test("cli: help works with no workspace anywhere above cwd", () => {
   }
 });
 
-test("cli: unknown command prints the help text and exits 1", () => {
+test("cli: unknown command returns a typed usage error", () => {
   const dir = tmpDir("aios-unknown-");
   try {
     const r = run(["not-a-command"], { cwd: dir });
-    assert.equal(r.code, 1);
-    assert.equal(r.stdout, `${renderUsage()}\n`);
+    assert.equal(r.code, 2);
+    assert.equal(r.stdout, "");
+    assert.match(r.stderr, /AIOS_E_USAGE/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
