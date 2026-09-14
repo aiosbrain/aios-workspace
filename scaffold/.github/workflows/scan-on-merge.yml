@@ -138,6 +138,10 @@ jobs:
         # The slug is derived from the repository name — this workflow is repo-agnostic on
         # purpose, so it works unmodified in every scaffolded workspace.
         run: |
+          case "$BRAIN_URL" in
+            https://?*) ;;
+            *) echo "BRAIN_URL must use HTTPS" >&2; exit 1 ;;
+          esac
           SLUG="${GITHUB_REPOSITORY##*/}"
           HEALTH_JSON="$RUNNER_TEMP/codebase-health.contract.json"
           if [ -s "$HEALTH_JSON" ]; then

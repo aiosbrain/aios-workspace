@@ -1,0 +1,274 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import {
+  MAX_API_RESPONSE_BYTES,
+  MAX_ARCHIVE_BYTES,
+  resolveCoverageArtifact,
+  selectExactArtifact,
+  selectExactRun,
+} from "../scripts/resolve-coverage-artifact.mjs";
+
+const EXPECTED = Object.freeze({
+  repository: "aiosbrain/aios-workspace",
+  repositoryId: "1259989678",
+  sha: "a".repeat(40),
+});
+const TEST_CREDENTIAL = ["disposable", "test", "credential"].join("-");
+const ERROR_CREDENTIAL = ["must", "not", "appear", "in", "errors"].join("-");
+
+function run(overrides = {}) {
+  return {
+    id: 34211847359,
+    event: "push",
+    head_branch: "main",
+    head_sha: EXPECTED.sha,
+    head_repository: { id: 1259989678, full_name: EXPECTED.repository },
+    path: ".github/workflows/ci.yml",
+    ...overrides,
+  };
+}
+
+function artifact(overrides = {}) {
+  return {
+    id: 10050195342,
+    name: "coverage-bundle",
+    expired: false,
+    size_in_bytes: 341259,
+    workflow_run: {
+      id: 34211847359,
+      repository_id: 1259989678,
+      head_repository_id: 1259989678,
+      head_branch: "main",
+      head_sha: EXPECTED.sha,
+    },
+    ...overrides,
+  };
+}
+
+test("selects only the exact push/main/ci.yml repository and SHA run", () => {
+  const selected = selectExactRun(
+    {
+      workflow_runs: [
+        run({ event: "pull_request" }),
+        run({ head_sha: "b".repeat(40) }),
+        run({ path: ".github/workflows/other.yml" }),
+        run(),
+      ],
+    },
+    EXPECTED
+  );
+  assert.equal(selected.id, 34211847359);
+  assert.throws(
+    () => selectExactRun({ workflow_runs: [run(), run({ id: 34211847360 })] }, EXPECTED),
+    /multiple exact/
+  );
+});
+
+test("artifact selection binds run, repository, SHA, branch, expiry, and byte ceiling", () => {
+  assert.equal(selectExactArtifact({ artifacts: [artifact()] }, run(), EXPECTED).id, 10050195342);
+  for (const value of [
+    artifact({ expired: true }),
+    artifact({ size_in_bytes: MAX_ARCHIVE_BYTES + 1 }),
+    artifact({ workflow_run: { ...artifact().workflow_run, head_sha: "b".repeat(40) } }),
+    artifact({ workflow_run: { ...artifact().workflow_run, repository_id: 9 } }),
+  ]) {
+    assert.throws(() => selectExactArtifact({ artifacts: [value] }, run(), EXPECTED));
+  }
+});
+
+test("selectors reject malformed, duplicate, empty, and invalid-identifier responses", () => {
+  assert.throws(() => selectExactRun({}, EXPECTED), /runs response is malformed/);
+  assert.throws(
+    () => selectExactRun({ workflow_runs: [run({ id: "invalid" })] }, EXPECTED),
+    /workflow run id/
+  );
+  assert.throws(
+    () => selectExactRun({ workflow_runs: [run()] }, { ...EXPECTED, repository: "invalid" }),
+    /owner\/repository/
+  );
+  assert.throws(
+    () => selectExactRun({ workflow_runs: [run()] }, { ...EXPECTED, sha: "not-a-sha" }),
+    /40-character/
+  );
+  assert.throws(
+    () => selectExactRun({ workflow_runs: [run()] }, { ...EXPECTED, repositoryId: 0 }),
+    /repositoryId/
+  );
+  assert.equal(selectExactArtifact({ artifacts: [] }, run(), EXPECTED), null);
+  assert.throws(() => selectExactArtifact({}, run(), EXPECTED), /artifacts response is malformed/);
+  assert.throws(
+    () => selectExactArtifact({ artifacts: [artifact(), artifact({ id: 2 })] }, run(), EXPECTED),
+    /multiple coverage-bundle/
+  );
+  assert.throws(
+    () => selectExactArtifact({ artifacts: [artifact({ size_in_bytes: 0 })] }, run(), EXPECTED),
+    /positive safe integer/
+  );
+  assert.throws(
+    () => selectExactArtifact({ artifacts: [artifact({ id: "invalid" })] }, run(), EXPECTED),
+    /artifact id/
+  );
+});
+
+test("resolver bounds streamed API bodies and rejects invalid transport input", async () => {
+  const encoded = new TextEncoder().encode(JSON.stringify({ workflow_runs: [] }));
+  const midpoint = Math.floor(encoded.byteLength / 2);
+  const streamedFetch = async () =>
+    new Response(
+      new ReadableStream({
+        start(controller) {
+          controller.enqueue(encoded.slice(0, midpoint));
+          controller.enqueue(encoded.slice(midpoint));
+          controller.close();
+        },
+      }),
+      { status: 200, headers: { "content-length": String(encoded.byteLength) } }
+    );
+  await assert.rejects(
+    resolveCoverageArtifact({
+      fetchImpl: streamedFetch,
+      apiUrl: "https://api.github.com/",
+      token: TEST_CREDENTIAL,
+      expected: EXPECTED,
+      attempts: 1,
+      delayMs: 0,
+    }),
+    /did not become available/
+  );
+
+  for (const [overrides, pattern] of [
+    [{ apiUrl: "http://api.github.com" }, /apiUrl/],
+    [{ token: "" }, /token is missing/],
+    [{ attempts: 0 }, /attempts/],
+    [{ delayMs: 60_001 }, /delayMs/],
+  ]) {
+    await assert.rejects(
+      resolveCoverageArtifact({
+        fetchImpl: streamedFetch,
+        apiUrl: "https://api.github.com",
+        token: TEST_CREDENTIAL,
+        expected: EXPECTED,
+        attempts: 1,
+        delayMs: 0,
+        ...overrides,
+      }),
+      pattern
+    );
+  }
+});
+
+test("resolver waits boundedly for the exact artifact and never exposes the token", async () => {
+  const responses = [
+    { workflow_runs: [] },
+    { workflow_runs: [run()] },
+    { artifacts: [] },
+    { workflow_runs: [run()] },
+    { artifacts: [artifact()] },
+  ];
+  const calls = [];
+  const sleeps = [];
+  const fetchImpl = async (url, options) => {
+    calls.push({ url, options });
+    const body = responses.shift();
+    return { ok: true, status: 200, text: async () => JSON.stringify(body) };
+  };
+  const resolved = await resolveCoverageArtifact({
+    fetchImpl,
+    sleep: async (milliseconds) => sleeps.push(milliseconds),
+    apiUrl: "https://api.github.com",
+    token: TEST_CREDENTIAL,
+    expected: EXPECTED,
+    attempts: 3,
+    delayMs: 1,
+  });
+  assert.equal(resolved.run.id, 34211847359);
+  assert.equal(resolved.artifact.id, 10050195342);
+  assert.deepEqual(sleeps, [1, 1]);
+  assert.equal(
+    calls.every((call) => !call.url.includes(TEST_CREDENTIAL)),
+    true
+  );
+  assert.equal(calls[0].url.includes(`head_sha=${EXPECTED.sha}&`), true);
+  assert.equal(
+    calls.every((call) => call.options.headers.Authorization === `Bearer ${TEST_CREDENTIAL}`),
+    true
+  );
+});
+
+test("resolver fails closed after the configured wait and on API failure", async () => {
+  const emptyFetch = async () => ({
+    ok: true,
+    status: 200,
+    text: async () => JSON.stringify({ workflow_runs: [] }),
+  });
+  await assert.rejects(
+    resolveCoverageArtifact({
+      fetchImpl: emptyFetch,
+      sleep: async () => {},
+      apiUrl: "https://api.github.com",
+      token: "test",
+      expected: EXPECTED,
+      attempts: 2,
+      delayMs: 0,
+    }),
+    /did not become available/
+  );
+
+  await assert.rejects(
+    resolveCoverageArtifact({
+      fetchImpl: async () => ({ ok: false, status: 503, text: async () => "unavailable" }),
+      apiUrl: "https://api.github.com",
+      token: ERROR_CREDENTIAL,
+      expected: EXPECTED,
+      attempts: 1,
+      delayMs: 0,
+    }),
+    (error) => /HTTP 503/.test(error.message) && !error.message.includes(ERROR_CREDENTIAL)
+  );
+
+  await assert.rejects(
+    resolveCoverageArtifact({
+      fetchImpl: async () => ({
+        ok: true,
+        status: 200,
+        text: async () => "x".repeat(MAX_API_RESPONSE_BYTES + 1),
+      }),
+      apiUrl: "https://api.github.com",
+      token: "test",
+      expected: EXPECTED,
+      attempts: 1,
+      delayMs: 0,
+    }),
+    /exceeds 2 MiB/
+  );
+});
+
+test("resolver stops immediately when the exact producer terminates without an artifact", async () => {
+  const calls = [];
+  const sleeps = [];
+  const responses = [
+    { workflow_runs: [run({ status: "completed", conclusion: "cancelled" })] },
+    { artifacts: [] },
+  ];
+  await assert.rejects(
+    resolveCoverageArtifact({
+      fetchImpl: async (url) => {
+        calls.push(url);
+        return {
+          ok: true,
+          status: 200,
+          text: async () => JSON.stringify(responses.shift()),
+        };
+      },
+      sleep: async (milliseconds) => sleeps.push(milliseconds),
+      apiUrl: "https://api.github.com",
+      token: TEST_CREDENTIAL,
+      expected: EXPECTED,
+      attempts: 90,
+      delayMs: 30_000,
+    }),
+    /producer completed \(cancelled\) without coverage-bundle/
+  );
+  assert.equal(calls.length, 2);
+  assert.deepEqual(sleeps, []);
+});
