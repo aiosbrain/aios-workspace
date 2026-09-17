@@ -49,16 +49,19 @@ export const StatusMessage = ({
   })();
 
   return (
-    <Box gap={1} flexDirection="row">
-      <Text aria-label={ariaLabel ?? `${variant} status`}>{""}</Text>
-      {variant === "loading" ? (
-        <Spinner type="dots" color={variantColor} aria-label="Loading" />
-      ) : (
-        <Text aria-hidden color={variantColor}>
-          {icon ?? resolveStatusSymbol(unicode, variant as Exclude<StatusVariant, "loading">)}
-        </Text>
-      )}
-      <Text>{children}</Text>
+    <Box flexDirection="row" aria-label={ariaLabel ?? `${variant} status`}>
+      <Box flexShrink={0} marginRight={1}>
+        {variant === "loading" ? (
+          <Spinner type="dots" color={variantColor} aria-label="Loading" />
+        ) : (
+          <Text aria-hidden color={variantColor}>
+            {icon ?? resolveStatusSymbol(unicode, variant as Exclude<StatusVariant, "loading">)}
+          </Text>
+        )}
+      </Box>
+      <Box flexShrink={1}>
+        <Text>{children}</Text>
+      </Box>
     </Box>
   );
 };

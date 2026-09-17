@@ -9,7 +9,8 @@
     "Guard an empty SetupFlow multi-select before indexing.",
     "Use semantic theme colors for SetupFlow step icons; inherit native foreground.",
     "Format vendored sources with repository Prettier settings.",
-    "Keep synchronous input and selection refs so batched edit/navigation plus Enter submits the current value."
+    "Keep synchronous input and selection refs so batched edit/navigation plus Enter submits the current value.",
+    "Keep status icons and spacing fixed while message content wraps in narrow terminals."
   ],
   "sha256": {
     "hooks/use-animation.ts": "e8ec41addd5b714ec5438fb2adc1d002f00540d33a1a8c704dd1c64fa74829b8",
@@ -38,5 +39,10 @@
     "ui/text-input.tsx": "f1c8d17a6a2cb59dbf705a8b4b2fc1edab790ed14ae1018e6c4bd8b4b209f839",
     "ui/types.ts": "16d3236f64814a0545b8eb85acd6bb406c9a1e5eb396cdf9fd79033c8cdc4e7c"
   },
-  "externalImports": ["cli-spinners", "ink", "react", "string-width"]
+  "externalImports": [
+    "cli-spinners",
+    "ink",
+    "react",
+    "string-width"
+  ]
 }
