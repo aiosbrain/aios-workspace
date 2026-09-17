@@ -69,6 +69,7 @@ test("tools/list exposes every registered tool with a JSON-Schema inputSchema", 
     "brain_list_tasks",
     "brain_pull_items",
     "brain_query",
+    "brain_search_evidence",
     "brain_stakeholders",
     "brain_status",
   ]);
