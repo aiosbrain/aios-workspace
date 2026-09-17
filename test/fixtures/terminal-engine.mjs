@@ -15,6 +15,7 @@ delete process.env.CI;
 const { cmdPush, cmdPull, cmdStatus, connectFlow } = legacyContext().local;
 const cfg = {
   project_members: [],
+  member: "fixture",
   project: "fixture",
   brain_url: "https://brain.example",
   api_key: "fixture-token",
