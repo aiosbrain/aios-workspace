@@ -63,8 +63,47 @@ test("themes inherit canvas and text, and use ANSI fallbacks without colors in m
     const colors = terminalTheme({ ...ctx, background }).colors;
     assert.equal(colors.foreground, undefined);
     assert.equal(colors.background, undefined);
-    assert.equal(colors.success, undefined);
+    assert.ok(Object.values(colors).every((value) => value === undefined));
     assert.equal(terminalTheme({ ...ctx, background, colorDepth: 4 }).colors.error, "red");
+  }
+});
+test("chromatic ink is legible on light and dark reference canvases", () => {
+  const luminance = (hex) => {
+    const rgb = hex.match(/[a-f0-9]{2}/gi).map((value) => parseInt(value, 16) / 255);
+    return rgb
+      .map((value) => (value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4))
+      .reduce((total, value, index) => total + value * [0.2126, 0.7152, 0.0722][index], 0);
+  };
+  for (const [background, canvas] of [
+    ["light", "#fafaf8"],
+    ["dark", "#0b0b0b"],
+  ]) {
+    const colors = terminalTheme({ ...ctx, background, colorDepth: 24 }).colors;
+    assert.equal(colors.foreground, undefined);
+    assert.equal(colors.background, undefined);
+    assert.notEqual(colors.primary, colors.accent);
+    assert.notEqual(colors.success, colors.error);
+    for (const role of [
+      "primary",
+      "secondary",
+      "accent",
+      "focusRing",
+      "success",
+      "warning",
+      "error",
+      "info",
+    ]) {
+      const ink = luminance(colors[role]);
+      const bg = luminance(canvas);
+      assert.ok(
+        (Math.max(ink, bg) + 0.05) / (Math.min(ink, bg) + 0.05) >= 4.5,
+        `${background} ${role}`
+      );
+    }
+    const ansi = terminalTheme({ ...ctx, background, colorDepth: 4 }).colors;
+    assert.equal(ansi.primary, "magenta");
+    assert.equal(ansi.accent, "green");
+    assert.equal(ansi.info, "cyan");
   }
 });
 test("basic and reduced-motion tiers never open a live animation", () => {

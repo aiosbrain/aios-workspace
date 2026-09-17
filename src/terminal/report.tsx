@@ -1,7 +1,7 @@
 import { Box, Text, renderToString } from "ink";
 import { stripVTControlCharacters } from "node:util";
 import type { ReactNode } from "react";
-import { Providers } from "./theme.js";
+import { Providers, terminalTheme } from "./theme.js";
 import { Badge } from "./vendor/ui/badge.js";
 import { KeyValue } from "./vendor/ui/key-value.js";
 import { Table } from "./vendor/ui/table.js";
@@ -26,17 +26,25 @@ export function renderStatic(ctx: Capabilities, children: ReactNode) {
   return ctx.colorDepth === 0 ? stripVTControlCharacters(text) : text;
 }
 export function renderMessage(ctx: Capabilities, message: string, status: Status = "info") {
-  return renderStatic(ctx, <StatusMessage variant={status}>{safeText(message)}</StatusMessage>);
+  return renderStatic(
+    ctx,
+    <StatusMessage variant={status}>
+      <Text color={terminalTheme(ctx).colors[status === "pending" ? "foreground" : status]}>
+        {safeText(message)}
+      </Text>
+    </StatusMessage>
+  );
 }
 export function renderStep(ctx: Capabilities, message: string) {
   return renderStatic(
     ctx,
-    <SetupFlow.Step iconColor={undefined} status="done">
+    <SetupFlow.Step iconColor={terminalTheme(ctx).colors.success} status="done">
       {safeText(message)}
     </SetupFlow.Step>
   );
 }
 export function renderStatus(ctx: Capabilities, report: StatusReport) {
+  const colors = terminalTheme(ctx).colors;
   const counts: Record<string, number> = {
     New: report.fresh.length,
     Modified: report.modified.length,
@@ -46,12 +54,15 @@ export function renderStatus(ctx: Capabilities, report: StatusReport) {
   return renderStatic(
     ctx,
     <>
-      <Text bold>AIOS {ctx.glyphs === "ascii" ? "|" : "·"} status</Text>
+      <Text bold>
+        AIOS <Text color={colors.primary}>{ctx.glyphs === "ascii" ? "|" : "·"} status</Text>
+      </Text>
       <Text>{safeText(report.project)}</Text>
       <Text>Destination: {safeText(report.destination)}</Text>
       <Box marginY={1} flexDirection="column">
         {ctx.width < 80 ? (
           <KeyValue
+            keyColor={colors.primary}
             items={Object.entries(counts).map(([key, value]) => ({ key, value: String(value) }))}
           />
         ) : (
@@ -71,7 +82,16 @@ export function renderStatus(ctx: Capabilities, report: StatusReport) {
         ([label, items]) =>
           items.length > 0 && (
             <Box key={label} flexDirection="column" marginBottom={1}>
-              <Text bold>
+              <Text
+                bold
+                color={
+                  label === "New"
+                    ? colors.success
+                    : label === "Modified"
+                      ? colors.warning
+                      : colors.info
+                }
+              >
                 {label} ({items.length})
               </Text>
               {items.map((item, i) => (
@@ -80,7 +100,10 @@ export function renderStatus(ctx: Capabilities, report: StatusReport) {
                   {item.reason ? (
                     <Text wrap="wrap">Reason: {safeText(item.reason)}</Text>
                   ) : (
-                    <Badge bordered={false} variant="secondary">
+                    <Badge
+                      bordered={false}
+                      color={item.tier === "team" ? colors.primary : colors.info}
+                    >
                       {safeText(
                         [item.kind, item.tier]
                           .filter(Boolean)
@@ -99,7 +122,10 @@ export function renderStatus(ctx: Capabilities, report: StatusReport) {
         </StatusMessage>
       )}
       <Text>
-        Next: {report.fresh.length + report.modified.length ? "aios push --dry-run" : "aios status"}
+        Next:{" "}
+        <Text color={colors.accent} bold>
+          {report.fresh.length + report.modified.length ? "aios push --dry-run" : "aios status"}
+        </Text>
       </Text>
     </>
   );

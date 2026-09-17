@@ -1,6 +1,6 @@
 import { Box, Text, render, useInput, useApp, useStdout } from "ink";
 import { useState, useEffect } from "react";
-import { Providers } from "./theme.js";
+import { Providers, terminalTheme } from "./theme.js";
 import { Select } from "./vendor/ui/select.js";
 import { MultiSelect } from "./vendor/ui/multi-select.js";
 import { TextInput } from "./vendor/ui/text-input.js";
@@ -52,7 +52,9 @@ function Question({
     [];
   return (
     <Box flexDirection="column" width={width}>
-      <Text bold>{safeText(question.message)}</Text>
+      <Text bold color={terminalTheme(ctx).colors.primary}>
+        {safeText(question.message)}
+      </Text>
       {question.kind === "select" ? (
         <Select
           options={options}
@@ -147,9 +149,12 @@ export function startProgress(ctx: Capabilities, event: ProgressEvent, stdout = 
   const instance = render(
     <Providers ctx={ctx}>
       <Box flexDirection="column" width={ctx.width}>
-        <StatusMessage variant="loading">{safeText(event.label)}</StatusMessage>
+        <StatusMessage variant="loading">
+          <Text color={terminalTheme(ctx).colors.accent}>{safeText(event.label)}</Text>
+        </StatusMessage>
         {event.total !== undefined && event.total > 0 && event.completed !== undefined && (
           <ProgressBar
+            color={terminalTheme(ctx).colors.accent}
             value={event.completed}
             total={event.total}
             width={Math.min(24, Math.max(4, ctx.width - 16))}

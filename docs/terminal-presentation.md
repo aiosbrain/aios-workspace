@@ -40,6 +40,14 @@ colors. Until that additive export is published, the CLI reads the same generate
 colors from the existing `tokens.pencil.json` export. This compatibility path contains
 no copied palette values. Foreground and canvas always inherit the terminal.
 
+The terminal palette uses violet for headings, active choices, and team labels; lime
+for live progress and next commands; teal for information and intentionally held files;
+and emerald/amber/red for success, changes or warnings, and failures. The AIOS product
+label remains terminal-native. Truecolor accents are derived toward the canonical
+foreground until they reach 4.5:1 against the selected canonical light/dark canvas.
+Custom terminal backgrounds may differ; `AIOS_UI_BG` selects the reference and limited
+terminals use their own ANSI palette. Monochrome output retains labels and symbols.
+
 TermCN's source adaptations are recorded in provenance: Node ESM import paths,
 default-option focus, safe empty selection, Node-only global checks, and semantic step
 colors, and synchronous input refs for batched paste/navigation plus Enter. Updates require reviewing the pinned source diff and running the PTY tests.
