@@ -203,3 +203,25 @@ test("help and disabled presenters run with React and Ink imports blocked", () =
   );
   assert.equal(probe.status, 0, probe.stderr);
 });
+
+test("MCP JSON with no target stays noninteractive even on a TTY", () => {
+  const result = spawnSync(
+    process.execPath,
+    [
+      "--no-warnings",
+      "--experimental-loader",
+      "./test/fixtures/block-terminal-loader.mjs",
+      "--input-type=module",
+      "-e",
+      `
+      import { cmdMcpHost } from './scripts/mcp-host-command.mjs';
+      Object.defineProperty(process.stdin, 'isTTY', { value: true });
+      try { await cmdMcpHost(['install', '--json']); throw new Error('unexpected success'); }
+      catch (error) { if (!error.message.startsWith('Use --host')) throw error; }
+    `,
+    ],
+    { cwd: root, encoding: "utf8", timeout: 5000 }
+  );
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, "");
+});

@@ -96,7 +96,7 @@ export async function cmdMcpHost(args, options = {}) {
       : 0;
   }
   if (!hosts.length) {
-    if (!process.stdin.isTTY)
+    if (json || !process.stdin.isTTY)
       throw new Error("Use --host claude-desktop,claude-code,codex,cursor to select targets");
     hosts.push(...(await chooseMcpHosts()));
     if (!hosts.length) {
