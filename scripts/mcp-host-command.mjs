@@ -5,7 +5,7 @@ import { readHostDocument } from "./mcp-host-formats.mjs";
 import os from "node:os";
 
 export async function chooseMcpHosts({ optional = false } = {}) {
-  const ui = await import("@clack/prompts");
+  const { clack: ui } = await import("./onboard-ui.mjs");
   if (optional) {
     const answer = await ui.confirm({
       message: "Connect your Brain to an MCP host now? (optional)",

@@ -1,3 +1,4 @@
+import { createPresenter } from "./ui.mjs";
 import { isDistributionRoot } from "./cli.mjs";
 /**
  * aios.mjs — AIOS Team Brain sync client for aios-workspace repos.
@@ -24,8 +25,6 @@ import readline from "node:readline";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  listConnectors,
-  getDescriptor,
   validateConnector,
   storeConnector,
   vaultGet,
@@ -446,7 +445,8 @@ function finishOAuth(repo, d, status) {
 // onboarding wizard (cmdOnboard) and an interactive `aios connect <id>` both pass
 // onboard-ui.mjs's clack-backed askViaClack (masked input); omit it and connectFlow opens
 // its own plain readline question for a single non-interactive-safe standalone connect.
-async function connectFlow(repo, d, { sets = {}, tokenFlag = null, ask } = {}) {
+async function connectFlow(repo, d, { sets = {}, tokenFlag = null, ask, presenter } = {}) {
+  presenter ??= await createPresenter();
   // OAuth connectors take a separate one-click path (browser → brain), not local secrets.
   if (d.auth_mode === "oauth") return oauthConnectFlow(repo, d, { ask, tokenFlag });
 
@@ -481,9 +481,11 @@ async function connectFlow(repo, d, { sets = {}, tokenFlag = null, ask } = {}) {
   }
 
   // validate live
-  process.stdout.write(c.dim("  validating… "));
-  const result = await validateConnector(d, values);
-  console.log("");
+  if (!presenter) process.stdout.write(c.dim("  validating… "));
+  const result = presenter
+    ? await presenter.run({ label: `Validating ${d.name}` }, () => validateConnector(d, values))
+    : await validateConnector(d, values);
+  if (!presenter) console.log("");
   for (const ch of result.checks)
     console.log(`  ${ch.ok ? c.green("✓") : c.red("✗")} ${ch.name} ${c.dim("— " + ch.detail)}`);
   if (!result.ok) {
@@ -494,6 +496,7 @@ async function connectFlow(repo, d, { sets = {}, tokenFlag = null, ask } = {}) {
   }
 
   // store (encrypt + write artifact + flip status); include any captured values (e.g. team id)
+  if (presenter) presenter.step(`Storing ${d.name} connection`);
   const stored = storeConnector(repo, d, { ...values, ...(result.captured || {}) });
   const who = result.identity?.value ? ` as ${result.identity.value}` : "";
   const where = result.instance?.value ? ` in ${result.instance.value}` : "";
@@ -503,50 +506,13 @@ async function connectFlow(repo, d, { sets = {}, tokenFlag = null, ask } = {}) {
       `  secret encrypted in .env (dotenvx) · ${stored.transport === "mcp" ? "MCP server added to .mcp.json" : `skill installed → .claude/skills/${d.skill.skill_name}/`}`
     )
   );
+  if (presenter) presenter.message("Next: aios status");
   return true;
 }
 
 // aios connect [<id>] — guided connect→validate→store for an integration (headless engine).
 async function cmdConnect(repo, args) {
-  const id = args.find((a) => !a.startsWith("--"));
-  if (!id) {
-    console.log(c.blue("connectable integrations:"));
-    for (const conn of listConnectors(repo)) {
-      const badge = conn.status === "wired" ? c.green("✓ wired") : c.dim("○ available");
-      // AIO-356: dual-auth connectors (Granola) report which auth path is active.
-      const authNote = conn.auth_path ? c.dim(` (auth: ${conn.auth_path.label})`) : "";
-      console.log(
-        `  ${conn.id.padEnd(12)} ${badge}  ${c.dim(`[${conn.transport}] ${conn.summary}`)}${authNote}`
-      );
-    }
-    console.log(c.dim("\nrun: aios connect <id>"));
-    return;
-  }
-  // AIO-1067 user-level linear setup (credential REFERENCE mode): setup.mjs returns an
-  // exit code when it handled the request; undefined falls through to the vault flow.
-  const lin = id === "linear" && (await (await import("./connectors.mjs")).loadLinearSetup());
-  const handled = lin ? await lin.cmdConnectLinear(repo, args) : undefined;
-  if (handled !== undefined) return void (handled && (process.exitCode = handled));
-  let d;
-  try {
-    d = getDescriptor(repo, id);
-  } catch (e) {
-    die(e.message);
-  }
-  // collect secret values: --token sets the primary required secret; --set ENV=VALUE for others.
-  const sets = {};
-  for (let i = 0; i < args.length; i++)
-    if (args[i] === "--set" && args[i + 1]) {
-      const [k, ...v] = args[i + 1].split("=");
-      sets[k] = v.join("=");
-    }
-  const tokenFlag = args.includes("--token") ? args[args.indexOf("--token") + 1] : null;
-
-  // Interactively prompted secrets (not covered by --set/--token) get masked input too — the
-  // same connectFlow the onboarding wizard drives (plaintext-echo fix applies standalone too).
-  const ask = process.stdin.isTTY ? (await import("./onboard-ui.mjs")).askViaClack : undefined;
-  const ok = await connectFlow(repo, d, { sets, tokenFlag, ask });
-  if (!ok) process.exitCode = 1;
+  return (await import("./connect-command.mjs")).cmdConnect(repo, args, { connectFlow });
 }
 
 /**

@@ -11,7 +11,9 @@
  * (push/pull/status/query) and connector.mjs's engine underneath this stay dependency-free.
  */
 
-import * as clack from "@clack/prompts";
+import * as plainPrompts from "@clack/prompts";
+import { createPromptUI } from "./ui.mjs";
+const clack = await createPromptUI(plainPrompts);
 
 export const ONBOARDING_PATHS = [
   { value: "personal", label: "Personal", hint: "Use AIOS locally; a Team Brain is optional." },
@@ -26,7 +28,7 @@ export const ONBOARDING_PATHS = [
 /** Bail out the same way everywhere on Ctrl-C/Esc: a cancel message, then exit 1. */
 export function bailOnCancel(value) {
   if (clack.isCancel(value)) {
-    clack.cancel("Cancelled — nothing else was changed.");
+    clack.cancel("Cancelled. Completed steps remain saved; no further steps were run.");
     process.exit(1);
   }
   return value;

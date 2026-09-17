@@ -1,11 +1,14 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { stripVTControlCharacters } from "node:util";
 import { createPresenter, canPresent } from "../scripts/ui.mjs";
 import { renderStatus, safeText } from "../dist/terminal/report.js";
 import { startProgress } from "../dist/terminal/session.js";
 import { terminalTheme } from "../dist/terminal/theme.js";
 
+const root = fileURLToPath(new URL("../", import.meta.url));
 const ctx = {
   mode: "human",
   width: 80,
@@ -115,4 +118,88 @@ test("presentation failure never retries an operation or changes its return/erro
   );
   assert.equal(calls, 2);
   assert.doesNotThrow(() => ui.message("Completed"));
+});
+const python = spawnSync("python3", ["--version"]).status === 0;
+for (const width of [60, 80, 120]) {
+  test(
+    `real PTY restores input and masks a pasted secret at ${width} columns`,
+    { skip: process.platform === "win32" || !python },
+    () => {
+      const r = spawnSync(
+        "python3",
+        [
+          "test/helpers/terminal-pty.py",
+          process.execPath,
+          "test/fixtures/terminal-session.mjs",
+          "secret",
+          String(width),
+        ],
+        { cwd: root, encoding: "utf8", timeout: 20000 }
+      );
+      assert.equal(r.status, 0, r.stderr);
+      const { code, output } = JSON.parse(r.stdout);
+      assert.equal(code, 0, output);
+      assert.doesNotMatch(output, /fixture-secret-123/);
+      assert.match(output, /Stored 18 characters/);
+      assert.match(output, /RAW_MODE=false/);
+      assert.ok(output.includes("\x1b[?25h"), "cursor is restored");
+      assert.ok(!output.includes("\x1b[?1049h"));
+    }
+  );
+}
+for (const [scenario, expected, code] of [
+  ["confirm", /Answer false/, 0],
+  ["confirm-batch", /Answer true/, 0],
+  ["text", /Answer "Example"/, 0],
+  ["multi", /Answer \["b"\]/, 0],
+  ["cancel", /Completed steps remain saved/, 1],
+  ["interrupt", /Completed steps remain saved/, 1],
+  ["terminate", /Completed steps remain saved/, 1],
+  ["progress", /Completed synthetic sync/, 0],
+]) {
+  test(`real PTY: ${scenario}`, { skip: process.platform === "win32" || !python }, () => {
+    const r = spawnSync(
+      "python3",
+      [
+        "test/helpers/terminal-pty.py",
+        process.execPath,
+        "test/fixtures/terminal-session.mjs",
+        scenario,
+        "80",
+      ],
+      { cwd: root, encoding: "utf8", timeout: 20000 }
+    );
+    assert.equal(r.status, 0, r.stderr);
+    const result = JSON.parse(r.stdout);
+    assert.equal(result.code, code, result.output);
+    assert.match(stripVTControlCharacters(result.output), expected);
+    assert.match(result.output, /RAW_MODE=false/);
+  });
+}
+test("help and disabled presenters run with React and Ink imports blocked", () => {
+  const options = { cwd: root, encoding: "utf8" };
+  const base = [
+    "--no-warnings",
+    "--experimental-loader",
+    "./test/fixtures/block-terminal-loader.mjs",
+  ];
+  const help = spawnSync(process.execPath, [...base, "scripts/aios.mjs", "help"], options);
+  assert.equal(help.status, 0, help.stderr);
+  const probe = spawnSync(
+    process.execPath,
+    [
+      ...base,
+      "--input-type=module",
+      "-e",
+      `
+    import {createPresenter} from './scripts/ui.mjs';
+    for(const mode of ['json','porcelain']) {
+      if(await createPresenter({mode,stdout:{isTTY:true},env:{FORCE_COLOR:'3'}})) throw new Error('loaded');
+    }
+    if(await createPresenter({stdout:{isTTY:true},env:{AIOS_UI_TIER:'plain'}})) throw new Error('loaded');
+  `,
+    ],
+    options
+  );
+  assert.equal(probe.status, 0, probe.stderr);
 });
