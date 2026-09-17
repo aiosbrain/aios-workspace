@@ -68,7 +68,7 @@ jobs:
       matrix:
         node: [22, 24, 26]
     env:
-      MCP_BRAIN_SHA: ca23e87464b6b06df742709a55ec111187a7815b
+      MCP_BRAIN_SHA: f2ece8a7d38eb6d1e85e641fa32feea5816d4663
       MCP_BRAIN_DIR: ${{ github.workspace }}/.mcp-brain
       MCP_EVIDENCE_DIR: ${{ github.workspace }}/.tmp/mcp-package-evidence
       MCP_PACKAGE_ARTIFACT: ${{ github.workspace }}/mcp-candidate-artifact

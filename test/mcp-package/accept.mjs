@@ -172,9 +172,18 @@ try {
     return value;
   };
   assert.equal((await invoke("brain_status")).connected, true);
-  const evidence = await invoke("brain_search_evidence", { query: "synthetic lighthouse launch", project: "acme" });
-  assert.ok(evidence.sources.some(s => s.item_id === fixture.itemId && s.excerpt.includes("violet")));
-  assert.ok(evidence.sources.some(s => s.contributors.some(p => p.name === "Synthetic Researcher" && p.role === "author")));
+  const evidence = await invoke("brain_search_evidence", {
+    query: "synthetic lighthouse launch",
+    project: "acme",
+  });
+  assert.ok(
+    evidence.sources.some((s) => s.item_id === fixture.itemId && s.excerpt.includes("violet"))
+  );
+  assert.ok(
+    evidence.sources.some((s) =>
+      s.contributors.some((p) => p.name === "Synthetic Researcher" && p.role === "author")
+    )
+  );
   assert.ok(JSON.stringify(evidence).length <= 20000);
   const query = await invoke("brain_query", {
     question: "What color is the synthetic lighthouse launch?",
