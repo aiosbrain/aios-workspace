@@ -29,7 +29,13 @@ export function renderMessage(ctx: Capabilities, message: string, status: Status
   return renderStatic(
     ctx,
     <StatusMessage variant={status}>
-      <Text color={terminalTheme(ctx).colors[status === "pending" ? "foreground" : status]}>
+      <Text
+        color={
+          terminalTheme(ctx).colors[
+            status === "pending" || status === "info" ? "foreground" : status
+          ]
+        }
+      >
         {safeText(message)}
       </Text>
     </StatusMessage>
