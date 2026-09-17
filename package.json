@@ -41,7 +41,7 @@
   ],
   "scripts": {
     "help": "node scripts/npm-menu.mjs",
-    "prepack": "node scripts/write-build-provenance.mjs",
+    "prepack": "npm run build:terminal && node scripts/write-build-provenance.mjs",
     "postinstall": "node scripts/ensure-loop-built.mjs && node scripts/postinstall-banner.mjs",
     "aios": "dotenvx run -- node scripts/aios.mjs",
     "gen:catalog": "node scripts/gen-catalog.mjs",
@@ -68,7 +68,7 @@
     "format:check": "prettier --check .",
     "setup": "npm ci",
     "test": "npm run test:prepare && npm run test:node",
-    "test:prepare": "node scripts/ensure-native-abi.mjs && npm run build:loop && npm run check:domains && npm run check:size && npm run check:boundaries && npm run check:devtools && npm run check:inbox-audit && npm run check:linear-skill-parity && npm run check:retired-routes",
+    "test:prepare": "node scripts/ensure-native-abi.mjs && npm run build:loop && npm run build:terminal && npm run check:domains && npm run check:size && npm run check:boundaries && npm run check:devtools && npm run check:inbox-audit && npm run check:linear-skill-parity && npm run check:retired-routes",
     "pretest:node": "node scripts/ensure-native-abi.mjs",
     "test:node": "node scripts/ensure-loop-built.mjs --strict && node scripts/test-suite.mjs",
     "test:node:list": "node scripts/test-suite.mjs --list",
@@ -80,7 +80,8 @@
     "test:coverage:report": "npm run test:prepare && node scripts/run-coverage.mjs",
     "test:mutation": "node scripts/run-mutation.mjs",
     "test:mutation:nightly": "node scripts/run-mutation.mjs --nightly",
-    "check:devtools": "node scripts/devtools-preflight.mjs"
+    "check:devtools": "node scripts/devtools-preflight.mjs",
+    "build:terminal": "node scripts/build-terminal.mjs"
   },
   "packageManager": "npm@10.9.4",
   "engines": {
@@ -93,6 +94,7 @@
     "@stryker-mutator/vitest-runner": "^10.0.0",
     "@types/better-sqlite3": "^9.6.0",
     "@types/node": "^26.1.2",
+    "@types/react": "19.2.14",
     "c8": "^12.0.0",
     "eslint": "^9.39.5",
     "globals": "^17.8.0",
@@ -111,7 +113,11 @@
     "@dotenvx/dotenvx": "^2.19.1",
     "ajv": "^8.20.0",
     "better-sqlite3": "^13.0.1",
+    "cli-spinners": "3.3.0",
+    "ink": "7.1.1",
     "koffi": "2.16.3",
-    "smol-toml": "1.8.0"
+    "react": "19.2.4",
+    "smol-toml": "1.8.0",
+    "string-width": "8.1.1"
   }
 }

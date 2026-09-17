@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -461,3 +462,38 @@ test(
     assert.equal(fs.existsSync(hostTargets(f)[3].file), false);
   }
 );
+
+test("Windows verification retries only a cold PowerShell startup and only once", async (t) => {
+  const f = fixture(t);
+  const timeout =
+    "MCP startup failed: spawnSync C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe ETIMEDOUT\n";
+  const success = `process.stdin.resume();process.stdin.on('end',()=>{console.log(JSON.stringify({id:1,result:{protocolVersion:'2025-11-25',serverInfo:{version:'0.1.1'}}}));console.log(JSON.stringify({id:2,result:{tools:${JSON.stringify(TOOLSETS.brain)}.map(name=>({name,annotations:{readOnlyHint:true}}))}}))})`;
+  for (const [platform, message, recover, expected] of [
+    ["win32", timeout, true, 2],
+    ["win32", timeout, false, 2],
+    ["linux", timeout, true, 1],
+    ["win32", "MCP startup failed: Credential ACL grants access to another principal\n", true, 1],
+  ]) {
+    let launches = 0;
+    const result = verifyServerCommand(
+      { command: process.execPath, args: [] },
+      {
+        ...f,
+        platform,
+        timeoutMs: 5000,
+        spawnImpl: (command, _args, options) => {
+          launches++;
+          const script =
+            recover && launches === 2
+              ? success
+              : `process.stderr.write(${JSON.stringify(message)});process.exitCode=1`;
+          return spawn(command, ["-e", script], options);
+        },
+      }
+    );
+    if (recover && platform === "win32" && message === timeout)
+      assert.equal((await result).verified, true);
+    else await assert.rejects(result, /did not pass/);
+    assert.equal(launches, expected);
+  }
+});

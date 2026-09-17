@@ -5,7 +5,7 @@ import { readHostDocument } from "./mcp-host-formats.mjs";
 import os from "node:os";
 
 export async function chooseMcpHosts({ optional = false } = {}) {
-  const ui = await import("@clack/prompts");
+  const { clack: ui } = await import("./onboard-ui.mjs");
   if (optional) {
     const answer = await ui.confirm({
       message: "Connect your Brain to an MCP host now? (optional)",
@@ -96,7 +96,7 @@ export async function cmdMcpHost(args, options = {}) {
       : 0;
   }
   if (!hosts.length) {
-    if (!process.stdin.isTTY)
+    if (json || !process.stdin.isTTY)
       throw new Error("Use --host claude-desktop,claude-code,codex,cursor to select targets");
     hosts.push(...(await chooseMcpHosts()));
     if (!hosts.length) {
