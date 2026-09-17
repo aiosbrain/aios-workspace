@@ -49,8 +49,8 @@ export const StatusMessage = ({
   })();
 
   return (
-    <Box flexDirection="row" aria-label={ariaLabel ?? `${variant} status`}>
-      <Box flexShrink={0} marginRight={1}>
+    <Box flexDirection="row">
+      <Box flexShrink={0} marginRight={1} aria-label={ariaLabel ?? `${variant} status`}>
         {variant === "loading" ? (
           <Spinner type="dots" color={variantColor} aria-label="Loading" />
         ) : (
