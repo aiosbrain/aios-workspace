@@ -19,6 +19,31 @@ function env(dir, extra = {}) {
   return { HOME: dir, PATH: path.dirname(process.execPath), AIOS_CONFIG_DIR: dir, ...extra };
 }
 
+test("misplaced credentials are absent from setup errors and compatibility banners", (t) => {
+  const dir = fixture(t);
+  const sentinel = "lin_api_SYNTHETIC_REVIEW_SENTINEL";
+  for (const [bin, args] of [
+    ["scripts/aios.mjs", ["connect", "linear", "--reference", sentinel]],
+    ["scripts/aios.mjs", ["disconnect", sentinel]],
+    ["scripts/linear.mjs", [sentinel]],
+  ]) {
+    const result = spawnSync(process.execPath, [path.join(ROOT, bin), ...args], {
+      cwd: dir,
+      encoding: "utf8",
+      env: env(dir),
+    });
+    assert.notEqual(result.status, 0);
+    assert.equal(
+      (result.stdout + result.stderr).includes(sentinel),
+      false,
+      "credential must not be echoed"
+    );
+    if (args[0] === "connect") assert.match(result.stderr, /Invalid credential reference/);
+    if (bin === "scripts/linear.mjs")
+      assert.match(result.stderr, /deprecated compatibility command/);
+  }
+});
+
 test("malformed credentials remain value-free through canonical, bare and real shim commands", (t) => {
   const dir = fixture(t);
   const preload = path.join(dir, "never-network.mjs");

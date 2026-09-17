@@ -117,9 +117,7 @@ export async function cmdConnectLinear(repo, args, options = {}) {
       stored = await promptReference(output);
     }
     if (!parseCredentialReference(stored)) {
-      throw usageError(
-        `"${stored}" is not a valid credential reference — use env:VARIABLE_NAME or keychain:service.`
-      );
+      throw usageError("Invalid credential reference — use env:VARIABLE_NAME or keychain:service.");
     }
     const configPath = await storeReference(stored, options);
     const resolves = Boolean(resolveReferenceValue(stored, options));
@@ -161,7 +159,7 @@ export async function cmdDisconnect(repo, args, options = {}) {
     if (target !== "linear") {
       throw new AiosError(
         "AIOS_E_USAGE",
-        `aios disconnect supports: linear (got ${target ?? "nothing"}).`,
+        "aios disconnect supports: linear.",
         "Run `aios disconnect linear`."
       );
     }
