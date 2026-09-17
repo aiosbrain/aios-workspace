@@ -660,7 +660,7 @@ function emptyPushResult() {
   return { pushed: new Set(), clean: new Set(), blocked: new Map(), failed: new Map() };
 }
 
-async function cmdPush(repo, cfg, patterns, args) {
+async function cmdPush(repo, cfg, patterns, args, { onProgress } = {}) {
   warnBrainUrlMismatch(cfg, { colorize: c.yellow }); // push writes — a wrong URL reaches another brain
 
   if (args[0] === "skill") return cmdPushSkill(repo, cfg, patterns, args.slice(1));
@@ -692,6 +692,8 @@ async function cmdPush(repo, cfg, patterns, args) {
   const dotenv = loadDotEnv(repo);
   const member = resolveMember(repo, cfg, dotenv);
 
+  const presenter = await createPresenter();
+  let attempted = 0;
   let pushed = 0;
   for (const item of plan.push) {
     const payload = {
@@ -710,7 +712,15 @@ async function cmdPush(repo, cfg, patterns, args) {
     try {
       if (!validateItemPayload(payload).success)
         throw new Error("local Brain API 1.12 payload validation failed");
-      const res = await api(cfg, "POST", "/items", payload);
+      const event = { label: `Pushing ${item.rel}`, completed: attempted, total: plan.push.length };
+      try {
+        onProgress?.(event);
+      } catch {
+        /* observer only */
+      }
+      const res = presenter
+        ? await presenter.run(event, () => api(cfg, "POST", "/items", payload))
+        : await api(cfg, "POST", "/items", payload);
       state.items[item.rel] = {
         sha: item.hash,
         remote_id: res.id || null,
@@ -720,7 +730,9 @@ async function cmdPush(repo, cfg, patterns, args) {
       };
       pushed++;
       result.pushed.add(item.rel);
-      console.log(`  ${c.green("✓")} ${item.rel} ${c.dim(res.status || "")}`);
+      if (presenter)
+        presenter.message(`${item.rel}${res.status ? ` - ${res.status}` : ""}`, "success");
+      else console.log(`  ${c.green("✓")} ${item.rel} ${c.dim(res.status || "")}`);
     } catch (e) {
       const needs112 =
         (item.kind === "fact" || item.kind === "stakeholder_mention") &&
@@ -729,11 +741,18 @@ async function cmdPush(repo, cfg, patterns, args) {
         );
       const message = needs112 ? `Brain API 1.12 required: ${e.message}` : e.message;
       result.failed.set(item.rel, message);
-      console.log(`  ${c.red("✗")} ${item.rel} — ${message}`);
+      if (presenter) presenter.message(`${item.rel} - ${message}`, "error");
+      else console.log(`  ${c.red("✗")} ${item.rel} — ${message}`);
     }
+    attempted++;
   }
   saveState(repo, state);
-  console.log(`\n${c.green(`pushed ${pushed}/${plan.push.length} item(s).`)}`);
+  if (presenter)
+    presenter.message(
+      `Pushed ${pushed}/${plan.push.length} | Failed ${result.failed.size} | Held locally ${plan.blocked.length} | Already synced ${plan.clean.length}`,
+      result.failed.size ? "warning" : "success"
+    );
+  else console.log(`\n${c.green(`pushed ${pushed}/${plan.push.length} item(s).`)}`);
   if (result.failed.size) process.exitCode = 1; // propagate partial failure to shell/GUI callers
   if (plan.blocked.length)
     console.log(c.dim(`${plan.blocked.length} held — run 'aios status' for reasons.`));
@@ -741,10 +760,11 @@ async function cmdPush(repo, cfg, patterns, args) {
     await import("./pm.mjs").then(({ printProjectionHealth }) =>
       printProjectionHealth(cfg, { optional: true })
     );
+  if (presenter) presenter.message("Next: aios status");
   return result;
 }
 
-async function cmdPull(repo, cfg, args = []) {
+async function cmdPull(repo, cfg, args = [], { onProgress } = {}) {
   if (args[0] === "skill") return cmdPullSkill(repo, cfg, args.slice(1));
   if (args[0] === "deliverable") return cmdPullDeliverable(repo, cfg, args.slice(1));
   if (args[0] === "blueprint") return cmdPullBlueprint(repo, cfg);
@@ -757,118 +777,154 @@ async function cmdPull(repo, cfg, args = []) {
   const destRoot = path.join(repo, inboxDir, "from-brain");
   mkdirSync(destRoot, { recursive: true });
 
+  const presenter = await createPresenter();
+  let skipped = 0;
   let cursor = null;
   let fetched = 0;
-  do {
-    const qs = new URLSearchParams({ since });
-    if (cursor) qs.set("cursor", cursor);
-    const res = await api(cfg, "GET", `/items?${qs}`);
-    for (const item of res.items || []) {
-      // H1: flatten BOTH project and path (a MITM brain can put `..` in either) + safeJoin.
-      const flat = `${String(item.project).replace(/\//g, "__")}__${item.path.replace(/\//g, "__")}`;
-      const dest = safeJoin(destRoot, flat);
-      if (existsSync(dest) && sha256(readFileSync(dest)) === item.content_sha256) continue;
-      const fm = [
-        "---",
-        `from_brain: true`,
-        `origin_project: ${item.project}`,
-        `origin_path: ${item.path}`,
-        `origin_actor: ${item.actor || "unknown"}`,
-        `access: ${item.access}`,
-        `pulled_at: ${new Date().toISOString()}`,
-        "---",
-        "",
-      ].join("\n");
-      writeFileSync(dest, fm + (item.body || ""));
-      fetched++;
-      console.log(`  ${c.green("✓")} ${destRel}/${flat}`);
+  const stage = async (label, operation) => {
+    try {
+      onProgress?.({ label });
+    } catch {
+      /* observer only */
     }
-    cursor = res.next_cursor || null;
-  } while (cursor);
-
-  // Task writeback: UI rows → the team-synced tasks file (path + merge: scripts/pull-tasks.mjs).
-  const tasksRes = await api(
-    cfg,
-    "GET",
-    `/tasks?${new URLSearchParams({ since: state.last_tasks_pull || "1970-01-01T00:00:00Z" })}`
-  );
-  const tasksPath = resolveTasksPath(repo);
-  const merged = mergeWritebackFeed(tasksPath, tasksRes, cfg.project);
-
-  // Sync-origin return leg (brain-api 1.13, AIO-537) — brain-side status/assignee moves on rows
-  // THIS workspace pushed. Feature-detected + cursor-safe inside scripts/pull-tasks.mjs.
-  const leg = await pullSyncOriginTasks({
-    project: cfg.project,
-    tasksPath,
-    since: state.last_sync_tasks_pull,
-    fetchFeed: (route) => apiOptional(cfg, route, null),
-    log: (line) => console.log(`  ${c.green("✓")} ${line}`),
-  });
-  const mergedSyncOrigin = leg.rows.length;
-  if (leg.supported) state.last_sync_tasks_pull = leg.cursor;
-
-  // Decision writeback: UI-created/edited rows → merge into 3-log/decision-log.md
-  // (mirrors the task writeback; keyed on the `#` column = row_key).
-  const decRes = await apiOptional(
-    cfg,
-    `/decisions?${new URLSearchParams({ since: state.last_decisions_pull || "1970-01-01T00:00:00Z" })}`,
-    { decisions: [] }
-  );
-  let mergedDecisions = 0;
-  const decPath = existsSync(path.join(repo, "3-log", "decision-log.md"))
-    ? path.join(repo, "3-log", "decision-log.md")
-    : path.join(repo, "03-status", "decision-log.md");
-  if (existsSync(decPath) && (decRes.decisions || []).length) {
-    let content = readFileSync(decPath, "utf8");
-    for (const group of decRes.decisions) {
-      if (group.project !== cfg.project) continue;
-      for (const row of group.rows || []) {
-        const line = `| ${row.row_key} | ${row.decided_at || ""} | ${row.title} | ${row.rationale || ""} | ${row.decided_by || ""} | ${row.impact || ""} | ${row.tier ?? ""} | ${row.audience || ""} |`;
-        const re = new RegExp(
-          `^\\|\\s*${row.row_key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*\\|.*$`,
-          "m"
-        );
-        if (re.test(content)) content = content.replace(re, line);
-        else content = content.trimEnd() + "\n" + line + "\n";
-        mergedDecisions++;
+    return presenter ? presenter.run({ label }, operation) : operation();
+  };
+  try {
+    do {
+      const qs = new URLSearchParams({ since });
+      if (cursor) qs.set("cursor", cursor);
+      const res = await stage("Fetching Team Brain items", () => api(cfg, "GET", `/items?${qs}`));
+      for (const item of res.items || []) {
+        // H1: flatten BOTH project and path (a MITM brain can put `..` in either) + safeJoin.
+        const flat = `${String(item.project).replace(/\//g, "__")}__${item.path.replace(/\//g, "__")}`;
+        const dest = safeJoin(destRoot, flat);
+        if (existsSync(dest) && sha256(readFileSync(dest)) === item.content_sha256) {
+          skipped++;
+          continue;
+        }
+        const fm = [
+          "---",
+          `from_brain: true`,
+          `origin_project: ${item.project}`,
+          `origin_path: ${item.path}`,
+          `origin_actor: ${item.actor || "unknown"}`,
+          `access: ${item.access}`,
+          `pulled_at: ${new Date().toISOString()}`,
+          "---",
+          "",
+        ].join("\n");
+        writeFileSync(dest, fm + (item.body || ""));
+        fetched++;
+        if (presenter) presenter.message(`${destRel}/${flat}`, "success");
+        else console.log(`  ${c.green("✓")} ${destRel}/${flat}`);
       }
-    }
-    writeFileSync(decPath, content);
-  }
+      cursor = res.next_cursor || null;
+    } while (cursor);
 
-  // Project registration: brain-created projects (never pushed from a repo) → marker
-  // files under from-brain/_projects/ so the workspace is aware of them. Append-only;
-  // full local scaffold generation is deferred. Tolerates an older brain (404 → skip).
-  let registered = 0;
-  const projRes = await apiOptional(cfg, "/projects", { projects: [] });
-  const projDir = path.join(repo, inboxDir, "from-brain", "_projects");
-  for (const p of projRes.projects || []) {
-    if (!p.brain_only || p.slug === cfg.project) continue;
-    const marker = path.join(projDir, `${p.slug}.md`);
-    if (existsSync(marker)) continue;
-    mkdirSync(projDir, { recursive: true });
-    writeFileSync(
-      marker,
-      `---\naccess: team\nkind: project-registration\nslug: ${p.slug}\n---\n\n# ${p.name || p.slug}\n\nBrain-created project \`${p.slug}\` (created in the team dashboard; no local workspace yet).\n`
+    // Task writeback: UI rows → the team-synced tasks file (path + merge: scripts/pull-tasks.mjs).
+    const tasksRes = await stage("Fetching task updates", () =>
+      api(
+        cfg,
+        "GET",
+        `/tasks?${new URLSearchParams({ since: state.last_tasks_pull || "1970-01-01T00:00:00Z" })}`
+      )
     );
-    registered++;
-  }
+    const tasksPath = resolveTasksPath(repo);
+    const merged = mergeWritebackFeed(tasksPath, tasksRes, cfg.project);
 
-  state.last_pull = new Date().toISOString();
-  state.last_tasks_pull = state.last_pull;
-  state.last_decisions_pull = state.last_pull;
-  saveState(repo, state);
-  console.log("");
-  console.log(
-    c.green(
-      `pulled ${fetched} item(s); merged ${merged} task row(s), ${mergedDecisions} decision row(s)` +
-        (mergedSyncOrigin
-          ? `, updated ${mergedSyncOrigin} pushed task row(s) from the brain`
-          : "") +
-        (registered ? `, registered ${registered} brain project(s)` : "") +
-        "."
-    )
-  );
+    // Sync-origin return leg (brain-api 1.13, AIO-537) — brain-side status/assignee moves on rows
+    // THIS workspace pushed. Feature-detected + cursor-safe inside scripts/pull-tasks.mjs.
+    if (presenter) presenter.step("Merging task updates");
+    const leg = await pullSyncOriginTasks({
+      project: cfg.project,
+      tasksPath,
+      since: state.last_sync_tasks_pull,
+      fetchFeed: (route) => apiOptional(cfg, route, null),
+      log: (line) => console.log(`  ${c.green("✓")} ${line}`),
+    });
+    const mergedSyncOrigin = leg.rows.length;
+    if (leg.supported) state.last_sync_tasks_pull = leg.cursor;
+
+    // Decision writeback: UI-created/edited rows → merge into 3-log/decision-log.md
+    // (mirrors the task writeback; keyed on the `#` column = row_key).
+    if (presenter) presenter.step("Fetching decision updates");
+    const decRes = await apiOptional(
+      cfg,
+      `/decisions?${new URLSearchParams({ since: state.last_decisions_pull || "1970-01-01T00:00:00Z" })}`,
+      { decisions: [] }
+    );
+    let mergedDecisions = 0;
+    const decPath = existsSync(path.join(repo, "3-log", "decision-log.md"))
+      ? path.join(repo, "3-log", "decision-log.md")
+      : path.join(repo, "03-status", "decision-log.md");
+    if (existsSync(decPath) && (decRes.decisions || []).length) {
+      let content = readFileSync(decPath, "utf8");
+      for (const group of decRes.decisions) {
+        if (group.project !== cfg.project) continue;
+        for (const row of group.rows || []) {
+          const line = `| ${row.row_key} | ${row.decided_at || ""} | ${row.title} | ${row.rationale || ""} | ${row.decided_by || ""} | ${row.impact || ""} | ${row.tier ?? ""} | ${row.audience || ""} |`;
+          const re = new RegExp(
+            `^\\|\\s*${row.row_key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*\\|.*$`,
+            "m"
+          );
+          if (re.test(content)) content = content.replace(re, line);
+          else content = content.trimEnd() + "\n" + line + "\n";
+          mergedDecisions++;
+        }
+      }
+      writeFileSync(decPath, content);
+    }
+
+    // Project registration: brain-created projects (never pushed from a repo) → marker
+    // files under from-brain/_projects/ so the workspace is aware of them. Append-only;
+    // full local scaffold generation is deferred. Tolerates an older brain (404 → skip).
+    if (presenter) presenter.step("Registering Brain projects");
+    let registered = 0;
+    const projRes = await apiOptional(cfg, "/projects", { projects: [] });
+    const projDir = path.join(repo, inboxDir, "from-brain", "_projects");
+    for (const p of projRes.projects || []) {
+      if (!p.brain_only || p.slug === cfg.project) continue;
+      const marker = path.join(projDir, `${p.slug}.md`);
+      if (existsSync(marker)) continue;
+      mkdirSync(projDir, { recursive: true });
+      writeFileSync(
+        marker,
+        `---\naccess: team\nkind: project-registration\nslug: ${p.slug}\n---\n\n# ${p.name || p.slug}\n\nBrain-created project \`${p.slug}\` (created in the team dashboard; no local workspace yet).\n`
+      );
+      registered++;
+    }
+
+    state.last_pull = new Date().toISOString();
+    state.last_tasks_pull = state.last_pull;
+    state.last_decisions_pull = state.last_pull;
+    saveState(repo, state);
+    if (presenter) {
+      presenter.message(
+        `Pulled ${fetched} | Unchanged ${skipped} | Task rows ${merged} | Decision rows ${mergedDecisions} | Updated pushed tasks ${mergedSyncOrigin} | Registered projects ${registered}`,
+        "success"
+      );
+      presenter.message("Next: aios status");
+      return;
+    }
+    console.log("");
+    console.log(
+      c.green(
+        `pulled ${fetched} item(s); merged ${merged} task row(s), ${mergedDecisions} decision row(s)` +
+          (mergedSyncOrigin
+            ? `, updated ${mergedSyncOrigin} pushed task row(s) from the brain`
+            : "") +
+          (registered ? `, registered ${registered} brain project(s)` : "") +
+          "."
+      )
+    );
+  } catch (error) {
+    if (presenter)
+      presenter.message(
+        `Pull stopped after writing ${fetched} item(s). Completed writes remain on disk. ${error.message}`,
+        "error"
+      );
+    throw error;
+  }
 }
 
 // ── skill + artifact share/pull (P4) ─────────────────────────────────────────
