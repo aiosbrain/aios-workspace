@@ -9,6 +9,7 @@
   ],
   "exclude": [
     "**/*.test.*",
+    "**/*.d.ts",
     "test/**",
     "coverage/**",
     "dist/**",

@@ -4,11 +4,19 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { stripVTControlCharacters } from "node:util";
 import { createPresenter, canPresent } from "../scripts/ui.mjs";
-import { renderStatus, safeText } from "../dist/terminal/report.js";
-import { startProgress } from "../dist/terminal/session.js";
-import { terminalTheme } from "../dist/terminal/theme.js";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
+// Sharded CI invokes test:node directly, without test:prepare. Build before imports.
+const terminalBuild = spawnSync(process.execPath, ["scripts/build-terminal.mjs"], {
+  cwd: root,
+  encoding: "utf8",
+  timeout: 30000,
+});
+assert.equal(terminalBuild.status, 0, terminalBuild.stderr);
+const { renderStatus, safeText } = await import("../dist/terminal/report.js");
+const { startProgress } = await import("../dist/terminal/session.js");
+const { terminalTheme } = await import("../dist/terminal/theme.js");
+
 const ctx = {
   mode: "human",
   width: 80,
@@ -224,4 +232,60 @@ test("MCP JSON with no target stays noninteractive even on a TTY", () => {
   );
   assert.equal(result.status, 0, result.stderr);
   assert.equal(result.stdout, "");
+});
+
+test("rich command engines retain partial results and tolerate failed progress observers", () => {
+  const result = spawnSync(process.execPath, ["test/fixtures/terminal-engine.mjs"], {
+    cwd: root,
+    encoding: "utf8",
+    timeout: 15000,
+  });
+  assert.equal(result.status, 0, result.stderr + result.stdout);
+  assert.match(result.stdout, /ENGINE_CONTRACTS_OK/);
+  assert.match(result.stdout, /Pushed 1\/2/);
+  assert.match(result.stdout, /Pull stopped after writing 1 item/);
+  assert.match(result.stdout, /invalid_key/);
+});
+
+test("terminal build emits directly importable ESM and retains vendor notices", () => {
+  const result = spawnSync(process.execPath, ["scripts/build-terminal.mjs"], {
+    cwd: root,
+    encoding: "utf8",
+    timeout: 15000,
+  });
+  assert.equal(result.status, 0, result.stderr);
+  const probe = spawnSync(
+    process.execPath,
+    [
+      "--input-type=module",
+      "-e",
+      `
+    import {readFileSync} from 'node:fs';
+    await import('./dist/terminal/report.js');
+    for (const file of ['LICENSE', 'provenance.json']) {
+      if (readFileSync('./dist/terminal/vendor/'+file,'utf8') !== readFileSync('./src/terminal/vendor/'+file,'utf8')) throw new Error('missing vendor notice');
+    }
+  `,
+    ],
+    { cwd: root, encoding: "utf8" }
+  );
+  assert.equal(probe.status, 0, probe.stderr);
+});
+
+test("cursor editing and table padding respect combining characters and wide graphemes", async () => {
+  const text = await import("../dist/terminal/vendor/lib/terminal-text.js");
+  const value = "Ae\u0301界";
+  assert.equal(text.graphemeLength(value), 3);
+  assert.equal(text.terminalWidth(value), 4);
+  assert.equal(text.cursorCellOffset(value, 3), 4);
+  assert.deepEqual(text.removeGraphemeBefore(value, 2), { value: "A界", cursor: 1 });
+  assert.deepEqual(text.removeGraphemeBefore(value, 0), { value, cursor: 0 });
+  assert.deepEqual(text.removeGraphemeAt(value, 1), { value: "A界", cursor: 1 });
+  assert.deepEqual(text.removeGraphemeAt(value, 3), { value, cursor: 3 });
+  assert.equal(text.truncateToTerminalWidth(value, 3), "Ae\u0301…");
+  assert.equal(text.truncateToTerminalWidth(value, 1), "…");
+  assert.equal(text.truncateToTerminalWidth(value, 0), "");
+  assert.equal(text.truncateToTerminalWidth(value, 1, ".."), "");
+  assert.equal(text.padToTerminalWidth("界", 4), "界  ");
+  assert.equal(text.padToTerminalWidth("界", 4, "right"), "  界");
 });
