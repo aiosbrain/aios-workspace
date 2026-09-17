@@ -194,5 +194,77 @@ export function createBrainClient(config, deps = {}) {
     member: config.member || null,
   };
 
-  return { fetchJson, query, streamQuery, meta };
+  async function searchEvidence(query, project, limit = 8, { signal } = {}) {
+    if (
+      typeof query !== "string" ||
+      !query.trim() ||
+      query.trim().length > 2000 ||
+      !Number.isInteger(limit) ||
+      limit < 1 ||
+      limit > 20 ||
+      (project !== undefined &&
+        (typeof project !== "string" || !project.trim() || project.length > 200))
+    )
+      throw new Error("Invalid evidence search arguments");
+    const timeout = AbortSignal.timeout(10000);
+    const res = await request("/evidence/search", {
+      method: "POST",
+      headers: { ...headers, "Content-Type": "application/json" },
+      body: JSON.stringify({ query: query.trim(), ...(project ? { project } : {}), limit }),
+      signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
+    });
+    if (res.status === 404 || res.status === 405) {
+      await res.body?.cancel();
+      throw new Error(
+        "Brain upgrade required: this server does not support evidence search. Use direct record retrieval on older servers."
+      );
+    }
+    if (!res.ok) {
+      await res.body?.cancel();
+      throw new Error(`${res.status}: evidence search failed`);
+    }
+    let raw = "";
+    const decoder = new TextDecoder();
+    const reader = res.body?.getReader();
+    if (!reader) throw new Error("Invalid evidence search response");
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        raw += decoder.decode(value, { stream: true });
+        if (raw.length > 20000) {
+          await reader.cancel();
+          throw new Error("Evidence search response too large");
+        }
+      }
+      raw += decoder.decode();
+    } finally {
+      reader.releaseLock();
+    }
+    let data;
+    try {
+      data = JSON.parse(raw);
+    } catch {
+      throw new Error("Invalid evidence search response");
+    }
+    if (
+      raw.length > 20000 ||
+      !Array.isArray(data?.sources) ||
+      data.sources.length > 20 ||
+      data.returned !== data.sources.length ||
+      typeof data.truncated !== "boolean" ||
+      data.sources.some(
+        (s) =>
+          !s ||
+          typeof s.item_id !== "string" ||
+          typeof s.sid !== "string" ||
+          typeof s.excerpt !== "string" ||
+          !Array.isArray(s.contributors)
+      )
+    )
+      throw new Error("Invalid evidence search response");
+    return data;
+  }
+
+  return { fetchJson, query, streamQuery, searchEvidence, meta };
 }

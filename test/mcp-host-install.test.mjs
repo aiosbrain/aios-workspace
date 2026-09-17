@@ -11,7 +11,7 @@ import {
 } from "../scripts/mcp-host-install.mjs";
 import { filePolicy } from "../scripts/mcp-host-files.mjs";
 import { offerOnboardingMcp, cmdMcpHost } from "../scripts/mcp-host-command.mjs";
-import { TOOLSETS } from "../packages/mcp-core/capabilities.mjs";
+import { MCP_PACKAGE_TOOLSETS as TOOLSETS } from "../scripts/mcp-hosts.mjs";
 
 import { credential, fetchImpl, fixture, put, tree } from "./lib/mcp-host-fixture.mjs";
 

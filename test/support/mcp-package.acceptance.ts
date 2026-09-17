@@ -7,7 +7,7 @@ import { db, seedTeam, ingest } from "../datamechanics/helpers";
 import { BASE_URL, convergeTeam } from "./http-helpers";
 import { issueApiKey } from "@/lib/admin/keys";
 
-it("invokes all eight installed standalone tools against the real Brain", async () => {
+it("invokes all nine installed standalone tools against the real Brain", async () => {
   const workspace = process.env.MCP_WORKSPACE_DIR!;
   const artifact = process.env.MCP_PACKAGE_ARTIFACT!;
   const container = process.env.MCP_ACCEPTANCE_CONTAINER_NAME!;
@@ -17,6 +17,7 @@ it("invokes all eight installed standalone tools against the real Brain", async 
     const item = await ingest(seed, {
       path: "2-work/mcp-package.md",
       body: "The synthetic lighthouse launch is violet.",
+      frontmatter: { authors: [{ role: "author", display_name: "Synthetic Researcher" }] },
       access: "team",
     });
     await ingest(seed, {

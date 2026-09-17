@@ -81,8 +81,8 @@ async function launch({
 }
 
 test("surface and tier selection uses exact memberships", () => {
-  assert.equal(SURFACES.standalone.length, 8);
-  assert.equal(SURFACES.toolkit.length, 9);
+  assert.equal(SURFACES.standalone.length, 9);
+  assert.equal(SURFACES.toolkit.length, 10);
   for (const surface of ["standalone", "toolkit"]) {
     for (const tier of [null, "external", "team"]) {
       const expected = [
@@ -153,7 +153,7 @@ test("startup /me selects team or external and hidden tools cannot dispatch", as
   assert.equal(external.result[2].error.code, -32602);
   assert.equal(external.calls.length, 1, "hidden call must never contact Brain");
   const standalone = await launch({ surface: "standalone" });
-  assert.equal(standalone.result[1].result.tools.length, 8);
+  assert.equal(standalone.result[1].result.tools.length, 9);
   assert.equal(standalone.result[0].result.serverInfo.version, "9.8.7");
 });
 
