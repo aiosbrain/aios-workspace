@@ -78,7 +78,23 @@ test("published artifact resists project-local package shadowing and detects edi
     command: undefined,
     verify: async (entry, options) => {
       try {
-        return await verifyServerCommand(entry, options);
+        return await verifyServerCommand(entry, {
+          ...options,
+          spawnImpl: (...args) => {
+            const child = spawn(...args);
+            let stderr = "";
+            child.stderr.on("data", (chunk) => {
+              stderr = (stderr + chunk).slice(-4000);
+            });
+            child.on("close", (code, signal) => {
+              if (code !== 0)
+                t.diagnostic(
+                  `Synthetic initial server: code=${code}, signal=${signal}, stderr=${stderr.replaceAll(credential.api_key, "[synthetic-key]")}`
+                );
+            });
+            return child;
+          },
+        });
       } catch (error) {
         // Diagnostic replay only in this synthetic, credential-isolated fixture.
         // Preserve the original failure even if the replay starts successfully.

@@ -164,10 +164,10 @@ export function inspectMcpHosts(options = {}) {
 
 export async function verifyServerCommand(
   entry,
-  { home, project, env = process.env, timeoutMs = 120000 } = {}
+  { home, project, env = process.env, timeoutMs = 120000, spawnImpl = spawn } = {}
 ) {
   return new Promise((resolve, reject) => {
-    const child = spawn(entry.command, entry.args, {
+    const child = spawnImpl(entry.command, entry.args, {
       cwd: project,
       env: { ...env, ...entry.env, HOME: home, USERPROFILE: home },
       stdio: ["pipe", "pipe", "pipe"],
