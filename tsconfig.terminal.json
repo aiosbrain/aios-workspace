@@ -1,0 +1,11 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "rootDir": "src/terminal",
+    "outDir": "dist/terminal",
+    "lib": ["ES2023"],
+    "types": ["node", "react"]
+  },
+  "include": ["src/terminal/**/*.ts", "src/terminal/**/*.tsx"]
+}

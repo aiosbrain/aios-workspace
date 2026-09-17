@@ -1,0 +1,42 @@
+{
+  "repository": "https://github.com/shadcn-labs/termcn",
+  "commit": "9d06ed9ca7bd54625fb5ab72e9598865836e695e",
+  "sourceRoot": "apps/web/registry/bases/ink",
+  "transforms": [
+    "Rewrite registry aliases and relative imports to Node ESM .js paths.",
+    "Select initially focuses the supplied default value; preserves AIOS confirm/onboarding defaults.",
+    "Use globalThis for the optional browser check in the Node Unicode hook.",
+    "Guard an empty SetupFlow multi-select before indexing.",
+    "Use semantic theme colors for SetupFlow step icons; inherit native foreground.",
+    "Format vendored sources with repository Prettier settings.",
+    "Keep synchronous input and selection refs so batched edit/navigation plus Enter submits the current value."
+  ],
+  "sha256": {
+    "hooks/use-animation.ts": "e8ec41addd5b714ec5438fb2adc1d002f00540d33a1a8c704dd1c64fa74829b8",
+    "hooks/use-interaction.tsx": "5f948591951ac64afd5f0660b5443878aaaf7fc6accce935355f5ab175012289",
+    "hooks/use-motion.ts": "beeb21b6655e186e52c6e73ed8d8a23af3c6ab2c61062c3cac627e61ac230603",
+    "hooks/use-theme.ts": "4ece57c28607c69a998060349180c206d50cb9313288715c694fe4448ffde5ca",
+    "hooks/use-unicode.ts": "e3c12c9d31f7ed5a665b246528580c39fe18d35ad6e05f98c356cc15803f71a4",
+    "lib/terminal-style.ts": "7a411bc441d6df957b3a304316699530d4de396972243257aa3e43b8757ab6df",
+    "lib/terminal-symbols.ts": "cb4b5d15da750891dc99ac33324c360a7233702dcaa1e5c9215dce0771140d86",
+    "lib/terminal-text.ts": "8f973ea4f92f40d6256837c371e1f2e0bc1205163633c975b4d7279bde76bd10",
+    "providers/motion-provider.tsx": "924ef575e3f61977cd11f844e5fc5f13b1f7ba249a0d96f22c0312d57001041c",
+    "providers/theme-provider.tsx": "a8a714da78015a0a52101db79625393302336d0c7c42edc1502fbedccc8ce5b3",
+    "providers/unicode-provider.tsx": "ebe2a7ebc1c946f335db90bd75bd039607d05e6d091712d01c0cde80cc504c7e",
+    "themes/default.ts": "cb92a8fb962ac255c9eeb8bcd40a657a1e23fa3187493c119d5cd97433352c11",
+    "ui/badge.tsx": "f1bbe346124c2b75f60e00698d80961aae14b0c16dc2725e8878112849d80851",
+    "ui/big-text.tsx": "6faecb8dd0a2784962772e65ba4d20f0f3afd77fa8be2912402e5daaf26e2a8b",
+    "ui/key-value.tsx": "5e5c989328b3162c18868369e460ea03b59b4d723909cf0233bc103974e1ce1e",
+    "ui/multi-select.tsx": "612ed09d388ddeff5b990102529514db7add435bc23d6abf186bdf1118c499e7",
+    "ui/password-input.tsx": "2b306b7f2cfde7b6ff15ce59a32f19e38017ee145936b66f175f987bb3df27ae",
+    "ui/progress-bar.tsx": "db250a78c4329e58843a2a720616988f55824cf5e59b5d62a4f5f150d6aff5ba",
+    "ui/select.tsx": "cbf8845b84155c4c447c2e2e44599df14e44429abf972455517c2870d89e1c20",
+    "ui/setup-flow.tsx": "b2346d26c4b5a5584bcbd7c190ed3eba36324e5f1ca4710ff2477b3ff4b55d1f",
+    "ui/spinner.tsx": "246635dc051ca76acbbf82aa64d426b4495b6e17c872b0a745b98234ae524495",
+    "ui/status-message.tsx": "938925914b19915aaf06d26057d9bdd1e99a83d1286d7a85b39d00b191d89424",
+    "ui/table.tsx": "2902d8e21f026a611b2853891656eed7e86f877070b8f974ea31a60bff2e4e62",
+    "ui/text-input.tsx": "f1c8d17a6a2cb59dbf705a8b4b2fc1edab790ed14ae1018e6c4bd8b4b209f839",
+    "ui/types.ts": "16d3236f64814a0545b8eb85acd6bb406c9a1e5eb396cdf9fd79033c8cdc4e7c"
+  },
+  "externalImports": ["cli-spinners", "ink", "react", "string-width"]
+}
