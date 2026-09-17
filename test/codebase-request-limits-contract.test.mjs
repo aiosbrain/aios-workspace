@@ -163,7 +163,7 @@ test("adopting the supplement did NOT bump the member-facing API version", () =>
   // silently claim the 1.24 scanner-identity semantics this change does not implement. Only the
   // DOCUMENT revision moves, which is what a doc-only clarification is allowed to move.
   assert.match(brainApi, /\*\*Version: 1\.24\*\* is the shipped member-facing Brain API/);
-  assert.match(brainApi, /\*\*Document revision: 1\.25\*\*/);
+  assert.match(brainApi, /\*\*Document revision: 1\.26\*\*/);
   assert.equal(brainApi.includes("**Version: 1.25**"), false);
 });
 

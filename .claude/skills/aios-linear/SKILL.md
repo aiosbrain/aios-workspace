@@ -40,9 +40,10 @@ compat bin `linear <verb> …` (`scripts/linear.mjs`). It is deprecated — pref
 ## Credentials: `aios connect linear` (never export-and-hope)
 
 The adapter resolves ONE complete credential source, in order: the `LINEAR_API_KEY`
-environment variable → the workspace `.env` vault (scoped dotenvx decryption of that single
-key, AIO-790) → the user-level config reference written by `aios connect linear`
-(`env:VARIABLE` or `keychain:service` — a REFERENCE, never a stored plaintext secret).
+environment variable → the user-level config reference written by `aios connect linear`
+(`env:VARIABLE` or `keychain:service` — a REFERENCE, never a stored plaintext secret) →
+the legacy workspace `.env` vault (scoped decryption of only LINEAR_API_KEY, AIO-790).
+A configured but unresolved reference fails before trying the legacy workspace source.
 
 - Missing everywhere → stable error `AIOS_E_CREDENTIAL_MISSING` (exit class 3) whose
   remediation is exactly the command that fixes it: `aios connect linear`.

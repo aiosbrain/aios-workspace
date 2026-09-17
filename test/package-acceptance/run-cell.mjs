@@ -25,7 +25,7 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { scrubAmbientProcessEnv } from "../helpers/scrubbed-env.mjs";
 import { CellContext, scanTextForSentinels } from "./lib/context.mjs";
 import {
@@ -35,7 +35,7 @@ import {
   isolationProbes,
 } from "./lib/journeys-core.mjs";
 import { linearJourney, slackJourney } from "./lib/journeys-connectors.mjs";
-import { migrationJourney, rollbackJourney, upgradeJourney } from "./lib/journeys-lifecycle.mjs";
+import { rollbackJourney, upgradeJourney } from "./lib/journeys-lifecycle.mjs";
 import { runFaultControls } from "./lib/faults.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -86,19 +86,28 @@ async function main() {
     );
   }
 
+  await executeCell(ctx);
+}
+
+async function runJourneys(ctx) {
+  const install = freshInstallJourney(ctx);
+  isolationProbes(ctx, install);
+  diagnosticsJourney(ctx, install);
+  configuredUseJourney(ctx, install);
+  linearJourney(ctx, install);
+  slackJourney(ctx, install);
+  const upgrade = upgradeJourney(ctx);
+  await rollbackJourney(ctx, upgrade);
+  await runFaultControls(ctx, install);
+}
+
+/** The production cell completion boundary; injected work/cleanup enable offline fault tests. */
+export async function executeCell(ctx, { journey = runJourneys, cleanup = rmSync } = {}) {
+  const { base, evidenceDir } = ctx;
   let ok = false;
   let failure = null;
   try {
-    const install = freshInstallJourney(ctx);
-    isolationProbes(ctx, install);
-    diagnosticsJourney(ctx, install);
-    configuredUseJourney(ctx, install);
-    linearJourney(ctx, install);
-    slackJourney(ctx, install);
-    await migrationJourney(ctx, install);
-    const upgrade = upgradeJourney(ctx);
-    await rollbackJourney(ctx, install, upgrade);
-    await runFaultControls(ctx, install);
+    await journey(ctx);
 
     if (ctx.sentinelHits.length > 0) {
       throw new Error(
@@ -112,9 +121,11 @@ async function main() {
 
   let cleanupState = "removed";
   try {
-    rmSync(base, { recursive: true, force: true });
+    cleanup(base, { recursive: true, force: true });
   } catch (error) {
-    cleanupState = `failed: ${error.message}`;
+    cleanupState = "failed";
+    ok = false;
+    failure ??= new Error("Acceptance fixture cleanup failed.", { cause: error });
   }
   ctx.record("cleanup", { workDir: base, state: cleanupState });
   const evidenceFile = ctx.writeEvidence({ ok });
@@ -135,7 +146,8 @@ async function main() {
   );
 }
 
-main().catch((error) => {
-  console.error(error.stack ?? String(error));
-  process.exit(1);
-});
+if (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url)
+  main().catch((error) => {
+    console.error(error.stack ?? String(error));
+    process.exit(1);
+  });

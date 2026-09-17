@@ -36,7 +36,7 @@ on:
         required: true
         type: string
       acceptance_run_id:
-        description: "MCP only: successful post-merge MCP package acceptance workflow run ID"
+        description: "Workspace/MCP: successful exact-commit package acceptance workflow run ID"
         required: false
         type: string
 
@@ -46,7 +46,7 @@ permissions:
 
 jobs:
   publish:
-    if: inputs.package != 'mcp'
+    if: inputs.package == 'foundation'
     runs-on: ubuntu-latest
     timeout-minutes: 15 # observed p100 0.9 min (npm registry + OIDC round trips)
     steps:
@@ -172,7 +172,7 @@ jobs:
             import { execFileSync } from "node:child_process";
             const version = readFileSync(".npm-version", "utf8").trim();
             if (!/^\d+\.\d+\.\d+$/.test(version)) throw new Error("Invalid npm version pin");
-            execFileSync("npm", ["install", "--global", `npm@${version}`, "--ignore-scripts"], { stdio: "inherit" });
+            execFileSync("npm", ["install", "--global", "npm@" + version, "--ignore-scripts"], { stdio: "inherit" });
           '
       - name: Download the previously accepted artifact and every live cell evidence
         run: |
@@ -186,3 +186,40 @@ jobs:
             --mount "type=bind,source=$MCP_RELEASE_ARTIFACTS/mcp-candidate,target=/candidate,readonly" \
             --mount "type=bind,source=$GITHUB_WORKSPACE/test/mcp-package,target=/acceptance,readonly" \
             node:22-bookworm-slim node /acceptance/registry-smoke.mjs /candidate/candidate.json
+
+  publish-workspace:
+    if: inputs.package == 'aios'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      WORKSPACE_ACCEPTANCE_RUN_ID: ${{ inputs.acceptance_run_id }}
+      WORKSPACE_RELEASE_VERSION: ${{ inputs.version }}
+      WORKSPACE_RELEASE_ARTIFACTS: ${{ github.workspace }}/.release-artifacts
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          package-manager-cache: false
+      - name: Use the tested npm pin
+        run: |
+          node --input-type=module -e '
+            import { readFileSync } from "node:fs";
+            import { execFileSync } from "node:child_process";
+            const version = readFileSync(".npm-version", "utf8").trim();
+            if (!/^\d+\.\d+\.\d+$/.test(version)) throw new Error("Invalid npm pin");
+            execFileSync("npm", ["install", "--global", "npm@" + version, "--ignore-scripts"], { stdio: "inherit" });
+          '
+      - name: Download the accepted candidate and all six evidence cells
+        run: |
+          case "$WORKSPACE_ACCEPTANCE_RUN_ID" in ''|*[!0-9]*) exit 1 ;; esac
+          gh run download "$WORKSPACE_ACCEPTANCE_RUN_ID" --repo aiosbrain/aios-workspace --dir "$WORKSPACE_RELEASE_ARTIFACTS"
+      - name: Verify release identity and publish only the accepted bytes
+        run: node scripts/verify-workspace-release.mjs --publish

@@ -1272,11 +1272,10 @@ async function cmdWhoami(repo, cfg) {
   console.log(JSON.stringify(me));
 }
 
-// aios stakeholders — query the team-brain Company-Graph (AIO-141). Team-tier only:
-// the graph tables carry a team_id but no per-row tier column and there is no RLS
-// backstop, so the boundary is enforced in app code — the endpoint 403s an external
-// key, and this CLI probes GET /me and rejects EVERY mode for a non-team key up front
-// (so --meeting, which reads /items, can't leak a partial answer).
+// aios stakeholders retains a client-side team-posture restriction (AIO-141).
+// Brain API 1.24's people/structure endpoints now admit all authenticated members;
+// this legacy client still probes GET /me and rejects non-team posture on every mode.
+// Do not infer the server's project-membership policy from this narrower CLI gate.
 //
 //   --owns <domain>    people who OWN/TOUCH/PRODUCE a workflow matching <domain>
 //   --who <person>     one person's role, job family, reports-to, and owned workflows
