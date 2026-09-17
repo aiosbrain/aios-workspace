@@ -166,7 +166,23 @@ export function inspectMcpHosts(options = {}) {
   });
 }
 
-export async function verifyServerCommand(
+// The pinned server's Windows ACL probe can time out while PowerShell initializes
+// a fresh user profile. Retry that read-only startup once; never retry protocol,
+// membership, authorization, or overall verification timeouts.
+export async function verifyServerCommand(entry, options = {}) {
+  try {
+    return await verifyServerAttempt(entry, options);
+  } catch (error) {
+    if (
+      (options.platform || process.platform) !== "win32" ||
+      error.code !== "AIOS_MCP_WINDOWS_STARTUP_TIMEOUT"
+    )
+      throw error;
+    return verifyServerAttempt(entry, options);
+  }
+}
+
+async function verifyServerAttempt(
   entry,
   { home, project, env = process.env, timeoutMs = 120000, spawnImpl = spawn } = {}
 ) {
@@ -262,9 +278,18 @@ export async function verifyServerCommand(
         const reason = ["timeout", "exit", "protocol", "membership"].includes(error.message)
           ? error.message
           : "invalid response or credential source";
-        finish(
-          new Error(`Recorded MCP command did not pass initialize and tools/list (${reason})`)
+        const failure = new Error(
+          `Recorded MCP command did not pass initialize and tools/list (${reason})`
         );
+        if (
+          reason === "exit" &&
+          code === 1 &&
+          /^MCP startup failed: spawnSync [a-z]:[^\r\n]*[\\/]WindowsPowerShell[\\/]v1\.0[\\/]powershell\.exe ETIMEDOUT\r?\n?$/i.test(
+            stderr
+          )
+        )
+          failure.code = "AIOS_MCP_WINDOWS_STARTUP_TIMEOUT";
+        finish(failure);
       }
     });
     child.stdin.on("error", () => {});
