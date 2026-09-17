@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createBrainClient } from "../packages/foundation/src/brain-client.mjs";
-import { TOOLS } from "../packages/mcp-core/index.mjs";
+import { TOOLS, validateArgs } from "../packages/mcp-core/index.mjs";
 const cfg = { brain_url: "https://brain.example", api_key: "synthetic-key", team_id: "demo" };
 test("search sends authorized structured request and preserves bounded evidence", async () => {
   const data = {
@@ -56,4 +56,16 @@ test("direct-client cancellation reaches the authenticated fetch", async () => {
   const result = client.searchEvidence("question", undefined, 8, { signal: controller.signal });
   controller.abort(new Error("caller cancelled"));
   await assert.rejects(() => result, /caller cancelled/);
+});
+
+test("MCP dispatch accepts explicit integer limits and rejects non-integers", () => {
+  const schema = TOOLS.find((tool) => tool.name === "brain_search_evidence").inputSchema;
+  for (const limit of [1, 8, 10, 20]) {
+    assert.deepEqual(validateArgs(schema, { query: "question", limit }), []);
+  }
+  for (const limit of [1.5, "10", true, [], {}, NaN, Infinity]) {
+    assert.ok(
+      validateArgs(schema, { query: "question", limit }).some((error) => error.includes("integer"))
+    );
+  }
 });

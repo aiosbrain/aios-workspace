@@ -175,6 +175,7 @@ try {
   const evidence = await invoke("brain_search_evidence", {
     query: "synthetic lighthouse launch",
     project: "acme",
+    limit: 10,
   });
   assert.ok(
     evidence.sources.some((s) => s.item_id === fixture.itemId && s.excerpt.includes("violet"))
