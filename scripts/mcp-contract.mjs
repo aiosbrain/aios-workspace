@@ -5,6 +5,7 @@ import { TOOLS, SURFACES } from "../packages/mcp-core/index.mjs";
 export const EXPECTED_MCP_SURFACES = {
   standalone: [
     "brain_status",
+    "brain_search_evidence",
     "brain_query",
     "brain_pull_items",
     "brain_get_item",
@@ -15,6 +16,7 @@ export const EXPECTED_MCP_SURFACES = {
   ],
   toolkit: [
     "brain_status",
+    "brain_search_evidence",
     "brain_query",
     "brain_pull_items",
     "brain_get_item",

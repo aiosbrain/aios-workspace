@@ -3,7 +3,7 @@
 Read-only access to an AIOS Team Brain from an MCP host. Requires Node.js 22 or newer;
 no AIOS checkout, global toolkit installation, native modules or runtime dependencies.
 
-Start with `npx -y @aiosbrain/mcp@0.1.1`. Configure `AIOS_BRAIN_URL` and `AIOS_API_KEY`,
+Start with `npx -y @aiosbrain/mcp@0.2.0`. Configure `AIOS_BRAIN_URL` and `AIOS_API_KEY`,
 or use the owner-only default tuple in `~/.aios/credentials.json`:
 
 ```json
@@ -26,7 +26,7 @@ alone cannot send a stored key to another server. An environment key needs an ex
 or existing workspace URL; it never borrows a URL from the global credential file.
 
 Startup performs one `/api/v1/me` probe with a three-second deadline. Team members get
-all eight Brain tools; external members get the four `brain` tools. Missing configuration,
+all nine Brain tools; external members get the five `brain` tools. Missing configuration,
 revoked credentials, delegated tokens, malformed identity responses and network failures
 register no Brain tools and produce a diagnostic on stderr. Availability stays fixed until
 restart; the Brain checks authorization on every call, including after membership changes.
@@ -48,3 +48,8 @@ provide a remote HTTP endpoint or write tools.
 Maintainers: generate and pack from the committed candidate with
 `node packages/mcp-build/pack.mjs --out <new-artifact-directory>` in the source repository.
 Publish the accepted tarball, never the unbuilt source directory.
+
+
+### Evidence-first answers
+
+`brain_search_evidence` (Brain API 1.27+) returns ranked source passages, citations, dates and recorded contributor roles without calling an answering model. The host composes the answer and can expand sources with `brain_get_item`. It belongs to the read-only `brain` toolset. Arguments: `query`, optional `project`, optional `limit` (default 8, max20). Responses remain valid JSON under 20,000 characters; truncation is disclosed. Older servers report upgrade required, and HTTP failures are never converted to no matches. No additional key or hosted MCP service is required.

@@ -76,7 +76,7 @@ MCP tool, source, rubric, or C1-C8 spec changes, update the relevant block in th
 
 <!-- drift:mcp-tools -->
 - `brain_status`
-- `brain_query`
+- `brain_search_evidence`, `brain_query`
 - `brain_list_projects`
 - `brain_list_tasks`
 - `brain_list_decisions`
@@ -90,7 +90,7 @@ Standalone package surface (8 tools; publication is tracked in AIO-1111):
 
 <!-- drift:mcp-standalone -->
 - `brain_status`
-- `brain_query`
+- `brain_search_evidence`, `brain_query`
 - `brain_pull_items`
 - `brain_get_item`
 - `brain_list_projects`

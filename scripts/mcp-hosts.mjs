@@ -4,6 +4,17 @@ import os from "node:os";
 import { existsSync } from "node:fs";
 
 export const MCP_PACKAGE_VERSION = "0.1.1";
+
+// Tool membership belongs to the integrity-pinned artifact, not the moving source tree.
+export const MCP_PACKAGE_TOOLSETS = Object.freeze({
+  brain: Object.freeze(["brain_status", "brain_query", "brain_pull_items", "brain_get_item"]),
+  board: Object.freeze([
+    "brain_list_projects",
+    "brain_list_tasks",
+    "brain_list_decisions",
+    "brain_stakeholders",
+  ]),
+});
 export const MCP_SERVER_KEY = "aios-brain";
 export const MCP_HOSTS = Object.freeze([
   {

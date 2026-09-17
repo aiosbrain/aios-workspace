@@ -13,8 +13,8 @@ const fixture = JSON.parse(
 
 test("contract gate rejects deliberate membership drift, including equal-count substitutions", () => {
   const contract = assertMcpContract(fixture);
-  assert.equal(contract.standalone.size, 8);
-  assert.equal(contract.toolkit.size, 9);
+  assert.equal(contract.standalone.size, 9);
+  assert.equal(contract.toolkit.size, 10);
   assert.equal(contract.remoteSpecification.size, 2);
   assert.throws(() => assertMcpContract(fixture, { tools: TOOLS.slice(1) }), /membership drift/);
   assert.throws(

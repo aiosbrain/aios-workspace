@@ -3,7 +3,12 @@ import os from "node:os";
 import { execFileSync, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
-import { hostTargets, MCP_PACKAGE_VERSION, MCP_SERVER_KEY } from "./mcp-hosts.mjs";
+import {
+  hostTargets,
+  MCP_PACKAGE_VERSION,
+  MCP_SERVER_KEY,
+  MCP_PACKAGE_TOOLSETS as TOOLSETS,
+} from "./mcp-hosts.mjs";
 import { readHostDocument, editHostDocument } from "./mcp-host-formats.mjs";
 import { filePolicy, commitHostFiles } from "./mcp-host-files.mjs";
 import { resolveBrainConfig } from "./mcp-config.mjs";
@@ -12,7 +17,6 @@ import {
   readGlobalCredential,
   windowsSystemExecutable,
 } from "./mcp-credentials.mjs";
-import { TOOLSETS } from "../packages/mcp-core/capabilities.mjs";
 import { installedServerCommand, prepareServerArtifact } from "./mcp-host-artifact.mjs";
 export { installedServerCommand } from "./mcp-host-artifact.mjs";
 
