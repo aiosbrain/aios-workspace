@@ -1,6 +1,6 @@
 {
   "name": "@aiosbrain/mcp",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Read-only AIOS Team Brain MCP server with zero runtime dependencies",
   "type": "module",
   "license": "AGPL-3.0-only",

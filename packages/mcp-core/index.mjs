@@ -422,6 +422,7 @@ export function validateArgs(schema, args) {
     const ok =
       (t === "string" && typeof v === "string") ||
       (t === "number" && typeof v === "number") ||
+      (t === "integer" && Number.isInteger(v)) ||
       (t === "boolean" && typeof v === "boolean") ||
       (t === "array" && Array.isArray(v)) ||
       (t === "object" && typeof v === "object" && !Array.isArray(v)) ||
