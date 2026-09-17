@@ -1,6 +1,12 @@
 // Registration saves context; it never replaces the Brain's per-request authorization.
 export const TOOLSETS = Object.freeze({
-  brain: Object.freeze(["brain_status", "brain_search_evidence", "brain_query", "brain_pull_items", "brain_get_item"]),
+  brain: Object.freeze([
+    "brain_status",
+    "brain_search_evidence",
+    "brain_query",
+    "brain_pull_items",
+    "brain_get_item",
+  ]),
   board: Object.freeze([
     "brain_list_projects",
     "brain_list_tasks",
