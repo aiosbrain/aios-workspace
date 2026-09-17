@@ -3,7 +3,7 @@
 Read-only access to an AIOS Team Brain from an MCP host. Requires Node.js 22 or newer;
 no AIOS checkout, global toolkit installation, native modules or runtime dependencies.
 
-Start with `npx -y @aiosbrain/mcp@0.2.0`. Configure `AIOS_BRAIN_URL` and `AIOS_API_KEY`,
+Start with `npx -y @aiosbrain/mcp@0.2.1`. Configure `AIOS_BRAIN_URL` and `AIOS_API_KEY`,
 or use the owner-only default tuple in `~/.aios/credentials.json`:
 
 ```json
@@ -33,7 +33,7 @@ restart; the Brain checks authorization on every call, including after membershi
 
 | Toolset | Tools |
 | --- | --- |
-| `brain` | `brain_status`, `brain_query`, `brain_pull_items`, `brain_get_item` |
+| `brain` | `brain_status`, `brain_search_evidence`, `brain_query`, `brain_pull_items`, `brain_get_item` |
 | `board` | `brain_list_projects`, `brain_list_tasks`, `brain_list_decisions`, `brain_stakeholders` |
 
 `--toolsets brain,board` overrides `AIOS_MCP_TOOLSETS`. Repeated `--tools <name>` adds tools;
@@ -53,3 +53,8 @@ Publish the accepted tarball, never the unbuilt source directory.
 ### Evidence-first answers
 
 `brain_search_evidence` (Brain API 1.27+) returns ranked source passages, citations, dates and recorded contributor roles without calling an answering model. The host composes the answer and can expand sources with `brain_get_item`. It belongs to the read-only `brain` toolset. Arguments: `query`, optional `project`, optional `limit` (default 8, max20). Responses remain valid JSON under 20,000 characters; truncation is disclosed. Older servers report upgrade required, and HTTP failures are never converted to no matches. No additional key or hosted MCP service is required.
+
+## 0.2.1
+
+Explicit integer evidence-search limits now pass MCP argument validation. The packed
+artifact acceptance test covers an explicit limit of 10 as well as live retrieval.
