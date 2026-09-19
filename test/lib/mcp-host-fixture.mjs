@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { windowsSystemExecutable } from "../../scripts/mcp-credentials.mjs";
+import { MCP_PACKAGE_VERSION } from "../../scripts/mcp-hosts.mjs";
 export const credential = {
   brain_url: "https://brain.example",
   api_key: "test-key",
@@ -75,4 +76,19 @@ export function tree(root) {
   }
   walk(root);
   return rows;
+}
+// `node -e` source for a synthetic stdio server: once stdin closes it answers the
+// verifier's initialize (id 1) and tools/list (id 2). Defaults model a healthy pinned
+// artifact so each test overrides only the field it is attacking.
+export function serverScript({
+  names = [],
+  tools = names.map((name) => ({ name, annotations: { readOnlyHint: true } })),
+  version = MCP_PACKAGE_VERSION,
+  protocolVersion = "2025-11-25",
+} = {}) {
+  const lines = [
+    { id: 1, result: { protocolVersion, serverInfo: { version } } },
+    { id: 2, result: { tools } },
+  ].map((message) => JSON.stringify(message));
+  return `process.stdin.resume();process.stdin.on('end',()=>{for(const line of ${JSON.stringify(lines)})console.log(line)})`;
 }

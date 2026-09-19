@@ -3,11 +3,19 @@ import path from "node:path";
 import os from "node:os";
 import { existsSync } from "node:fs";
 
-export const MCP_PACKAGE_VERSION = "0.1.1";
+export const MCP_PACKAGE_VERSION = "0.2.1";
 
-// Tool membership belongs to the integrity-pinned artifact, not the moving source tree.
+// Tool membership belongs to the integrity-pinned artifact, not the moving source tree:
+// this is the 0.2.1 tarball's own TOOLSETS, frozen here. A version bump re-derives it
+// from the new artifact, never from packages/mcp-core at HEAD.
 export const MCP_PACKAGE_TOOLSETS = Object.freeze({
-  brain: Object.freeze(["brain_status", "brain_query", "brain_pull_items", "brain_get_item"]),
+  brain: Object.freeze([
+    "brain_status",
+    "brain_search_evidence",
+    "brain_query",
+    "brain_pull_items",
+    "brain_get_item",
+  ]),
   board: Object.freeze([
     "brain_list_projects",
     "brain_list_tasks",
@@ -15,6 +23,13 @@ export const MCP_PACKAGE_TOOLSETS = Object.freeze({
     "brain_stakeholders",
   ]),
 });
+// The only memberships a verified launch may report: a tier-limited (external) Brain
+// identity exposes brain alone; a team identity adds board. Nothing else is valid.
+export const MCP_PACKAGE_MEMBERSHIPS = Object.freeze(
+  [MCP_PACKAGE_TOOLSETS.brain, [...MCP_PACKAGE_TOOLSETS.brain, ...MCP_PACKAGE_TOOLSETS.board]].map(
+    (names) => Object.freeze([...names].sort())
+  )
+);
 export const MCP_SERVER_KEY = "aios-brain";
 export const MCP_HOSTS = Object.freeze([
   {

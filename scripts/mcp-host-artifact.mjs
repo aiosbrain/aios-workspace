@@ -4,10 +4,11 @@ import { createHash } from "node:crypto";
 import { gunzipSync } from "node:zlib";
 import { MCP_PACKAGE_VERSION } from "./mcp-hosts.mjs";
 
-// Published and independently accepted AIO-1164 artifact. Updating the version
-// requires updating this integrity and repeating package acceptance.
+// Published @aiosbrain/mcp 0.2.1 registry tarball (dist.integrity). Updating the version
+// requires updating this integrity, re-deriving the closure below and the frozen toolsets
+// in mcp-hosts.mjs from the new tarball, and repeating package acceptance.
 export const MCP_PACKAGE_INTEGRITY =
-  "sha512-6IDfKK/Ml7eMrzhO1JLrkGh8XbeWqJXlxHaJ90o8TIN0yrI5ipFZTcBN14/yq9gxAht5LKO5fZ+q3rFamnoXBg==";
+  "sha512-+YNY05QMYyNwC56U3V5oFS7uKToSr9mTNGZeha1waq8grhB32WyHnluRnKS6mO4LKi8ueiEpI4H3xDknR5Pb1Q==";
 const files = [
   "LICENSE",
   "package.json",
