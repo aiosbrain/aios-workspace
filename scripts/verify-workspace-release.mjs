@@ -136,6 +136,32 @@ export function verifyWorkspaceRelease({ directory, run, jobs, sha, version, ref
   return { tarball, candidate, integrity };
 }
 
+// npm acknowledges an upload before publish-time scanning makes it readable.
+// Retry only registry absence; never repeat the upload or soften an integrity failure.
+export function verifyRegistryAvailability({ readIntegrity, expected, wait }) {
+  const attempts = 41;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    let integrity;
+    try {
+      integrity = readIntegrity();
+    } catch (error) {
+      let code;
+      try {
+        code = JSON.parse(String(error.stdout ?? "")).error?.code;
+      } catch {}
+      if (code !== "E404") throw error;
+      assert.ok(
+        attempt < attempts,
+        "Published package is still unavailable after bounded registry checks; do not republish"
+      );
+      wait(30_000);
+      continue;
+    }
+    assert.equal(integrity, expected, "Registry bytes differ from accepted artifact");
+    return;
+  }
+}
+
 /** Publication orchestration; injected command runner permits offline no-publish verification. */
 export function runWorkspaceRelease({
   env = process.env,
@@ -143,6 +169,7 @@ export function runWorkspaceRelease({
   root = process.cwd(),
   command = execFileSync,
   publish = false,
+  wait = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms),
 } = {}) {
   // This entrypoint belongs to the Ubuntu OIDC publisher. Verification above is portable.
   // Never discover release executables from an artifact-controlled search path.
@@ -201,14 +228,26 @@ export function runWorkspaceRelease({
       ],
       { stdio: "inherit" }
     );
-    const integrity = JSON.parse(
-      command(
-        process.execPath,
-        [npmCli, "view", `@aiosbrain/aios@${manifest.version}`, "dist.integrity", "--json"],
-        { encoding: "utf8", cwd: root }
-      )
-    );
-    assert.equal(integrity, verified.integrity, "Registry bytes differ from accepted artifact");
+    verifyRegistryAvailability({
+      expected: verified.integrity,
+      wait,
+      readIntegrity: () =>
+        JSON.parse(
+          command(
+            process.execPath,
+            [
+              npmCli,
+              "view",
+              `@aiosbrain/aios@${manifest.version}`,
+              "dist.integrity",
+              "--json",
+              "--prefer-online",
+              "--fetch-retries=0",
+            ],
+            { encoding: "utf8", cwd: root, timeout: 15_000 }
+          )
+        ),
+    });
   }
   return verified;
 }

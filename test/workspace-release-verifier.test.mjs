@@ -380,3 +380,64 @@ test("registry integrity mismatch cannot return success after the simulated publ
     /Registry bytes differ/
   );
 });
+
+test("accepted upload polls processing 404 without a second publish", (t) => {
+  const f = orchestrationFixture(t);
+  let reads = 0;
+  const waits = [];
+  const command = (exe, args) => {
+    if (exe === process.execPath && args[1] === "view" && ++reads <= 2)
+      throw Object.assign(new Error("processing"), {
+        stdout: JSON.stringify({ error: { code: "E404" } }),
+      });
+    return f.options.command(exe, args);
+  };
+  runWorkspaceRelease({ ...f.options, command, wait: (ms) => waits.push(ms), publish: true });
+  assert.equal(reads, 3);
+  assert.deepEqual(waits, [30000, 30000]);
+  assert.equal(f.calls.filter((c) => c[2] === "publish").length, 1);
+});
+
+test("registry absence exhausts bounded checks without republishing", (t) => {
+  const f = orchestrationFixture(t);
+  let reads = 0;
+  let waits = 0;
+  const command = (exe, args) => {
+    if (exe === process.execPath && args[1] === "view") {
+      reads++;
+      throw Object.assign(new Error("processing"), {
+        stdout: JSON.stringify({ error: { code: "E404" } }),
+      });
+    }
+    return f.options.command(exe, args);
+  };
+  assert.throws(
+    () => runWorkspaceRelease({ ...f.options, command, wait: () => waits++, publish: true }),
+    /still unavailable.*do not republish/
+  );
+  assert.equal(reads, 41);
+  assert.equal(waits, 40);
+  assert.equal(f.calls.filter((c) => c[2] === "publish").length, 1);
+});
+
+test("registry authentication failure is not retried as processing", (t) => {
+  const f = orchestrationFixture(t);
+  const failure = Object.assign(new Error("auth"), {
+    stdout: JSON.stringify({ error: { code: "E401" } }),
+  });
+  const command = (exe, args) => {
+    if (exe === process.execPath && args[1] === "view") throw failure;
+    return f.options.command(exe, args);
+  };
+  assert.throws(
+    () =>
+      runWorkspaceRelease({
+        ...f.options,
+        command,
+        wait: () => assert.fail("must not wait"),
+        publish: true,
+      }),
+    (error) => error === failure
+  );
+  assert.equal(f.calls.filter((c) => c[2] === "publish").length, 1);
+});

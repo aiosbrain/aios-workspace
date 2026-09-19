@@ -190,7 +190,7 @@ jobs:
   publish-workspace:
     if: inputs.package == 'aios'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 40 # includes bounded npm publish-time scanning visibility checks
     permissions:
       contents: read
       actions: read
