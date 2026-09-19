@@ -10,6 +10,7 @@
  * `npm pack` itself; cells verify the digest recorded here before installing.
  */
 import { execFileSync } from "node:child_process";
+import assert from "node:assert/strict";
 import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -104,6 +105,10 @@ export function packCandidate(outDir) {
   const tarball = path.join(outDir, tarballName);
   const bytes = readFileSync(tarball);
   const inventory = run("tar", ["-tzf", tarball]).split("\n").filter(Boolean).sort();
+  assert.ok(
+    inventory.includes("package/docs/mcp-host-install.md"),
+    "The installed getting-started guide must link to a packaged MCP installer guide"
+  );
 
   const pkg = JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf8"));
   const manifest = {
