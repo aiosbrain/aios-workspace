@@ -18,7 +18,11 @@ export const LINEAR_COMMANDS = {
     prepareInvocation: async (rest) =>
       (await (await import("../connectors.mjs")).loadLinearAdapter()).prepareLinearInvocation(rest),
     loader: async () => (await import("../connectors.mjs")).loadLinearAdapter(),
-    adapt: (ctx, mod) => mod.cmdLinear(ctx.repo, ctx.rest, { invocationPlan: ctx.invocationPlan }),
+    adapt: (ctx, mod) =>
+      mod.cmdLinear(ctx.repo, ctx.rest, {
+        invocationPlan: ctx.invocationPlan,
+        json: ctx.rest.includes("--json"),
+      }),
     exit: "exit-code",
     usage: U.linear,
   },

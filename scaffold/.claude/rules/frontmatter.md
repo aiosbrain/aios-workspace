@@ -42,6 +42,16 @@ status: draft        # draft | review | final | sent | signed
 The `check-frontmatter` validator enforces `status`, `owner`, and `access` presence
 by directory. It does not enforce `type` — run `AIOS_OKF_LINT=1 ./validation/check-frontmatter.sh <repo>` to get advisory notices on files missing `type:`.
 
+## Publishing labels and Brain membership
+
+These labels control what may leave this workspace: admin/private and untagged content
+remain blocked. Brain reads use people → group memberships → project grants → included
+content. A team label does not make an item visible to every member, and an external
+collaborator explicitly granted a project may read its team-labeled items through the
+collection/query surfaces. The roster, identities and company graph share team structure
+with authenticated members. Some endpoints retain additional posture/role restrictions;
+check the pinned Brain contract rather than inferring permissions from a content label.
+
 ## OKF alignment (Open Knowledge Format)
 
 This repo's frontmatter is OKF v0.1-conformant. Field mapping:

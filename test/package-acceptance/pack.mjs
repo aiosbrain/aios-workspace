@@ -140,10 +140,9 @@ export function packCandidate(outDir) {
   ]) {
     copyFileSync(path.join(ROOT, "test", "helpers", name), path.join(helpers, name));
   }
-  copyFileSync(
-    path.join(ROOT, "test", "package-acceptance", "wrong-linear-provider.mjs"),
-    path.join(helpers, "wrong-linear-provider.mjs")
-  );
+  for (const name of ["wrong-linear-provider.mjs", "interrupt-migration.mjs"]) {
+    copyFileSync(path.join(ROOT, "test", "package-acceptance", name), path.join(helpers, name));
+  }
   return manifest;
 }
 

@@ -1,3 +1,4 @@
+import { AiosError } from "../../cli.mjs";
 import { extractConnectorRepo } from "../../connector-invocation.mjs";
 import { parseLinearActivityArgs } from "./activity-args.mjs";
 import { parseLinearQueryArgs } from "./query-args.mjs";
@@ -95,6 +96,23 @@ export function prepareLinearInvocation(argv) {
   });
   const rest = Object.freeze([verb, ...selected.argv]);
   const help = !verb || ["help", "--help", "-h"].includes(verb) || helpRequested(rest);
+  let jsonFlag = false;
+  for (let i = 0; i < selected.argv.length; i++) {
+    if (literal.has(verb) && i === 1) continue;
+    if (valueFlags.has(selected.argv[i])) {
+      i++;
+      continue;
+    }
+    if (selected.argv[i] === "--json") jsonFlag = true;
+  }
+  if (!help && verb !== "status" && jsonFlag) {
+    // Historical Linear verbs emit human output. Never silently ignore JSON mode.
+    throw new AiosError(
+      "AIOS_E_USAGE",
+      "This Linear verb does not support --json.",
+      "Remove --json; use aios linear status --json for connection state."
+    );
+  }
   return Object.freeze({
     argv: rest,
     repoArg: selected.repoArg,

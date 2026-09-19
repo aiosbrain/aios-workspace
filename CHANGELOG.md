@@ -20,6 +20,20 @@ baseline non-strict (published 0.12.0 pins devtools 0.3.0, engines `>=22 <23`), 
 AIO-1068 Slack consent narrowing (an environment-sourced token is refused toward a
 workspace-domain brain; `--stdin`/argv is the consent path).
 
+### Release review corrections
+
+- Linear rejects malformed credential headers without echoing values. Credential selection
+  now follows environment, user reference, then legacy workspace source; an incomplete
+  selected source fails closed.
+- Ambiguous Slack write failures require readback before another attempt; safe reads and
+  explicit rate-limit responses retain bounded retries.
+- Unknown top-level commands return typed usage errors. Linear rejects unsupported
+  `--json` flags before credentials, and simple angle-bracket Markdown link destinations
+  compare equivalently without hiding content changes.
+- Package acceptance scans raw stdout and stderr on every exit, fails on cleanup errors,
+  and tests actual installed CLI interruption/re-entry and config-drift rollback. The
+  Workspace publisher verifies all six cells and publishes their exact accepted tarball.
+
 ### Added
 
 - **Stamp format 2 + content-addressed merge bases (AIO-635 D1).** `.aios-toolkit-version`

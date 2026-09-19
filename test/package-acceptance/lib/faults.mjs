@@ -11,7 +11,7 @@ import { writeFileSync } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { SENTINELS, scanTextForSentinels, sha256Hex } from "./context.mjs";
+import { CellContext, SENTINELS } from "./context.mjs";
 
 let copyCounter = 0;
 
@@ -206,23 +206,57 @@ function unknownErrorControl(ctx, install) {
   };
 }
 
+function faultContext(ctx, name) {
+  const dir = configDir(ctx, name);
+  writeFileSync(path.join(dir, "manifest.json"), JSON.stringify(ctx.manifest));
+  return new CellContext({
+    artifactDir: dir,
+    evidenceDir: path.join(dir, "evidence"),
+    checkoutRoot: ctx.checkoutRoot,
+    base: path.join(dir, "work"),
+  });
+}
+
 function digestTamperControl(ctx) {
+  const probe = faultContext(ctx, "tampered-artifact");
   const bytes = Buffer.from(readFileSync(ctx.tarball));
   bytes[Math.floor(bytes.length / 2)] ^= 0xff;
-  const tampered = sha256Hex(bytes);
+  writeFileSync(probe.tarball, bytes);
+  let refused = false;
+  try {
+    probe.verifyArtifactDigest();
+  } catch (error) {
+    if (!/artifact digest mismatch/.test(error.message)) throw error;
+    refused = true;
+  }
   return {
-    signature: "SHA-256 differs from the manifest digest",
-    red: tampered !== ctx.manifest.sha256,
-    observed: `tampered digest differs=${tampered !== ctx.manifest.sha256}`,
+    signature: "actual artifact verifier rejects changed tarball bytes",
+    red: refused,
+    observed: `verifier refused=${refused}`,
   };
 }
 
-function sentinelScanControl() {
-  const hits = scanTextForSentinels(`prefix ${SENTINELS.linearKey} suffix`);
+async function sentinelScanControl(ctx) {
+  const { executeCell } = await import("../run-cell.mjs");
+  const probe = faultContext(ctx, "stderr-leak");
+  let refused = false;
+  try {
+    await executeCell(probe, {
+      journey: (cell) => {
+        cell.run(process.execPath, ["-e", "process.stderr.write(process.env.LEAK_FIXTURE)"], {
+          env: cell.cliEnv({ LEAK_FIXTURE: SENTINELS.linearKey }),
+        });
+      },
+    });
+  } catch (error) {
+    if (!/secret sentinel leaked/.test(error.message)) throw error;
+    refused = true;
+  }
+  const evidence = JSON.parse(readFileSync(path.join(probe.evidenceDir, "evidence.json")));
   return {
-    signature: "scanner reports the seeded sentinel",
-    red: hits.includes("linearKey"),
-    observed: `scanner hits: ${hits.join(",")}`,
+    signature: "production cell rejects a successful child leaking to stderr",
+    red: refused && evidence.ok === false && evidence.sentinelHits.length === 1,
+    observed: `cell refused=${refused}, ok=${evidence.ok}`,
   };
 }
 
