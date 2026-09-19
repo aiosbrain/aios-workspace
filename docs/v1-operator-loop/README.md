@@ -86,7 +86,7 @@ MCP tool, source, rubric, or C1-C8 spec changes, update the relevant block in th
 - `aios_loop_collect`
 <!-- /drift:mcp-tools -->
 
-Standalone package surface (8 tools; publication is tracked in AIO-1111):
+Standalone package surface (9 tools in published `@aiosbrain/mcp@0.2.1`):
 
 <!-- drift:mcp-standalone -->
 - `brain_status`
