@@ -1,8 +1,8 @@
-# Project membership access — Brain API 1.24
+# Project membership access — Brain API 1.27
 
-Document revision: 1.26. Reconciled 2026-09-10 with Brain's existing PRET-4/PRET-6
-implementation. This document corrects the pinned description; it changes no runtime
-permissions, deployment, endpoint shape or API version. The API change policy in
+Document revision: 1.29. The PRET-4/PRET-6 membership rules reconciled on 2026-09-10
+remain unchanged. Updated 2026-09-19 to include the additive evidence-search route.
+This description does not claim a deployment. The API change policy in
 [brain-api.md](../brain-api.md) still governs future behavior changes.
 
 ## What a person can see
@@ -19,8 +19,8 @@ permissions, deployment, endpoint shape or API version. The API change policy in
    not authorize it. A source project slug and an access label alone do not authorize it.
 4. A delegated token can only narrow access: intersect launcher visibility, the represented
    person's visibility when different, and the explicit project scope. An empty scope
-   means no projects. Only the items collection and natural-language query accept these
-   tokens; the other member API routes reject their credential format. The current
+   means no projects. The items collection, natural-language query and evidence search
+   accept these tokens; the other member API routes reject their credential format. The current
    delegated-token implementation still reads the stored member tier for eligibility and
    refuses external stored-tier delegation. This is a retained exception: it does not
    resolve ordinary member posture from the `everyone` group.
@@ -54,6 +54,7 @@ permissions from another endpoint's status code.
 | `GET /items` | Membership-visible item set; no extra external-posture audience ceiling. Delegated scope may only narrow it. |
 | `GET /items/<id>` | Membership **and** posture ceiling; external posture still cannot fetch a team item here. Missing/denied both404. |
 | `POST /query` | Membership/provenance-grounded retrieval. Delegated scope may only narrow it. A project selector filters, never grants. Delegated queries are stateless; conversation IDs are422. Stored turns are not reused as grounding until visibility can be revalidated. |
+| `POST /evidence/search` | Membership/provenance-grounded source retrieval. Delegated scope intersects the launcher, represented member and explicit project scope. No answer synthesis or conversation storage. |
 | `POST /graph-query` | Accessible projects' stored partition pointers scope Graphiti. Legitimate empty scope returns empty facts; a visible system project with no partition fails500. |
 | `GET /tasks`, `GET /decisions` | Sourced rows require a visible source item; source-less rows require a recorded author and team-posture member. External posture additionally requires external audience. Filters run before the row limit. |
 | `GET /timeline` | Member-specific membership/provenance view and cache variant; team posture does not permit every stored item. The structured-row authored exception applies. |
