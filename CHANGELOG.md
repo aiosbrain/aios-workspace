@@ -8,7 +8,7 @@ This is the **individual workspace** repo. The Team Brain sync contract
 (`docs/brain-api.md`) is versioned separately; it is currently pinned at **v1.27**
 (additive within major `v1`). Entries predating a bump did not change the protocol.
 
-## [2.1.0] — 2026-09-19
+## [2.1.0] — 2026-09-20
 
 ### Added
 

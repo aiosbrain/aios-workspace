@@ -317,3 +317,74 @@ test("escaping-link probe catches a node_modules symlink that leaves the prefix"
   symlinkSync(outside, path.join(nm, "@scope", "escape-link"));
   assert.deepEqual(findEscapingLinks(nm, prefix), [path.join(nm, "@scope", "escape-link")]);
 });
+
+// Failure paths must reject normally so executeCell can redact evidence and clean HOME.
+import { startBrain, rpc, KEYS } from "./package-acceptance/lib/mcp-support.mjs";
+
+test("synthetic Brain drains actual request IPC and stops its child", async (t) => {
+  const base = mkdtempSync(path.join(tmpdir(), "aio1112-brain-"));
+  t.after(() => rmSync(base, { recursive: true, force: true }));
+  const ctx = makeContext(base);
+  const brain = await startBrain(ctx);
+  try {
+    const response = await fetch(`${brain.origin}/api/v1/me`, {
+      headers: { Authorization: `Bearer ${KEYS.team}` },
+      signal: AbortSignal.timeout(5000),
+    });
+    assert.equal(response.status, 200);
+    await response.text();
+    await brain.drain();
+    assert.deepEqual(brain.requests, [
+      { method: "GET", path: "/api/v1/me", tier: "team", status: 200 },
+    ]);
+  } finally {
+    await brain.stop();
+  }
+  await assert.rejects(brain.drain(), /exited/);
+});
+
+for (const [name, body, expected] of [
+  ["early exit", "process.exit(2)", /exited early/],
+  ["silent startup", "setInterval(()=>{},1000)", /did not start/],
+  ["malformed protocol", "console.log('broken'); setInterval(()=>{},1000)", /outside its protocol/],
+  [
+    "invalid port",
+    "console.log('{\"port\":65536}'); setInterval(()=>{},1000)",
+    /outside its protocol/,
+  ],
+])
+  test(`synthetic Brain fails closed on ${name}`, async (t) => {
+    const base = mkdtempSync(path.join(tmpdir(), "aio1112-brain-fail-"));
+    t.after(() => rmSync(base, { recursive: true, force: true }));
+    const ctx = makeContext(base);
+    const fixture = path.join(base, "fixture.mjs");
+    writeFileSync(fixture, body);
+    await assert.rejects(
+      startBrain(ctx, { fixture, startupMs: name === "silent startup" ? 150 : 3000 }),
+      expected
+    );
+  });
+
+test("synthetic Brain bounds a missing drain response and terminates the child", async (t) => {
+  const base = mkdtempSync(path.join(tmpdir(), "aio1112-brain-drain-"));
+  t.after(() => rmSync(base, { recursive: true, force: true }));
+  const ctx = makeContext(base);
+  const fixture = path.join(base, "fixture.mjs");
+  writeFileSync(fixture, "console.log(JSON.stringify({port:1234})); process.stdin.resume();");
+  const brain = await startBrain(ctx, { fixture, drainMs: 100, stopMs: 100 });
+  try {
+    await assert.rejects(brain.drain(), /drain timed out/);
+  } finally {
+    await brain.stop();
+  }
+});
+
+test("MCP protocol parse and process errors reject instead of escaping cleanup", async (t) => {
+  const base = mkdtempSync(path.join(tmpdir(), "aio1112-rpc-fail-"));
+  t.after(() => rmSync(base, { recursive: true, force: true }));
+  const ctx = makeContext(base);
+  for (const script of ["console.log('not-json')", "process.exit(3)"])
+    await assert.rejects(
+      rpc({ command: process.execPath, args: ["-e", script] }, { cwd: base, env: ctx.env() })
+    );
+});

@@ -34,4 +34,4 @@ jobs:
       - run: npm ci --ignore-scripts
       # Windows ACL fixtures launch PowerShell repeatedly. Avoid competing test-file
       # workers exhausting the published server's bounded credential-probe startup.
-      - run: node --test --test-concurrency=1 test/mcp-host-install.test.mjs test/mcp-host-atomic.test.mjs
+      - run: node --test --test-concurrency=1 test/mcp-host-install.test.mjs test/mcp-host-atomic.test.mjs test/mcp-host-verify.test.mjs test/mcp-host-cli.test.mjs

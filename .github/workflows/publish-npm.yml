@@ -217,7 +217,7 @@ jobs:
             if (!/^\d+\.\d+\.\d+$/.test(version)) throw new Error("Invalid npm pin");
             execFileSync("npm", ["install", "--global", "npm@" + version, "--ignore-scripts"], { stdio: "inherit" });
           '
-      - name: Download the accepted candidate and all six evidence cells
+      - name: Download the accepted candidate and all nine evidence cells
         run: |
           case "$WORKSPACE_ACCEPTANCE_RUN_ID" in ''|*[!0-9]*) exit 1 ;; esac
           gh run download "$WORKSPACE_ACCEPTANCE_RUN_ID" --repo aiosbrain/aios-workspace --dir "$WORKSPACE_RELEASE_ARTIFACTS"

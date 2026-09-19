@@ -10,7 +10,85 @@ import {
 } from "../scripts/verify-workspace-release.mjs";
 
 const sha = "a".repeat(40),
-  version = "2.0.0";
+  version = "2.1.0";
+function mcpFixture(platform) {
+  const external = [
+    "brain_get_item",
+    "brain_pull_items",
+    "brain_query",
+    "brain_search_evidence",
+    "brain_status",
+  ];
+  const team = [
+    ...external,
+    "brain_list_decisions",
+    "brain_list_projects",
+    "brain_list_tasks",
+    "brain_stakeholders",
+  ].sort();
+  const hosts = ["claude-code", "codex", "cursor"];
+  if (platform !== "linux") hosts.push("claude-desktop");
+  return {
+    toolkitVersion: version,
+    artifact: {
+      name: "@aiosbrain/mcp",
+      version: "0.2.1",
+      closureFiles: 15,
+      integrity:
+        "sha512-+YNY05QMYyNwC56U3V5oFS7uKToSr9mTNGZeha1waq8grhB32WyHnluRnKS6mO4LKi8ueiEpI4H3xDknR5Pb1Q==",
+    },
+    membership: { team, external },
+    packaged: {
+      tamperedArtifactRejected: true,
+      files: 14,
+      supportedHosts: hosts,
+      nativeDependency: "koffi resolved in prefix",
+    },
+    cases: {
+      runningHost: {
+        selectedRunning: "refused AIOS_E_CONFLICT, no writes",
+        unselectedRunning: "not blocking",
+      },
+      dryRun: { proposals: hosts.length, treeUnchanged: true },
+      install: {
+        hosts,
+        tier: "team",
+        tools: 9,
+        closureBytes: "identical to registry",
+        nativeReplacement: true,
+        unrelatedPreserved: true,
+      },
+      server: { launchedFrom: "neutral cwd", team: 9, external: 5, evidenceSearch: "ok" },
+      repeatAndStatus: {
+        repeat: "unchanged",
+        credentialSources: ["global-file", "environment"],
+        hostLoading: "unverified",
+      },
+      editedEntry: { install: "refused AIOS_E_CONFLICT", uninstall: "preserved" },
+      uninstall: { hostsRestored: hosts.length, credentials: "preserved" },
+      legacyUpgrade: {
+        owned: "upgraded to 0.2.1, record rewritten, 0.1.1 artifact intact",
+        edited: "refused AIOS_E_CONFLICT, untouched",
+      },
+      ownerOnlyAcl: true,
+      onboarding:
+        platform === "win32"
+          ? { skipped: "the workspace scaffolder is bash; Windows cells cover the installer only" }
+          : {
+              accept: {
+                offerShown: true,
+                host: "claude-code",
+                projectTarget: "--repo workspace",
+                cwdUntouched: true,
+              },
+              decline: { offerShown: true, mcpWrites: 0 },
+              failedBrain: { offerShown: false, mcpWrites: 0 },
+              personal: { offerShown: false, mcpWrites: 0 },
+            },
+    },
+    realProfile: "stat fingerprint unchanged",
+  };
+}
 function setup(t) {
   const directory = mkdtempSync(path.join(tmpdir(), "aios-release-verifier-"));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
@@ -37,10 +115,11 @@ function setup(t) {
   for (const [os, platform] of [
     ["ubuntu-latest", "linux"],
     ["macos-latest", "darwin"],
+    ["windows-latest", "win32"],
   ]) {
     for (const node of [22, 24, 26]) {
       jobs.push({
-        name: `accept (${os}, Node ${node})`,
+        name: `${platform === "win32" ? "MCP accept" : "accept"} (${os}, Node ${node})`,
         head_sha: sha,
         status: "completed",
         conclusion: "success",
@@ -56,7 +135,14 @@ function setup(t) {
         cell: { node: `v${node}.0.0`, platform },
         commands: [{ status: 0 }],
         sections: {
-          "fresh-install": { verifiedSha256: digest, installedVersion: version },
+          "fresh-install": {
+            verifiedSha256: digest,
+            installedVersion: version,
+            escapingLinks: "none",
+            engineStrict: true,
+            actualCli: true,
+          },
+          "mcp-host-install": mcpFixture(platform),
           "isolation-probes": {
             ambientCredentials: "none",
             escapingLinks: "none",
@@ -80,6 +166,16 @@ function setup(t) {
             ),
           },
           "upgrade-journey": { candidateEngineStrict: true, upgradedVersion: version },
+          "current-upgrade-journey": {
+            baseline: "@aiosbrain/aios@2.0.0",
+            upgradedVersion: version,
+            candidateSha: sha,
+            actualCli: true,
+            engineStrict: true,
+            customizationPreserved: true,
+            configPreserved: true,
+            repeatByteStable: true,
+          },
           "rollback-journey": {
             actualCli: true,
             configDriftRefused: true,
@@ -111,7 +207,7 @@ function setup(t) {
     jobs,
     sha,
     version,
-    ref: "refs/tags/v2.0.0",
+    ref: "refs/tags/v2.1.0",
     run: {
       status: "completed",
       conclusion: "success",
@@ -130,12 +226,112 @@ function mutateJson(directory, file, fn) {
   writeFileSync(p, JSON.stringify(data));
 }
 const cell = "acceptance-evidence-macos-latest-node26/evidence.json";
-test("accepts exactly six matching cells and returns the same tarball and computed integrity", (t) => {
+test("requires six full cells and three Windows MCP cells bound to the same tarball", (t) => {
   const args = setup(t),
     result = verifyWorkspaceRelease(args);
   assert.equal(result.tarball, path.join(args.directory, "package-candidate/candidate.tgz"));
   assert.match(result.integrity, /^sha512-/);
 });
+
+for (const [name, mutate] of [
+  [
+    "lost current-release customization",
+    (e) => {
+      e.sections["current-upgrade-journey"].customizationPreserved = false;
+    },
+  ],
+  [
+    "current-release stamp names another candidate",
+    (e) => {
+      e.sections["current-upgrade-journey"].candidateSha = "b".repeat(40);
+    },
+  ],
+  [
+    "missing corrupt-artifact rejection",
+    (e) => {
+      delete e.sections["mcp-host-install"].packaged.tamperedArtifactRejected;
+    },
+  ],
+  [
+    "missing MCP journey",
+    (e) => {
+      delete e.sections["mcp-host-install"];
+    },
+  ],
+  [
+    "old server pin",
+    (e) => {
+      e.sections["mcp-host-install"].artifact.version = "0.1.1";
+    },
+  ],
+  [
+    "different server integrity",
+    (e) => {
+      e.sections["mcp-host-install"].artifact.integrity = "other";
+    },
+  ],
+  [
+    "missing evidence tool",
+    (e) => {
+      e.sections["mcp-host-install"].membership.team.splice(6, 1);
+    },
+  ],
+  [
+    "onboarding helper without completed flow",
+    (e) => {
+      e.sections["mcp-host-install"].cases.onboarding.accept.cwdUntouched = false;
+    },
+  ],
+  [
+    "no existing-file native replacement",
+    (e) => {
+      e.sections["mcp-host-install"].cases.install.nativeReplacement = false;
+    },
+  ],
+  [
+    "unverified old installer upgrade",
+    (e) => {
+      delete e.sections["mcp-host-install"].cases.legacyUpgrade;
+    },
+  ],
+])
+  test(`refuses ${name}`, (t) => {
+    const args = setup(t);
+    mutateJson(args.directory, cell, mutate);
+    assert.throws(() => verifyWorkspaceRelease(args));
+  });
+
+for (const [name, mutate] of [
+  [
+    "Windows replaced by a non-native cell",
+    (e) => {
+      e.cell.platform = "linux";
+    },
+  ],
+  [
+    "Windows artifact mismatch",
+    (e) => {
+      e.tarballSha256 = "b".repeat(64);
+    },
+  ],
+  [
+    "missing owner-only ACL proof",
+    (e) => {
+      delete e.sections["mcp-host-install"].cases.ownerOnlyAcl;
+    },
+  ],
+  [
+    "Windows cleanup failed",
+    (e) => {
+      e.sections.cleanup.state = "failed";
+    },
+  ],
+])
+  test(`refuses ${name}`, (t) => {
+    const args = setup(t);
+    mutateJson(args.directory, "acceptance-evidence-windows-latest-node26/evidence.json", mutate);
+    assert.throws(() => verifyWorkspaceRelease(args));
+  });
 for (const [name, mutate] of [
   [
     "branch instead of tag",

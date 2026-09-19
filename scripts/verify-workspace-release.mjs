@@ -1,4 +1,4 @@
-// Publish only the immutable Workspace tarball accepted by all six release cells.
+// Publish only the immutable Workspace tarball accepted by all full and MCP cells.
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
@@ -27,10 +27,97 @@ const SECTIONS = [
   "slack-journey",
   "migration-journey",
   "upgrade-journey",
+  "current-upgrade-journey",
   "rollback-journey",
   "fault-controls",
   "cleanup",
 ];
+const MCP_TOOLS = [
+  "brain_status",
+  "brain_search_evidence",
+  "brain_query",
+  "brain_pull_items",
+  "brain_get_item",
+  "brain_list_projects",
+  "brain_list_tasks",
+  "brain_list_decisions",
+  "brain_stakeholders",
+].sort();
+function verifyMcpEvidence(section, platform, version) {
+  assert.ok(section, "Missing packed MCP installer acceptance");
+  assert.equal(section.toolkitVersion, version);
+  assert.deepEqual(section.artifact, {
+    name: "@aiosbrain/mcp",
+    version: "0.2.1",
+    closureFiles: 15,
+    integrity:
+      "sha512-+YNY05QMYyNwC56U3V5oFS7uKToSr9mTNGZeha1waq8grhB32WyHnluRnKS6mO4LKi8ueiEpI4H3xDknR5Pb1Q==",
+  });
+  assert.deepEqual(section.membership.team, MCP_TOOLS);
+  assert.deepEqual(section.membership.external, [
+    "brain_get_item",
+    "brain_pull_items",
+    "brain_query",
+    "brain_search_evidence",
+    "brain_status",
+  ]);
+  const hosts = ["claude-code", "codex", "cursor"];
+  if (platform !== "linux") hosts.push("claude-desktop");
+  hosts.sort();
+  assert.deepEqual([...section.packaged.supportedHosts].sort(), hosts);
+  assert.equal(
+    section.packaged.tamperedArtifactRejected,
+    true,
+    "Installed decoder must reject corrupt pinned bytes"
+  );
+  assert.equal(section.packaged.nativeDependency, "koffi resolved in prefix");
+  const c = section.cases;
+  assert.equal(c.runningHost.selectedRunning, "refused AIOS_E_CONFLICT, no writes");
+  assert.equal(c.runningHost.unselectedRunning, "not blocking");
+  assert.equal(c.dryRun.treeUnchanged, true);
+  assert.equal(c.dryRun.proposals, hosts.length);
+  assert.deepEqual([...c.install.hosts].sort(), hosts);
+  assert.equal(c.install.tier, "team");
+  assert.equal(c.install.tools, 9);
+  assert.equal(c.install.closureBytes, "identical to registry");
+  assert.equal(c.install.nativeReplacement, true);
+  assert.equal(c.install.unrelatedPreserved, true);
+  assert.deepEqual(c.server, {
+    launchedFrom: "neutral cwd",
+    team: 9,
+    external: 5,
+    evidenceSearch: "ok",
+  });
+  assert.deepEqual(c.repeatAndStatus, {
+    repeat: "unchanged",
+    credentialSources: ["global-file", "environment"],
+    hostLoading: "unverified",
+  });
+  assert.deepEqual(c.editedEntry, { install: "refused AIOS_E_CONFLICT", uninstall: "preserved" });
+  assert.equal(c.uninstall.hostsRestored, hosts.length);
+  assert.equal(c.uninstall.credentials, "preserved");
+  assert.deepEqual(c.legacyUpgrade, {
+    owned: "upgraded to 0.2.1, record rewritten, 0.1.1 artifact intact",
+    edited: "refused AIOS_E_CONFLICT, untouched",
+  });
+  if (platform === "win32") {
+    assert.equal(c.ownerOnlyAcl, true, "Native Windows owner-only ACL proof required");
+    assert.deepEqual(c.onboarding, {
+      skipped: "the workspace scaffolder is bash; Windows cells cover the installer only",
+    });
+  } else {
+    assert.deepEqual(c.onboarding.accept, {
+      offerShown: true,
+      host: "claude-code",
+      projectTarget: "--repo workspace",
+      cwdUntouched: true,
+    });
+    assert.deepEqual(c.onboarding.decline, { offerShown: true, mcpWrites: 0 });
+    for (const name of ["failedBrain", "personal"])
+      assert.deepEqual(c.onboarding[name], { offerShown: false, mcpWrites: 0 });
+  }
+  assert.equal(section.realProfile, "stat fingerprint unchanged");
+}
 
 function readJson(file) {
   assert.ok(lstatSync(file).isFile(), "Release evidence must be a regular file");
@@ -51,6 +138,7 @@ export function verifyWorkspaceRelease({ directory, run, jobs, sha, version, ref
   const requiredJobs = ["pack candidate"];
   for (const os of ["ubuntu-latest", "macos-latest"])
     for (const node of [22, 24, 26]) requiredJobs.push(`accept (${os}, Node ${node})`);
+  for (const node of [22, 24, 26]) requiredJobs.push(`MCP accept (windows-latest, Node ${node})`);
   for (const name of requiredJobs) {
     const matches = jobs.filter((job) => job.name === name);
     assert.equal(matches.length, 1, `Exactly one job required: ${name}`);
@@ -73,6 +161,7 @@ export function verifyWorkspaceRelease({ directory, run, jobs, sha, version, ref
   for (const [os, platform] of [
     ["ubuntu-latest", "linux"],
     ["macos-latest", "darwin"],
+    ["windows-latest", "win32"],
   ]) {
     for (const node of [22, 24, 26]) {
       const evidence = readJson(
@@ -87,10 +176,19 @@ export function verifyWorkspaceRelease({ directory, run, jobs, sha, version, ref
       assert.deepEqual(evidence.sentinelHits, []);
       assert.equal(evidence.cell.platform, platform);
       assert.match(evidence.cell.node, new RegExp(String.raw`^v${node}\.`));
-      for (const section of SECTIONS) assert.ok(evidence.sections[section], `Missing ${section}`);
       const s = evidence.sections;
+      verifyMcpEvidence(s["mcp-host-install"], platform, version);
+      assert.equal(s.cleanup.state, "removed");
+      assert.ok(Array.isArray(evidence.commands) && evidence.commands.length > 0);
       assert.equal(s["fresh-install"].verifiedSha256, candidate.sha256);
       assert.equal(s["fresh-install"].installedVersion, version);
+      if (platform === "win32") {
+        assert.equal(s["fresh-install"].escapingLinks, "none");
+        assert.equal(s["fresh-install"].engineStrict, true);
+        assert.equal(s["fresh-install"].actualCli, true);
+        continue;
+      }
+      for (const section of SECTIONS) assert.ok(s[section], `Missing ${section}`);
       assert.equal(s.diagnostics.provenance.build.expectedGitHead, sha);
       assert.equal(s["isolation-probes"].ambientCredentials, "none");
       assert.equal(s["isolation-probes"].escapingLinks, "none");
@@ -122,6 +220,18 @@ export function verifyWorkspaceRelease({ directory, run, jobs, sha, version, ref
       assert.equal(s["rollback-journey"].restoredPackage, "@aiosbrain/aios@0.12.0");
       assert.equal(s["upgrade-journey"].candidateEngineStrict, true);
       assert.equal(s["upgrade-journey"].upgradedVersion, version);
+      const currentUpgrade = s["current-upgrade-journey"];
+      assert.equal(currentUpgrade.baseline, "@aiosbrain/aios@2.0.0");
+      assert.equal(currentUpgrade.upgradedVersion, version);
+      assert.equal(currentUpgrade.candidateSha, sha);
+      for (const key of [
+        "actualCli",
+        "engineStrict",
+        "customizationPreserved",
+        "configPreserved",
+        "repeatByteStable",
+      ])
+        assert.equal(currentUpgrade[key], true, `Current release upgrade missing: ${key}`);
 
       const controls = s["fault-controls"];
       assert.equal(controls.allRed, true);
@@ -148,7 +258,9 @@ export function verifyRegistryAvailability({ readIntegrity, expected, wait }) {
       let code;
       try {
         code = JSON.parse(String(error.stdout ?? "")).error?.code;
-      } catch {}
+      } catch {
+        /* Non-JSON npm errors are not evidence of temporary registry absence. */
+      }
       if (code !== "E404") throw error;
       assert.ok(
         attempt < attempts,
