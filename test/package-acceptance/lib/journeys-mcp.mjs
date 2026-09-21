@@ -65,6 +65,7 @@ function seed(home, project, hosts) {
 
 async function lifecycle(ctx, state, brain) {
   const home = S.makeDir(path.join(state.root, "lifecycle", "home"), state.root);
+  S.prepareProfile(ctx, home);
   const project = S.makeDir(path.join(home, "project"), state.root);
   const neutral = S.makeDir(path.join(state.root, "lifecycle", "neutral"), state.root);
   const hosts = state.targets(home, project);

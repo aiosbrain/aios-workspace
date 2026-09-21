@@ -17,6 +17,7 @@ export async function legacyUpgrade(ctx, state, brain, { VERSION, TEAM }) {
   const cases = {};
   for (const variant of ["owned", "edited"]) {
     const home = S.makeDir(path.join(state.root, `legacy-${variant}`, "home"), state.root);
+    S.prepareProfile(ctx, home);
     const project = S.makeDir(path.join(home, "project"), state.root);
     const cursor = state.targets(home, project).find((host) => host.id === "cursor");
     const legacyServer = path.join(home, ".aios", "mcp", "0.1.1", "bin", "aios-brain-mcp.mjs");

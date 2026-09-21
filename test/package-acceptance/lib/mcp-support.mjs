@@ -113,6 +113,21 @@ ConvertTo-Json -InputObject $rows -Compress
       "no unrelated identity can access the sensitive path"
     );
   }
+  return rows;
+}
+
+/** Provision the disposable Windows profile before PowerShell can create cache parents. */
+export function prepareProfile(ctx, home) {
+  if (process.platform !== "win32") return;
+  const dirs = ["Roaming", "Local"].map((name) =>
+    makeDir(path.join(home, "AppData", name), home)
+  );
+  const paths = [home, path.join(home, "AppData"), ...dirs];
+  const owners = assertOwnerOnlyAcl(ctx, home, paths);
+  ctx.record(`windows-profile-${path.basename(path.dirname(home))}`, {
+    paths,
+    owners,
+  });
 }
 
 /** Create a user-owned directory chain below `root` (0700 on POSIX). */
@@ -267,6 +282,7 @@ export function isolatedEnv(ctx, home, extra = {}) {
     HOME: home,
     USERPROFILE: home,
     APPDATA: path.join(home, "AppData", "Roaming"),
+    LOCALAPPDATA: path.join(home, "AppData", "Local"),
     ...extra,
   });
 }
