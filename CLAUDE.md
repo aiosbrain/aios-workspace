@@ -88,10 +88,12 @@ Every scaffolded workspace uses the same six-folder spine, each with a default a
 5-personal/  private scratch                                       tier: admin
 ```
 
-**Access tiers are the safety boundary.** Canonical values: **`admin`** (never syncs — owner only),
+**Access tiers are the local publishing safety boundary.** Canonical values: **`admin`** (never syncs — owner only),
 **`team`** (syncs to the brain), **`external`** (syncs outward to stakeholders). **Default-deny:**
 content with no resolvable `access:` frontmatter is **not** pushed. The brain rejects `admin`-tier
-at the boundary (422). Never weaken this. Full vocabulary (aliases, spine defaults, isolation
+at the boundary (422). Never weaken this. Brain reads use project membership and people/group grants, with
+endpoint-specific posture/role checks; a content label is not a universal server read ceiling.
+See `docs/contract/project-membership-access.md`. Full vocabulary (aliases, spine defaults, isolation
 invariants): `../docs/tier-vocabulary.md` — the scaffold's self-contained copy is
 `scaffold/.claude/rules/frontmatter.md`; change both together.
 

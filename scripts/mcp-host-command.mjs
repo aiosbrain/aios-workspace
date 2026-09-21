@@ -2,6 +2,7 @@ import { hostTargets, MCP_SERVER_KEY } from "./mcp-hosts.mjs";
 import { installMcpHosts, inspectMcpHosts, verifyServerCommand } from "./mcp-host-install.mjs";
 import { filePolicy } from "./mcp-host-files.mjs";
 import { readHostDocument } from "./mcp-host-formats.mjs";
+import { typedInstallerError } from "./mcp-host-errors.mjs";
 import os from "node:os";
 
 export async function chooseMcpHosts({ optional = false } = {}) {
@@ -37,6 +38,15 @@ export async function offerOnboardingMcp(
 }
 
 export async function cmdMcpHost(args, options = {}) {
+  try {
+    return await runMcpHost(args, options);
+  } catch (error) {
+    // Recognised refusals become typed and actionable; nothing renders error.message.
+    throw typedInstallerError(error, options);
+  }
+}
+
+async function runMcpHost(args, options) {
   const rest = [...args];
   const action = ["install", "status", "uninstall"].includes(rest[0]) ? rest.shift() : "install";
   const hosts = [];

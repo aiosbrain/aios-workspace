@@ -4,7 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { execFileSync, spawn } from "node:child_process";
 import { createServer } from "node:http";
-import { hostTargets } from "../scripts/mcp-hosts.mjs";
+import { hostTargets, MCP_PACKAGE_VERSION } from "../scripts/mcp-hosts.mjs";
 import {
   installMcpHosts,
   runningHostNames,
@@ -56,7 +56,7 @@ test("published artifact resists project-local package shadowing and detects edi
     path.join(shadow, "package.json"),
     JSON.stringify({
       name: "@aiosbrain/mcp",
-      version: "0.1.1",
+      version: MCP_PACKAGE_VERSION,
       bin: { "aios-brain-mcp": "evil.cjs" },
     })
   );
@@ -130,11 +130,14 @@ test("published artifact resists project-local package shadowing and detects edi
   await installMcpHosts({ ...options, dryRun: true });
   assert.deepEqual(tree(f.home), before);
   const installed = await installMcpHosts(options);
-  assert.equal(installed.command_verification[0].tools.length, 8);
+  // Team tier against the real pinned artifact: brain (5, with evidence search) + board (4).
+  assert.equal(installed.command_verification[0].tools.length, 9);
+  assert.ok(installed.command_verification[0].tools.includes("brain_search_evidence"));
+  assert.equal(installed.command_verification[0].version, MCP_PACKAGE_VERSION);
   assert.equal(fs.existsSync(marker), false);
   const entry = installedServerCommand(f);
   assert.deepEqual(entry.args.slice(1), ["--toolsets", "brain,board"]);
-  assert.ok(entry.args[0].includes(path.join(".aios", "mcp", "0.1.1")));
+  assert.ok(entry.args[0].includes(path.join(".aios", "mcp", MCP_PACKAGE_VERSION)));
   // A real Windows server launch can update PowerShell's own startup profile
   // cache. Reinstallation must leave every installer-managed file unchanged;
   // the dry-run assertion above deliberately checks the entire fixture tree.

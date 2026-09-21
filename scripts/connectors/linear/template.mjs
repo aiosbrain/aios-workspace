@@ -251,6 +251,18 @@ export function normalizeForCompare(md) {
     }
     // (2) strip paired asterisk emphasis in prose, never stars in code/globs or underscores.
     let normalized = mapOutsideCodeSpans(line, normalizeEmphasis);
+    // Canonicalize unambiguous inline link destinations, preserving labels/titles.
+    // Restrict to simple valid destinations; complex/escaped links still fail closed.
+    normalized = mapOutsideCodeSpans(normalized, (prose) =>
+      prose.replace(
+        /(?<!\\)\[([^[\]\\]+)\]\(<([^\s<>()\\]+)>/g,
+        (match, label, destination, offset) => {
+          const ending = prose.slice(offset + match.length);
+          if (!/^\s*(?:"[^"]*"|'[^']*')?\)/.test(ending)) return match;
+          return `[${label}](${destination}`;
+        }
+      )
+    );
     // Linear canonicalises unordered-list markers to `*`.
     normalized = normalized.replace(/^(\s*(?:>\s*)*)[-*](?=[ \t]+)/, "$1*");
     // Only canonicalize a delimiter with an actual table header immediately above it.

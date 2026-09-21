@@ -6,14 +6,9 @@
  * precedence order:
  *
  *   1. environment      — process.env.LINEAR_API_KEY (a direnv/dotenvx-hydrated shell).
- *   2. workspace        — the cwd workspace / AIOS_AGENT_WORKSPACE .env via
- *                         resolveConnectorEnv({ apiKeyEnv: "LINEAR_API_KEY" }), the exact
- *                         AIO-790 scoped-decryption path the legacy `linear` bin used
- *                         (decrypts ONLY LINEAR_API_KEY, never the whole .env).
- *   3. user-config      — the user-level config.json credentialSources.linear REFERENCE
- *                         (env:VARIABLE or keychain:service), written by `aios connect linear`.
- *                         Only the reference is stored; the secret itself stays in the
- *                         referenced environment variable or OS keychain.
+ *   2. user-config      — the reference stored by `aios connect linear` (env or keychain).
+ *                         An unresolved selected reference stops resolution.
+ *   3. workspace        — v2-only legacy fallback, scoped decryption of LINEAR_API_KEY.
  *
  * Missing everywhere → AIOS_E_CREDENTIAL_MISSING with the exact bootstrap command
  * (`aios connect linear`), exit class 3. No credential VALUE is ever returned to callers
@@ -111,7 +106,23 @@ export async function resolveLinearCredential(options = {}) {
   const roots = [
     {
       name: "environment",
-      load: () => (env.LINEAR_API_KEY ? { apiKey: env.LINEAR_API_KEY } : null),
+      load: () => (Object.hasOwn(env, "LINEAR_API_KEY") ? { apiKey: env.LINEAR_API_KEY } : null),
+    },
+    {
+      name: "user-config",
+      load: async () => {
+        const { reference } = await readLinearReference(options);
+        if (!reference) return null;
+        const value = resolveReferenceValue(reference, options);
+        if (!value) {
+          throw new AiosError(
+            "AIOS_E_CREDENTIAL_INCOMPLETE",
+            `The configured Linear credential reference (${reference}) did not resolve to a value.`,
+            "Make the referenced secret available, or run `aios connect linear` to store a working reference."
+          );
+        }
+        return { apiKey: value };
+      },
     },
     {
       name: "workspace",
@@ -129,22 +140,6 @@ export async function resolveLinearCredential(options = {}) {
         return resolved.LINEAR_API_KEY && resolved.LINEAR_API_KEY !== env.LINEAR_API_KEY
           ? { apiKey: resolved.LINEAR_API_KEY }
           : null;
-      },
-    },
-    {
-      name: "user-config",
-      load: async () => {
-        const { reference } = await readLinearReference(options);
-        if (!reference) return null;
-        const value = resolveReferenceValue(reference, options);
-        if (!value) {
-          throw new AiosError(
-            "AIOS_E_CREDENTIAL_INCOMPLETE",
-            `The configured Linear credential reference (${reference}) did not resolve to a value.`,
-            "Make the referenced secret available, or run `aios connect linear` to store a working reference."
-          );
-        }
-        return { apiKey: value };
       },
     },
   ];

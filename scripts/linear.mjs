@@ -8,8 +8,8 @@
  * written to stderr so machine consumers of stdout see zero extra bytes.
  */
 process.stderr.write(
-  "linear: deprecated compatibility command — use `aios linear " +
-    `${process.argv[2] ?? "<verb>"} …\` (this bin will be removed no earlier than v3.0.0)\n`
+  "linear: deprecated compatibility command — use `aios linear <verb> …` " +
+    "(this bin will be removed no earlier than v3.0.0)\n"
 );
 const { run } = await import("./cli.mjs");
 await run(["linear", ...process.argv.slice(2)]);

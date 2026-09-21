@@ -7,7 +7,7 @@ import {
   hostTargets,
   MCP_PACKAGE_VERSION,
   MCP_SERVER_KEY,
-  MCP_PACKAGE_TOOLSETS as TOOLSETS,
+  MCP_PACKAGE_MEMBERSHIPS,
 } from "./mcp-hosts.mjs";
 import { readHostDocument, editHostDocument } from "./mcp-host-formats.mjs";
 import { filePolicy, commitHostFiles } from "./mcp-host-files.mjs";
@@ -250,19 +250,13 @@ async function verifyServerAttempt(
           init?.protocolVersion !== "2025-11-25" ||
           init?.serverInfo?.version !== MCP_PACKAGE_VERSION ||
           !Array.isArray(tools) ||
-          ![4, 8].includes(tools.length) ||
-          tools.some((tool) => tool.annotations?.readOnlyHint !== true)
+          tools.some((tool) => tool?.annotations?.readOnlyHint !== true)
         )
           throw new Error("protocol");
-        const expected = [...TOOLSETS.brain, ...(tools.length === 8 ? TOOLSETS.board : [])].sort(
-          (a, b) => a.localeCompare(b)
-        );
-        if (
-          !isDeepStrictEqual(
-            tools.map((tool) => tool.name).sort((a, b) => a.localeCompare(b)),
-            expected
-          )
-        )
+        // Exact membership of the pinned artifact: missing, extra, renamed or duplicated
+        // tools all fail, whatever the count.
+        const names = tools.map((tool) => tool.name).sort();
+        if (!MCP_PACKAGE_MEMBERSHIPS.some((expected) => isDeepStrictEqual(names, expected)))
           throw new Error("membership");
         finish(null, {
           verified: true,

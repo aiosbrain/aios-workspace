@@ -1,6 +1,6 @@
 {
   "name": "@aiosbrain/aios",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "Agent-native operating system for an individual contributor: governed workspace scaffold, multi-agent harnesses with rubric-gated self-correction, AIOS Team Brain sync client, and a local GUI.",
   "license": "AGPL-3.0-only",
   "type": "module",
@@ -32,6 +32,7 @@
     "docs/devtools-*.md",
     "docs/ENGINEERING-CONSTITUTION.md",
     "docs/GETTING-STARTED.md",
+    "docs/mcp-host-install.md",
     "docs/guard-verification.md",
     "CHANGELOG.md",
     "build.json"

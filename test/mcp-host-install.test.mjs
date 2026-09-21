@@ -3,7 +3,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
-import { hostTargets } from "../scripts/mcp-hosts.mjs";
+import { hostTargets, MCP_PACKAGE_TOOLSETS as TOOLSETS } from "../scripts/mcp-hosts.mjs";
 import {
   installMcpHosts,
   inspectMcpHosts,
@@ -12,9 +12,9 @@ import {
 } from "../scripts/mcp-host-install.mjs";
 import { filePolicy } from "../scripts/mcp-host-files.mjs";
 import { offerOnboardingMcp, cmdMcpHost } from "../scripts/mcp-host-command.mjs";
-import { MCP_PACKAGE_TOOLSETS as TOOLSETS } from "../scripts/mcp-hosts.mjs";
 
 import { credential, fetchImpl, fixture, put, tree } from "./lib/mcp-host-fixture.mjs";
+import { serverScript } from "./lib/mcp-host-fixture.mjs";
 
 test("four platform adapters resolve documented global/project targets", () => {
   const win = hostTargets({
@@ -318,8 +318,7 @@ test(
 
 test("recorded command verifies exact membership and rejects same-count drift", async (t) => {
   const f = fixture(t);
-  const script = (names) =>
-    `process.stdin.resume();process.stdin.on('end',()=>{console.log(JSON.stringify({id:1,result:{protocolVersion:'2025-11-25',serverInfo:{version:'0.1.1'}}}));console.log(JSON.stringify({id:2,result:{tools:${JSON.stringify(names)}.map(name=>({name,annotations:{readOnlyHint:true}}))}}))})`;
+  const script = (names) => serverScript({ names });
   const entry = { command: process.execPath, args: ["-e", script(TOOLSETS.brain)], env: {} };
   const good = await verifyServerCommand(entry, { ...f, timeoutMs: 2000 });
   assert.equal(good.verified, true);
@@ -467,7 +466,7 @@ test("Windows verification retries only a cold PowerShell startup and only once"
   const f = fixture(t);
   const timeout =
     "MCP startup failed: spawnSync C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe ETIMEDOUT\n";
-  const success = `process.stdin.resume();process.stdin.on('end',()=>{console.log(JSON.stringify({id:1,result:{protocolVersion:'2025-11-25',serverInfo:{version:'0.1.1'}}}));console.log(JSON.stringify({id:2,result:{tools:${JSON.stringify(TOOLSETS.brain)}.map(name=>({name,annotations:{readOnlyHint:true}}))}}))})`;
+  const success = serverScript({ names: TOOLSETS.brain });
   for (const [platform, message, recover, expected] of [
     ["win32", timeout, true, 2],
     ["win32", timeout, false, 2],

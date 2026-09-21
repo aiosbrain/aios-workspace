@@ -269,6 +269,27 @@ offers Personal / Join / Create, and requires you to confirm the exact canonical
 before it persists a newly entered remote value. It may validate the connection with `/api/v1/me`;
 it never runs `aios push`.
 
+After a successful Brain connection, toolkit 2.1 offers optional MCP setup for
+Claude Desktop, Claude Code, Codex and Cursor. The offer defaults to **No**;
+accept it and select the hosts you want to use. Personal onboarding and unsuccessful
+Brain connections do not offer this step. Installing the toolkit alone does not
+change any host configuration.
+
+You can also set it up later from your connected workspace:
+
+```bash
+aios mcp install
+aios mcp status --json
+```
+
+Quit the selected hosts yourself before installation, then restart them and confirm
+the Brain tools appear. The installer verifies the server command; it cannot confirm
+that an application has loaded its configuration. Claude Code uses the current
+project's `.mcp.json`, so run the command from the project you intend to configure.
+Other supported hosts use their global configuration. Claude Desktop is supported
+on macOS and Windows. See [MCP host installation](mcp-host-install.md) for dry-run,
+uninstall, credential storage and restart details.
+
 **`.env`** (gitignored — never commit it) — the scaffolder already created this for
 you (copied from `.env.example`), so just fill in the real values:
 

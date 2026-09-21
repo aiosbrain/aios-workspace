@@ -5,10 +5,36 @@ loosely based on [Keep a Changelog](https://keepachangelog.com/); dates are
 ISO-8601.
 
 This is the **individual workspace** repo. The Team Brain sync contract
-(`docs/brain-api.md`) is versioned separately; it is currently at **v1.24**
+(`docs/brain-api.md`) is versioned separately; it is currently pinned at **v1.27**
 (additive within major `v1`). Entries predating a bump did not change the protocol.
 
-## [2.0.0] — Unreleased
+## [2.1.0] — 2026-09-21
+
+### Added
+
+- Install the integrity-pinned MCP 0.2.1 server into Claude Desktop, Claude Code, Codex
+  and Cursor with `aios mcp install`. Brain-connected onboarding offers the same
+  optional installation. Host files keep credential references rather than secrets;
+  malformed, symlinked, foreign-owned or concurrently changed files fail closed.
+- MCP source evidence search and inline terminal setup/status presentation are included
+  from current main. The member-facing contract is pinned to API 1.27 (document
+  revision 1.29); publication does not imply a Brain deployment or API version upgrade.
+
+### Fixed
+
+- Preserve the independently reviewed 2.0.0 credential-diagnostic, ambiguous Slack
+  write, lifecycle acceptance and exact-artifact publication safeguards.
+- After npm accepts an upload, poll bounded registry visibility during publish-time
+  scanning. Never repeat the upload; integrity mismatches remain hard failures.
+
+### Installation
+
+Install `@aiosbrain/aios@2.1.0`, then use `aios onboard` or `aios mcp install`.
+Restart the selected host applications after installation. Installation verifies the
+server command; host-visible tool loading is verified separately after restart.
+The toolkit never closes running applications or overwrites their live configuration.
+
+## [2.0.0] — 2026-09-17
 
 **Major release: the published npm package becomes the distribution root of the AIOS CLI**
 (AIO-1064 program; AIO-635 distribution spec; this release candidate is AIO-1072 /
@@ -19,6 +45,20 @@ matter in practice: real 0.12.0 → v2 rehearsals on Node 24/26 must install the
 baseline non-strict (published 0.12.0 pins devtools 0.3.0, engines `>=22 <23`), and the
 AIO-1068 Slack consent narrowing (an environment-sourced token is refused toward a
 workspace-domain brain; `--stdin`/argv is the consent path).
+
+### Release review corrections
+
+- Linear rejects malformed credential headers without echoing values. Credential selection
+  now follows environment, user reference, then legacy workspace source; an incomplete
+  selected source fails closed.
+- Ambiguous Slack write failures require readback before another attempt; safe reads and
+  explicit rate-limit responses retain bounded retries.
+- Unknown top-level commands return typed usage errors. Linear rejects unsupported
+  `--json` flags before credentials, and simple angle-bracket Markdown link destinations
+  compare equivalently without hiding content changes.
+- Package acceptance scans raw stdout and stderr on every exit, fails on cleanup errors,
+  and tests actual installed CLI interruption/re-entry and config-drift rollback. The
+  Workspace publisher verifies all six cells and publishes their exact accepted tarball.
 
 ### Added
 
