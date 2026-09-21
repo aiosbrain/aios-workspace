@@ -73,15 +73,7 @@ async function lifecycle(ctx, state, brain) {
   const seeds = seed(home, project, hosts);
   const credentials = { AIOS_BRAIN_URL: brain.origin, AIOS_API_KEY: S.KEYS.team };
   const at = { home, cwd: project, env: credentials, processes: S.UNRELATED_PROCESSES };
-  const managed = () =>
-    process.platform !== "win32"
-      ? S.tree(home)
-      : Object.fromEntries(
-          // A real Windows server launch may touch PowerShell's own profile cache.
-          Object.entries(S.tree(home)).filter(([file]) =>
-            /^(\.aios|\.cursor|\.codex|project|AppData)/.test(file)
-          )
-        );
+  const managed = () => S.profileTree(home);
   const cases = {};
   const pristine = managed();
 

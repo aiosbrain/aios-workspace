@@ -55,6 +55,22 @@ export function tree(root) {
   return rows;
 }
 
+/** PowerShell refreshes only this OS cache timestamp on each native ACL query. */
+export function profileTree(root, platform = process.platform) {
+  const rows = tree(root);
+  const cache = path.join(
+    "AppData",
+    "Local",
+    "Microsoft",
+    "Windows",
+    "PowerShell",
+    "StartupProfileData-NonInteractive"
+  );
+  // Keep the cache's existence, bytes and mode, and every other path's full fingerprint.
+  if (platform === "win32" && rows[cache]) rows[cache][0] = 0;
+  return rows;
+}
+
 /**
  * Elevated Windows runners create files owned by Administrators; the installer (rightly)
  * refuses foreign ownership. Fixtures model a user-owned profile — production checks are
@@ -119,9 +135,7 @@ ConvertTo-Json -InputObject $rows -Compress
 /** Provision the disposable Windows profile before PowerShell can create cache parents. */
 export function prepareProfile(ctx, home) {
   if (process.platform !== "win32") return;
-  const dirs = ["Roaming", "Local"].map((name) =>
-    makeDir(path.join(home, "AppData", name), home)
-  );
+  const dirs = ["Roaming", "Local"].map((name) => makeDir(path.join(home, "AppData", name), home));
   const paths = [home, path.join(home, "AppData"), ...dirs];
   const owners = assertOwnerOnlyAcl(ctx, home, paths);
   ctx.record(`windows-profile-${path.basename(path.dirname(home))}`, {

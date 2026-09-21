@@ -6,7 +6,15 @@
  * test/package-acceptance/run-cell.mjs, which is CI/workflow-driven, not test-discovered.
  */
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -319,7 +327,37 @@ test("escaping-link probe catches a node_modules symlink that leaves the prefix"
 });
 
 // Failure paths must reject normally so executeCell can redact evidence and clean HOME.
-import { startBrain, rpc, KEYS } from "./package-acceptance/lib/mcp-support.mjs";
+import { startBrain, rpc, KEYS, profileTree } from "./package-acceptance/lib/mcp-support.mjs";
+
+test("Windows profile snapshots retain cache bytes and every host-file timestamp", (t) => {
+  const home = mkdtempSync(path.join(tmpdir(), "aio1112-profile-"));
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  const cache = path.join(
+    home,
+    "AppData",
+    "Local",
+    "Microsoft",
+    "Windows",
+    "PowerShell",
+    "StartupProfileData-NonInteractive"
+  );
+  mkdirSync(path.dirname(cache), { recursive: true });
+  writeFileSync(cache, "synthetic cache");
+  const host = path.join(home, "mcp.json");
+  writeFileSync(host, "{}");
+  utimesSync(cache, 1, 1);
+  utimesSync(host, 1, 1);
+  const before = profileTree(home, "win32");
+  const posixBefore = profileTree(home, "linux");
+  utimesSync(cache, 2, 2);
+  assert.deepEqual(profileTree(home, "win32"), before);
+  assert.notDeepEqual(profileTree(home, "linux"), posixBefore);
+  utimesSync(host, 2, 2);
+  assert.notDeepEqual(profileTree(home, "win32"), before, "host-file mtime is still protected");
+  utimesSync(host, 1, 1);
+  writeFileSync(cache, "changed cache bytes");
+  assert.notDeepEqual(profileTree(home, "win32"), before, "cache bytes are still protected");
+});
 
 test("synthetic Brain drains actual request IPC and stops its child", async (t) => {
   const base = mkdtempSync(path.join(tmpdir(), "aio1112-brain-"));

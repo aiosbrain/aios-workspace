@@ -40,7 +40,7 @@ export async function legacyUpgrade(ctx, state, brain, { VERSION, TEAM }) {
       `${JSON.stringify({ mcpServers: { "aios-brain": live } }, null, 2)}\n`,
       home
     );
-    const before = S.tree(home);
+    const before = S.profileTree(home);
     const result = S.cli(ctx, state, ["mcp", "install", "--host", "cursor"], {
       ...{
         home,
@@ -54,7 +54,11 @@ export async function legacyUpgrade(ctx, state, brain, { VERSION, TEAM }) {
     if (variant === "edited") {
       assert.equal(result.status, 5);
       assert.match(result.stderr, /refusing to overwrite an edited or unowned aios-brain entry/);
-      assert.deepEqual(S.tree(home), before, "an edited 0.1.1 entry is left exactly as found");
+      assert.deepEqual(
+        S.profileTree(home),
+        before,
+        "an edited 0.1.1 entry is left exactly as found"
+      );
       cases.edited = "refused AIOS_E_CONFLICT, untouched";
       continue;
     }
