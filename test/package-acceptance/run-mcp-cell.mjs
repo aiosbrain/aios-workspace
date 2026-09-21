@@ -44,10 +44,17 @@ async function main() {
       // Invoke npm's JavaScript through the selected Node, never a shell .cmd shim.
       const npmCli = path.join(path.dirname(process.execPath), "node_modules/npm/bin/npm-cli.js");
       assert.ok(existsSync(npmCli), "Selected Windows Node installation must contain npm");
+      // Native dependency lifecycle scripts need Windows cache locations. Keep both
+      // inside the disposable cell HOME instead of inheriting the runner's profile.
+      const windowsProfile = {
+        APPDATA: path.join(ctx.home, "AppData", "Roaming"),
+        LOCALAPPDATA: path.join(ctx.home, "AppData", "Local"),
+      };
+      for (const dir of Object.values(windowsProfile)) mkdirSync(dir, { recursive: true });
       ctx.runWithAmbientEnv(
         process.execPath,
         [npmCli, "install", ctx.tarball, "--omit=optional", "--no-audit", "--no-fund"],
-        { cwd: prefix, label: "fresh-install", timeout: 600_000 }
+        { cwd: prefix, label: "fresh-install", timeout: 600_000, envExtra: windowsProfile }
       );
       const pkgDir = path.join(prefix, "node_modules/@aiosbrain/aios");
       const installed = JSON.parse(readFileSync(path.join(pkgDir, "package.json"), "utf8"));

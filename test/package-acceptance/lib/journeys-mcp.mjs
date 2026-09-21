@@ -23,7 +23,7 @@ import { BRAIN, INTEGRITY, TEAM, VERSION, packagedCapability } from "./journeys-
 import { onboardingCases } from "./journeys-mcp-onboarding.mjs";
 import * as S from "./mcp-support.mjs";
 
-const OTHER_TOKEN = "other_server_token_aio1112_must_survive_2d9f";
+const OTHER_TOKEN = "SENTINEL_other_server_aio1112_must_survive_2d9f";
 const CODEX_SEED =
   '# Preserve this exact text\nmodel = "example"\nlarge = 9223372036854775807\n[mcp_servers.other]\ncommand = "other"\n';
 const json = (stdout) => JSON.parse(stdout.slice(stdout.indexOf("{")));
