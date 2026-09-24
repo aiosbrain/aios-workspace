@@ -106,10 +106,17 @@ Do not return old results after access has been revoked.
 
 Notes accept **only title/body**. Reject blank content; preserve accepted content
 exactly (no trimming, Unicode normalization or newline rewriting after validation).
-Limits are 200 and 25,000 code points. Dedup key is SHA-256 of UTF-8 JSON encoding of
+Limits are 200 and 25,000 code points. Reject invalid UTF-8 and unpaired Unicode surrogates before acceptance.
+Dedup key is SHA-256 of UTF-8 RFC 8785 canonical JSON encoding of
 `["note/1", member_id, team_id, project_id, title, body]`, with array order fixed and
-no insignificant JSON whitespace. A unique durable constraint/claim makes concurrent
-identical submissions converge on one note/action. Date is never part of identity.
+no insignificant JSON whitespace. A unique durable note constraint and active-attempt claim make concurrent
+identical submissions converge on one note and one active action attempt. Date is never
+part of note identity. Before a note exists, a terminal denied/failed attempt proven to
+have no committed side effects may be followed by a freshly authorized attempt for the
+same content. Keep every old attempt/audit immutable. An unresolved/processing attempt
+must be resumed or queried, never restarted; once a note exists all authorized retries
+return that note and its successful action. A terminal error is not a permanent ban on
+creating that content after policy or availability changes.
 A changed title/body creates a new note. Path, timestamps, attribution, kind `note`
 and access `team` are server-owned. No overwrite, caller-selected tier, or external
 promotion route. Replays must reauthorize before disclosing the existing note.
@@ -148,7 +155,10 @@ Apply nonconflicting fields without losing unrelated edits; retain unresolved fi
 baselines. Persist updated values, revision, baseline advances, conflict records and
 outbound intents in one transaction per row. Never decide by timestamp alone.
 Provider state/assignee IDs map explicitly; absent, ambiguous or retired mappings
-produce `mapping_required`, no guessed assignment/status. Due dates participate in
+produce `mapping_required` carrying bounded raw provider values and mapping revision,
+no guessed assignment/status. A stale row reports `stale_revision` without inventing a
+field conflict. A batch returns at most four field conflicts per input row (20,000 for
+5,000 rows); a stale-row conflict replaces its field conflicts. Due dates participate in
 projection comparisons. Keep Linear/Plane external IDs and existing adoption links;
 never recreate an issue merely because a field differs.
 

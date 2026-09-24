@@ -98,9 +98,9 @@ only when remaining work is safely retryable on the unchanged, unexpired, author
 `GET /api/v1/items/publish/{operationId}?projectId=…` uses `PublishStatusInput/Output`.
 The authenticated actor/team and authorized project scope the operation key. Server validates
 `payloadHash` against exact UTF-8 `payloadJson`, parses it against the existing kind's `/items`
-row contract, and enforces tier/revision validation through shared ingestion services. Maximum
+row contract for non-task kinds, and enforces tier/revision validation through shared ingestion services. Maximum
 payload is 1,048,576 bytes. Persist operation intent and resulting receipt durably; domain
-write and succeeded receipt commit atomically. Same operation ID and identical payload/metadata
+write and corresponding durable receipt outcome commit atomically. Same operation ID and identical payload/metadata
 returns its receipt; different payload, kind, tier, or expected revision returns
 `IDEMPOTENCY_CONFLICT`. A different actor cannot query or replay another actor's receipt unless
 explicitly authorized by policy. Unknown/inaccessible IDs return `OPERATION_NOT_FOUND` without
@@ -110,3 +110,31 @@ Publishing authorization is separate from Brain action permission. A missing end
 retry after transport loss and requires renewed authorization. In-flight receipt state is
 `processing` with retryable false; it means intent recorded but outcome not yet confirmed,
 and must be polled, not submitted with a new ID.
+
+
+### Task publishing preserves row concurrency
+
+For `kind: task`, both `PlanItem` and `PublishItemInput` require typed `taskBatch` conforming
+to `tasks.schema.json#/definitions/Batch`, with nonempty rows. `payloadJson` must equal the
+RFC 8785 canonical serialization of that entire batch; `payloadHash` covers those exact bytes.
+The parsed batch binds `project_id = projectId`, `operation_id = operationId`, and
+`source_item_id = itemId`; preview stores these same identities in its immutable envelope.
+Each row retains its own task ID, row key, expected revision, complete four-field baseline,
+and incoming values. Validate every row before side effects. `expectedRevision` is null for
+task batches: a source document revision must never replace individual task revisions.
+For other kinds `taskBatch` is null and `expectedRevision` governs only the document.
+Neither branch accepts legacy actor, source-identity overrides, arbitrary metadata, or diff
+based deletions; omitted task rows leave existing tasks unchanged.
+
+A task receipt carries typed `taskResult` from `tasks.schema.json#/definitions/Result`.
+Every submitted task appears in `applied` with its resulting revision (including unchanged
+accepted rows), or in `conflicts` with current revision and reasons. Duplicate task IDs or row
+keys are rejected before applying any row. A task receipt has null document `revision`;
+`entityId` identifies its source item, never a fabricated single task. Success requires all
+rows accounted for as applied and zero conflicts. Conflict receipts retain both previously
+applied rows and per-row conflicts. Persist each row's result atomically with its domain
+change, then complete the aggregate receipt. Recovery resumes only rows without a durable
+result; identical retries return existing outcomes without applying completed rows again.
+Conflicts require a refreshed preview with a new operation ID. Non-task receipts have null
+`taskResult`; non-task succeeded receipts retain their document revision. Publication never
+falls back to legacy many-row `/items` ingestion for task batches.

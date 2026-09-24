@@ -101,7 +101,16 @@ for (const vector of read("tasks-fixtures.json").semantic)
 for (const vector of read("actions-fixtures.json").semantic)
   test(`reference: ${vector.name}`, () => {
     const i = vector.input;
-    if (vector.rule === "idempotency") {
+    if (vector.rule === "note-attempt") {
+      const outcome = !i.authorized
+        ? "denied"
+        : i.note_exists
+          ? "existing_note"
+          : i.active_attempt
+            ? "existing_attempt"
+            : "new_attempt";
+      assert.equal(outcome, vector.expected);
+    } else if (vector.rule === "idempotency") {
       assert.equal(i.stored_actor, i.actor);
       assert.equal(i.stored_destination, i.destination);
       assert.equal(i.stored_operation_id, i.operation_id);
@@ -119,3 +128,61 @@ for (const vector of read("actions-fixtures.json").semantic)
       assert.equal(outcome, vector.expected);
     }
   });
+
+test("valid large batches can report all four conflicts per row", () => {
+  const validate = ajv.getSchema("urn:aios:mcp-next:1:tasks#/definitions/Result");
+  const conflicts = Array.from({ length: 1251 }, (_, row) =>
+    ["title", "assignee", "status", "due"].map((field) => {
+      const values = {
+        title: ["Base", "Brain", "Incoming"],
+        assignee: [null, "member-a", "member-b"],
+        status: ["backlog", "ready", "done"],
+        due: [null, "2026-10-01", "2026-10-02"],
+      }[field];
+      return {
+        task_id: `task-${row}`,
+        revision: "r2",
+        field,
+        baseline: values[0],
+        brain: values[1],
+        incoming: values[2],
+        origin: "workspace",
+        code: "divergent_change",
+      };
+    })
+  ).flat();
+  assert.equal(validate({ applied: [], conflicts }), true, JSON.stringify(validate.errors));
+  assert.equal(conflicts.length, 5004);
+});
+
+test("task publishing pins row revisions, canonical bytes, destination and complete receipts", () => {
+  const fixtures = read("workspace-fixtures.json");
+  const input = fixtures.valid.find((v) => v.name === "publish-item-input").value;
+  const canonical = (v) =>
+    Array.isArray(v)
+      ? v.map(canonical)
+      : v && typeof v === "object"
+        ? Object.fromEntries(
+            Object.keys(v)
+              .sort()
+              .map((k) => [k, canonical(v[k])])
+          )
+        : v;
+  const bound = (v) =>
+    v.taskBatch.project_id === v.projectId &&
+    v.taskBatch.source_item_id === v.itemId &&
+    v.taskBatch.operation_id === v.operationId &&
+    JSON.stringify(canonical(v.taskBatch)) === v.payloadJson &&
+    `sha256:${createHash("sha256").update(v.payloadJson).digest("hex")}` === v.payloadHash;
+  assert.equal(bound(input), true);
+  for (const key of ["projectId", "itemId", "operationId", "payloadJson", "payloadHash"])
+    assert.equal(bound({ ...input, [key]: "changed" }), false, key);
+  assert.equal(new Set(input.taskBatch.rows.map((r) => r.expected_revision)).size, 2);
+  const receipt = fixtures.valid.find(
+    (v) => v.name === "task-receipt-partially-applied-conflict"
+  ).value;
+  const accounted = new Set(
+    [...receipt.taskResult.applied, ...receipt.taskResult.conflicts].map((r) => r.task_id)
+  );
+  assert.deepEqual(accounted, new Set(input.taskBatch.rows.map((r) => r.task_id)));
+});
