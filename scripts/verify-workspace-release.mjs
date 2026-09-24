@@ -269,6 +269,20 @@ export function verifyRegistryAvailability({ readIntegrity, expected, wait }) {
       wait(30_000);
       continue;
     }
+    if (Array.isArray(integrity)) {
+      assert.equal(
+        integrity.length,
+        1,
+        "Registry integrity must be a string or singleton string array"
+      );
+      [integrity] = integrity;
+    }
+    assert.equal(
+      typeof integrity,
+      "string",
+      "Registry integrity must be a string or singleton string array"
+    );
+    assert.ok(integrity.length > 0, "Registry integrity must not be empty");
     assert.equal(integrity, expected, "Registry bytes differ from accepted artifact");
     return;
   }
