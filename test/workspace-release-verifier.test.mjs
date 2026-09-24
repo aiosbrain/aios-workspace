@@ -333,7 +333,26 @@ test("publication orchestration passes only the accepted bytes to npm and checks
   assert.equal(publishCalls[0][3], f.expected.tarball);
   assert.ok(publishCalls[0].includes("--ignore-scripts"));
   assert.ok(publishCalls[0].includes("--provenance"));
-  assert.ok(f.calls.some((c) => c[0] === process.execPath && c[2] === "view"));
+  const viewCall = f.calls.find((c) => c[0] === process.execPath && c[2] === "view");
+  assert.ok(viewCall[1].endsWith("/lib/node_modules/npm/bin/npm-cli.js"));
+  assert.deepEqual(viewCall.slice(2), [
+    "view",
+    `@aiosbrain/aios@${version}`,
+    "dist.integrity",
+    "--json",
+    "--prefer-online",
+    "--fetch-retries=0",
+  ]);
+});
+
+test("publication orchestration accepts npm's matching singleton integrity array", (t) => {
+  const f = orchestrationFixture(t);
+  const command = (exe, args) =>
+    exe === process.execPath && args[1] === "view"
+      ? JSON.stringify([f.expected.integrity])
+      : f.options.command(exe, args);
+  runWorkspaceRelease({ ...f.options, command, publish: true });
+  assert.equal(f.calls.filter((c) => c[2] === "publish").length, 1);
 });
 
 test("packed metadata mismatch refuses publication before npm runs", (t) => {
@@ -361,15 +380,45 @@ test("registry integrity mismatch cannot return success after the simulated publ
   );
 });
 
+for (const [name, output, message] of [
+  ["missing integrity", "null", /string or singleton string array/],
+  ["empty scalar integrity", '""', /must not be empty/],
+  ["empty integrity list", "[]", /string or singleton string array/],
+  [
+    "multiple integrity values",
+    JSON.stringify(["sha512-one", "sha512-two"]),
+    /string or singleton string array/,
+  ],
+  [
+    "nested integrity value",
+    JSON.stringify([["sha512-nested"]]),
+    /string or singleton string array/,
+  ],
+  ["non-string integrity value", "123", /string or singleton string array/],
+  ["non-string singleton integrity value", "[123]", /string or singleton string array/],
+  ["mismatching singleton integrity", '["sha512-wrong"]', /Registry bytes differ/],
+  ["malformed registry JSON", "not-json", /Unexpected token|Unexpected identifier/],
+])
+  test(`publication orchestration rejects ${name}`, (t) => {
+    const f = orchestrationFixture(t);
+    const command = (exe, args) =>
+      exe === process.execPath && args[1] === "view" ? output : f.options.command(exe, args);
+    assert.throws(() => runWorkspaceRelease({ ...f.options, command, publish: true }), message);
+    assert.equal(f.calls.filter((c) => c[2] === "publish").length, 1);
+  });
+
 test("accepted upload polls processing 404 without a second publish", (t) => {
   const f = orchestrationFixture(t);
   let reads = 0;
   const waits = [];
   const command = (exe, args) => {
-    if (exe === process.execPath && args[1] === "view" && ++reads <= 2)
-      throw Object.assign(new Error("processing"), {
-        stdout: JSON.stringify({ error: { code: "E404" } }),
-      });
+    if (exe === process.execPath && args[1] === "view") {
+      if (++reads <= 2)
+        throw Object.assign(new Error("processing"), {
+          stdout: JSON.stringify({ error: { code: "E404" } }),
+        });
+      return JSON.stringify([f.expected.integrity]);
+    }
     return f.options.command(exe, args);
   };
   runWorkspaceRelease({ ...f.options, command, wait: (ms) => waits.push(ms), publish: true });
