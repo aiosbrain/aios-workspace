@@ -36,6 +36,28 @@ set -euo pipefail
 
 DEFAULT_BRANCH="main"
 
+# Resolve the chained hook BESIDE this file, not via `git rev-parse --git-path
+# hooks/...`: that helper honors core.hooksPath, so when this guard is installed
+# machine-locally in the common dir of a hooksPath repo (AIO-638) it would point
+# at a dead `<hooksPath>/pre-commit.chained` instead of our sibling.
+chained="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || true)/pre-commit.chained"
+
+# ── Scaffolded personal workspaces are out of scope ────────────────────────
+# This is TOOLKIT policy for the AIOS product repos. A scaffolded workspace
+# (marked by `.aios-toolkit-version` at its root) is master-only by design:
+# its owner commits straight to the primary checkout. The installers already
+# skip workspaces (#540), but a hook copied in by any other path — a harness
+# running the installer from inside the workspace, a hand copy — would still
+# block every commit there. So the guard also checks at run time, and in a
+# workspace it only runs whatever it chains to.
+toplevel="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+if [[ -n "$toplevel" && -f "$toplevel/.aios-toolkit-version" ]]; then
+  if [[ -x "$chained" ]]; then
+    exec "$chained" "$@"
+  fi
+  exit 0
+fi
+
 # ── Detect PRIMARY vs linked WORKTREE ──────────────────────────────────────
 # In the primary checkout, the git dir IS the common git dir.
 # In a linked worktree, the git dir is `<common>/worktrees/<name>` — different.
@@ -91,11 +113,6 @@ EOF
 fi
 
 # ── Chain to any pre-existing pre-commit hook (e.g. the NDA leak gate) ──────
-# Resolve the chained hook BESIDE this file, not via `git rev-parse --git-path
-# hooks/...`: that helper honors core.hooksPath, so when this guard is installed
-# machine-locally in the common dir of a hooksPath repo (AIO-638) it would point
-# at a dead `<hooksPath>/pre-commit.chained` instead of our sibling.
-chained="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || true)/pre-commit.chained"
 if [[ -n "$chained" && -x "$chained" ]]; then
   exec "$chained" "$@"
 fi

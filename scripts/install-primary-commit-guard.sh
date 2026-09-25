@@ -33,6 +33,13 @@ if [[ -z "$repo_root" ]]; then
   exit 1
 fi
 
+# Scaffolded personal workspaces are master-only by design; this guard would make
+# their documented workflow impossible. Refuse, whoever runs us from wherever.
+if [[ -f "$repo_root/.aios-toolkit-version" ]]; then
+  echo "install-primary-commit-guard: $repo_root is a scaffolded AIOS workspace (.aios-toolkit-version) — the primary-commit guard is toolkit policy only; not installing."
+  exit 0
+fi
+
 # Resolve the hooks dir honoring a custom core.hooksPath if set.
 common_dir="$(git rev-parse --git-common-dir 2>/dev/null)"
 if [[ "$common_dir" != /* ]]; then
