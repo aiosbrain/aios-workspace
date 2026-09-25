@@ -7,10 +7,10 @@
 import { installWorktreeSafetyBackstops } from "./worktree.mjs";
 
 // A clone cannot inherit .git/hooks. npm install is the one setup action every contributor
-// already runs, so hydrate the commit/push backstops here as well as through `aios worktree`.
+// already runs, so hydrate the worktree/push backstops here as well as through `aios worktree`.
 // The shared installer skips the product-only leak gate when this CLI is serving a scaffolded
 // personal workspace that does not carry scripts/leak-gate.sh.
-installWorktreeSafetyBackstops(process.cwd(), { quiet: true, productOnly: true });
+installWorktreeSafetyBackstops(process.cwd(), { quiet: true });
 
 if (!process.env.CI) {
   console.log("");

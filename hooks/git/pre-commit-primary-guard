@@ -42,16 +42,52 @@ DEFAULT_BRANCH="main"
 # at a dead `<hooksPath>/pre-commit.chained` instead of our sibling.
 chained="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || true)/pre-commit.chained"
 
-# ── Scaffolded personal workspaces are out of scope ────────────────────────
-# This is TOOLKIT policy for the AIOS product repos. A scaffolded workspace
-# (marked by `.aios-toolkit-version` at its root) is master-only by design:
-# its owner commits straight to the primary checkout. The installers already
-# skip workspaces (#540), but a hook copied in by any other path — a harness
-# running the installer from inside the workspace, a hand copy — would still
-# block every commit there. So the guard also checks at run time, and in a
-# workspace it only runs whatever it chains to.
-toplevel="$(git rev-parse --show-toplevel 2>/dev/null || true)"
-if [[ -n "$toplevel" && -f "$toplevel/.aios-toolkit-version" ]]; then
+# ── Scope: only repos the machine owner has opted in ───────────────────────
+# This is a machine-local developer policy, not something a repo imposes. It
+# enforces ONLY in repos listed under `protect` in the same scope file the
+# Claude Code branch-protection hook reads:
+#
+#   ~/.claude/branch-protection.json   (override: AIOS_BRANCH_PROTECTION_CONFIG)
+#   {"mode": "opt-in", "protect": [<repo roots>], "exempt": [<repo roots>]}
+#
+# `exempt` always wins; `mode: "opt-out"` protects everything not exempt. A
+# missing or unreadable file, or no `node`, means OUT of scope — so a guard that
+# lands in a personal workspace (or any repo nobody listed) blocks nothing.
+#
+# `AIOS_PRIMARY_GUARD_SCOPE_CHECK=1` makes this script answer only the scope
+# question (exit 0 = in scope) — the installer uses it, so the two never drift.
+repo_in_scope() {
+  local root cfg
+  root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+  cfg="${AIOS_BRANCH_PROTECTION_CONFIG:-$HOME/.claude/branch-protection.json}"
+  [[ -n "$root" && -f "$cfg" ]] || return 1
+  command -v node >/dev/null 2>&1 || return 1
+  node -e '
+    const fs = require("fs"), path = require("path"), os = require("os");
+    const [cfgPath, rootRaw] = process.argv.slice(1);
+    const norm = (p) => {
+      if (typeof p !== "string" || !p.trim()) return null;
+      p = p.trim();
+      if (p === "~" || p.startsWith("~/")) p = path.join(os.homedir(), p.slice(1));
+      p = path.resolve(p);
+      try { return fs.realpathSync(p); } catch { return p; }
+    };
+    const under = (r, l) => r === l || r.startsWith(l.endsWith(path.sep) ? l : l + path.sep);
+    const cfg = JSON.parse(fs.readFileSync(cfgPath, "utf8"));
+    const root = norm(rootRaw);
+    const list = (k) => (Array.isArray(cfg[k]) ? cfg[k] : []).map(norm).filter(Boolean);
+    if (list("exempt").some((l) => under(root, l))) process.exit(1);
+    if (cfg.mode === "opt-out") process.exit(0);
+    process.exit(list("protect").some((l) => under(root, l)) ? 0 : 1);
+  ' "$cfg" "$root" 2>/dev/null
+}
+
+if [[ "${AIOS_PRIMARY_GUARD_SCOPE_CHECK:-}" == "1" ]]; then
+  repo_in_scope
+  exit $?
+fi
+
+if ! repo_in_scope; then
   if [[ -x "$chained" ]]; then
     exec "$chained" "$@"
   fi

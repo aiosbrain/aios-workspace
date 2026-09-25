@@ -8,9 +8,10 @@
 # any pre-existing pre-commit hook by chaining it to `.git/hooks/pre-commit.chained`
 # (the guard execs it on success — so the NDA leak gate keeps running).
 #
-# Idempotent: safe to run repeatedly. Re-run after cloning or if the hook is lost.
-# Invoked automatically by `aios worktree add` (via the shared hook-install path)
-# and can be run by hand from the primary checkout.
+# Idempotent: safe to run repeatedly. Run by hand from the primary checkout. The
+# toolkit never installs it automatically: it is a machine-local preference, and it
+# only installs into repos listed under "protect" in ~/.claude/branch-protection.json
+# (override: AIOS_BRANCH_PROTECTION_CONFIG). Anywhere else it is a no-op.
 #
 # NOTE: because worktrees share the primary's hooks dir, this single install
 # covers every worktree; the guard itself NO-OPs inside linked worktrees.
@@ -33,10 +34,19 @@ if [[ -z "$repo_root" ]]; then
   exit 1
 fi
 
-# Scaffolded personal workspaces are master-only by design; this guard would make
-# their documented workflow impossible. Refuse, whoever runs us from wherever.
-if [[ -f "$repo_root/.aios-toolkit-version" ]]; then
-  echo "install-primary-commit-guard: $repo_root is a scaffolded AIOS workspace (.aios-toolkit-version) — the primary-commit guard is toolkit policy only; not installing."
+# Locate the tracked guard source relative to this script.
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+guard_src="$script_dir/../hooks/git/pre-commit-primary-guard"
+if [[ ! -f "$guard_src" ]]; then
+  echo "install-primary-commit-guard: guard source not found at $guard_src" >&2
+  exit 1
+fi
+
+# Machine-local opt-in only: install solely into repos listed under `protect` in
+# ~/.claude/branch-protection.json (override: AIOS_BRANCH_PROTECTION_CONFIG). The
+# guard itself answers the scope question, so installer and guard cannot drift.
+if ! (cd "$repo_root" && AIOS_PRIMARY_GUARD_SCOPE_CHECK=1 bash "$guard_src"); then
+  echo "install-primary-commit-guard: $repo_root is not listed under \"protect\" in ${AIOS_BRANCH_PROTECTION_CONFIG:-$HOME/.claude/branch-protection.json} — not installing."
   exit 0
 fi
 
@@ -66,14 +76,6 @@ if [[ "$hooks_dir" != "$common_hooks_dir" && -f "$hooks_dir/pre-commit" ]] \
   && grep -q "$tracked_marker" "$hooks_dir/pre-commit" 2>/dev/null; then
   echo "install-primary-commit-guard: tracked pre-commit hook at $hooks_dir/pre-commit (core.hooksPath) — installing machine-local guard into $common_hooks_dir (chained by the tracked hook)."
   hooks_dir="$common_hooks_dir"
-fi
-
-# Locate the tracked guard source relative to this script.
-script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-guard_src="$script_dir/../hooks/git/pre-commit-primary-guard"
-if [[ ! -f "$guard_src" ]]; then
-  echo "install-primary-commit-guard: guard source not found at $guard_src" >&2
-  exit 1
 fi
 
 mkdir -p "$hooks_dir"

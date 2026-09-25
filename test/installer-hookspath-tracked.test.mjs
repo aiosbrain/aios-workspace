@@ -62,7 +62,13 @@ const GIT_ENV = {
 };
 delete GIT_ENV.AIOS_LEAK_GATE_INSTALL_PRODUCT_MODE;
 
-const roots = [];
+// The commit-guard installer only installs into repos in the machine's branch-protection
+// scope. These fixtures are about hooksPath handling, not scope, so put every repo in scope.
+const SCOPE_DIR = mkdtempSync(path.join(os.tmpdir(), "aios-guard-scope-"));
+GIT_ENV.AIOS_BRANCH_PROTECTION_CONFIG = path.join(SCOPE_DIR, "branch-protection.json");
+writeFileSync(GIT_ENV.AIOS_BRANCH_PROTECTION_CONFIG, JSON.stringify({ mode: "opt-out" }));
+
+const roots = [SCOPE_DIR];
 test.after(() => {
   for (const root of roots) rmSync(root, { recursive: true, force: true });
 });
@@ -380,14 +386,11 @@ test("installWorktreeSafetyBackstops (aios worktree add path) leaves tracked hoo
 
   const result = installWorktreeSafetyBackstops(repo, { quiet: true });
 
-  assert.equal(result.primaryCommit, "installed");
   assert.equal(result.prePush, "installed");
   assert.deepEqual(readFileSync(path.join(hooksDir, "pre-commit")), trackedCommit);
   assert.deepEqual(readFileSync(path.join(hooksDir, "pre-push")), trackedPush);
-  assert.match(
-    readFileSync(path.join(commonHooksDir, "pre-commit"), "utf8"),
-    /pre-commit-primary-guard/
-  );
+  // the commit guard is never installed automatically (hand-installed, scope-gated)
+  assert.ok(!existsSync(path.join(commonHooksDir, "pre-commit")));
   assert.match(readFileSync(path.join(commonHooksDir, "pre-push"), "utf8"), /pre-push-leak-gate/);
   const status = execFileSync("git", ["-C", repo, "status", "--porcelain"], {
     encoding: "utf8",
