@@ -143,9 +143,9 @@ export async function cmdOnboard(repo, cfg, args = [], { connectFlow, nextAction
   }
 
   // AIO-482: hydrate per-machine worktree hooks as a silent onboarding side effect. In a
-  // scaffolded personal workspace productOnly keeps this to post-checkout; in the public
-  // toolkit repo, where scripts/leak-gate.sh is present, it restores commit/push backstops too.
-  installWorktreeSafetyBackstops(repo, { quiet: true, productOnly: true });
+  // scaffolded personal workspace this is post-checkout only; in the public toolkit repo,
+  // where scripts/leak-gate.sh is present, it restores the push gate too.
+  installWorktreeSafetyBackstops(repo, { quiet: true });
 
   const connectors = listConnectors(repo);
   if (!process.stdin.isTTY) {

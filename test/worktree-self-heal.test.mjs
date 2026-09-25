@@ -165,15 +165,12 @@ test("T7: installPostCheckoutHook reports installed → present, and skips with 
   assert.equal(installPostCheckoutHook(bare, { quiet: true }), "skipped");
 });
 
-test("T7b: worktree install-hook installs the primary and pre-push safety backstops", async () => {
+test("T7b: worktree install-hook installs the pre-push backstop and no commit guard", async () => {
   const { repo } = makePrimary();
 
   await cmdWorktree(repo, {}, ["install-hook"]);
 
-  assert.match(
-    readFileSync(path.join(repo, ".git", "hooks", "pre-commit"), "utf8"),
-    /pre-commit-primary-guard/
-  );
+  assert.ok(!existsSync(path.join(repo, ".git", "hooks", "pre-commit")), "no commit guard");
   assert.match(
     readFileSync(path.join(repo, ".git", "hooks", "pre-push"), "utf8"),
     /pre-push-leak-gate/
@@ -198,7 +195,7 @@ test("T7c: worktree install-hook reports backstop installer failures without thr
     console.log = original;
   }
 
-  assert.match(lines.join("\n"), /primary-commit-guard install failed \(non-fatal\)/);
+  assert.doesNotMatch(lines.join("\n"), /primary-commit-guard/);
   assert.match(lines.join("\n"), /leak-gate push hook install failed \(non-fatal\)/);
 });
 
@@ -209,10 +206,7 @@ test("T7d: worktree init hydrates the shared safety backstops", async () => {
 
   await cmdWorktree(repo, {}, ["init", "--dir", wt]);
 
-  assert.match(
-    readFileSync(path.join(repo, ".git", "hooks", "pre-commit"), "utf8"),
-    /pre-commit-primary-guard/
-  );
+  assert.ok(!existsSync(path.join(repo, ".git", "hooks", "pre-commit")), "no commit guard");
   assert.match(
     readFileSync(path.join(repo, ".git", "hooks", "pre-push"), "utf8"),
     /pre-push-leak-gate/
@@ -228,17 +222,14 @@ test("postinstall hydrates backstops for a fresh product-repository clone", () =
     stdio: "pipe",
   });
 
-  assert.match(
-    readFileSync(path.join(repo, ".git", "hooks", "pre-commit"), "utf8"),
-    /pre-commit-primary-guard/
-  );
+  assert.ok(!existsSync(path.join(repo, ".git", "hooks", "pre-commit")), "no commit guard");
   assert.match(
     readFileSync(path.join(repo, ".git", "hooks", "pre-push"), "utf8"),
     /pre-push-leak-gate/
   );
 });
 
-test("onboard and update invoke product-only safety hydration", () => {
+test("onboard and update invoke safety hydration", () => {
   // The apply steps moved with the AIO-635 split: checkout applies live in
   // update/vendor-apply.mjs, registry applies in update/registry-root.mjs.
   for (const rel of [
@@ -247,18 +238,14 @@ test("onboard and update invoke product-only safety hydration", () => {
     "scripts/update/registry-root.mjs",
   ]) {
     const source = readFileSync(path.join(TOOLKIT, rel), "utf8");
-    assert.match(
-      source,
-      /installWorktreeSafetyBackstops\(repo,\s*\{\s*quiet:\s*true,\s*productOnly:\s*true\s*\}\)/,
-      rel
-    );
+    assert.match(source, /installWorktreeSafetyBackstops\(repo,\s*\{\s*quiet:\s*true\s*\}\)/, rel);
   }
 });
 
-test("product-only lifecycle hydration leaves personal-workspace commit and push policy unchanged", () => {
+test("lifecycle hydration leaves personal-workspace commit and push policy unchanged", () => {
   const { repo } = makePrimary({ withLeakGate: false });
 
-  installWorktreeSafetyBackstops(repo, { quiet: true, productOnly: true });
+  installWorktreeSafetyBackstops(repo, { quiet: true });
 
   assert.ok(existsSync(path.join(repo, ".git", "hooks", "post-checkout")));
   assert.ok(!existsSync(path.join(repo, ".git", "hooks", "pre-commit")));

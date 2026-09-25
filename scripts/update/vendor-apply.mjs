@@ -196,9 +196,9 @@ async function cmdVendorApplyOnlyLocked(repo, cfg, args) {
   // including for --from <checkout> sources. The stamp destination is asserted safe above.
   await commitV2State(statePlan);
   // AIO-482: restore machine-local worktree hooks after an update. Personal workspaces receive
-  // post-checkout hydration only; the public product repo also restores its commit/push
-  // backstops because it carries scripts/leak-gate.sh. Never fails an update.
-  installWorktreeSafetyBackstops(repo, { quiet: true, productOnly: true });
+  // post-checkout hydration only; the public product repo also restores its push gate
+  // because it carries scripts/leak-gate.sh. Never fails an update.
+  installWorktreeSafetyBackstops(repo, { quiet: true });
   if (changedCount) {
     console.log(
       color.green(
