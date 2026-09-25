@@ -248,3 +248,51 @@ test("aios onboard in a scaffolded workspace hydrates post-checkout but never th
   assert.ok(existsSync(path.join(sb.repo, ".git", "hooks", "post-checkout")));
   assert.ok(!hooked(sb.repo));
 });
+
+// Unusual layouts: the repo root is not the parent of the git dir.
+function unusualRepo(layout) {
+  const home = realpathSync(mkdtempSync(path.join(tmpdir(), "aios-guard-layout-")));
+  roots.push(home);
+  const repo = path.join(home, "repo");
+  const env = { ...process.env, HOME: home, GIT_CONFIG_GLOBAL: "/dev/null" };
+  delete env.AIOS_ALLOW_PRIMARY_COMMIT;
+  delete env.AIOS_BRANCH_PROTECTION_CONFIG;
+  if (layout === "separate-git-dir") {
+    execFileSync("git", ["init", "-q", "--separate-git-dir", path.join(home, "gitdir"), repo], {
+      env,
+    });
+  } else {
+    // symlinked .git directory
+    mkdirSync(repo);
+    execFileSync("git", ["init", "-q", path.join(home, "real")], { env });
+    symlinkSync(path.join(home, "real", ".git"), path.join(repo, ".git"));
+  }
+  const git = (...args) => execFileSync("git", ["-C", repo, ...args], { stdio: "pipe", env });
+  git("config", "user.email", "test@example.com");
+  git("config", "user.name", "Test");
+  writeFileSync(path.join(repo, "note.md"), "hello\n");
+  git("add", "-A");
+  mkdirSync(path.join(home, ".claude"));
+  writeFileSync(
+    path.join(home, ".claude", "branch-protection.json"),
+    JSON.stringify({ protect: [repo] })
+  );
+  const hooks = execFileSync("git", ["-C", repo, "rev-parse", "--git-path", "hooks"], {
+    encoding: "utf8",
+    env,
+  }).trim();
+  const dest = path.resolve(repo, hooks, "pre-commit");
+  mkdirSync(path.dirname(dest), { recursive: true });
+  copyFileSync(GUARD_SRC, dest);
+  chmodSync(dest, 0o755);
+  return { repo, env };
+}
+
+for (const layout of ["separate-git-dir", "symlinked .git dir"]) {
+  test(`guard blocks a protected primary with a ${layout}`, () => {
+    const sb = unusualRepo(layout);
+    const r = commit(sb);
+    assert.notEqual(r.status, 0, "an unusual git-dir layout must not fail open");
+    assert.match(r.stderr, /commit BLOCKED in the PRIMARY checkout/);
+  });
+}

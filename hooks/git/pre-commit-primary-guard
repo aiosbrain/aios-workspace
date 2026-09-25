@@ -67,9 +67,10 @@ common_dir="$(physical_dir "$(git rev-parse --git-common-dir 2>/dev/null || true
 # missing or unreadable file, unset HOME, or no `node` means OUT of scope — so a
 # guard that lands in a personal workspace (or any unlisted repo) blocks nothing.
 #
-# Scope is judged against the PRIMARY checkout's root (the parent of the common
-# git dir), so a linked worktree of a protected repo is in scope too — the
-# installer relies on that — while the primary-vs-worktree check below still
+# Scope is judged against the PRIMARY checkout's root (its toplevel, or from a
+# linked worktree the parent of the common git dir), so a linked worktree of a
+# protected repo is in scope too — the installer relies on that — while the
+# primary-vs-worktree check below still
 # lets worktree commits through.
 #
 # `AIOS_PRIMARY_GUARD_SCOPE_CHECK=1` makes this script answer only the scope
@@ -77,7 +78,14 @@ common_dir="$(physical_dir "$(git rev-parse --git-common-dir 2>/dev/null || true
 repo_in_scope() {
   local root cfg default_cfg=""
   [[ -n "$common_dir" ]] || return 1
-  root="$(dirname "$common_dir")"
+  if [[ "$git_dir" == "$common_dir" ]]; then
+    # The primary checkout: ask git for its root. `dirname` of the git dir is wrong
+    # for --separate-git-dir, a symlinked .git, and submodules (.git/modules/<name>).
+    root="$(physical_dir "$(git rev-parse --show-toplevel 2>/dev/null || true)")"
+  else
+    root="$(dirname "$common_dir")"
+  fi
+  [[ -n "$root" ]] || return 1
   [[ -n "${HOME:-}" ]] && default_cfg="$HOME/.claude/branch-protection.json"
   cfg="${AIOS_BRANCH_PROTECTION_CONFIG:-$default_cfg}"
   [[ -n "$cfg" && -f "$cfg" ]] || return 1
