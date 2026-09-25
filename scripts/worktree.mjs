@@ -180,7 +180,6 @@ export async function cmdWorktree(repo, cfg, args) {
     const wtPath = computeWorktreePath(repo, branch);
     const containerDir = path.dirname(wtPath);
 
-    // 0. Ensure the auto-hydration hook + push gate are installed in primary
     installSafety();
 
     // 0b. Ensure the container dir exists — `git worktree add` does not

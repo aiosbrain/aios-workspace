@@ -238,11 +238,7 @@ test("onboard and update invoke safety hydration", () => {
     "scripts/update/registry-root.mjs",
   ]) {
     const source = readFileSync(path.join(TOOLKIT, rel), "utf8");
-    assert.match(
-      source,
-      /installWorktreeSafetyBackstops\(repo,\s*\{\s*quiet:\s*true\s*\}\)/,
-      rel
-    );
+    assert.match(source, /installWorktreeSafetyBackstops\(repo,\s*\{\s*quiet:\s*true\s*\}\)/, rel);
   }
 });
 

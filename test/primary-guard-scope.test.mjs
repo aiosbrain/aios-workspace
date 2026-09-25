@@ -163,3 +163,18 @@ test("installWorktreeSafetyBackstops never writes the commit guard, even in the 
   assert.ok(!("primaryCommit" in res));
   assert.ok(!hooked(sb.repo));
 });
+
+test("aios onboard in a scaffolded workspace hydrates post-checkout but never the commit guard", async () => {
+  const { cmdOnboard } = await import("../scripts/onboard-command.mjs");
+  const sb = sandbox({ config: (repo) => ({ protect: [repo] }) });
+  writeFileSync(path.join(sb.repo, "aios.yaml"), "owner: test\n");
+  const log = console.log;
+  console.log = () => {};
+  try {
+    await cmdOnboard(sb.repo, {}, [], { connectFlow: () => {}, nextAction: () => "" });
+  } finally {
+    console.log = log;
+  }
+  assert.ok(existsSync(path.join(sb.repo, ".git", "hooks", "post-checkout")));
+  assert.ok(!hooked(sb.repo));
+});
