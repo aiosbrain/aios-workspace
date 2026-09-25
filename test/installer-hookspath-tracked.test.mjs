@@ -66,7 +66,10 @@ delete GIT_ENV.AIOS_LEAK_GATE_INSTALL_PRODUCT_MODE;
 // scope. These fixtures are about hooksPath handling, not scope, so put every repo in scope.
 const SCOPE_DIR = mkdtempSync(path.join(os.tmpdir(), "aios-guard-scope-"));
 GIT_ENV.AIOS_BRANCH_PROTECTION_CONFIG = path.join(SCOPE_DIR, "branch-protection.json");
-writeFileSync(GIT_ENV.AIOS_BRANCH_PROTECTION_CONFIG, JSON.stringify({ mode: "opt-out" }));
+writeFileSync(
+  GIT_ENV.AIOS_BRANCH_PROTECTION_CONFIG,
+  JSON.stringify({ protect: [os.tmpdir()] }) // every fixture repo is made under tmpdir
+);
 
 const roots = [SCOPE_DIR];
 test.after(() => {

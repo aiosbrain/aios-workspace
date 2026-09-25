@@ -44,9 +44,12 @@ fi
 
 # Machine-local opt-in only: install solely into repos listed under `protect` in
 # ~/.claude/branch-protection.json (override: AIOS_BRANCH_PROTECTION_CONFIG). The
-# guard itself answers the scope question, so installer and guard cannot drift.
+# guard itself answers the scope question, so installer and guard cannot drift. It
+# judges the PRIMARY checkout's root, so running this from a linked worktree of a
+# protected repo installs into the shared hooks dir as before.
 if ! (cd "$repo_root" && AIOS_PRIMARY_GUARD_SCOPE_CHECK=1 bash "$guard_src"); then
-  echo "install-primary-commit-guard: $repo_root is not listed under \"protect\" in ${AIOS_BRANCH_PROTECTION_CONFIG:-$HOME/.claude/branch-protection.json} — not installing."
+  scope_file="${AIOS_BRANCH_PROTECTION_CONFIG:-${HOME:-~}/.claude/branch-protection.json}"
+  echo "install-primary-commit-guard: the primary checkout of $repo_root is not listed under \"protect\" in $scope_file — not installing."
   exit 0
 fi
 

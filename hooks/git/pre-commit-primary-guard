@@ -42,25 +42,45 @@ DEFAULT_BRANCH="main"
 # at a dead `<hooksPath>/pre-commit.chained` instead of our sibling.
 chained="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || true)/pre-commit.chained"
 
+# ── Physical paths ─────────────────────────────────────────────────────────
+# Resolve symlinks (`pwd -P`) on both sides: `--absolute-git-dir` is physical,
+# while a relative `--git-common-dir` resolved with a logical `pwd` keeps the
+# symlink — so a commit run from a symlinked cwd (e.g. ~/Tessera -> ~/Projects)
+# compared unequal, was taken for a linked worktree, and slipped through.
+physical_dir() {
+  [[ -n "$1" ]] || return 0
+  (cd "$1" 2>/dev/null && pwd -P) || printf '%s\n' "$1"
+}
+git_dir="$(physical_dir "$(git rev-parse --absolute-git-dir 2>/dev/null || true)")"
+common_dir="$(physical_dir "$(git rev-parse --git-common-dir 2>/dev/null || true)")"
+
 # ── Scope: only repos the machine owner has opted in ───────────────────────
 # This is a machine-local developer policy, not something a repo imposes. It
 # enforces ONLY in repos listed under `protect` in the same scope file the
 # Claude Code branch-protection hook reads:
 #
 #   ~/.claude/branch-protection.json   (override: AIOS_BRANCH_PROTECTION_CONFIG)
-#   {"mode": "opt-in", "protect": [<repo roots>], "exempt": [<repo roots>]}
+#   {"protect": [<repo roots>], "exempt": [<repo roots>]}
 #
-# `exempt` always wins; `mode: "opt-out"` protects everything not exempt. A
-# missing or unreadable file, or no `node`, means OUT of scope — so a guard that
-# lands in a personal workspace (or any repo nobody listed) blocks nothing.
+# A pure allowlist: `exempt` always wins, and there is no protect-everything mode
+# (`mode` is ignored), so no config can pull an unlisted repo into scope. A
+# missing or unreadable file, unset HOME, or no `node` means OUT of scope — so a
+# guard that lands in a personal workspace (or any unlisted repo) blocks nothing.
+#
+# Scope is judged against the PRIMARY checkout's root (the parent of the common
+# git dir), so a linked worktree of a protected repo is in scope too — the
+# installer relies on that — while the primary-vs-worktree check below still
+# lets worktree commits through.
 #
 # `AIOS_PRIMARY_GUARD_SCOPE_CHECK=1` makes this script answer only the scope
 # question (exit 0 = in scope) — the installer uses it, so the two never drift.
 repo_in_scope() {
-  local root cfg
-  root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
-  cfg="${AIOS_BRANCH_PROTECTION_CONFIG:-$HOME/.claude/branch-protection.json}"
-  [[ -n "$root" && -f "$cfg" ]] || return 1
+  local root cfg default_cfg=""
+  [[ -n "$common_dir" ]] || return 1
+  root="$(dirname "$common_dir")"
+  [[ -n "${HOME:-}" ]] && default_cfg="$HOME/.claude/branch-protection.json"
+  cfg="${AIOS_BRANCH_PROTECTION_CONFIG:-$default_cfg}"
+  [[ -n "$cfg" && -f "$cfg" ]] || return 1
   command -v node >/dev/null 2>&1 || return 1
   node -e '
     const fs = require("fs"), path = require("path"), os = require("os");
@@ -76,8 +96,7 @@ repo_in_scope() {
     const cfg = JSON.parse(fs.readFileSync(cfgPath, "utf8"));
     const root = norm(rootRaw);
     const list = (k) => (Array.isArray(cfg[k]) ? cfg[k] : []).map(norm).filter(Boolean);
-    if (list("exempt").some((l) => under(root, l))) process.exit(1);
-    if (cfg.mode === "opt-out") process.exit(0);
+    if (!root || list("exempt").some((l) => under(root, l))) process.exit(1);
     process.exit(list("protect").some((l) => under(root, l)) ? 0 : 1);
   ' "$cfg" "$root" 2>/dev/null
 }
@@ -97,15 +116,6 @@ fi
 # ── Detect PRIMARY vs linked WORKTREE ──────────────────────────────────────
 # In the primary checkout, the git dir IS the common git dir.
 # In a linked worktree, the git dir is `<common>/worktrees/<name>` — different.
-git_dir="$(git rev-parse --absolute-git-dir 2>/dev/null || true)"
-common_dir="$(git rev-parse --git-common-dir 2>/dev/null || true)"
-
-# Normalize the common dir to an absolute path (it can be reported relative,
-# e.g. ".git", when invoked from the primary working tree root).
-if [[ -n "$common_dir" && "$common_dir" != /* ]]; then
-  common_dir="$(cd "$common_dir" 2>/dev/null && pwd || echo "$common_dir")"
-fi
-
 is_primary=0
 if [[ -n "$git_dir" && "$git_dir" == "$common_dir" ]]; then
   is_primary=1

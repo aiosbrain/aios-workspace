@@ -11,6 +11,7 @@ import {
   readFileSync,
   realpathSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -123,10 +124,79 @@ test("guard lets an unlisted repo commit, e.g. a personal workspace", () => {
   assert.equal(r.status, 0, `commit was blocked:\n${r.stderr}`);
 });
 
-test("guard lets an exempt repo commit, even in opt-out mode", () => {
-  const sb = sandbox({ config: (repo) => ({ mode: "opt-out", exempt: [repo] }) });
+test("guard: exempt wins over protect", () => {
+  const sb = sandbox({ config: (repo) => ({ protect: [repo], exempt: [repo] }) });
   installGuardByHand(sb.repo);
   assert.equal(commit(sb).status, 0);
+});
+
+test("guard: there is no protect-everything mode — opt-out with no protect list blocks nothing", () => {
+  const sb = sandbox({ config: () => ({ mode: "opt-out" }) });
+  installGuardByHand(sb.repo);
+  assert.equal(commit(sb).status, 0);
+});
+
+test("guard: a protect entry does not match a sibling that merely shares its prefix", () => {
+  // `<home>/rep` must not cover `<home>/repo` (cf. aios-workspace vs aios-workspace-gui).
+  const sb = sandbox({ config: (repo) => ({ protect: [repo.slice(0, -1)] }) });
+  installGuardByHand(sb.repo);
+  assert.equal(commit(sb).status, 0);
+});
+
+test("guard blocks a primary commit made through a symlinked path", () => {
+  const sb = sandbox({ config: (repo) => ({ protect: [repo] }) });
+  installGuardByHand(sb.repo);
+  const link = path.join(sb.home, "link");
+  symlinkSync(sb.home, link);
+  const viaLink = path.join(link, "repo");
+  const r = spawnSync("git", ["commit", "-q", "-m", "work"], {
+    cwd: viaLink,
+    encoding: "utf8",
+    env: { ...sb.env, PWD: viaLink },
+  });
+  assert.notEqual(r.status, 0, "a symlinked cwd must not look like a linked worktree");
+  assert.match(r.stderr, /commit BLOCKED in the PRIMARY checkout/);
+});
+
+test("guard honours a protect entry written through a symlink", () => {
+  const sb = sandbox({
+    config: (repo) => ({ protect: [path.join(path.dirname(repo), "link", "repo")] }),
+  });
+  symlinkSync(sb.home, path.join(sb.home, "link"));
+  installGuardByHand(sb.repo);
+  assert.notEqual(commit(sb).status, 0);
+});
+
+test("guard with HOME unset blocks nothing and does not crash", () => {
+  const sb = sandbox({ config: (repo) => ({ protect: [repo] }) });
+  installGuardByHand(sb.repo);
+  const env = { ...sb.env };
+  delete env.HOME;
+  const r = spawnSync("git", ["-C", sb.repo, "commit", "-q", "-m", "work"], {
+    encoding: "utf8",
+    env,
+  });
+  assert.equal(r.status, 0, r.stderr);
+  assert.doesNotMatch(r.stderr, /unbound variable/);
+});
+
+test("installer run from a linked worktree of a protected repo installs; worktree commits pass", () => {
+  const sb = sandbox({ config: (repo) => ({ protect: [repo] }) });
+  const git = (...args) =>
+    execFileSync("git", ["-C", sb.repo, ...args], { stdio: "pipe", env: sb.env });
+  git("commit", "-q", "-m", "init");
+  const wt = path.join(sb.home, "repo-worktrees", "task");
+  git("worktree", "add", "-q", "-b", "task", wt);
+  install({ repo: wt, env: sb.env });
+  assert.ok(hooked(sb.repo), "guard lands in the shared hooks dir");
+
+  writeFileSync(path.join(wt, "wt.md"), "x\n");
+  execFileSync("git", ["-C", wt, "add", "-A"], { env: sb.env });
+  assert.equal(commit({ repo: wt, env: sb.env }).status, 0, "worktree commits are the point");
+
+  writeFileSync(path.join(sb.repo, "primary.md"), "x\n");
+  git("add", "-A");
+  assert.notEqual(commit(sb).status, 0, "the primary stays blocked");
 });
 
 test("guard with no scope config blocks nothing", () => {
