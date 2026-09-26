@@ -186,3 +186,59 @@ test("task publishing pins row revisions, canonical bytes, destination and compl
   );
   assert.deepEqual(accounted, new Set(input.taskBatch.rows.map((r) => r.task_id)));
 });
+
+// Negotiation reference only; validates advertised compatibility, never authorizes execution.
+function negotiateAdvertisement(value) {
+  if (!value || Buffer.byteLength(JSON.stringify(value), "utf8") > 16384)
+    return { version: null, actions: [] };
+  const validate = ajv.getSchema("urn:aios:mcp-next:1:actions#/definitions/Capabilities");
+  if (!validate(value) || !value.contract_versions.includes("mcp-next/1"))
+    return { version: null, actions: [] };
+  const supported = new Set(["note.append", "task.create", "task.update", "decision.record"]);
+  return {
+    version: "mcp-next/1",
+    actions: value.actions.filter((action) => supported.has(action)),
+  };
+}
+test("additive capability negotiation intersects supported sets and remains fail closed", () => {
+  const advertisement = read("actions-fixtures.json").valid.find(
+    (v) => v.name === "additive-capability-advertisement"
+  ).value;
+  assert.deepEqual(negotiateAdvertisement(advertisement), {
+    version: "mcp-next/1",
+    actions: ["note.append"],
+  });
+  assert.deepEqual(
+    negotiateAdvertisement({ ...advertisement, contract_versions: ["mcp-next/2"] }),
+    { version: null, actions: [] }
+  );
+  assert.deepEqual(negotiateAdvertisement({ ...advertisement, actions: ["future.action"] }), {
+    version: "mcp-next/1",
+    actions: [],
+  });
+  assert.deepEqual(negotiateAdvertisement({ ...advertisement, task_revisions: "true" }), {
+    version: null,
+    actions: [],
+  });
+  assert.deepEqual(negotiateAdvertisement({ ...advertisement, future_blob: "x".repeat(16384) }), {
+    version: null,
+    actions: [],
+  });
+  assert.deepEqual(negotiateAdvertisement(undefined), { version: null, actions: [] });
+});
+test("503 unavailable has an executable retryable transport-error representation", () => {
+  const value = read("actions-fixtures.json").valid.find(
+    (v) => v.name === "retryable-unavailable-503"
+  ).value;
+  assert.equal(
+    ajv.getSchema("urn:aios:mcp-next:1:actions#/definitions/TransportError")(value),
+    true
+  );
+  const statuses = { unavailable: 503, rate_limited: 429, invalid_payload: 422 };
+  assert.equal(statuses[value.error.code], 503);
+  assert.equal(value.error.retryable, true);
+  assert.match(
+    readFileSync(new URL("README.md", root), "utf8"),
+    /503 with `TransportError\.error\.code: unavailable` and `retryable: true`/
+  );
+});

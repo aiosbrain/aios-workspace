@@ -38,7 +38,7 @@ Reserve `POST /api/v1/actions/submit`, `GET /api/v1/actions/{action_id}`,
 `mcp-next/1` request discriminator. Reuse the existing action/policy/audit services
 internally, but do not send the new shape to the legacy `/actions` endpoint: that
 endpoint accepts caller-supplied policy resources and has unrelated handler semantics.
-New clients treat an absent capability, unknown contract version or 404 as
+New clients treat an absent required capability, no mutually supported contract version, or 404 as
 `capability_unavailable`, preserve old reads, and never fall back to legacy writes.
 No version-string comparison alone enables writes.
 
@@ -46,7 +46,15 @@ No version-string comparison alone enables writes.
 `capabilities: { contract_versions: ["mcp-next/1"], actions: [...], task_revisions: true }`
 from an authenticated server capability response. Reserve this additive object on
 `GET /api/v1/me`; absent means unavailable. Local granted capabilities are displayed
-separately from server capabilities. All other legacy read tool inputs and successful
+separately from server capabilities. Accept additive unknown advertisement keys, versions and
+action names, then intersect the advertised versions/actions with the client's exact supported
+sets. Unknown advertisements never enable execution; unknown-only versions fail closed.
+The known `contract_versions`, `actions` and `task_revisions` properties remain required and
+typed. Advertisements are bounded to 32 versions, 128 actions, 64 properties, and 128 Unicode
+code points per nonblank name; cap the complete capability object at 16,384 UTF-8 bytes before
+validation, including unknown values. Ignore unknown keys after parsing. These tolerant
+advertisement rules do not change the strict `SubmitRequest` allowlist or setup/server
+authorization requirements. All other legacy read tool inputs and successful
 results stay unchanged. Future `note` item readers must tolerate unknown kinds;
 new readers understand notes through existing item retrieval, graph and query paths.
 
@@ -79,7 +87,9 @@ policy execution. A valid authorized request receives an action/audit identity e
 when policy denies it. Malformed or unauthenticated transport errors use
 `TransportError` without leaking action/entity IDs. Map success to 200, approval to
 202, denial to 403, conflict to 409, validation/execution failure to 422; transient
-server failure to 503, rate limiting to 429. Status GET is 200 for an accessible
+server failure to 503 with `TransportError.error.code: unavailable` and `retryable: true`,
+rate limiting to 429. Retry a transient failure with the same operation ID; after uncertain
+delivery, look up its durable status rather than inventing a new operation. Status GET is 200 for an accessible
 stored action regardless of its business outcome. Authenticate and recheck access
 for every lookup; only the initiating member may inspect it through this API.
 
