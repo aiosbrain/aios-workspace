@@ -1,6 +1,6 @@
 # AIOS Team Brain — API Contract
 
-**Version: 1.27** is the pinned member-facing Brain API (`/api/v1`). **Document revision: 1.29**
+**Version: 1.27** is the pinned member-facing Brain API (`/api/v1`). **Document revision: 1.30**
 also carries the separately negotiated internal Executor gateway contract **1.10**; it does not
 claim unimplemented member-facing v1.10 routes. This document is the single pinned contract between the
 contributor repo (this toolkit's `aios` CLI) and the `aios-team-brain` service. Both
@@ -27,7 +27,23 @@ ceiling on `POST /api/v1/items`. A supplement carries its own `revision`, is wit
 superseded **explicitly** (never rewritten in place), and the endpoint section that adopts it
 carries the coordinated rollback procedure.
 
+## Proposed MCP next supplement (document revision 1.30)
+
+[Contract revision 1.0.0](contract/mcp-next-v1/README.md) reserves governed member
+actions, task revisions, connection profiles and workspace publishing. It is **contract
+only**, not an implemented or deployed member API change. Member version 1.27 and
+internal gateway 1.10 remain unchanged. The supplement's `manifest.json` pins schemas,
+fixtures and CLI/MCP mappings; activation requires implemented capability negotiation.
+It supersedes legacy task conflict rules only for explicitly enabled projects after
+migration. Existing routes, read responses and unaffected projects retain their contract.
+
+The inspected Brain baseline still declares/venders 1.23. The companion records that
+pre-existing discrepancy; conformance of the proposed supplement does not establish
+that runtime implements every canonical 1.27 feature. Resolve actual capability and
+version alignment in candidate acceptance before launch.
+
 *Revisions (additive within v1):*
+- *2026-09-24 — document revision **1.30**: reserves the independently versioned MCP next supplement. No runtime member version bump or deployment claim.*
 - *2026-09-10 — document revision **1.28** (AIO-1101): records the implemented Team Brain intake endpoint at commit `87be1293dd8338dde953020c757bad336f2da9b4`. Availability still requires verified deployment and activation in each target environment; this editorial status update makes no production availability claim. Member API 1.26, scanner payload 1.25 and gateway 1.10 are unchanged.*
 - *2026-09-10 — **v1.26**, document revision **1.27** (AIO-1101): reserves append-only debt intake events. Contract only; endpoint/storage/publisher remain future increments. Codebase payload stays pinned at 1.25 and gateway at 1.10.*
 - *2026-09-09 — **v1.25**, document revision **1.26** (AIO-1095): defines optional

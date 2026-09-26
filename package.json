@@ -35,7 +35,8 @@
     "docs/mcp-host-install.md",
     "docs/guard-verification.md",
     "CHANGELOG.md",
-    "build.json"
+    "build.json",
+    "docs/contract/mcp-next-v1"
   ],
   "workspaces": [
     "packages/foundation"
