@@ -244,7 +244,7 @@ async function vendorFromRegistryLocked(repo, cfg, args, root, io) {
 
   await commitV2State(statePlan);
   // AIO-482 parity with the checkout apply: restore machine-local worktree hooks.
-  installWorktreeSafetyBackstops(repo, { quiet: true, productOnly: true });
+  installWorktreeSafetyBackstops(repo, { quiet: true });
   if (changedCount) {
     log(
       c.green(

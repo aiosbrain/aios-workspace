@@ -40,10 +40,6 @@ const HOOK_SRC = path.join(
   "git",
   "post-checkout"
 );
-const PRIMARY_GUARD_INSTALLER = path.join(
-  path.dirname(fileURLToPath(import.meta.url)),
-  "install-primary-commit-guard.sh"
-);
 const PUSH_GATE_INSTALLER = path.join(
   path.dirname(fileURLToPath(import.meta.url)),
   "install-leak-gate-push-hook.sh"
@@ -143,22 +139,16 @@ function runBackstopInstaller(repo, installer, label, successMessage, { quiet = 
 /**
  * Hydrate every machine-local worktree backstop. This is the shared contract used by
  * worktree add/init, onboarding, and update so a fresh clone cannot receive only the
- * post-checkout convenience hook while remaining publishable without commit/push guards.
+ * post-checkout convenience hook while remaining publishable without the push gate.
+ *
+ * The primary-commit guard is deliberately NOT here. It is a machine-local developer
+ * preference scoped by ~/.claude/branch-protection.json, installed by hand with
+ * scripts/install-primary-commit-guard.sh — never pushed into a repo by the toolkit.
  */
-export function installWorktreeSafetyBackstops(repo, { quiet = false, productOnly = false } = {}) {
+export function installWorktreeSafetyBackstops(repo, { quiet = false } = {}) {
   const gateAvailable = existsSync(path.join(repo, "scripts", "leak-gate.sh"));
   return {
     postCheckout: installPostCheckoutHook(repo, { quiet }),
-    primaryCommit:
-      !productOnly || gateAvailable
-        ? runBackstopInstaller(
-            repo,
-            PRIMARY_GUARD_INSTALLER,
-            "primary-commit-guard",
-            "primary-commit-guard → blocks all commits in the primary checkout",
-            { quiet }
-          )
-        : "skipped",
     prePush: gateAvailable
       ? runBackstopInstaller(
           repo,
@@ -179,14 +169,7 @@ export async function cmdWorktree(repo, cfg, args) {
     "link-worktree-env.sh"
   );
   const hookDest = postCheckoutHookPath(repo);
-  // productOnly, matching onboard/update/postinstall: the primary-commit guard and the
-  // leak-gate push hook are TOOLKIT policy and must never be injected into a scaffolded
-  // personal workspace. A scaffolded workspace's documented workflow is master-only with
-  // no worktrees, so a guard that blocks every commit in the primary checkout makes its
-  // normal way of working impossible. Gated on `scripts/leak-gate.sh`, which only the
-  // product repo carries. Without this, `aios worktree add` run from inside a scaffolded
-  // workspace silently installs the guard there and strands the owner.
-  const installSafety = () => installWorktreeSafetyBackstops(repo, { productOnly: true });
+  const installSafety = () => installWorktreeSafetyBackstops(repo);
 
   if (sub === "add") {
     const branch = rest[0];
@@ -197,7 +180,6 @@ export async function cmdWorktree(repo, cfg, args) {
     const wtPath = computeWorktreePath(repo, branch);
     const containerDir = path.dirname(wtPath);
 
-    // 0. Ensure the auto-hydration hook + primary-commit guard are installed in primary
     installSafety();
 
     // 0b. Ensure the container dir exists — `git worktree add` does not

@@ -111,10 +111,11 @@ they don't recognize.
 
 ## 5. Conventions (internalize these)
 
-- **No direct commits in the primary checkout, on any branch.** A local `pre-commit` guard
-  (tracked source: `hooks/git/pre-commit-primary-guard`; installed by
-  `scripts/install-primary-commit-guard.sh`, and automatically by `aios worktree add` /
-  `aios worktree install-hook`) BLOCKS **every** authored commit made in the PRIMARY
+- **No direct commits in the primary checkout, on any branch.** A machine-local `pre-commit`
+  guard (tracked source: `hooks/git/pre-commit-primary-guard`; installed by hand with
+  `scripts/install-primary-commit-guard.sh`, never automatically) enforces only in repos listed
+  under `"protect"` in `~/.claude/branch-protection.json`, and is a no-op everywhere else,
+  including scaffolded personal workspaces, which commit on `master` by design. Where enabled it BLOCKS **every** authored commit made in the PRIMARY
   checkout — including on `main` — telling you to `aios worktree add <branch>` instead. The
   primary should only ever advance via `git merge --ff-only` from origin, which moves the ref
   without creating a commit and so never triggers the hook; a non-ff merge in the primary IS
