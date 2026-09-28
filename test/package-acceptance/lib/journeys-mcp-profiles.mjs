@@ -6,7 +6,7 @@ import { createServer } from "node:https";
 import { spawn } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import { SENTINELS } from "./context.mjs";
-import { prepareProfile, cli } from "./mcp-support.mjs";
+import { prepareProfile, cli, KEYS } from "./mcp-support.mjs";
 
 async function child(ctx, args, env, cwd, label) {
   const started = Date.now();
@@ -77,7 +77,7 @@ function session(command, env, cwd) {
   };
 }
 export async function profileHostJourney(ctx, install) {
-  const root = path.join(ctx.base, "mcp-profiles");
+  const root = path.join(fs.realpathSync(ctx.base), "mcp-profiles");
   fs.mkdirSync(root, { recursive: true, mode: 0o700 });
   const cert = path.join(root, "certificate.pem"),
     key = path.join(root, "private.pem");
@@ -103,29 +103,38 @@ export async function profileHostJourney(ctx, install) {
     { cwd: root, label: "profile-fixture-certificate" }
   );
   const requests = [];
-  const server = createServer(
-    { key: fs.readFileSync(key), cert: fs.readFileSync(cert) },
-    (request, response) => {
-      requests.push(request.url);
-      request.resume();
-      request.on("end", () => {
-        const authorized = request.headers.authorization === `Bearer ${SENTINELS.aiosKey}`;
-        const body =
-          request.url === "/api/v1/me"
-            ? { actor: "synthetic-member", team: "synthetic-team", role: "member", tier: "team" }
-            : request.url === "/api/v1/projects/synthetic-project"
-              ? { project_id: "synthetic-project", team_id: "synthetic-team" }
-              : { items: [] };
-        response.writeHead(authorized ? 200 : 401, { "Content-Type": "application/json" });
-        response.end(JSON.stringify(authorized ? body : { error: "unauthorized" }));
-      });
-    }
-  );
-  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
-  const origin = `https://127.0.0.1:${server.address().port}`,
-    results = [];
+  const fixture = (credential) =>
+    createServer(
+      { key: fs.readFileSync(key), cert: fs.readFileSync(cert) },
+      (request, response) => {
+        requests.push(request.url);
+        request.resume();
+        request.on("end", () => {
+          const authorized = request.headers.authorization === `Bearer ${credential}`;
+          const body =
+            request.url === "/api/v1/me"
+              ? { actor: "synthetic-member", team: "synthetic-team", role: "member", tier: "team" }
+              : request.url === "/api/v1/projects/synthetic-project"
+                ? { project_id: "synthetic-project", team_id: "synthetic-team" }
+                : { items: [] };
+          response.writeHead(authorized ? 200 : 401, { "Content-Type": "application/json" });
+          response.end(JSON.stringify(authorized ? body : { error: "unauthorized" }));
+        });
+      }
+    );
+  const fixtures = {
+    "brain-only": { credential: SENTINELS.aiosKey },
+    workspace: { credential: KEYS.external },
+  };
+  for (const state of Object.values(fixtures)) {
+    state.server = fixture(state.credential);
+    await new Promise((resolve) => state.server.listen(0, "127.0.0.1", resolve));
+    state.origin = `https://127.0.0.1:${state.server.address().port}`;
+  }
+  const results = [];
   try {
     for (const mode of ["brain-only", "workspace"]) {
+      const { origin, credential } = fixtures[mode];
       const home = path.join(root, mode);
       fs.mkdirSync(home, { mode: 0o700 });
       prepareProfile(ctx, home);
@@ -137,7 +146,7 @@ export async function profileHostJourney(ctx, install) {
         HOME: home,
         USERPROFILE: home,
         AIOS_CONFIG_DIR: path.join(home, "config"),
-        PROFILE_KEY: SENTINELS.aiosKey,
+        PROFILE_KEY: credential,
         NODE_EXTRA_CA_CERTS: cert,
       });
       const register = [
@@ -182,7 +191,7 @@ export async function profileHostJourney(ctx, install) {
           home,
           project: workspace,
           profileId: "selected",
-          hosts: ["cursor"],
+          hosts: ["claude-desktop", "claude-code", "codex", "cursor"],
           artifactInput: { ...artifact, tarball: undefined },
           tarball,
         }),
@@ -197,6 +206,7 @@ export async function profileHostJourney(ctx, install) {
       const records = JSON.parse(
         fs.readFileSync(path.join(home, ".aios", "mcp-installations.json"))
       );
+      assert.equal(records.installations.length, 4, "all four host formats installed and verified");
       const entry = records.installations[0].entry;
       assert.ok(!JSON.stringify(entry).includes(ctx.checkoutRoot));
       assert.ok(entry.args.includes("--profile"));
@@ -235,7 +245,14 @@ export async function profileHostJourney(ctx, install) {
           processList: path.join(home, "processes.json"),
           processLog: path.join(home, "process-log.json"),
         },
-        ["mcp", "uninstall", "--host", "cursor"],
+        [
+          "mcp",
+          "uninstall",
+          "--host",
+          "claude-desktop,claude-code,codex,cursor",
+          "--project",
+          workspace,
+        ],
         {
           home,
           cwd: neutral,
@@ -256,8 +273,10 @@ export async function profileHostJourney(ctx, install) {
       });
     }
   } finally {
-    server.closeAllConnections();
-    await new Promise((resolve) => server.close(resolve));
+    for (const { server } of Object.values(fixtures)) {
+      server.closeAllConnections();
+      await new Promise((resolve) => server.close(resolve));
+    }
   }
   ctx.record("mcp-profile-installed-journeys", results);
   return results;

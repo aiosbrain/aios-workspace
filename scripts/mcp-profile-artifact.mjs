@@ -198,7 +198,7 @@ export async function prepareProfileArtifact({
   fs.mkdirSync(parent, { recursive: true, mode: 0o700 });
   const stage = path.join(parent, `.prepare-${randomUUID()}`);
   fs.mkdirSync(stage, { mode: 0o700 });
-  policy.secure(stage);
+  if (policy.platform === "win32") policy.secure(stage);
   const stageIdentity = fs.lstatSync(stage);
   try {
     if (mode === "brain-only") {

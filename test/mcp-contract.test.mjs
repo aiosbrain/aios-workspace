@@ -83,7 +83,7 @@ test("configuration preserves workspace, dotenv and environment compatibility wi
     );
     assert.deepEqual(
       JSON.parse(output).result.tools.map((t) => t.name),
-      ["aios_loop_collect"]
+      [] // Unbound cwd collection remains unavailable until profile-bounded operations land.
     );
   } finally {
     rmSync(dir, { recursive: true, force: true });
