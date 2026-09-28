@@ -5,8 +5,11 @@ import {
   migrateProfiles,
 } from "./mcp-profile-setup.mjs";
 import { inspectProfile } from "./mcp-profile-binding.mjs";
-import { GRANTS, ProfileError, emptyGrants } from "./cli/connection-profiles.mjs";
-import { AiosError } from "./cli/errors.mjs";
+import { GRANTS, ProfileError, emptyGrants } from "./mcp-profile-schema.mjs";
+import { AiosError } from "./command-errors.mjs";
+import os from "node:os";
+import { prepareProfileArtifact } from "./mcp-profile-artifact.mjs";
+import { filePolicy } from "./mcp-host-files.mjs";
 import { workspaceProfileCredential } from "./mcp-profile-workspace-credentials.mjs";
 export async function cmdMcpProfile(args, options = {}) {
   const [action, ...rest] = args;
@@ -122,6 +125,14 @@ export async function chooseProfileSetup(options = {}) {
   for (const key of grants) input.grants[key] = true;
   const setupOptions = { workspaceCredential: workspaceProfileCredential, ...options };
   const preview = await registerProfile(input, { ...setupOptions, dryRun: true });
+  await prepareProfileArtifact({
+    ...options,
+    mode,
+    profileId: input.id,
+    home: options.home || os.homedir(),
+    policy: options.policy || filePolicy(options),
+    dryRun: true,
+  });
   const confirmed = await ui.confirm({
     message: `Save ${preview.profile.id}: ${preview.profile.brainOrigin} / ${preview.profile.teamId} / ${preview.profile.projectId}${preview.profile.root ? ` / ${preview.profile.root}` : ""}; permissions: ${grants.join(", ") || "read-only Brain access"}?`,
     initialValue: false,

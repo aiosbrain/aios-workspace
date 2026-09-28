@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 import { scrubAmbientProcessEnv } from "../helpers/scrubbed-env.mjs";
 import { CellContext, findEscapingLinks } from "./lib/context.mjs";
 import { executeCell } from "./run-cell.mjs";
+import { profileHostJourney } from "./lib/journeys-mcp-profiles.mjs";
 import { mcpHostJourney } from "./lib/journeys-mcp.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
@@ -76,6 +77,7 @@ async function main() {
         actualCli: true,
       });
       await mcpHostJourney(ctx, { prefix, pkgDir, bin });
+      await profileHostJourney(ctx, { prefix, pkgDir, bin });
     },
   });
 }

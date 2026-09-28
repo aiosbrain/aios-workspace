@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { validReference, deny } from "./connection-profiles.mjs";
+import { validReference, deny } from "./mcp-profile-schema.mjs";
 
 export function parseCredentialReference(reference) {
   if (!validReference(reference))

@@ -1,18 +1,15 @@
 import { lstatSync, realpathSync, existsSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { parseUserConfig, resolveUserConfigPath } from "./cli/config-broker.mjs";
+import { parseUserConfig, resolveUserConfigPath } from "./user-config-reader.mjs";
 import {
   ProfileError,
   deny,
   effectiveGrants,
   profileFingerprint,
   validateProfiles,
-} from "./cli/connection-profiles.mjs";
-import {
-  parseCredentialReference,
-  resolveCredentialReference,
-} from "./cli/credential-reference.mjs";
+} from "./mcp-profile-schema.mjs";
+import { parseCredentialReference, resolveCredentialReference } from "./mcp-profile-reference.mjs";
 import { readPrivateDocument } from "./mcp-credentials.mjs";
 
 export function profilePaths(options = {}) {

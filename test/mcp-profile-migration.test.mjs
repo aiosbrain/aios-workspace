@@ -7,7 +7,7 @@ import {
   emptyGrants,
   effectiveGrants,
   nextGeneration,
-} from "../scripts/cli/connection-profiles.mjs";
+} from "../scripts/mcp-profile-schema.mjs";
 const profile = () => ({
   id: "demo",
   mode: "brain-only",

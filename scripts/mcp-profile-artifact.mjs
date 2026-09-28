@@ -4,7 +4,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { gunzipSync } from "node:zlib";
 import { execFileSync } from "node:child_process";
 import * as pins from "./mcp-hosts.mjs";
-import { deny } from "./cli/connection-profiles.mjs";
+import { deny } from "./mcp-profile-schema.mjs";
 import { resolveDistributionRoot } from "./distribution-root.mjs";
 import { verifyProfileArtifactReceipt } from "./mcp-artifact-receipt.mjs";
 const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
@@ -23,11 +23,10 @@ const STANDALONE_FILES = [
     "scripts/flat-yaml.mjs",
     "scripts/mcp-profile-binding.mjs",
     "scripts/mcp-artifact-receipt.mjs",
-    "scripts/cli/connection-profiles.mjs",
-    "scripts/cli/credential-reference.mjs",
-    "scripts/cli/config-broker.mjs",
-    "scripts/cli/atomic-file.mjs",
-    "scripts/cli/errors.mjs",
+    "scripts/mcp-profile-schema.mjs",
+    "scripts/mcp-profile-reference.mjs",
+    "scripts/user-config-reader.mjs",
+    "scripts/command-errors.mjs",
     "packages/mcp-core/index.mjs",
     "packages/mcp-core/capabilities.mjs",
     "packages/foundation/src/brain-client.mjs",
@@ -220,9 +219,15 @@ export async function prepareProfileArtifact({
         npm_config_engine_strict: "true",
         npm_config_registry: "https://registry.npmjs.org",
         npm_config_userconfig: config,
-        npm_config_globalconfig: config,
+        npm_config_globalconfig: path.join(stage, "global-npmrc"),
         npm_config_cache: path.join(stage, "cache"),
       };
+      if (process.platform === "win32") {
+        env.APPDATA = path.join(stage, "AppData", "Roaming");
+        env.LOCALAPPDATA = path.join(stage, "AppData", "Local");
+        fs.mkdirSync(env.APPDATA, { recursive: true });
+        fs.mkdirSync(env.LOCALAPPDATA, { recursive: true });
+      }
       for (const key of [
         "SystemRoot",
         "WINDIR",

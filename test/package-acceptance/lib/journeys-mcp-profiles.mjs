@@ -5,7 +5,8 @@ import path from "node:path";
 import { createServer } from "node:https";
 import { spawn } from "node:child_process";
 import { pathToFileURL } from "node:url";
-import { prepareProfile } from "./mcp-support.mjs";
+import { SENTINELS } from "./context.mjs";
+import { prepareProfile, cli } from "./mcp-support.mjs";
 
 async function child(ctx, args, env, cwd, label) {
   const started = Date.now();
@@ -57,8 +58,18 @@ function session(command, env, cwd) {
       throw new Error("Profile server response deadline");
     },
     async close() {
-      process_.stdin.end();
-      await new Promise((resolve) => process_.once("close", resolve));
+      if (process_.exitCode !== null) return;
+      await new Promise((resolve, reject) => {
+        const timer = setTimeout(() => {
+          process_.kill("SIGKILL");
+          reject(new Error("Profile server did not stop"));
+        }, 5000);
+        process_.once("close", () => {
+          clearTimeout(timer);
+          resolve();
+        });
+        process_.stdin.end();
+      });
     },
     kill() {
       process_.kill();
@@ -98,7 +109,7 @@ export async function profileHostJourney(ctx, install) {
       requests.push(request.url);
       request.resume();
       request.on("end", () => {
-        const authorized = request.headers.authorization === "Bearer synthetic-profile-key";
+        const authorized = request.headers.authorization === `Bearer ${SENTINELS.aiosKey}`;
         const body =
           request.url === "/api/v1/me"
             ? { actor: "synthetic-member", team: "synthetic-team", role: "member", tier: "team" }
@@ -126,7 +137,7 @@ export async function profileHostJourney(ctx, install) {
         HOME: home,
         USERPROFILE: home,
         AIOS_CONFIG_DIR: path.join(home, "config"),
-        PROFILE_KEY: "synthetic-profile-key",
+        PROFILE_KEY: SENTINELS.aiosKey,
         NODE_EXTRA_CA_CERTS: cert,
       });
       const register = [
@@ -217,12 +228,21 @@ export async function profileHostJourney(ctx, install) {
         await live.close();
       }
       // Public uninstall exercises ownership but leaves the revoked profile and its epoch intact.
-      await child(
+      cli(
         ctx,
-        [install.bin, "mcp", "uninstall", "--host", "cursor"],
-        env,
-        neutral,
-        `profile-uninstall-${mode}`
+        {
+          entry: install.bin,
+          processList: path.join(home, "processes.json"),
+          processLog: path.join(home, "process-log.json"),
+        },
+        ["mcp", "uninstall", "--host", "cursor"],
+        {
+          home,
+          cwd: neutral,
+          env,
+          processes: [],
+          label: `profile-uninstall-${mode}`,
+        }
       );
       const after = JSON.parse(fs.readFileSync(path.join(home, ".aios", "mcp-installations.json")));
       assert.equal(after.profileEpochs.selected.revoked, true);

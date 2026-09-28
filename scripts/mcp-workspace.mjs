@@ -1,5 +1,5 @@
 // The former cwd-based collector is unavailable until profile-bounded collection is installed.
-import { ProfileError } from "./cli/connection-profiles.mjs";
+import { ProfileError } from "./mcp-profile-schema.mjs";
 export async function workspaceHandler() {
   throw new ProfileError(
     "CAPABILITY_DENIED",

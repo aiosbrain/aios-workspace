@@ -124,6 +124,10 @@ async function runMcpHost(args, options) {
       console.log("MCP setup skipped.");
       return 0;
     }
+    if (dryRun) {
+      console.log(JSON.stringify(selected.preview, null, 2));
+      return 0;
+    }
     options = { ...options, profileId: selected.profileId };
   }
   if (!hosts.length) {

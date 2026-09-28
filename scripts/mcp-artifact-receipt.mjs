@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { readFileSync, lstatSync, realpathSync } from "node:fs";
 import path from "node:path";
 import { readPrivateDocument } from "./mcp-credentials.mjs";
-import { deny } from "./cli/connection-profiles.mjs";
+import { deny } from "./mcp-profile-schema.mjs";
 export function verifyProfileArtifactReceipt(file, options = {}) {
   try {
     const receipt = readPrivateDocument(file, options);

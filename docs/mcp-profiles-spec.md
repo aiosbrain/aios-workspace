@@ -121,8 +121,8 @@ Additional existing surfaces exclusively delegated to this lane by coordinator (
 
 New bounded modules/tests:
 
-- `scripts/cli/connection-profiles.mjs` — schema semantics and pure migration/update generation.
-- `scripts/cli/credential-reference.mjs` — builtin-only selected-reference logic.
+- `scripts/mcp-profile-schema.mjs` — schema semantics and pure migration/update generation.
+- `scripts/mcp-profile-reference.mjs` — builtin-only selected-reference logic.
 - `scripts/mcp-profile-binding.mjs` — read-only resolution/authorization/status reusable by runtime and later operations.
 - New file: `scripts/mcp-profile-setup.mjs` — registration/update/revoke orchestration with existing transaction primitives.
 - `scripts/mcp-profile-workspace-credentials.mjs` — toolkit-only scoped encrypted-key adapter, excluded from standalone.

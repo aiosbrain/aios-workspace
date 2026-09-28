@@ -5,7 +5,7 @@ import {
   authorizeProfileCall,
   validateProfileDestination,
 } from "./mcp-profile-binding.mjs";
-import { ProfileError } from "./cli/connection-profiles.mjs";
+import { ProfileError } from "./mcp-profile-schema.mjs";
 import { createBrainClient } from "./brain-client.mjs";
 import {
   TOOLS,
@@ -71,13 +71,27 @@ export function startMcp(
               readOnly: selected.readOnly,
             });
             const current = loadProfileBinding(binding.profile.id, profileOptions);
+            const guardedFetch = (url, options) => {
+              authorizeProfileCall(binding, profileOptions);
+              const latest = loadProfileBinding(binding.profile.id, profileOptions);
+              if (latest.config.api_key !== current.config.api_key)
+                throw new ProfileError(
+                  "AUTH_REVOKED",
+                  "The selected credential changed. Retry the request."
+                );
+              return doFetch(url, options);
+            };
             // A successful old startup probe is never current identity evidence.
             const identity = await validateProfileDestination(
               current.profile,
               current.config.api_key,
-              doFetch
+              guardedFetch
             );
-            const currentClient = createBrainClient(current.config, deps);
+            authorizeProfileCall(binding, profileOptions);
+            const currentClient = createBrainClient(current.config, {
+              ...deps,
+              fetch: guardedFetch,
+            });
             const currentTools = selectTools(TOOLS, {
               surface,
               tier: identity.tier,

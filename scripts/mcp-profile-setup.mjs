@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { filePolicy, commitHostFiles } from "./mcp-host-files.mjs";
-import { parseUserConfig } from "./cli/config-broker.mjs";
+import { parseUserConfig } from "./user-config-reader.mjs";
 import {
   PROFILE_ID,
   PROFILE_VERSION,
@@ -14,8 +14,8 @@ import {
   prepareProfileMigration,
   validReference,
   deny,
-} from "./cli/connection-profiles.mjs";
-import { resolveCredentialReference } from "./cli/credential-reference.mjs";
+} from "./mcp-profile-schema.mjs";
+import { resolveCredentialReference } from "./mcp-profile-reference.mjs";
 import {
   profilePaths,
   readProfileState,
