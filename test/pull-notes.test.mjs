@@ -89,3 +89,12 @@ for (const item of [
     assert.throws(() => renderPulledNote(item, pulledAt), TypeError);
   });
 }
+
+test("escapes Unicode YAML line breaks while preserving accepted title codepoints", () => {
+  const title = "NEL\u0085LS\u2028PS\u2029end";
+  const output = renderPulledNote(note({ frontmatter: { title } }), pulledAt);
+  assert.equal(splitProjection(output).fields.title, title);
+  assert.equal(output.includes("\u0085"), false);
+  assert.equal(output.includes("\u2028"), false);
+  assert.equal(output.includes("\u2029"), false);
+});

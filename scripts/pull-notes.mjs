@@ -30,7 +30,10 @@ export function renderPulledNote(item, pulledAt) {
     [
       "---",
       "from_brain: true",
-      ...Object.entries(metadata).map(([key, value]) => `${key}: ${JSON.stringify(value)}`),
+      ...Object.entries(metadata).map(
+        ([key, value]) =>
+          `${key}: ${JSON.stringify(value).replace(/[\u0085\u2028\u2029]/gu, (character) => `\\u${character.charCodeAt(0).toString(16).padStart(4, "0")}`)}`
+      ),
       "---",
       "",
     ].join("\n") + item.body
