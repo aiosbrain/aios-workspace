@@ -75,8 +75,18 @@ export type DecisionTableLine =
   | { index: number; kind: "other" }
   | { index: number; kind: "separator"; schema: DecisionTableSchema | null }
   | { index: number; kind: "header"; cells: string[]; schema: DecisionTableSchema }
-  | { index: number; kind: "row"; cells: string[]; schema: DecisionTableSchema; row: DecisionRow | null; endsTable?: boolean };
-export function classifyDecisionTableLines(body: string, fallbackAudience?: string | null): DecisionTableLine[];
+  | {
+      index: number;
+      kind: "row";
+      cells: string[];
+      schema: DecisionTableSchema;
+      row: DecisionRow | null;
+      endsTable?: boolean;
+    };
+export function classifyDecisionTableLines(
+  body: string,
+  fallbackAudience?: string | null
+): DecisionTableLine[];
 export function parseDecisionRows(body: string): DecisionRow[];
 
 export const DECISION_CELL_MARKER: string;
