@@ -1,3 +1,4 @@
+import { fixtureOwner } from "./lib/mcp-host-fixture.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -53,6 +54,8 @@ test("launch receipt rejects changed installed entrypoint and escaping file refe
   };
   const file = path.join(root, "receipt.json");
   fs.writeFileSync(file, JSON.stringify(receipt), { mode: 0o600 });
+  for (const target of [root, ...Object.keys(files).map((name) => path.join(root, name)), file])
+    fixtureOwner(target);
   assert.equal(verifyProfileArtifactReceipt(file).packageVersion, "0.2.1");
   fs.writeFileSync(path.join(root, "entry.mjs"), "changed");
   assert.throws(() => verifyProfileArtifactReceipt(file), { code: "UNAVAILABLE" });

@@ -28,7 +28,8 @@ async function locked(options, task) {
   const paths = profilePaths(options),
     policy = options.policy || filePolicy(options);
   policy.snapshot(paths.lock, { privateFile: true });
-  fs.mkdirSync(path.dirname(paths.lock), { recursive: true, mode: 0o700 });
+  const created = fs.mkdirSync(path.dirname(paths.lock), { recursive: true, mode: 0o700 });
+  if (created && policy.platform === "win32") policy.secure(path.dirname(paths.lock));
   let fd;
   try {
     fd = fs.openSync(

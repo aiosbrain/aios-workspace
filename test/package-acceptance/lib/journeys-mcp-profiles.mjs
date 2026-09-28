@@ -8,6 +8,15 @@ import { pathToFileURL } from "node:url";
 import { SENTINELS } from "./context.mjs";
 import { prepareProfile, cli, KEYS } from "./mcp-support.mjs";
 
+export function profileAcceptanceHosts(platform = process.platform) {
+  return [
+    ...(["darwin", "win32"].includes(platform) ? ["claude-desktop"] : []),
+    "claude-code",
+    "codex",
+    "cursor",
+  ];
+}
+
 async function child(ctx, args, env, cwd, label) {
   const started = Date.now();
   const result = await new Promise((resolve, reject) => {
@@ -132,6 +141,7 @@ export async function profileHostJourney(ctx, install) {
     state.origin = `https://127.0.0.1:${state.server.address().port}`;
   }
   const results = [];
+  const hosts = profileAcceptanceHosts();
   try {
     for (const mode of ["brain-only", "workspace"]) {
       const { origin, credential } = fixtures[mode];
@@ -191,7 +201,7 @@ export async function profileHostJourney(ctx, install) {
           home,
           project: workspace,
           profileId: "selected",
-          hosts: ["claude-desktop", "claude-code", "codex", "cursor"],
+          hosts,
           artifactInput: { ...artifact, tarball: undefined },
           tarball,
         }),
@@ -206,7 +216,11 @@ export async function profileHostJourney(ctx, install) {
       const records = JSON.parse(
         fs.readFileSync(path.join(home, ".aios", "mcp-installations.json"))
       );
-      assert.equal(records.installations.length, 4, "all four host formats installed and verified");
+      assert.deepEqual(
+        records.installations.map((row) => row.host).sort(),
+        [...hosts].sort(),
+        "every supported native host installed and verified"
+      );
       const entry = records.installations[0].entry;
       assert.ok(!JSON.stringify(entry).includes(ctx.checkoutRoot));
       assert.ok(entry.args.includes("--profile"));
@@ -245,14 +259,7 @@ export async function profileHostJourney(ctx, install) {
           processList: path.join(home, "processes.json"),
           processLog: path.join(home, "process-log.json"),
         },
-        [
-          "mcp",
-          "uninstall",
-          "--host",
-          "claude-desktop,claude-code,codex,cursor",
-          "--project",
-          workspace,
-        ],
+        ["mcp", "uninstall", "--host", hosts.join(","), "--project", workspace],
         {
           home,
           cwd: neutral,
@@ -265,6 +272,7 @@ export async function profileHostJourney(ctx, install) {
       assert.equal(after.profileEpochs.selected.revoked, true);
       results.push({
         mode,
+        hosts,
         artifactIntegrity: artifact.integrity,
         recordedCommand: true,
         identityVerified: true,

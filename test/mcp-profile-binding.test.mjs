@@ -1,3 +1,4 @@
+import { fixtureOwner } from "./lib/mcp-host-fixture.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -12,6 +13,7 @@ import { loadProfileBinding, authorizeProfileCall } from "../scripts/mcp-profile
 test("live list and old reads/status reload selected profile and never use stale client", async (t) => {
   const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "profile-runtime-")));
   t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  fixtureOwner(home);
   const env = {
     AIOS_CONFIG_DIR: path.join(home, "config"),
     KEY: "sentinel_a",
@@ -93,6 +95,7 @@ test("live list and old reads/status reload selected profile and never use stale
 test("two roots and Brains isolate tuple, cross-selection, readonly and removal", async (t) => {
   const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "profile-isolation-")));
   t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  fixtureOwner(home);
   const env = {
     AIOS_CONFIG_DIR: path.join(home, "config"),
     ONE: "one",

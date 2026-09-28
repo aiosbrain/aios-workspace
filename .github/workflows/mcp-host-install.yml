@@ -2,12 +2,26 @@ name: MCP host installation safety
 on:
   pull_request:
     paths:
-      - scripts/mcp-host*.mjs
+      - scripts/mcp-*.mjs
+      - scripts/brain-mcp.mjs
+      - scripts/brain-client.mjs
+      - scripts/flat-yaml.mjs
+      - scripts/distribution-root.mjs
+      - scripts/user-config-reader.mjs
+      - scripts/command-errors.mjs
+      - scripts/cli/config-broker.mjs
+      - scripts/cli/errors.mjs
+      - packages/mcp-build/**
+      - packages/mcp/**
+      - packages/mcp-core/**
+      - packages/foundation/src/**
       - scripts/cli/registry.mjs
       - scripts/onboard-command.mjs
       - scripts/onboard-inspect.mjs
       - scripts/mcp-credentials.mjs
       - test/mcp-host*.test.mjs
+      - test/mcp-profile*.test.mjs
+      - test/mcp-credentials.test.mjs
       - test/lib/mcp-host-fixture.mjs
       - package.json
       - package-lock.json
@@ -34,4 +48,11 @@ jobs:
       - run: npm ci --ignore-scripts
       # Windows ACL fixtures launch PowerShell repeatedly. Avoid competing test-file
       # workers exhausting the published server's bounded credential-probe startup.
-      - run: node --test --test-concurrency=1 test/mcp-host-install.test.mjs test/mcp-host-atomic.test.mjs test/mcp-host-verify.test.mjs test/mcp-host-cli.test.mjs
+      - name: Run native installer and profile lifecycle safety tests
+        run: >
+          node --test --test-concurrency=1
+          test/mcp-host-install.test.mjs test/mcp-host-atomic.test.mjs
+          test/mcp-host-verify.test.mjs test/mcp-host-cli.test.mjs
+          test/mcp-credentials.test.mjs test/mcp-profile-migration.test.mjs
+          test/mcp-profile-binding.test.mjs test/mcp-profile-lifecycle.test.mjs
+          test/mcp-profile-artifact.test.mjs

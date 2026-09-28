@@ -1,3 +1,4 @@
+import { fixtureOwner } from "./lib/mcp-host-fixture.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -14,6 +15,7 @@ const key = "SENTINEL_profile_secret_not_for_output";
 function fixture(t) {
   const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "profile-test-")));
   t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  fixtureOwner(home);
   const options = {
     home,
     env: { AIOS_CONFIG_DIR: path.join(home, "config"), KEY: key },
@@ -290,4 +292,29 @@ test("shared-source changes and partial revokes cannot reauthorize stale restore
   assert.deepEqual(fs.readFileSync(paths.records), records);
   await revokeProfile("second", undefined, options);
   assert.throws(() => loadProfileBinding("second", options), { code: "PROFILE_CHANGED" });
+});
+
+test("Windows setup secures a newly created authority directory without changing an existing one", async (t) => {
+  const { home, options, input } = fixture(t);
+  const secured = [];
+  const policy = {
+    platform: "win32",
+    snapshot() {},
+    secure(file) {
+      secured.push(file);
+    },
+  };
+  const invalid = { ...input, id: "invalid id" };
+  await assert.rejects(registerProfile(invalid, { ...options, policy }), {
+    code: "INVALID_PROFILE",
+  });
+  assert.deepEqual(secured, [
+    path.join(home, ".aios"),
+    path.join(home, ".aios", "mcp-profile.lock"),
+  ]);
+  secured.length = 0;
+  await assert.rejects(registerProfile(invalid, { ...options, policy }), {
+    code: "INVALID_PROFILE",
+  });
+  assert.deepEqual(secured, [path.join(home, ".aios", "mcp-profile.lock")]);
 });

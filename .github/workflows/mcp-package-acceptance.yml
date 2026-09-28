@@ -8,6 +8,8 @@ on:
       - "scripts/mcp-*.mjs"
       - "scripts/brain-client.mjs"
       - "scripts/flat-yaml.mjs"
+      - "scripts/user-config-reader.mjs"
+      - "scripts/command-errors.mjs"
       - "packages/mcp-build/build.mjs"
       - "packages/mcp-build/pack.mjs"
       - "test/mcp-package/**"
