@@ -61,3 +61,7 @@ export interface DecisionRow {
 }
 
 export function parseDecisionRows(body: string): DecisionRow[];
+
+export const DECISION_CELL_MARKER: string;
+export function encodeTableCell(value: unknown): string;
+export function decodeTableCell(value: string): string;

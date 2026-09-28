@@ -1,3 +1,4 @@
+import { mergeDecisionWriteback } from "./pull-decisions.mjs";
 import { createPresenter } from "./ui.mjs";
 import { isDistributionRoot } from "./cli.mjs";
 /**
@@ -861,16 +862,9 @@ async function cmdPull(repo, cfg, args = [], { onProgress } = {}) {
       let content = readFileSync(decPath, "utf8");
       for (const group of decRes.decisions) {
         if (group.project !== cfg.project) continue;
-        for (const row of group.rows || []) {
-          const line = `| ${row.row_key} | ${row.decided_at || ""} | ${row.title} | ${row.rationale || ""} | ${row.decided_by || ""} | ${row.impact || ""} | ${row.tier ?? ""} | ${row.audience || ""} |`;
-          const re = new RegExp(
-            `^\\|\\s*${row.row_key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*\\|.*$`,
-            "m"
-          );
-          if (re.test(content)) content = content.replace(re, line);
-          else content = content.trimEnd() + "\n" + line + "\n";
-          mergedDecisions++;
-        }
+        const rows = group.rows || [];
+        content = mergeDecisionWriteback(content, rows);
+        mergedDecisions += rows.length;
       }
       writeFileSync(decPath, content);
     }

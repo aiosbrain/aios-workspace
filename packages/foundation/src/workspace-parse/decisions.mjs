@@ -1,3 +1,4 @@
+import { DECISION_CELL_MARKER, decodeTableCell } from "./table-cell.mjs";
 // Decision-table scanning + H3 row redaction, split from core.mjs purely to satisfy the
 // repo file-size gate (scripts/size-caps.json defaultCap) when workspace-parse moved into
 // @aiosbrain/foundation (AIO-601). Same module surface: ./index.mjs re-exports both halves.
@@ -83,6 +84,7 @@ function decisionTableSchema(cells) {
 // (e.g. from a stray unescaped pipe) → null (dropped). A present-but-blank audience cell → "admin".
 function parseDecisionRow(cells, schema) {
   if (!schema.valid || cells.length !== schema.columnCount) return null;
+  if (schema.encoded) cells = cells.map(decodeTableCell);
   const idx = (name) => schema.header.findIndex((c) => c.startsWith(name));
   const audienceCell = schema.audienceIdx >= 0 ? cells[schema.audienceIdx]?.trim() : null;
   // AIO-524: `decided_at` writes straight into a Postgres `date` column (`decisions.decided_at
@@ -138,7 +140,7 @@ function scanDecisionTables(body, fallbackAudience = null) {
       if (isTableSeparatorLine(line)) return true; // keep separators
 
       const cells = parseTableRows(trimmed.startsWith("|") ? line : `|${line}`)[0] || [];
-      const candidate = decisionTableSchema(cells);
+      const candidate = { ...decisionTableSchema(cells), encoded: lines[index - 1]?.trim() === DECISION_CELL_MARKER };
       const isLegacyDecisionHeader =
         candidate.isDecision &&
         candidate.header.every((cell) => DECISION_HEADER_CELLS.has(cell)) &&
