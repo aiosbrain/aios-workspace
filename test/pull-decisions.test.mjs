@@ -41,3 +41,30 @@ test('a legacy table missing optional columns gains complete decision content', 
   const old = '| # | Decision | Audience |\n| --- | --- | --- |\n| ui-one | Old | team |\n';
   assert.deepEqual(parseDecisionRows(mergeDecisionWriteback(old, [row()])), [row()]);
 });
+
+test('pull never repairs malformed restricted rows into publishable rows', () => {
+  for (const local of [
+    '| local | | Secret | synthetic-private-sentinel | actor | | | team | private |',
+    '| local | | Secret | synthetic-private-sentinel | actor | | |',
+  ]) {
+    const before = header+'\n'+local+'\n';
+    assert.ok(!redactAdminDecisionRows(before).body.includes('synthetic-private-sentinel'));
+    const after = mergeDecisionWriteback(before, [row()]);
+    assert.ok(!redactAdminDecisionRows(after).body.includes('synthetic-private-sentinel'));
+    assert.deepEqual(parseDecisionRows(after), [row()]);
+  }
+});
+test('blank-separated local continuation uses the same encoding once', () => {
+  const content = header+'\n| old | | Literal | &#124; &amp; | actor | | | team |\n\n| continuation | | Literal | &#124; &amp; | actor | | | team |\n';
+  const result = mergeDecisionWriteback(content, [row()]);
+  for (const key of ['old', 'continuation']) {
+    assert.equal(parseDecisionRows(result).find(r => r.row_key === key).rationale, '&#124; &amp;');
+  }
+  assert.equal(mergeDecisionWriteback(result, [row()]), result);
+});
+test('adjacent unrelated tables retain every byte and column', () => {
+  const other = '| Task | Status |\n| --- | --- |\n| literal &#124; | active |\n';
+  const before = header+'\n| old | | Legacy | because | actor | | | team |\n'+other;
+  const result = mergeDecisionWriteback(before, [row()]);
+  assert.ok(result.endsWith(other));
+});

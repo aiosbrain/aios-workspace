@@ -29,20 +29,27 @@ export function mergeDecisionWriteback(content, rows) {
     }
     const marked = output.at(-1)?.trim() === MARKER;
     if (marked) output.pop();
+    const originalWidth = header.length;
     const missing = COLUMNS.filter(column => !normalized.includes(column));
     header.push(...missing);
     normalized.push(...missing);
     output.push(MARKER, missing.length ? render(header) : lines[index],
       missing.length ? '| '+header.map(() => '---').join(' | ')+' |' : lines[index + 1]);
     index++;
-    while (index + 1 < lines.length && tableLine(lines[index + 1])) {
+    while (index + 1 < lines.length && (tableLine(lines[index + 1]) || !lines[index + 1].trim())) {
+      if (!lines[index + 1].trim()) { output.push(lines[++index]); continue; }
       const nextHeader = parseTableRows(lines[index + 1])[0]?.map(cell => cell.toLowerCase());
-      if (nextHeader?.includes('decision') && nextHeader.includes('#') && separator(lines[index + 2] ?? '')) break;
+      if (nextHeader && separator(lines[index + 2] ?? '')) break;
       const originalLine = lines[++index];
       if (separator(originalLine)) { output.push(originalLine); continue; }
       let cells = parseTableRows(originalLine)[0];
       if (!cells) { output.push(originalLine); continue; }
       if (marked) cells = cells.map(decodeTableCell);
+      // Preserve malformed width: repairing it can turn a withheld private row into public data.
+      if (cells.length !== originalWidth) {
+        output.push(render([...cells, ...missing.map(() => '')]));
+        continue;
+      }
       const key = cells[normalized.indexOf('#')];
       const incomingRow = incoming.get(key);
       if (incomingRow) {
