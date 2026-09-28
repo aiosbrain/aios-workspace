@@ -1,6 +1,6 @@
 # AIOS Team Brain — API Contract
 
-**Version: 1.27** is the pinned member-facing Brain API (`/api/v1`). **Document revision: 1.29**
+**Version: 1.28** is the pinned member-facing Brain API (`/api/v1`). **Document revision: 1.30**
 also carries the separately negotiated internal Executor gateway contract **1.10**; it does not
 claim unimplemented member-facing v1.10 routes. This document is the single pinned contract between the
 contributor repo (this toolkit's `aios` CLI) and the `aios-team-brain` service. Both
@@ -28,6 +28,7 @@ superseded **explicitly** (never rewritten in place), and the endpoint section t
 carries the coordinated rollback procedure.
 
 *Revisions (additive within v1):*
+- *2026-09-28 — **v1.28**, document revision **1.30**: records the implemented, disabled-by-default governed action submit and owner-status routes. No domain action consumer is enabled or advertised, and this contract does not claim production availability. The legacy action route, scanner payload 1.25 and gateway 1.10 are unchanged.*
 - *2026-09-10 — document revision **1.28** (AIO-1101): records the implemented Team Brain intake endpoint at commit `87be1293dd8338dde953020c757bad336f2da9b4`. Availability still requires verified deployment and activation in each target environment; this editorial status update makes no production availability claim. Member API 1.26, scanner payload 1.25 and gateway 1.10 are unchanged.*
 - *2026-09-10 — **v1.26**, document revision **1.27** (AIO-1101): reserves append-only debt intake events. Contract only; endpoint/storage/publisher remain future increments. Codebase payload stays pinned at 1.25 and gateway at 1.10.*
 - *2026-09-09 — **v1.25**, document revision **1.26** (AIO-1095): defines optional
@@ -627,6 +628,10 @@ All errors:
 ```json
 { "error": { "code": "string", "message": "human-readable", "request_id": "uuid" } }
 ```
+
+The governed action submit/status routes below use their own closed error envelope:
+`{"error":{"code":"string","message":"string","retryable":false,"recovery":"string"}}`.
+They do not emit `request_id` in that envelope.
 
 Codes: `unauthorized` (401), `forbidden_tier` (422, admin content or managed-gateway tier
 violation), `forbidden_role`
@@ -2524,6 +2529,47 @@ actor/tier, never inherited from the caller's own dashboard role).
 
 **Errors:** `401` invalid key/team; `422 invalid_payload` malformed request; `403` denied by
 policy; `429` rate-limited. **Rate limit:** 60/min per key.
+
+---
+
+## Governed action foundation (member API 1.28)
+
+`POST /api/v1/actions/submit` and `GET /api/v1/actions/{action_id}` are separate from
+the legacy `/api/v1/actions` route. They accept member API keys, reject delegated read
+credentials, and return `Cache-Control: no-store`. The submit body is capped at 256 KiB
+and must be UTF-8 JSON with no unknown fields. Every request names
+`contract_version: "mcp-next/1"`, a `destination: {"project_id":"<uuid>"}` and one
+of `note.append`, `task.create`, `task.update`, or `decision.record`. The caller cannot
+supply actor, team, policy resource or credential fields.
+
+The `params` for `note.append` are nonblank `title` (at most 200 Unicode code points)
+and `body` (at most 25,000). `task.create` requires an opaque `operation_id`, title,
+nullable assignee, task status and nullable real-calendar `due` date. `task.update`
+requires the operation ID, destination task ID, expected revision and at least one
+changed task field. `decision.record` requires the operation ID, title, rationale
+and impact. The full closed validation and result shapes are enforced by the Brain
+route; this toolkit has no caller for these operations.
+
+Submit records a durable action identity and audit reference before execution. A
+replay of the same canonical operation returns its stored result; reusing an
+operation ID for different input returns `409 operation_id_conflict`. Authorized
+status reads are limited to the initiating member with current project access,
+including when the capability is disabled. Unknown or inaccessible actions and
+destinations return indistinguishable `404 not_found`. Status returns `200` with
+`contract_version`, `action_id`, `audit_ref` and a state: `requested`, `running`,
+`pending_approval`, `succeeded`, `denied`, `conflict` or `failed`. Success includes
+entity identity/revision and separate provider sync state; pending approval includes
+an approval request ID; terminal non-success includes a typed error. Submit maps
+success to `200`, requested/running/approval to `202`, denial to `403`, conflict to
+`409` and failure to `422`. Both routes use the closed error envelope above;
+transient service failures return retryable `503 unavailable` with `Retry-After`.
+
+The production consumer registry is empty in this foundation increment. New
+submission therefore returns `503 capability_unavailable` without creating an
+action, while already stored status remains readable. Neither route advertises or
+executes a note, task or decision consumer until separately reviewed increments
+register and enable one. A client must treat an absent capability or older Brain's
+`404` as unavailable; it must not fall back to the legacy action route for writes.
 
 ---
 
