@@ -95,7 +95,7 @@ try {
   globalThis.fetch = async (url) =>
     new URL(url).pathname.endsWith("/items")
       ? response({
-          items: [{ project: "other", path: "second.md", body: "# Second", access: "team" }],
+          items: [{ project: "other", path: "second.md", kind: "artifact", body: "# Second", access: "team" }],
         })
       : response({ error: "fixture auth failure" }, 403);
   await assert.rejects(cmdPull(root, cfg), /403/);
