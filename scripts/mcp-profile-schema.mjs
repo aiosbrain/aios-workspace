@@ -86,6 +86,8 @@ export function validateProfile(profile) {
   ];
   if (
     !exact(profile, keys) ||
+    typeof profile.id !== "string" ||
+    typeof profile.credentialSource !== "string" ||
     !PROFILE_ID.test(profile.id) ||
     !PROFILE_ID.test(profile.credentialSource) ||
     !["brain-only", "workspace"].includes(profile.mode) ||

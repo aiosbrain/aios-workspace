@@ -82,3 +82,23 @@ test("each-grant-independent and readonly overrides every mutation grant", () =>
   );
   assert.throws(() => nextGeneration(2147483647), { code: "PROFILE_CHANGED" });
 });
+
+test("profile identifiers and credential source names must be strings without coercion", () => {
+  for (const field of ["id", "credentialSource"]) {
+    for (const value of [123, ["valid-name"]]) {
+      assert.throws(
+        () =>
+          parseUserConfig(
+            JSON.stringify({
+              schemaVersion: 2,
+              connectionProfiles: {
+                version: "1.0.0",
+                profiles: [{ ...profile(), [field]: value }],
+              },
+            })
+          ),
+        { code: "INVALID_PROFILE" }
+      );
+    }
+  }
+});
