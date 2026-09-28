@@ -1104,6 +1104,44 @@
         "scope": "preparation",
         "generation": 3
       }
+    },
+    {
+      "name": "source-path-500-code-points",
+      "schema": "urn:aios:task-sync:1#/definitions/Request",
+      "value": {
+        "contract_version": "task-sync/1",
+        "project_id": "project-1",
+        "operation_id": "operation-1",
+        "mode": "connect",
+        "workspace_id": "00000000-0000-4000-8000-000000000001",
+        "source": {
+          "kind": "create",
+          "path": "a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a.md",
+          "access": "team",
+          "body": "| ID | Task |\n| --- | --- |",
+          "frontmatter": {},
+          "rows": []
+        }
+      }
+    },
+    {
+      "name": "source-path-500-astral-code-points",
+      "schema": "urn:aios:task-sync:1#/definitions/Request",
+      "value": {
+        "contract_version": "task-sync/1",
+        "project_id": "project-1",
+        "operation_id": "operation-1",
+        "mode": "connect",
+        "workspace_id": "00000000-0000-4000-8000-000000000001",
+        "source": {
+          "kind": "create",
+          "path": "🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀.md",
+          "access": "team",
+          "body": "| ID | Task |\n| --- | --- |",
+          "frontmatter": {},
+          "rows": []
+        }
+      }
     }
   ],
   "invalid": [
@@ -6403,6 +6441,44 @@
           ]
         },
         "rows": []
+      }
+    },
+    {
+      "name": "source-path-501-code-points",
+      "schema": "urn:aios:task-sync:1#/definitions/Request",
+      "value": {
+        "contract_version": "task-sync/1",
+        "project_id": "project-1",
+        "operation_id": "operation-1",
+        "mode": "connect",
+        "workspace_id": "00000000-0000-4000-8000-000000000001",
+        "source": {
+          "kind": "create",
+          "path": "a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/aa.md",
+          "access": "team",
+          "body": "| ID | Task |\n| --- | --- |",
+          "frontmatter": {},
+          "rows": []
+        }
+      }
+    },
+    {
+      "name": "source-path-501-astral-code-points",
+      "schema": "urn:aios:task-sync:1#/definitions/Request",
+      "value": {
+        "contract_version": "task-sync/1",
+        "project_id": "project-1",
+        "operation_id": "operation-1",
+        "mode": "connect",
+        "workspace_id": "00000000-0000-4000-8000-000000000001",
+        "source": {
+          "kind": "create",
+          "path": "🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀/🚀🚀.md",
+          "access": "team",
+          "body": "| ID | Task |\n| --- | --- |",
+          "frontmatter": {},
+          "rows": []
+        }
       }
     }
   ]
