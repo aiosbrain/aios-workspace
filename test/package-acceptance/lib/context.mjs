@@ -126,6 +126,28 @@ export class CellContext {
     return actual;
   }
 
+  /** Internal candidate input for the real installer; never a command or verifier replacement. */
+  profileArtifact(mode) {
+    this.verifyArtifactDigest();
+    const candidate = mode === "workspace" ? this.manifest : this.manifest.profileCandidate;
+    if (!candidate) throw new Error("Missing standalone candidate artifact");
+    const file =
+      mode === "workspace"
+        ? this.tarball
+        : path.join(this.artifactDir, candidate.path, candidate.tarball);
+    const bytes = readFileSync(file);
+    const integrity = `sha512-${createHash("sha512").update(bytes).digest("base64")}`;
+    if (sha256Hex(bytes) !== candidate.sha256 || integrity !== candidate.integrity)
+      throw new Error("Profile artifact digest mismatch");
+    return {
+      profileVersion: "1.0.0",
+      packageName: candidate.packageName,
+      packageVersion: candidate.packageVersion || candidate.version,
+      integrity,
+      tarball: bytes,
+    };
+  }
+
   /** Explicit allowlisted child environment (empty HOME, engine-strict, no ambient creds). */
   env(extra = {}) {
     const env = { CI: "1", NO_COLOR: "1", npm_config_engine_strict: "true" };
