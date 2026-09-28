@@ -39,6 +39,10 @@ export async function offerOnboardingMcp(
 
 export async function cmdMcpHost(args, options = {}) {
   try {
+    if (args[0] === "profile") {
+      const { cmdMcpProfile } = await import("./mcp-profile-command.mjs");
+      return cmdMcpProfile(args.slice(1), options);
+    }
     return await runMcpHost(args, options);
   } catch (error) {
     // Recognised refusals become typed and actionable; nothing renders error.message.
@@ -58,7 +62,15 @@ async function runMcpHost(args, options) {
     if (arg === "--dry-run") dryRun = true;
     else if (arg === "--uninstall") uninstall = true;
     else if (arg === "--json") json = true;
-    else if (arg === "--host" || arg.startsWith("--host=")) {
+    else if (arg === "--profile") {
+      options = { ...options, profileId: rest[++index] };
+      if (!options.profileId || options.profileId.startsWith("--"))
+        throw new Error("Invalid profile selection");
+    } else if (arg === "--project") {
+      options = { ...options, project: rest[++index] };
+      if (!options.project || options.project.startsWith("--"))
+        throw new Error("Explicit host project required");
+    } else if (arg === "--host" || arg.startsWith("--host=")) {
       const value = arg === "--host" ? rest[++index] : arg.slice(7);
       if (!value || value.startsWith("--"))
         throw new Error("--host needs a comma-separated host list");
@@ -104,6 +116,15 @@ async function runMcpHost(args, options) {
     return report.some((host) => host.error || host.command_verification?.verified === false)
       ? 1
       : 0;
+  }
+  if (!uninstall && !options.profileId && process.stdin.isTTY && !json && !hosts.length) {
+    const { chooseProfileSetup } = await import("./mcp-profile-command.mjs");
+    const selected = await chooseProfileSetup({ ...options, dryRun });
+    if (!selected) {
+      console.log("MCP setup skipped.");
+      return 0;
+    }
+    options = { ...options, profileId: selected.profileId };
   }
   if (!hosts.length) {
     if (json || !process.stdin.isTTY)

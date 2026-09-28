@@ -1,3 +1,4 @@
+import { validateProfiles, PROFILE_ID } from "./connection-profiles.mjs";
 import os from "node:os";
 import path from "node:path";
 import * as fs from "node:fs/promises";
@@ -5,7 +6,12 @@ import { parseFlatYaml } from "../flat-yaml.mjs";
 import { atomicWrite } from "./atomic-file.mjs";
 import { AiosError } from "./errors.mjs";
 
-const KNOWN_USER_KEYS = new Set(["schemaVersion", "defaultWorkspace", "credentialSources"]);
+const KNOWN_USER_KEYS = new Set([
+  "schemaVersion",
+  "defaultWorkspace",
+  "credentialSources",
+  "connectionProfiles",
+]);
 const REFERENCE_SUFFIXES = ["sources", "source", "references", "reference", "refs", "ref"];
 const VALUE_SUFFIXES = ["values", "value"];
 const HEADER_SUFFIXES = ["headers", "header"];
@@ -43,7 +49,7 @@ const SECRET_SUFFIXES = [
   "subscriptionkey",
   "passkey",
 ];
-const CREDENTIAL_SOURCE_NAME = /^[a-z][a-z0-9._-]{0,63}$/i;
+const CREDENTIAL_SOURCE_NAME = PROFILE_ID;
 const ENV_REFERENCE = /^env:[A-Za-z_][A-Za-z0-9_]*$/;
 const KEYCHAIN_REFERENCE = /^keychain:[A-Za-z0-9][A-Za-z0-9._/@:+-]{0,255}$/;
 
@@ -210,6 +216,14 @@ function invalidReference(trail) {
 function rejectSecrets(value, trail = []) {
   if (!value || typeof value !== "object") return;
   for (const [key, child] of Object.entries(value)) {
+    if (
+      key === "credentialSource" &&
+      trail.length === 3 &&
+      trail[0] === "connectionProfiles" &&
+      trail[1] === "profiles" &&
+      PROFILE_ID.test(child)
+    )
+      continue;
     const classification = classifySecretKey(key);
     if (classification?.kind === "reference" && hasMaterialValue(child)) {
       const valid = classification.sourceMap
@@ -253,6 +267,7 @@ export function parseUserConfig(raw) {
       "Run the explicit v2 config migration or create a version-2 config."
     );
   }
+  if (document.connectionProfiles !== undefined) validateProfiles(document.connectionProfiles);
   rejectSecrets(document);
   const known = {};
   const unknown = {};
@@ -264,6 +279,7 @@ export function parseUserConfig(raw) {
 
 export function parseWorkspaceConfig(raw) {
   const document = parseFlatYaml(raw);
+  if (document.connectionProfiles !== undefined) validateProfiles(document.connectionProfiles);
   rejectSecrets(document);
   return document;
 }
@@ -286,6 +302,7 @@ export async function writeUserConfig(configPath, nextKnown, options = {}) {
     ...nextKnown,
     schemaVersion: 2,
   };
+  if (document.connectionProfiles !== undefined) validateProfiles(document.connectionProfiles);
   rejectSecrets(document);
   const serialized = `${JSON.stringify(document, null, 2)}\n`;
   await atomicWrite(configPath, serialized, options);

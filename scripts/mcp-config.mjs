@@ -87,3 +87,36 @@ export function resolveBrainConfig({ cwd = process.cwd(), env = process.env, hom
   }
   return legacy;
 }
+
+/** Consume connection selectors before legacy configuration can inspect cwd or defaults. */
+export function parseProfileSelector(argv = []) {
+  const rest = [],
+    profiles = [];
+  let readOnly = false,
+    artifactReceipt,
+    configDir;
+  for (let index = 0; index < argv.length; index++) {
+    const value = argv[index];
+    if (value === "--config-dir") {
+      configDir = argv[++index];
+      if (!configDir || !path.isAbsolute(configDir))
+        throw new Error("Invalid profile configuration directory");
+    } else if (value === "--artifact-receipt") {
+      artifactReceipt = argv[++index];
+      if (!artifactReceipt || !path.isAbsolute(artifactReceipt))
+        throw new Error("Invalid artifact receipt");
+    } else if (value === "--read-only") readOnly = true;
+    else if (value === "--profile" || value.startsWith("--profile=")) {
+      const id = value === "--profile" ? argv[++index] : value.slice(10);
+      if (!id || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(id))
+        throw new Error("Invalid MCP profile selector");
+      profiles.push(id);
+    } else rest.push(value);
+  }
+  if (profiles.length > 1) throw new Error("Select exactly one MCP profile");
+  return { profileId: profiles[0], readOnly, artifactReceipt, configDir, rest };
+}
+export function resolveLaunchConfig(argv = [], options = {}) {
+  const selected = parseProfileSelector(argv);
+  return selected.profileId ? { profileId: selected.profileId } : resolveBrainConfig(options);
+}

@@ -14,9 +14,14 @@ function rpcError(id, code, message, data) {
  * Create the message dispatcher. Returns `async dispatch(message)` → a response object,
  * or `null` for notifications (no `id`) and unknown notifications, which get no reply.
  */
-export function createDispatcher({ client, ctx = {}, serverInfo, tools = [] } = {}) {
-  const toolByName = new Map(tools.map((t) => [t.name, t]));
-
+export function createDispatcher({
+  client,
+  ctx = {},
+  serverInfo,
+  tools = [],
+  resolveRequest,
+  safeError,
+} = {}) {
   return async function dispatch(message) {
     const isNotification = message == null || message.id === undefined || message.id === null;
     const id = isNotification ? null : message.id;
@@ -29,6 +34,17 @@ export function createDispatcher({ client, ctx = {}, serverInfo, tools = [] } = 
       return rpcError(id, -32600, "Invalid Request");
     }
 
+    let active = { client, tools, ctx };
+    if (resolveRequest && ["tools/list", "tools/call"].includes(method)) {
+      try {
+        active = await resolveRequest();
+      } catch (error) {
+        const message = safeError ? safeError(error) : "Connection unavailable";
+        return method === "tools/list"
+          ? rpcError(id, -32000, message)
+          : rpcResult(id, { content: [{ type: "text", text: message }], isError: true });
+      }
+    }
     switch (method) {
       case "initialize":
         return rpcResult(id, {
@@ -36,7 +52,7 @@ export function createDispatcher({ client, ctx = {}, serverInfo, tools = [] } = 
           capabilities: { tools: {} },
           serverInfo,
           instructions:
-            "Read-only access to the AIOS Team Brain and optional local workspace. Availability is fixed until restart; the Brain rechecks authorization on every call.",
+            "Read-only access to the AIOS Team Brain and optional local workspace. Selected connections are checked on every tool list and call; the Brain rechecks authorization on every call.",
         });
 
       case "ping":
@@ -44,7 +60,7 @@ export function createDispatcher({ client, ctx = {}, serverInfo, tools = [] } = 
 
       case "tools/list":
         return rpcResult(id, {
-          tools: tools.map((t) => ({
+          tools: active.tools.map((t) => ({
             name: t.name,
             description: t.description,
             inputSchema: t.inputSchema,
@@ -56,7 +72,7 @@ export function createDispatcher({ client, ctx = {}, serverInfo, tools = [] } = 
       case "tools/call": {
         const name = message.params?.name;
         const args = message.params?.arguments || {};
-        const tool = toolByName.get(name);
+        const tool = active.tools.find((tool) => tool.name === name);
         if (!tool) {
           return rpcError(id, -32602, `Unknown tool: ${name}`);
         }
@@ -68,13 +84,18 @@ export function createDispatcher({ client, ctx = {}, serverInfo, tools = [] } = 
         }
         try {
           // ctx carries non-brain context (cwd) for local aios_* tools; brain tools ignore it.
-          const out = await tool.handler(args, client, ctx);
+          const out = await tool.handler(args, active.client, active.ctx);
           return rpcResult(id, out);
         } catch (e) {
           // Tool-level failures are reported in-band (isError) so the model can react,
           // not as JSON-RPC protocol errors. Matches MCP guidance.
           return rpcResult(id, {
-            content: [{ type: "text", text: `Error: ${e?.message ?? String(e)}` }],
+            content: [
+              {
+                type: "text",
+                text: `Error: ${resolveRequest && safeError ? safeError(e) : (e?.message ?? String(e))}`,
+              },
+            ],
             isError: true,
           });
         }

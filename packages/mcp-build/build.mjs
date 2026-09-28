@@ -9,6 +9,13 @@ export const MCP_SOURCE_ROOT = path.resolve(fileURLToPath(new URL("../..", impor
 // Explicit transitive dependency closure. New dependencies require a reviewed change here.
 export const MCP_MODULES = Object.freeze([
   "scripts/mcp-runtime.mjs",
+  "scripts/mcp-profile-binding.mjs",
+  "scripts/mcp-artifact-receipt.mjs",
+  "scripts/cli/connection-profiles.mjs",
+  "scripts/cli/credential-reference.mjs",
+  "scripts/cli/config-broker.mjs",
+  "scripts/cli/atomic-file.mjs",
+  "scripts/cli/errors.mjs",
   "scripts/mcp-stdio.mjs",
   "scripts/mcp-config.mjs",
   "scripts/mcp-credentials.mjs",
