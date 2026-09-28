@@ -121,6 +121,10 @@ Additional existing surfaces exclusively delegated to this lane by coordinator (
 
 New bounded modules/tests:
 
+- `scripts/user-config-reader.mjs` and `scripts/command-errors.mjs` — builtin-only shared reader/errors; CLI writer and error forwarding remain compatible.
+- `scripts/mcp-profile-artifact.mjs`, `scripts/mcp-artifact-receipt.mjs`, `scripts/mcp-host-server-check.mjs` — exact installed artifact staging, launch verification and existing protocol verification.
+- `scripts/mcp-profile-command.mjs` — profile lifecycle commands and explicit guided setup.
+
 - `scripts/mcp-profile-schema.mjs` — schema semantics and pure migration/update generation.
 - `scripts/mcp-profile-reference.mjs` — builtin-only selected-reference logic.
 - `scripts/mcp-profile-binding.mjs` — read-only resolution/authorization/status reusable by runtime and later operations.
@@ -129,7 +133,7 @@ New bounded modules/tests:
 - `test/mcp-profile-migration.test.mjs`
 - `test/mcp-profile-binding.test.mjs`
 - `test/mcp-profile-lifecycle.test.mjs`
-- `test/package-acceptance/lib/journeys-mcp-profiles.mjs` — isolated installed candidate journey; root wires it into shared runner.
+- `test/package-acceptance/lib/journeys-mcp-profiles.mjs` — isolated installed candidate journey invoked by the shared package acceptance runners.
 
 ## Integration dependencies
 
@@ -151,11 +155,11 @@ Focused tests must be executable behaviors, using real disposable files and sent
 - `setup-rejects-wrong-team-or-invisible-project-before-write`, `dry-run-no-files-dirs-backups`, `upgrade-owned-only`, `stale-profile-command-refused`, `uninstall-preserves-shared-and-edited`, `mid-transaction-failure-restores-unchanged`, `concurrent-config-edit-preserved`, `concurrent-profile-mutators-no-lost-update`, `crash-after-epoch-reservation-denies-old-config`, `restored-backup-below-high-water-denied`, `revoked-id-reuse-cannot-resurrect-plans`.
 - `legacy-five-nine-reads-unchanged`, `legacy-upgrade-no-local-or-write-grants`, `unbound-collector-denied-without-file-read`.
 
-Run focused Node tests under development Node 22, then complete `npm test`, lint/format, contract fixture/conformance and required security/provenance gates in the implementation worktree. Verify `npm run test:node:list` includes the new tracked tests; native installer workflow must actually run lifecycle cases. Keep existing atomic replacement/race tests intact. No local test was executed for this read-only specification task.
+Run focused Node tests under development Node 22, then complete `npm test`, lint/format, contract fixture/conformance and required security/provenance gates in the implementation worktree. Verify `npm run test:node:list` includes the new tracked tests; native installer workflow must actually run lifecycle cases. Keep existing atomic replacement/race tests intact.
 
 Installed-artifact acceptance extends `test/package-acceptance/pack.mjs` and `test/package-acceptance/lib/context.mjs`: pack once behind existing clean-surface barriers, retain the exact tarball SHA-256, package version/name, file inventory, dependency metadata and candidate SHA; every cell re-verifies digest before installation. Add the candidate standalone pack tuple to the same artifact/evidence route, with independent manifest/inventory validation. Cells never repack. Extend installed dependency probes to prove every required runtime dependency resolves within the installation prefix, no npm-link/source-checkout escape, and native loadability on each supported OS/Node cell. Feed verified candidate bytes through the existing test artifact route only; never a production skip-integrity flag or replacement command/verifier. Installed-artifact acceptance must install these exact artifacts into an isolated prefix/home outside source checkouts; clear toolkit override env; do not inject an alternate server command/verifier. Use two synthetic HTTPS Brain origins and two explicit roots with different sentinel values. Exercise setup for both modes and every supported host format, run the exact recorded command from a third unrelated cwd, inspect status and tools, then mutate grants through the actual profile CLI while the subprocess remains live and prove denial before its next protected call. Confirm source checkout paths cannot appear in installed commands/import resolution and no real-user host/config bytes changed. Include native ownership/ACL and root-replacement tests. Assert stable five/nine legacy reads, no leaked sentinel and no arbitrary workspace hook/install/commit execution. Use a locally trusted test HTTPS certificate, not a production HTTP-origin exception.
 
 AIO-1190 does not implement AIO-1191 bounded list/read/write/collect or AIO-1192 publishing. Its reusable guard and generation invalidation are directly testable now; the later real-operation plan/call integration tests remain dependency gates. Do not claim workspace mode complete merely because a profile exists or an inert tool advertises it.
 
-Manual evidence: clean setup of both connection choices in a real host; record native OS, host name/version, toolkit/MCP exact artifact versions/digests, selected identity/destination visible inside the host, grant choices, restart/trust behavior, and revocation before the next protected call. Retain concrete evidence for AIO-1195's all-four-host journeys. Automated JSON/TOML/subprocess validation is not host UI acceptance. User-only trust/keychain consent may require the owner; no need to request product-scope approval already granted. This read-only task has neither changed real host settings nor claimed manual acceptance.
+Manual evidence: clean setup of both connection choices in a real host; record native OS, host name/version, toolkit/MCP exact artifact versions/digests, selected identity/destination visible inside the host, grant choices, restart/trust behavior, and revocation before the next protected call. Retain concrete evidence for AIO-1195's all-four-host journeys. Automated JSON/TOML/subprocess validation is not host UI acceptance. User-only trust/keychain consent may require the owner; no need to request product-scope approval already granted. Automated evidence does not replace real-host manual acceptance.
 

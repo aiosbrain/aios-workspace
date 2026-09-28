@@ -127,12 +127,18 @@ function profileProposal(input, state) {
   const reference = input.reference ?? sources[input.credentialSource];
   if (!validReference(reference)) deny("PROFILE_NOT_FOUND");
   sources[input.credentialSource] = reference;
+  if (
+    input.mode === "workspace" &&
+    (typeof input.root !== "string" || !path.isAbsolute(input.root))
+  )
+    deny("INVALID_PROFILE", "Workspace setup requires an explicit absolute root.");
   const root = input.mode === "workspace" ? fs.realpathSync(input.root) : null;
+  const retainedEpoch = state.records.profileEpochs?.[input.id];
   const grants = { ...emptyGrants(), ...(input.grants || {}) };
   const profile = validateProfile({
     id: input.id,
     mode: input.mode,
-    generation: prior?.generation || 1,
+    generation: prior?.generation ?? (retainedEpoch ? nextGeneration(retainedEpoch.generation) : 1),
     brainOrigin: input.brainOrigin,
     teamId: input.teamId,
     projectId: input.projectId,
@@ -148,7 +154,9 @@ function profileProposal(input, state) {
   if (
     prior &&
     (oldFingerprint !== profileFingerprint(profile, reference) ||
-      state.records.profileEpochs?.[prior.id]?.revoked)
+      retainedEpoch?.revoked ||
+      retainedEpoch?.generation !== prior.generation ||
+      retainedEpoch?.fingerprint !== oldFingerprint)
   )
     profile.generation = nextGeneration(
       Math.max(prior.generation, state.records.profileEpochs?.[prior.id]?.generation || 0)

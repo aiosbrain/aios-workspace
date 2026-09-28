@@ -138,3 +138,105 @@ test("canonical-root and root-replacement denied, offline authorization independ
   fs.mkdirSync(root);
   assert.throws(() => authorizeProfileCall(binding, options), { code: "PROFILE_CHANGED" });
 });
+
+test("explicit registration cannot infer a relative root or reuse a removed profile epoch", async (t) => {
+  const { options, input } = fixture(t);
+  await assert.rejects(
+    registerProfile({ ...input, mode: "workspace", root: "." }, { ...options, dryRun: true }),
+    { code: "INVALID_PROFILE" }
+  );
+  await registerProfile(input, options);
+  const first = loadProfileBinding(input.id, options);
+  await revokeProfile(input.id, undefined, options);
+  const config = profilePaths(options).config;
+  const document = JSON.parse(fs.readFileSync(config));
+  document.connectionProfiles.profiles = [];
+  fs.writeFileSync(config, JSON.stringify(document));
+  await registerProfile(input, options);
+  const recreated = loadProfileBinding(input.id, options);
+  assert.ok(recreated.profile.generation > first.profile.generation + 1);
+  assert.throws(() => authorizeProfileCall(first, options), { code: "PROFILE_CHANGED" });
+});
+
+test("shared source change invalidates both bindings and identical registration is a no-op", async (t) => {
+  const { options, input } = fixture(t);
+  options.env.OTHER = "selected-other";
+  await registerProfile(input, options);
+  await registerProfile({ ...input, id: "second" }, options);
+  const first = loadProfileBinding(input.id, options),
+    second = loadProfileBinding("second", options);
+  const config = profilePaths(options).config,
+    before = fs.readFileSync(config);
+  const repeated = await registerProfile(input, options);
+  assert.equal(repeated.changed, false);
+  assert.deepEqual(fs.readFileSync(config), before);
+  await registerProfile({ ...input, reference: "env:OTHER" }, options);
+  assert.throws(() => authorizeProfileCall(first, options), { code: "PROFILE_CHANGED" });
+  assert.throws(() => authorizeProfileCall(second, options), { code: "PROFILE_CHANGED" });
+  assert.equal(loadProfileBinding("second", options).config.api_key, "selected-other");
+});
+
+test("concurrent registration cannot lose an update or overwrite unrelated config edits", async (t) => {
+  const { options, input } = fixture(t);
+  await registerProfile(input, options);
+  let release;
+  const wait = new Promise((resolve) => {
+    release = resolve;
+  });
+  let entered;
+  const ready = new Promise((resolve) => {
+    entered = resolve;
+  });
+  const pending = registerProfile(
+    { ...input, grants: {} },
+    {
+      ...options,
+      fetchImpl: async (url) => {
+        entered();
+        await wait;
+        return options.fetchImpl(url);
+      },
+    }
+  );
+  await ready;
+  await assert.rejects(registerProfile({ ...input, id: "other" }, options), {
+    code: "PROFILE_CHANGED",
+  });
+  const config = profilePaths(options).config,
+    document = JSON.parse(fs.readFileSync(config));
+  document.unrelatedFutureKey = { preserved: true };
+  fs.writeFileSync(config, JSON.stringify(document));
+  release();
+  await assert.rejects(pending, { code: "PROFILE_CHANGED" });
+  assert.equal(JSON.parse(fs.readFileSync(config)).unrelatedFutureKey.preserved, true);
+  assert.equal(loadProfileBinding(input.id, options).profile.grants.brainActions, true);
+});
+
+test("workspace resolves only its selected root/key and Brain-only never invokes the vault", async (t) => {
+  const { home, options, input } = fixture(t);
+  const root = path.join(home, "selected-root");
+  fs.mkdirSync(root);
+  const calls = [];
+  const opts = {
+    ...options,
+    env: { AIOS_CONFIG_DIR: options.env.AIOS_CONFIG_DIR },
+    workspaceCredential: (selectedRoot, keyName) => {
+      calls.push([selectedRoot, keyName]);
+      return key;
+    },
+  };
+  await registerProfile({ ...input, mode: "workspace", root }, opts);
+  loadProfileBinding(input.id, opts);
+  assert.deepEqual(calls, [
+    [root, "KEY"],
+    [root, "KEY"],
+  ]);
+  await assert.rejects(registerProfile({ ...input, id: "brain-only" }, opts), {
+    code: "AUTH_REVOKED",
+  });
+  assert.equal(calls.length, 2);
+  assert.throws(() => loadProfileBinding(input.id, { ...opts, env: { ...opts.env, KEY: "" } }), {
+    code: "AUTH_REVOKED",
+  });
+  assert.equal(calls.length, 2, "explicit missing environment source cannot fall back to vault");
+});
