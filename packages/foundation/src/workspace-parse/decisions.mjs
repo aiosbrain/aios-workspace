@@ -1,3 +1,4 @@
+import { DECISION_CELL_MARKER, decodeTableCell } from "./table-cell.mjs";
 // Decision-table scanning + H3 row redaction, split from core.mjs purely to satisfy the
 // repo file-size gate (scripts/size-caps.json defaultCap) when workspace-parse moved into
 // @aiosbrain/foundation (AIO-601). Same module surface: ./index.mjs re-exports both halves.
@@ -76,6 +77,16 @@ function decisionTableSchema(cells) {
     header,
     decisionIdx: decisionCols[0] ?? -1,
     audienceIdx: audienceCols[0] ?? -1,
+    columns: {
+      row_key: header.findIndex((c) => c.startsWith("#")),
+      decided_at: header.findIndex((c) => c.startsWith("date")),
+      title: decisionCols[0] ?? -1,
+      rationale: header.findIndex((c) => c.startsWith("rationale")),
+      decided_by: header.findIndex((c) => c.startsWith("decided")),
+      impact: header.findIndex((c) => c.startsWith("impact")),
+      tier: header.findIndex((c) => c.startsWith("type")),
+      audience: audienceCols[0] ?? -1,
+    },
   };
 }
 
@@ -83,7 +94,9 @@ function decisionTableSchema(cells) {
 // (e.g. from a stray unescaped pipe) → null (dropped). A present-but-blank audience cell → "admin".
 function parseDecisionRow(cells, schema) {
   if (!schema.valid || cells.length !== schema.columnCount) return null;
-  const idx = (name) => schema.header.findIndex((c) => c.startsWith(name));
+  if (schema.encoded) cells = cells.map(decodeTableCell);
+  const column = schema.columns;
+  const idx = (name) => (name === "date" ? column.decided_at : -1);
   const audienceCell = schema.audienceIdx >= 0 ? cells[schema.audienceIdx]?.trim() : null;
   // AIO-524: `decided_at` writes straight into a Postgres `date` column (`decisions.decided_at
   // date` in aios-team-brain's postgres/schema.sql) on the brain side — a literal `—` (the
@@ -91,13 +104,13 @@ function parseDecisionRow(cells, schema) {
   // null here too, not round-trip as text. Reuses tasks-table.mjs's `dateCell` (same shape of
   // fix for its own `due` field) instead of a second, independently-drifting implementation.
   const row = {
-    row_key: cells[idx("#")] ?? cells[0] ?? "",
+    row_key: cells[column.row_key] ?? cells[0] ?? "",
     decided_at: dateCell(cells, idx, "date"),
     title: cells[schema.decisionIdx] || "",
-    rationale: idx("rationale") >= 0 ? cells[idx("rationale")] || "" : "",
-    decided_by: idx("decided") >= 0 ? cells[idx("decided")] || "" : "",
-    impact: idx("impact") >= 0 ? cells[idx("impact")] || "" : "",
-    tier: idx("type") >= 0 ? parseInt(cells[idx("type")], 10) || null : null,
+    rationale: column.rationale >= 0 ? cells[column.rationale] || "" : "",
+    decided_by: column.decided_by >= 0 ? cells[column.decided_by] || "" : "",
+    impact: column.impact >= 0 ? cells[column.impact] || "" : "",
+    tier: column.tier >= 0 ? parseInt(cells[column.tier], 10) || null : null,
     audience: schema.audienceIdx < 0 ? null : audienceCell ? normalizeTier(audienceCell) : "admin",
   };
   return row.row_key ? row : null;
@@ -121,9 +134,14 @@ function scanDecisionTables(body, fallbackAudience = null) {
   const keptRows = [];
   let table = null;
   let removedRows = 0;
+  const lineInfo = [];
   const keptBody = body
     .split("\n")
     .filter((line, index, lines) => {
+      const info = { index, kind: "other" };
+      lineInfo.push(info);
+      const describeRow = (cells, row, schema = table) =>
+        Object.assign(info, { kind: "row", cells, row, schema });
       const trimmed = line.trim();
       if (!hasUnescapedTablePipe(trimmed)) {
         // Blank lines do not terminate a table: hand-edited decision logs often space rows apart,
@@ -135,10 +153,17 @@ function scanDecisionTables(body, fallbackAudience = null) {
         }
         return true;
       }
-      if (isTableSeparatorLine(line)) return true; // keep separators
+      if (isTableSeparatorLine(line)) {
+        Object.assign(info, { kind: "separator", schema: table });
+        return true;
+      }
 
       const cells = parseTableRows(trimmed.startsWith("|") ? line : `|${line}`)[0] || [];
-      const candidate = decisionTableSchema(cells);
+      const candidate = {
+        ...decisionTableSchema(cells),
+        headerIndex: index,
+        encoded: lines[index - 1]?.trim() === DECISION_CELL_MARKER,
+      };
       const isLegacyDecisionHeader =
         candidate.isDecision &&
         candidate.header.every((cell) => DECISION_HEADER_CELLS.has(cell)) &&
@@ -160,6 +185,8 @@ function scanDecisionTables(body, fallbackAudience = null) {
         return false;
       }
       if (startsNewTable && currentRow) {
+        describeRow(cells, currentRow);
+        info.endsTable = true;
         rows.push(currentRow);
         keptRows.push(currentRow);
         table = { ...table, valid: false };
@@ -167,6 +194,7 @@ function scanDecisionTables(body, fallbackAudience = null) {
       }
       if (isLegacyDecisionHeader) {
         table = candidate;
+        Object.assign(info, { kind: "header", cells, schema: table });
         return true;
       }
       const recoverableDenyOnlyRow =
@@ -184,16 +212,19 @@ function scanDecisionTables(body, fallbackAudience = null) {
         !currentRow &&
         (recoverableDenyOnlyRow || staleAudienceLooksRestricted)
       ) {
+        describeRow(cells, null);
         removedRows++;
         return false;
       }
       if (startsNewTable && !currentRow) {
         table = candidate;
+        Object.assign(info, { kind: "header", cells, schema: table });
         return true;
       }
       if (!table?.isDecision) return true;
 
       const row = currentRow ?? parseDecisionRow(cells, table);
+      describeRow(cells, row);
       if (row) rows.push(row);
       if (row && isSyncableDecisionAudience(row.audience ?? fallbackAudience)) {
         keptRows.push(row);
@@ -203,7 +234,12 @@ function scanDecisionTables(body, fallbackAudience = null) {
       return false;
     })
     .join("\n");
-  return { body: keptBody, rows, keptRows, removedRows };
+  return { body: keptBody, rows, keptRows, removedRows, lineInfo };
+}
+
+/** Original parser classification for lossless local edits; indexes refer to input lines. */
+export function classifyDecisionTableLines(body, fallbackAudience = null) {
+  return scanDecisionTables(body, fallbackAudience).lineInfo;
 }
 
 export function parseDecisionRows(body) {

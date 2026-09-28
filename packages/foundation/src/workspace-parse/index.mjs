@@ -5,3 +5,4 @@
 
 export * from "./core.mjs";
 export * from "./decisions.mjs";
+export * from "./table-cell.mjs";
