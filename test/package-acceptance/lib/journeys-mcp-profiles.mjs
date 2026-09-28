@@ -6,7 +6,7 @@ import { createServer } from "node:https";
 import { spawn } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import { SENTINELS } from "./context.mjs";
-import { prepareProfile, cli, KEYS } from "./mcp-support.mjs";
+import { prepareProfile, makeDir, cli, KEYS } from "./mcp-support.mjs";
 
 export function profileAcceptanceHosts(platform = process.platform) {
   return [
@@ -149,9 +149,9 @@ export async function profileHostJourney(ctx, install) {
       fs.mkdirSync(home, { mode: 0o700 });
       prepareProfile(ctx, home);
       const workspace = path.join(home, "selected");
-      fs.mkdirSync(workspace);
+      makeDir(workspace, home);
       const neutral = path.join(home, "neutral");
-      fs.mkdirSync(neutral);
+      makeDir(neutral, home);
       const env = ctx.cliEnv({
         HOME: home,
         USERPROFILE: home,

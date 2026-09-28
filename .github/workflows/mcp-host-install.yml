@@ -23,6 +23,7 @@ on:
       - test/mcp-profile*.test.mjs
       - test/mcp-credentials.test.mjs
       - test/lib/mcp-host-fixture.mjs
+      - test/lib/mcp-profile-artifact-fixture.mjs
       - package.json
       - package-lock.json
       - .github/workflows/mcp-host-install.yml
@@ -55,4 +56,4 @@ jobs:
           test/mcp-host-verify.test.mjs test/mcp-host-cli.test.mjs
           test/mcp-credentials.test.mjs test/mcp-profile-migration.test.mjs
           test/mcp-profile-binding.test.mjs test/mcp-profile-lifecycle.test.mjs
-          test/mcp-profile-artifact.test.mjs
+          test/mcp-profile-artifact.test.mjs test/mcp-profile-command.test.mjs

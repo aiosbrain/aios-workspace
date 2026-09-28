@@ -114,3 +114,41 @@ test("launch verifies every artifact path owner/ACL and writable intermediate di
     assert.equal(verifyProfileArtifactReceipt(file).packageVersion, "0.2.1");
   }
 });
+
+import { filePolicy } from "../scripts/mcp-host-files.mjs";
+import { profileArtifactFixture } from "./lib/mcp-profile-artifact-fixture.mjs";
+test("standalone setup stages the verified closure, reuses it, and refuses changed or unsafe destinations", async (t) => {
+  const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "profile-stage-")));
+  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  fixtureOwner(home);
+  const artifactInput = profileArtifactFixture(home);
+  const options = {
+    mode: "brain-only",
+    profileId: "demo",
+    home,
+    policy: filePolicy(),
+    artifactInput,
+  };
+  const preview = await prepareProfileArtifact({ ...options, dryRun: true });
+  assert.equal(
+    fs.existsSync(path.join(home, ".aios")),
+    false,
+    "preview makes no artifact directory"
+  );
+  const result = await prepareProfileArtifact(options);
+  assert.deepEqual(result.command, preview.command);
+  const receiptPath = result.command.args[result.command.args.indexOf("--artifact-receipt") + 1];
+  assert.equal(verifyProfileArtifactReceipt(receiptPath).packageName, "@aiosbrain/mcp");
+  const before = fs.statSync(receiptPath).mtimeMs;
+  assert.deepEqual((await prepareProfileArtifact(options)).command, result.command);
+  assert.equal(fs.statSync(receiptPath).mtimeMs, before, "safe reuse does not rewrite the receipt");
+  fs.appendFileSync(result.command.args[0], "\n// changed executable\n");
+  await assert.rejects(prepareProfileArtifact(options), { code: "UNAVAILABLE" });
+  fs.unlinkSync(receiptPath);
+  await assert.rejects(prepareProfileArtifact(options), /incomplete profile artifact/);
+  if (process.platform !== "win32") {
+    const linked = path.join(home, "linked");
+    fs.symlinkSync(home, linked);
+    await assert.rejects(prepareProfileArtifact({ ...options, home: linked }), /Unsafe directory/);
+  }
+});
