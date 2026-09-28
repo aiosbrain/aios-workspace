@@ -49,11 +49,33 @@ jobs:
       - run: npm ci --ignore-scripts
       # Windows ACL fixtures launch PowerShell repeatedly. Avoid competing test-file
       # workers exhausting the published server's bounded credential-probe startup.
-      - name: Run native installer and profile lifecycle safety tests
+      - name: Run native installer safety tests
         run: >
           node --test --test-concurrency=1
           test/mcp-host-install.test.mjs test/mcp-host-atomic.test.mjs
           test/mcp-host-verify.test.mjs test/mcp-host-cli.test.mjs
-          test/mcp-credentials.test.mjs test/mcp-profile-migration.test.mjs
-          test/mcp-profile-binding.test.mjs test/mcp-profile-lifecycle.test.mjs
-          test/mcp-profile-artifact.test.mjs test/mcp-profile-command.test.mjs
+          test/mcp-credentials.test.mjs
+  profiles:
+    name: MCP profiles (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22
+      - run: npm ci --ignore-scripts
+      # Keep native ACL checks serial within each runner. Profile lifecycle tests
+      # use a separate job so their Windows PowerShell calls have a bounded budget.
+      - name: Run native profile lifecycle safety tests
+        run: >
+          node --test --test-concurrency=1
+          test/mcp-profile-migration.test.mjs test/mcp-profile-binding.test.mjs
+          test/mcp-profile-lifecycle.test.mjs test/mcp-profile-artifact.test.mjs
+          test/mcp-profile-command.test.mjs
