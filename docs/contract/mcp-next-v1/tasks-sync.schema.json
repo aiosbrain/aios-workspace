@@ -1169,6 +1169,93 @@
               ]
             },
             "readback": {
+              "const": null
+            },
+            "dispatch": {
+              "const": "rejected"
+            },
+            "action": {
+              "const": null
+            },
+            "domain": {
+              "const": null
+            },
+            "error": {
+              "allOf": [
+                {
+                  "$ref": "#/definitions/Error"
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "enum": [
+                        "unauthorized",
+                        "revoked_authorization"
+                      ]
+                    },
+                    "retryable": {
+                      "const": false
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "retryable"
+                  ]
+                }
+              ]
+            }
+          },
+          "required": [
+            "row_receipt_id",
+            "row_key",
+            "task_id",
+            "readback",
+            "dispatch",
+            "action",
+            "domain",
+            "error"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "row_receipt_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "not": {
+                "pattern": "\\u0000"
+              },
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+            },
+            "row_key": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "not": {
+                "pattern": "\\u0000"
+              },
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+            },
+            "task_id": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128,
+                  "not": {
+                    "pattern": "\\u0000"
+                  },
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "readback": {
               "anyOf": [
                 {
                   "$ref": "#/definitions/Readback"
@@ -2901,31 +2988,46 @@
             "properties": {
               "rows": {
                 "items": {
-                  "type": "object",
-                  "properties": {
-                    "dispatch": {
-                      "const": "submitted"
-                    },
-                    "action": {
+                  "oneOf": [
+                    {
                       "type": "object",
                       "properties": {
-                        "status": {
-                          "enum": [
-                            "succeeded",
-                            "denied",
-                            "conflict",
-                            "failed"
+                        "dispatch": {
+                          "const": "submitted"
+                        },
+                        "action": {
+                          "type": "object",
+                          "properties": {
+                            "status": {
+                              "enum": [
+                                "succeeded",
+                                "denied",
+                                "conflict",
+                                "failed"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "status"
                           ]
                         }
                       },
                       "required": [
-                        "status"
+                        "dispatch",
+                        "action"
+                      ]
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "dispatch": {
+                          "const": "rejected"
+                        }
+                      },
+                      "required": [
+                        "dispatch"
                       ]
                     }
-                  },
-                  "required": [
-                    "dispatch",
-                    "action"
                   ]
                 }
               }

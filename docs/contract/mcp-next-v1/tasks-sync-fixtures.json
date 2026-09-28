@@ -1142,6 +1142,290 @@
           "rows": []
         }
       }
+    },
+    {
+      "name": "rejected-original-credential-revoked",
+      "schema": "urn:aios:task-sync:1#/definitions/RowReceipt",
+      "value": {
+        "row_receipt_id": "receipt-1",
+        "row_key": "ui-task-1",
+        "task_id": "task-1",
+        "readback": null,
+        "dispatch": "rejected",
+        "action": null,
+        "domain": null,
+        "error": {
+          "code": "revoked_authorization",
+          "message": "The original credential is no longer authorized.",
+          "retryable": false,
+          "recovery": "Refresh authorized state and submit a fresh operation."
+        }
+      }
+    },
+    {
+      "name": "rejected-original-credential-missing",
+      "schema": "urn:aios:task-sync:1#/definitions/RowReceipt",
+      "value": {
+        "row_receipt_id": "receipt-1",
+        "row_key": "ui-task-1",
+        "task_id": null,
+        "readback": null,
+        "dispatch": "rejected",
+        "action": null,
+        "domain": null,
+        "error": {
+          "code": "unauthorized",
+          "message": "The original credential is no longer authorized.",
+          "retryable": false,
+          "recovery": "Refresh authorized state and submit a fresh operation."
+        }
+      }
+    },
+    {
+      "name": "complete-rejected-only-batch",
+      "schema": "urn:aios:task-sync:1#/definitions/Response",
+      "value": {
+        "contract_version": "task-sync/1",
+        "project_id": "project-1",
+        "operation_id": "operation-1",
+        "mode": "reconcile",
+        "batch_id": "batch-1",
+        "link_id": "link-1",
+        "link_generation": 1,
+        "phase": "complete",
+        "rows": [
+          {
+            "row_receipt_id": "receipt-1",
+            "row_key": "ui-task-1",
+            "task_id": "task-1",
+            "readback": null,
+            "dispatch": "rejected",
+            "action": null,
+            "domain": null,
+            "error": {
+              "code": "revoked_authorization",
+              "message": "The original credential is no longer authorized.",
+              "retryable": false,
+              "recovery": "Refresh authorized state and submit a fresh operation."
+            }
+          }
+        ],
+        "applied": [],
+        "conflicts": []
+      }
+    },
+    {
+      "name": "complete-submitted-and-rejected-batch",
+      "schema": "urn:aios:task-sync:1#/definitions/Response",
+      "value": {
+        "contract_version": "task-sync/1",
+        "project_id": "project-1",
+        "operation_id": "operation-1",
+        "mode": "reconcile",
+        "batch_id": "batch-1",
+        "link_id": "link-1",
+        "link_generation": 1,
+        "phase": "complete",
+        "rows": [
+          {
+            "row_receipt_id": "receipt-1",
+            "row_key": "ui-task-1",
+            "task_id": "task-1",
+            "readback": null,
+            "dispatch": "submitted",
+            "action": {
+              "contract_version": "mcp-next/1",
+              "action_id": "action-1",
+              "audit_ref": "audit-1",
+              "status": "succeeded",
+              "entity": {
+                "kind": "task",
+                "id": "task-1",
+                "revision": "r2"
+              },
+              "sync": {
+                "state": "pending",
+                "providers": [
+                  {
+                    "provider": "linear",
+                    "state": "pending",
+                    "error_code": null
+                  }
+                ]
+              }
+            },
+            "domain": {
+              "outcome": "applied",
+              "task_id": "task-1",
+              "revision": "r2",
+              "values": {
+                "title": "Ship the synthetic task",
+                "assignee": "member-1",
+                "status": "ready",
+                "due": "2028-02-29"
+              },
+              "baseline": {
+                "state": "initialized",
+                "generation": 1,
+                "values": {
+                  "title": "Ship the synthetic task",
+                  "assignee": "member-1",
+                  "status": "ready",
+                  "due": "2028-02-29"
+                }
+              },
+              "conflicts": [],
+              "acknowledgement": {
+                "token": "synthetic-token",
+                "fields": [
+                  "title",
+                  "assignee",
+                  "status",
+                  "due"
+                ],
+                "task_revision": "r2",
+                "baseline_generation": 1,
+                "link_generation": 1
+              }
+            },
+            "error": null
+          },
+          {
+            "row_receipt_id": "receipt-2",
+            "row_key": "ui-task-2",
+            "task_id": "task-2",
+            "readback": null,
+            "dispatch": "submitted",
+            "action": {
+              "contract_version": "mcp-next/1",
+              "action_id": "action-2",
+              "audit_ref": "audit-2",
+              "status": "denied",
+              "error": {
+                "code": "forbidden",
+                "message": "Refresh this source.",
+                "retryable": false,
+                "recovery": "Read current revision and submit a fresh operation."
+              }
+            },
+            "domain": null,
+            "error": null
+          },
+          {
+            "row_receipt_id": "receipt-3",
+            "row_key": "ui-task-3",
+            "task_id": "task-3",
+            "readback": null,
+            "dispatch": "submitted",
+            "action": {
+              "contract_version": "mcp-next/1",
+              "action_id": "action-3",
+              "audit_ref": "audit-3",
+              "status": "conflict",
+              "error": {
+                "code": "stale_revision",
+                "message": "Refresh this source.",
+                "retryable": false,
+                "recovery": "Read current revision and submit a fresh operation."
+              }
+            },
+            "domain": null,
+            "error": null
+          },
+          {
+            "row_receipt_id": "receipt-4",
+            "row_key": "ui-task-4",
+            "task_id": "task-4",
+            "readback": null,
+            "dispatch": "submitted",
+            "action": {
+              "contract_version": "mcp-next/1",
+              "action_id": "action-4",
+              "audit_ref": "audit-4",
+              "status": "failed",
+              "error": {
+                "code": "execution_failed",
+                "message": "Refresh this source.",
+                "retryable": false,
+                "recovery": "Read current revision and submit a fresh operation."
+              }
+            },
+            "domain": null,
+            "error": null
+          },
+          {
+            "row_receipt_id": "receipt-5",
+            "row_key": "ui-task-5",
+            "task_id": "task-5",
+            "readback": null,
+            "dispatch": "rejected",
+            "action": null,
+            "domain": null,
+            "error": {
+              "code": "revoked_authorization",
+              "message": "The original credential is no longer authorized.",
+              "retryable": false,
+              "recovery": "Refresh authorized state and submit a fresh operation."
+            }
+          }
+        ],
+        "applied": [
+          {
+            "task_id": "task-1",
+            "revision": "r2"
+          }
+        ],
+        "conflicts": []
+      }
+    },
+    {
+      "name": "processing-pending-and-rejected-batch",
+      "schema": "urn:aios:task-sync:1#/definitions/Response",
+      "value": {
+        "contract_version": "task-sync/1",
+        "project_id": "project-1",
+        "operation_id": "operation-1",
+        "mode": "reconcile",
+        "batch_id": "batch-1",
+        "link_id": "link-1",
+        "link_generation": 1,
+        "phase": "processing",
+        "rows": [
+          {
+            "row_receipt_id": "receipt-1",
+            "row_key": "ui-task-1",
+            "task_id": "task-1",
+            "readback": null,
+            "dispatch": "submitted",
+            "action": {
+              "contract_version": "mcp-next/1",
+              "action_id": "action-1",
+              "audit_ref": "audit-1",
+              "status": "pending_approval",
+              "approval_request_id": "approval-1"
+            },
+            "domain": null,
+            "error": null
+          },
+          {
+            "row_receipt_id": "receipt-5",
+            "row_key": "ui-task-5",
+            "task_id": "task-5",
+            "readback": null,
+            "dispatch": "rejected",
+            "action": null,
+            "domain": null,
+            "error": {
+              "code": "revoked_authorization",
+              "message": "The original credential is no longer authorized.",
+              "retryable": false,
+              "recovery": "Refresh authorized state and submit a fresh operation."
+            }
+          }
+        ],
+        "applied": [],
+        "conflicts": []
+      }
     }
   ],
   "invalid": [
@@ -6479,6 +6763,299 @@
           "frontmatter": {},
           "rows": []
         }
+      }
+    },
+    {
+      "name": "rejected-fabricated-action",
+      "schema": "urn:aios:task-sync:1#/definitions/RowReceipt",
+      "value": {
+        "row_receipt_id": "receipt-1",
+        "row_key": "ui-task-1",
+        "task_id": "task-1",
+        "readback": null,
+        "dispatch": "rejected",
+        "action": {
+          "contract_version": "mcp-next/1",
+          "action_id": "action-1",
+          "audit_ref": "audit-1",
+          "status": "succeeded",
+          "entity": {
+            "kind": "task",
+            "id": "task-1",
+            "revision": "r2"
+          },
+          "sync": {
+            "state": "pending",
+            "providers": [
+              {
+                "provider": "linear",
+                "state": "pending",
+                "error_code": null
+              }
+            ]
+          }
+        },
+        "domain": null,
+        "error": {
+          "code": "revoked_authorization",
+          "message": "The original credential is no longer authorized.",
+          "retryable": false,
+          "recovery": "Refresh authorized state and submit a fresh operation."
+        }
+      }
+    },
+    {
+      "name": "rejected-domain-effects",
+      "schema": "urn:aios:task-sync:1#/definitions/RowReceipt",
+      "value": {
+        "row_receipt_id": "receipt-1",
+        "row_key": "ui-task-1",
+        "task_id": "task-1",
+        "readback": null,
+        "dispatch": "rejected",
+        "action": null,
+        "domain": {
+          "outcome": "applied",
+          "task_id": "task-1",
+          "revision": "r2",
+          "values": {
+            "title": "Ship the synthetic task",
+            "assignee": "member-1",
+            "status": "ready",
+            "due": "2028-02-29"
+          },
+          "baseline": {
+            "state": "initialized",
+            "generation": 1,
+            "values": {
+              "title": "Ship the synthetic task",
+              "assignee": "member-1",
+              "status": "ready",
+              "due": "2028-02-29"
+            }
+          },
+          "conflicts": [],
+          "acknowledgement": {
+            "token": "synthetic-token",
+            "fields": [
+              "title",
+              "assignee",
+              "status",
+              "due"
+            ],
+            "task_revision": "r2",
+            "baseline_generation": 1,
+            "link_generation": 1
+          }
+        },
+        "error": {
+          "code": "revoked_authorization",
+          "message": "The original credential is no longer authorized.",
+          "retryable": false,
+          "recovery": "Refresh authorized state and submit a fresh operation."
+        }
+      }
+    },
+    {
+      "name": "rejected-no-error",
+      "schema": "urn:aios:task-sync:1#/definitions/RowReceipt",
+      "value": {
+        "row_receipt_id": "receipt-1",
+        "row_key": "ui-task-1",
+        "task_id": "task-1",
+        "readback": null,
+        "dispatch": "rejected",
+        "action": null,
+        "domain": null,
+        "error": null
+      }
+    },
+    {
+      "name": "rejected-readback",
+      "schema": "urn:aios:task-sync:1#/definitions/RowReceipt",
+      "value": {
+        "row_receipt_id": "receipt-1",
+        "row_key": "ui-task-1",
+        "task_id": "task-1",
+        "readback": {
+          "revision": "r2",
+          "values": {
+            "title": "Ship the synthetic task",
+            "assignee": "member-1",
+            "status": "ready",
+            "due": "2028-02-29"
+          },
+          "baseline": {
+            "state": "initialized",
+            "generation": 1,
+            "values": {
+              "title": "Ship the synthetic task",
+              "assignee": "member-1",
+              "status": "ready",
+              "due": "2028-02-29"
+            }
+          }
+        },
+        "dispatch": "rejected",
+        "action": null,
+        "domain": null,
+        "error": {
+          "code": "revoked_authorization",
+          "message": "The original credential is no longer authorized.",
+          "retryable": false,
+          "recovery": "Refresh authorized state and submit a fresh operation."
+        }
+      }
+    },
+    {
+      "name": "rejected-retryable",
+      "schema": "urn:aios:task-sync:1#/definitions/RowReceipt",
+      "value": {
+        "row_receipt_id": "receipt-1",
+        "row_key": "ui-task-1",
+        "task_id": "task-1",
+        "readback": null,
+        "dispatch": "rejected",
+        "action": null,
+        "domain": null,
+        "error": {
+          "code": "revoked_authorization",
+          "message": "The original credential is no longer authorized.",
+          "retryable": true,
+          "recovery": "Refresh authorized state and submit a fresh operation."
+        }
+      }
+    },
+    {
+      "name": "rejected-transient-error",
+      "schema": "urn:aios:task-sync:1#/definitions/RowReceipt",
+      "value": {
+        "row_receipt_id": "receipt-1",
+        "row_key": "ui-task-1",
+        "task_id": "task-1",
+        "readback": null,
+        "dispatch": "rejected",
+        "action": null,
+        "domain": null,
+        "error": {
+          "code": "unavailable",
+          "message": "The original credential is no longer authorized.",
+          "retryable": false,
+          "recovery": "Refresh authorized state and submit a fresh operation."
+        }
+      }
+    },
+    {
+      "name": "rejected-extra-acknowledgement",
+      "schema": "urn:aios:task-sync:1#/definitions/RowReceipt",
+      "value": {
+        "row_receipt_id": "receipt-1",
+        "row_key": "ui-task-1",
+        "task_id": "task-1",
+        "readback": null,
+        "dispatch": "rejected",
+        "action": null,
+        "domain": null,
+        "error": {
+          "code": "revoked_authorization",
+          "message": "The original credential is no longer authorized.",
+          "retryable": false,
+          "recovery": "Refresh authorized state and submit a fresh operation."
+        },
+        "acknowledgement": {
+          "token": "synthetic-token",
+          "fields": [
+            "title",
+            "assignee",
+            "status",
+            "due"
+          ],
+          "task_revision": "r2",
+          "baseline_generation": 1,
+          "link_generation": 1
+        }
+      }
+    },
+    {
+      "name": "processing-rejected-only-batch",
+      "schema": "urn:aios:task-sync:1#/definitions/Response",
+      "value": {
+        "contract_version": "task-sync/1",
+        "project_id": "project-1",
+        "operation_id": "operation-1",
+        "mode": "reconcile",
+        "batch_id": "batch-1",
+        "link_id": "link-1",
+        "link_generation": 1,
+        "phase": "processing",
+        "rows": [
+          {
+            "row_receipt_id": "receipt-1",
+            "row_key": "ui-task-1",
+            "task_id": "task-1",
+            "readback": null,
+            "dispatch": "rejected",
+            "action": null,
+            "domain": null,
+            "error": {
+              "code": "revoked_authorization",
+              "message": "The original credential is no longer authorized.",
+              "retryable": false,
+              "recovery": "Refresh authorized state and submit a fresh operation."
+            }
+          }
+        ],
+        "applied": [],
+        "conflicts": []
+      }
+    },
+    {
+      "name": "complete-pending-and-rejected-batch",
+      "schema": "urn:aios:task-sync:1#/definitions/Response",
+      "value": {
+        "contract_version": "task-sync/1",
+        "project_id": "project-1",
+        "operation_id": "operation-1",
+        "mode": "reconcile",
+        "batch_id": "batch-1",
+        "link_id": "link-1",
+        "link_generation": 1,
+        "phase": "complete",
+        "rows": [
+          {
+            "row_receipt_id": "receipt-1",
+            "row_key": "ui-task-1",
+            "task_id": "task-1",
+            "readback": null,
+            "dispatch": "submitted",
+            "action": {
+              "contract_version": "mcp-next/1",
+              "action_id": "action-1",
+              "audit_ref": "audit-1",
+              "status": "pending_approval",
+              "approval_request_id": "approval-1"
+            },
+            "domain": null,
+            "error": null
+          },
+          {
+            "row_receipt_id": "receipt-5",
+            "row_key": "ui-task-5",
+            "task_id": "task-5",
+            "readback": null,
+            "dispatch": "rejected",
+            "action": null,
+            "domain": null,
+            "error": {
+              "code": "revoked_authorization",
+              "message": "The original credential is no longer authorized.",
+              "retryable": false,
+              "recovery": "Refresh authorized state and submit a fresh operation."
+            }
+          }
+        ],
+        "applied": [],
+        "conflicts": []
       }
     }
   ]

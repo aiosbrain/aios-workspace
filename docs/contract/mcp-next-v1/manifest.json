@@ -8,8 +8,8 @@
     "profile.schema.json": "25a322a0cf859ee0033997b6f60d04f33a797ecbb7e093b6e1d65bc0cc4a7a33",
     "read-baseline.json": "657753d3397889fcf0dfb12c7169ade68de5fcdc28a91b06539eb39e035fa0c1",
     "tasks-fixtures.json": "64752fbae79f2baeb91e3dff436f4fa227c4ed7141b05743626f014f3627724e",
-    "tasks-sync-fixtures.json": "545b649946ea0f64ef18ffbab817f1aa22cd8ef8ec1a6ae4011f03b0480ec291",
-    "tasks-sync.schema.json": "720c4ed7ea63f65cb9bed6ae786b594467bb0c0b3c9eb8aa55c07c2c12c2e7d7",
+    "tasks-sync-fixtures.json": "77162e087a92d7afd3de0e46624cb3ff1c7b3767f60466cc1780eddf403351e7",
+    "tasks-sync.schema.json": "3d60a0edfce7c11ef58815119d879e8872709ceaa8efbcba45a2c4a36668407e",
     "tasks.schema.json": "b88f910b4a9a37a3043b641c9e814680ef188468403f14e8aa0a4d6263d5f95a",
     "workspace-fixtures.json": "b9374a9e0b600f45c11679fb899ad3039b7f3de5b0f741a34969dffe9bacd89e",
     "workspace.schema.json": "4a1a3705afaafe30a2bf779d13489d48800de97c2367995d665c2e8bf8595773"
