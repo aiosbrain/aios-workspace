@@ -2,7 +2,11 @@
 import { createHash } from "node:crypto";
 import { readFileSync, lstatSync, realpathSync } from "node:fs";
 import path from "node:path";
-import { readPrivateDocument } from "./mcp-credentials.mjs";
+import {
+  readPrivateDocument,
+  readWindowsCredentialAcl,
+  assertWindowsCredentialAcl,
+} from "./mcp-credentials.mjs";
 import { deny } from "./mcp-profile-schema.mjs";
 export function verifyProfileArtifactReceipt(file, options = {}) {
   try {
@@ -15,26 +19,36 @@ export function verifyProfileArtifactReceipt(file, options = {}) {
       realpathSync(receipt.packageRoot) !== receipt.packageRoot
     )
       deny("UNAVAILABLE");
-    const root = lstatSync(receipt.packageRoot);
-    if (
-      !root.isDirectory() ||
-      root.isSymbolicLink() ||
-      (process.platform !== "win32" && (root.uid !== process.getuid?.() || root.mode & 0o022))
-    )
-      deny("UNAVAILABLE");
+    const receiptRoot = realpathSync(path.dirname(file));
+    const relation = path.relative(receiptRoot, receipt.packageRoot);
+    if (path.isAbsolute(relation) || relation.split(path.sep).includes("..")) deny("UNAVAILABLE");
+    const platform = options.platform || process.platform;
+    const uid = options.uid ?? process.getuid?.();
+    const readAcl = options.readAcl || readWindowsCredentialAcl;
+    const checked = new Set();
+    function inspect(target, isFile = false) {
+      for (let at = target; ; at = path.dirname(at)) {
+        if (checked.has(at)) break;
+        const stat = lstatSync(at);
+        if (
+          stat.isSymbolicLink() ||
+          realpathSync(at) !== at ||
+          (at === target && isFile ? !stat.isFile() || stat.nlink !== 1 : !stat.isDirectory())
+        )
+          deny("UNAVAILABLE");
+        if (platform === "win32") assertWindowsCredentialAcl(readAcl(at));
+        else if (uid === undefined || stat.uid !== uid || stat.mode & 0o022) deny("UNAVAILABLE");
+        checked.add(at);
+        if (at === receiptRoot) break;
+      }
+    }
+    inspect(receipt.packageRoot);
     for (const [relative, expected] of Object.entries(receipt.hashes)) {
       if (!relative || path.isAbsolute(relative) || relative.split(/[\\/]/).includes(".."))
         deny("UNAVAILABLE");
-      const target = path.join(receipt.packageRoot, relative),
-        stat = lstatSync(target);
-      if (
-        (process.platform !== "win32" && (stat.uid !== process.getuid?.() || stat.mode & 0o022)) ||
-        !stat.isFile() ||
-        stat.isSymbolicLink() ||
-        stat.nlink !== 1 ||
-        realpathSync(target) !== target ||
-        createHash("sha256").update(readFileSync(target)).digest("hex") !== expected
-      )
+      const target = path.join(receipt.packageRoot, relative);
+      inspect(target, true);
+      if (createHash("sha256").update(readFileSync(target)).digest("hex") !== expected)
         deny("UNAVAILABLE");
     }
     if (!receipt.hashes["package.json"] || !receipt.hashes[receipt.entrypoint]) deny("UNAVAILABLE");

@@ -273,6 +273,17 @@ export async function prepareProfileArtifact({
         : path.join(stage, "package");
     for (const [relative, digest] of Object.entries(receipt.hashes))
       if (hash(fs.readFileSync(path.join(stagedRoot, relative))) !== digest) deny("UNAVAILABLE");
+    if (policy.platform === "win32") {
+      const secured = new Set();
+      for (const relative of Object.keys(receipt.hashes)) {
+        for (let at = path.join(stagedRoot, relative); ; at = path.dirname(at)) {
+          if (secured.has(at)) break;
+          policy.secure(at);
+          secured.add(at);
+          if (at === stage) break;
+        }
+      }
+    }
     fs.writeFileSync(path.join(stage, "receipt.json"), JSON.stringify(receipt, null, 2) + "\n", {
       mode: 0o600,
     });

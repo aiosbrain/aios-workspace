@@ -240,3 +240,54 @@ test("workspace resolves only its selected root/key and Brain-only never invokes
   });
   assert.equal(calls.length, 2, "explicit missing environment source cannot fall back to vault");
 });
+
+test("updating another profile never restores a revoked cached binding from a config backup", async (t) => {
+  const { options, input } = fixture(t);
+  await registerProfile(input, options);
+  await registerProfile({ ...input, id: "second", credentialSource: "second-source" }, options);
+  const old = loadProfileBinding("second", options);
+  const paths = profilePaths(options),
+    backup = fs.readFileSync(paths.config);
+  await revokeProfile("second", ["brainActions"], options);
+  const retained = JSON.parse(fs.readFileSync(paths.records)).profileEpochs.second;
+  fs.writeFileSync(paths.config, backup);
+  assert.throws(() => authorizeProfileCall(old, options), { code: "PROFILE_CHANGED" });
+  await registerProfile({ ...input, grants: {} }, options);
+  assert.deepEqual(JSON.parse(fs.readFileSync(paths.records)).profileEpochs.second, retained);
+  assert.throws(() => authorizeProfileCall(old, { ...options, capability: "brainActions" }), {
+    code: "PROFILE_CHANGED",
+  });
+});
+
+test("shared-source changes and partial revokes cannot reauthorize stale restored grants", async (t) => {
+  const { home, options, input } = fixture(t);
+  options.env.OTHER = "new-selected-key";
+  const root = path.join(home, "root");
+  fs.mkdirSync(root);
+  await registerProfile(input, options);
+  await registerProfile(
+    {
+      ...input,
+      id: "second",
+      mode: "workspace",
+      root,
+      readRoots: ["2-work"],
+      grants: { brainActions: true, workspaceRead: true },
+    },
+    options
+  );
+  const paths = profilePaths(options),
+    backup = fs.readFileSync(paths.config);
+  await revokeProfile("second", ["brainActions"], options);
+  const records = fs.readFileSync(paths.records);
+  fs.writeFileSync(paths.config, backup);
+  await assert.rejects(registerProfile({ ...input, reference: "env:OTHER" }, options), {
+    code: "PROFILE_CHANGED",
+  });
+  await assert.rejects(revokeProfile("second", ["workspaceRead"], options), {
+    code: "PROFILE_CHANGED",
+  });
+  assert.deepEqual(fs.readFileSync(paths.records), records);
+  await revokeProfile("second", undefined, options);
+  assert.throws(() => loadProfileBinding("second", options), { code: "PROFILE_CHANGED" });
+});

@@ -74,17 +74,46 @@ async function commitState(state, document, { revokedIds = [], ...options }) {
     deny("PROFILE_CHANGED", "Profile configuration changed concurrently; retry.");
   const epoch = { ...(state.records.profileEpochs || {}) };
   for (const profile of document.connectionProfiles.profiles) {
+    const fingerprint = profileFingerprint(
+      profile,
+      document.credentialSources?.[profile.credentialSource]
+    );
+    const retained = epoch[profile.id];
+    const prior = state.profiles.find((row) => row.id === profile.id);
+    const priorFingerprint =
+      prior &&
+      profileFingerprint(prior, state.document.credentialSources?.[prior.credentialSource]);
+    const explicitRegistration = options.reactivateId === profile.id;
+    const fullRevocation =
+      revokedIds.includes(profile.id) && GRANTS.every((key) => profile.grants[key] === false);
+    // Unchanged unrelated rows may come from a restored config. Preserve their authority
+    // record verbatim: they remain denied until their own explicit registration/revocation.
+    if (
+      retained &&
+      !explicitRegistration &&
+      !fullRevocation &&
+      prior?.generation === profile.generation &&
+      priorFingerprint === fingerprint
+    )
+      continue;
+    if (
+      retained &&
+      (profile.generation < retained.generation ||
+        (profile.generation === retained.generation && fingerprint !== retained.fingerprint) ||
+        (!explicitRegistration &&
+          !fullRevocation &&
+          (prior?.generation !== retained.generation || priorFingerprint !== retained.fingerprint)))
+    )
+      deny(
+        "PROFILE_CHANGED",
+        "A restored profile cannot change retained authority. Repeat explicit setup or fully revoke that profile."
+      );
     epoch[profile.id] = {
       generation: profile.generation,
-      fingerprint: profileFingerprint(
-        profile,
-        document.credentialSources?.[profile.credentialSource]
-      ),
-      revoked:
-        revokedIds.includes(profile.id) ||
-        state.records.profileEpochs?.[profile.id]?.revoked === true,
+      fingerprint,
+      revoked: revokedIds.includes(profile.id) || retained?.revoked === true,
     };
-    if (options.reactivateId === profile.id) epoch[profile.id].revoked = false;
+    if (explicitRegistration) epoch[profile.id].revoked = false;
   }
   const transaction = {
     id: randomUUID(),
