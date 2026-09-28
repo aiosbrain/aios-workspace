@@ -13,7 +13,7 @@ for (const name of readdirSync(root).filter((x) => x.endsWith(".schema.json")))
 
 test("proposed manifest pins the complete JSON artifact inventory", () => {
   const manifest = read("manifest.json");
-  assert.equal(manifest.version, "1.0.0");
+  assert.equal(manifest.version, "1.0.1");
   assert.equal(manifest.status, "proposed");
   assert.deepEqual(
     Object.keys(manifest.files).sort(),
