@@ -2547,8 +2547,16 @@ and `body` (at most 25,000). `task.create` requires an opaque `operation_id`, ti
 nullable assignee, task status and nullable real-calendar `due` date. `task.update`
 requires the operation ID, destination task ID, expected revision and at least one
 changed task field. `decision.record` requires the operation ID, title, rationale
-and impact. The full closed validation and result shapes are enforced by the Brain
-route; this toolkit has no caller for these operations.
+and impact. `operation_id`, `task_id`, `project_id` and assignee IDs are 1–128 ASCII
+characters matching `[A-Za-z0-9][A-Za-z0-9._:-]*`; the destination project and
+status path IDs must also be UUIDs. A revision is 1–128 Unicode code points.
+Task titles are nonblank and at most 500 code points; statuses are exactly
+`backlog|ready|in_progress|in_review|blocked|done`. A non-null `due` is a real
+`YYYY-MM-DD` date. `task.update.changes` is a nonempty subset of `title`,
+`assignee`, `status` and `due`. Decision title/rationale are nonblank at most
+500/25,000 code points, and impact is at most 5,000 (empty allowed). All objects
+are closed; invalid scalars, unpaired surrogates and extra keys return
+`422 invalid_payload`. This toolkit has no caller for these operations.
 
 Submit records a durable action identity and audit reference before execution. A
 replay of the same canonical operation returns its stored result; reusing an
@@ -2558,8 +2566,11 @@ including when the capability is disabled. Unknown or inaccessible actions and
 destinations return indistinguishable `404 not_found`. Status returns `200` with
 `contract_version`, `action_id`, `audit_ref` and a state: `requested`, `running`,
 `pending_approval`, `succeeded`, `denied`, `conflict` or `failed`. Success includes
-entity identity/revision and separate provider sync state; pending approval includes
-an approval request ID; terminal non-success includes a typed error. Submit maps
+`entity: {kind: "note"|"task"|"decision", id, revision}` and
+`sync: {state: "not_applicable"|"pending"|"synced"|"conflict"|"failed", providers: [...]}`;
+each provider entry names `linear` or `plane`, its state and a nullable error code.
+Pending approval includes `approval_request_id`; terminal non-success includes
+`error: {code, message, retryable, recovery}`. Submit maps
 success to `200`, requested/running/approval to `202`, denial to `403`, conflict to
 `409` and failure to `422`. Both routes use the closed error envelope above;
 transient service failures return retryable `503 unavailable` with `Retry-After`.
