@@ -827,9 +827,10 @@ async function cmdPull(repo, cfg, args = [], { onProgress } = {}) {
           "---",
           "",
         ].join("\n");
-        const content = item.kind === "note"
-          ? renderPulledNote(item, new Date().toISOString())
-          : fm + (item.body || "");
+        const content =
+          item.kind === "note"
+            ? renderPulledNote(item, new Date().toISOString())
+            : fm + (item.body || "");
         writeFileSync(dest, content);
         fetched++;
         if (presenter) presenter.message(`${destRel}/${flat}`, "success");

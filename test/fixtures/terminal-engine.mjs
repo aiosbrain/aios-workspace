@@ -72,7 +72,9 @@ try {
     routes.push(route);
     if (route.endsWith("/items"))
       return response({
-        items: [{ project: "other", path: "note.md", kind: "artifact", body: "# Note", access: "team" }],
+        items: [
+          { project: "other", path: "note.md", kind: "artifact", body: "# Note", access: "team" },
+        ],
       });
     if (route.endsWith("/projects"))
       return response({
@@ -95,7 +97,15 @@ try {
   globalThis.fetch = async (url) =>
     new URL(url).pathname.endsWith("/items")
       ? response({
-          items: [{ project: "other", path: "second.md", kind: "artifact", body: "# Second", access: "team" }],
+          items: [
+            {
+              project: "other",
+              path: "second.md",
+              kind: "artifact",
+              body: "# Second",
+              access: "team",
+            },
+          ],
         })
       : response({ error: "fixture auth failure" }, 403);
   await assert.rejects(cmdPull(root, cfg), /403/);
