@@ -1,11 +1,11 @@
-# MCP next contract — revision 1.0.0
+# MCP next contract — revision 1.0.1
 
 Status: **proposed, contract-only**. This supplement specifies the next local stdio
 release; passing its fixtures proves specification consistency, not runtime support.
 The governing requirements are Linear AIO-1185 and its parent. Runtime consumers must
 pin this directory's manifest and the reviewed contract commit before implementation.
 
-The canonical Brain API document includes this supplement at document revision 1.30.
+The canonical Brain API document includes this supplement at document revision 1.31.
 Its member-facing version remains 1.27; gateway negotiation remains 1.10. At the
 inspected baseline, Brain commit `5b9400e74ff9b470682b785dcd33366cfbd74172`
 actually declares 1.23 and vendors a 1.23 fixture. This pre-existing discrepancy is
@@ -116,7 +116,7 @@ Do not return old results after access has been revoked.
 
 Notes accept **only title/body**. Reject blank content; preserve accepted content
 exactly (no trimming, Unicode normalization or newline rewriting after validation).
-Limits are 200 and 25,000 code points. Reject invalid UTF-8 and unpaired Unicode surrogates before acceptance.
+Limits are 200 and 25,000 code points. Reject invalid UTF-8, unpaired Unicode surrogates and U+0000 before acceptance. U+0000 is not representable by the canonical PostgreSQL text/JSON storage and returns 422 invalid_payload, never a retryable storage failure. This applies to all governed action strings; accepted content is otherwise preserved exactly.
 Dedup key is SHA-256 of UTF-8 RFC 8785 canonical JSON encoding of
 `["note/1", member_id, team_id, project_id, title, body]`, with array order fixed and
 no insignificant JSON whitespace. A unique durable note constraint and active-attempt claim make concurrent
@@ -214,3 +214,5 @@ Acceptance here is schema/vector validation, the existing conformance suite, byt
 parity with Brain and independent review. Runtime issues must add real DB/HTTP, host,
 revocation/race/fault tests against these vectors. Release requires verified deployed
 capability/version alignment; this contract PR does not certify it.
+
+Implementation compatibility additions in revision 1.0.1 are specified in [governed item compatibility](governed-items.md). No runtime activation or package publication is implied.
