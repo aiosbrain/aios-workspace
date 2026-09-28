@@ -1,6 +1,6 @@
 # AIOS Team Brain — API Contract
 
-**Version: 1.27** is the pinned member-facing Brain API (`/api/v1`). **Document revision: 1.32**
+**Version: 1.27** is the pinned member-facing Brain API (`/api/v1`). **Document revision: 1.33**
 also carries the separately negotiated internal Executor gateway contract **1.10**; it does not
 claim unimplemented member-facing v1.10 routes. This document is the single pinned contract between the
 contributor repo (this toolkit's `aios` CLI) and the `aios-team-brain` service. Both
@@ -27,11 +27,11 @@ ceiling on `POST /api/v1/items`. A supplement carries its own `revision`, is wit
 superseded **explicitly** (never rewritten in place), and the endpoint section that adopts it
 carries the coordinated rollback procedure.
 
-## Proposed MCP next supplement (document revision 1.32)
+## Proposed MCP next supplement (document revision 1.33)
 
 The [explicit profile binding supplement](contract/mcp-next-v1/profile-binding.md) defines the additive current-destination verification route. The [governed item supplement](contract/mcp-next-v1/governed-items.md) defines note retrieval and immutable mirror compatibility. Runtime claims require deployed capability checks.
 
-[Contract revision 1.0.1](contract/mcp-next-v1/README.md) reserves governed member
+[Contract revision 1.0.2](contract/mcp-next-v1/README.md) reserves governed member
 actions, task revisions, connection profiles and workspace publishing. It is **contract
 only**, not an implemented or deployed member API change. Member version 1.27 and
 internal gateway 1.10 remain unchanged. The supplement's `manifest.json` pins schemas,
@@ -45,6 +45,7 @@ that runtime implements every canonical 1.27 feature. Resolve actual capability 
 version alignment in candidate acceptance before launch.
 
 *Revisions (additive within v1):*
+- *2026-09-28 — document revision **1.33**: MCP supplement 1.0.2 specifies task-sync/1 reconciliation, explicit profile binding, and note echo/publication behavior; capability defaults remain unchanged.*
 - *2026-09-28 — document revision **1.32**: MCP supplement 1.0.1 specifies immutable governed item echoes, lossless decision table cells and NUL rejection. This is contract-first; member version and runtime capability defaults remain unchanged.*
 - *2026-09-24 — document revision **1.30**: reserves the independently versioned MCP next supplement. No runtime member version bump or deployment claim.*
 - *2026-09-10 — document revision **1.28** (AIO-1101): records the implemented Team Brain intake endpoint at commit `87be1293dd8338dde953020c757bad336f2da9b4`. Availability still requires verified deployment and activation in each target environment; this editorial status update makes no production availability claim. Member API 1.26, scanner payload 1.25 and gateway 1.10 are unchanged.*

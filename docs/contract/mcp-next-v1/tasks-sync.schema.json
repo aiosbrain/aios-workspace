@@ -1,0 +1,3830 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "urn:aios:task-sync:1",
+  "title": "Workspace task synchronization, task-sync/1",
+  "definitions": {
+    "Fields": {
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500,
+          "not": {
+            "pattern": "\\u0000"
+          },
+          "pattern": "\\S"
+        },
+        "assignee": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "not": {
+                "pattern": "\\u0000"
+              },
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "status": {
+          "enum": [
+            "backlog",
+            "ready",
+            "in_progress",
+            "in_review",
+            "blocked",
+            "done"
+          ]
+        },
+        "due": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^(?:(?!0000)[0-9]{4}-(?:(?:01|03|05|07|08|10|12)-(?:0[1-9]|[12][0-9]|3[01])|(?:04|06|09|11)-(?:0[1-9]|[12][0-9]|30)|02-(?:0[1-9]|1[0-9]|2[0-8]))|(?:[0-9]{2}(?:0[48]|[2468][048]|[13579][26])|(?:0[48]|[2468][048]|[13579][26])00)-02-29)$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "title",
+        "assignee",
+        "status",
+        "due"
+      ],
+      "additionalProperties": false
+    },
+    "LocalFields": {
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 2000,
+          "not": {
+            "pattern": "\\u0000"
+          }
+        },
+        "assignee": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 0,
+              "maxLength": 500,
+              "not": {
+                "pattern": "\\u0000"
+              }
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "status": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 500,
+          "not": {
+            "pattern": "\\u0000"
+          }
+        },
+        "due": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 0,
+              "maxLength": 32,
+              "not": {
+                "pattern": "\\u0000"
+              }
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "title",
+        "assignee",
+        "status",
+        "due"
+      ],
+      "additionalProperties": false
+    },
+    "Baseline": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "state": {
+              "const": "uninitialized"
+            },
+            "generation": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "values": {
+              "const": null
+            }
+          },
+          "required": [
+            "state",
+            "generation",
+            "values"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "state": {
+              "const": "initialized"
+            },
+            "generation": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "values": {
+              "$ref": "#/definitions/Fields"
+            }
+          },
+          "required": [
+            "state",
+            "generation",
+            "values"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "Error": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "enum": [
+            "invalid_payload",
+            "unauthorized",
+            "not_found",
+            "forbidden",
+            "revoked_authorization",
+            "stale_revision",
+            "operation_id_conflict",
+            "mapping_required",
+            "upgrade_required",
+            "capability_unavailable",
+            "rate_limited",
+            "execution_failed",
+            "operation_in_progress",
+            "unavailable",
+            "refresh_required",
+            "baseline_required",
+            "identity_conflict",
+            "preparation_incomplete",
+            "invalid_generation",
+            "identity_backfill_required"
+          ]
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000,
+          "not": {
+            "pattern": "\\u0000"
+          }
+        },
+        "retryable": {
+          "type": "boolean"
+        },
+        "recovery": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000,
+          "not": {
+            "pattern": "\\u0000"
+          }
+        }
+      },
+      "required": [
+        "code",
+        "message",
+        "retryable",
+        "recovery"
+      ],
+      "additionalProperties": false
+    },
+    "TransportError": {
+      "type": "object",
+      "properties": {
+        "error": {
+          "$ref": "#/definitions/Error"
+        }
+      },
+      "required": [
+        "error"
+      ],
+      "additionalProperties": false
+    },
+    "Conflict": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "code": {
+              "const": "divergent_change"
+            },
+            "task_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "not": {
+                "pattern": "\\u0000"
+              },
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+            },
+            "revision": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "not": {
+                "pattern": "\\u0000"
+              }
+            },
+            "field": {
+              "const": "title"
+            },
+            "baseline": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 500,
+              "not": {
+                "pattern": "\\u0000"
+              },
+              "pattern": "\\S"
+            },
+            "brain": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 500,
+              "not": {
+                "pattern": "\\u0000"
+              },
+              "pattern": "\\S"
+            },
+            "incoming": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 500,
+              "not": {
+                "pattern": "\\u0000"
+              },
+              "pattern": "\\S"
+            },
+            "origin": {
+              "const": "workspace"
+            }
+          },
+          "required": [
+            "code",
+            "task_id",
+            "revision",
+            "field",
+            "baseline",
+            "brain",
+            "incoming",
+            "origin"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "code": {
+              "const": "baseline_required"
+            },
+            "task_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "not": {
+                "pattern": "\\u0000"
+              },
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+            },
+            "revision": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "not": {
+                "pattern": "\\u0000"
+              }
+            },
+            "field": {
+              "const": "title"
+            },
+            "baseline": {
+              "const": null
+            },
+            "brain": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 500,
+              "not": {
+                "pattern": "\\u0000"
+              },
+              "pattern": "\\S"
+            },
+            "incoming": {
+              "type": "string",
+              "minLength": 0,
+              "maxLength": 2000,
+              "not": {
+                "pattern": "\\u0000"
+              }
+            },
+            "origin": {
+              "const": "workspace"
+            }
+          },
+          "required": [
+            "code",
+            "task_id",
+            "revision",
+            "field",
+            "baseline",
+            "brain",
+            "incoming",
+            "origin"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "code": {
+              "const": "divergent_change"
+            },
+            "task_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "not": {
+                "pattern": "\\u0000"
+              },
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+            },
+            "revision": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "not": {
+                "pattern": "\\u0000"
+              }
+            },
+            "field": {
+              "const": "assignee"
+            },
+            "baseline": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128,
+                  "not": {
+                    "pattern": "\\u0000"
+                  },
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "brain": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128,
+                  "not": {
+                    "pattern": "\\u0000"
+                  },
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "incoming": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128,
+                  "not": {
+                    "pattern": "\\u0000"
+                  },
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "origin": {
+              "const": "workspace"
+            }
+          },
+          "required": [
+            "code",
+            "task_id",
+            "revision",
+            "field",
+            "baseline",
+            "brain",
+            "incoming",
+            "origin"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "code": {
+              "const": "baseline_required"
+            },
+            "task_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "not": {
+                "pattern": "\\u0000"
+              },
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+            },
+            "revision": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "not": {
+                "pattern": "\\u0000"
+              }
+            },
+            "field": {
+              "const": "assignee"
+            },
+            "baseline": {
+              "const": null
+            },
+            "brain": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128,
+                  "not": {
+                    "pattern": "\\u0000"
+                  },
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "incoming": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 0,
+                  "maxLength": 500,
+                  "not": {
+                    "pattern": "\\u0000"
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "origin": {
+              "const": "workspace"
+            }
+          },
+          "required": [
+            "code",
+            "task_id",
+            "revision",
+            "field",
+            "baseline",
+            "brain",
+            "incoming",
+            "origin"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "code": {
+              "const": "divergent_change"
+            },
+            "task_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "not": {
+                "pattern": "\\u0000"
+              },
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+            },
+            "revision": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "not": {
+                "pattern": "\\u0000"
+              }
+            },
+            "field": {
+              "const": "status"
+            },
+            "baseline": {
+              "enum": [
+                "backlog",
+                "ready",
+                "in_progress",
+                "in_review",
+                "blocked",
+                "done"
+              ]
+            },
+            "brain": {
+              "enum": [
+                "backlog",
+                "ready",
+                "in_progress",
+                "in_review",
+                "blocked",
+                "done"
+              ]
+            },
+            "incoming": {
+              "enum": [
+                "backlog",
+                "ready",
+                "in_progress",
+                "in_review",
+                "blocked",
+                "done"
+              ]
+            },
+            "origin": {
+              "const": "workspace"
+            }
+          },
+          "required": [
+            "code",
+            "task_id",
+            "revision",
+            "field",
+            "baseline",
+            "brain",
+            "incoming",
+            "origin"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "code": {
+              "const": "baseline_required"
+            },
+            "task_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "not": {
+                "pattern": "\\u0000"
+              },
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+            },
+            "revision": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "not": {
+                "pattern": "\\u0000"
+              }
+            },
+            "field": {
+              "const": "status"
+            },
+            "baseline": {
+              "const": null
+            },
+            "brain": {
+              "enum": [
+                "backlog",
+                "ready",
+                "in_progress",
+                "in_review",
+                "blocked",
+                "done"
+              ]
+            },
+            "incoming": {
+              "type": "string",
+              "minLength": 0,
+              "maxLength": 500,
+              "not": {
+                "pattern": "\\u0000"
+              }
+            },
+            "origin": {
+              "const": "workspace"
+            }
+          },
+          "required": [
+            "code",
+            "task_id",
+            "revision",
+            "field",
+            "baseline",
+            "brain",
+            "incoming",
+            "origin"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "code": {
+              "const": "divergent_change"
+            },
+            "task_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "not": {
+                "pattern": "\\u0000"
+              },
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+            },
+            "revision": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "not": {
+                "pattern": "\\u0000"
+              }
+            },
+            "field": {
+              "const": "due"
+            },
+            "baseline": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^(?:(?!0000)[0-9]{4}-(?:(?:01|03|05|07|08|10|12)-(?:0[1-9]|[12][0-9]|3[01])|(?:04|06|09|11)-(?:0[1-9]|[12][0-9]|30)|02-(?:0[1-9]|1[0-9]|2[0-8]))|(?:[0-9]{2}(?:0[48]|[2468][048]|[13579][26])|(?:0[48]|[2468][048]|[13579][26])00)-02-29)$"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "brain": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^(?:(?!0000)[0-9]{4}-(?:(?:01|03|05|07|08|10|12)-(?:0[1-9]|[12][0-9]|3[01])|(?:04|06|09|11)-(?:0[1-9]|[12][0-9]|30)|02-(?:0[1-9]|1[0-9]|2[0-8]))|(?:[0-9]{2}(?:0[48]|[2468][048]|[13579][26])|(?:0[48]|[2468][048]|[13579][26])00)-02-29)$"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "incoming": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^(?:(?!0000)[0-9]{4}-(?:(?:01|03|05|07|08|10|12)-(?:0[1-9]|[12][0-9]|3[01])|(?:04|06|09|11)-(?:0[1-9]|[12][0-9]|30)|02-(?:0[1-9]|1[0-9]|2[0-8]))|(?:[0-9]{2}(?:0[48]|[2468][048]|[13579][26])|(?:0[48]|[2468][048]|[13579][26])00)-02-29)$"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "origin": {
+              "const": "workspace"
+            }
+          },
+          "required": [
+            "code",
+            "task_id",
+            "revision",
+            "field",
+            "baseline",
+            "brain",
+            "incoming",
+            "origin"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "code": {
+              "const": "baseline_required"
+            },
+            "task_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "not": {
+                "pattern": "\\u0000"
+              },
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+            },
+            "revision": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "not": {
+                "pattern": "\\u0000"
+              }
+            },
+            "field": {
+              "const": "due"
+            },
+            "baseline": {
+              "const": null
+            },
+            "brain": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^(?:(?!0000)[0-9]{4}-(?:(?:01|03|05|07|08|10|12)-(?:0[1-9]|[12][0-9]|3[01])|(?:04|06|09|11)-(?:0[1-9]|[12][0-9]|30)|02-(?:0[1-9]|1[0-9]|2[0-8]))|(?:[0-9]{2}(?:0[48]|[2468][048]|[13579][26])|(?:0[48]|[2468][048]|[13579][26])00)-02-29)$"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "incoming": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 0,
+                  "maxLength": 32,
+                  "not": {
+                    "pattern": "\\u0000"
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "origin": {
+              "const": "workspace"
+            }
+          },
+          "required": [
+            "code",
+            "task_id",
+            "revision",
+            "field",
+            "baseline",
+            "brain",
+            "incoming",
+            "origin"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "AckGrant": {
+      "type": "object",
+      "properties": {
+        "token": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048,
+          "not": {
+            "pattern": "\\u0000"
+          }
+        },
+        "fields": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "title",
+              "assignee",
+              "status",
+              "due"
+            ]
+          },
+          "minItems": 1,
+          "maxItems": 4,
+          "uniqueItems": true
+        },
+        "task_revision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "not": {
+            "pattern": "\\u0000"
+          }
+        },
+        "baseline_generation": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "link_generation": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "token",
+        "fields",
+        "task_revision",
+        "baseline_generation",
+        "link_generation"
+      ],
+      "additionalProperties": false
+    },
+    "Domain": {
+      "type": "object",
+      "properties": {
+        "outcome": {
+          "enum": [
+            "unchanged",
+            "applied",
+            "partial_conflict"
+          ]
+        },
+        "task_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "not": {
+            "pattern": "\\u0000"
+          },
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+        },
+        "revision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "not": {
+            "pattern": "\\u0000"
+          }
+        },
+        "values": {
+          "$ref": "#/definitions/Fields"
+        },
+        "baseline": {
+          "$ref": "#/definitions/Baseline"
+        },
+        "conflicts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/Conflict"
+          },
+          "minItems": 0,
+          "maxItems": 4
+        },
+        "acknowledgement": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/AckGrant"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "outcome",
+        "task_id",
+        "revision",
+        "values",
+        "baseline",
+        "conflicts",
+        "acknowledgement"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "outcome": {
+                "const": "partial_conflict"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "conflicts": {
+                "minItems": 1
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "conflicts": {
+                "maxItems": 0
+              }
+            }
+          }
+        }
+      ]
+    },
+    "Readback": {
+      "type": "object",
+      "properties": {
+        "revision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "not": {
+            "pattern": "\\u0000"
+          }
+        },
+        "values": {
+          "$ref": "#/definitions/Fields"
+        },
+        "baseline": {
+          "$ref": "#/definitions/Baseline"
+        }
+      },
+      "required": [
+        "revision",
+        "values",
+        "baseline"
+      ],
+      "additionalProperties": false
+    },
+    "ActionStatus": {
+      "$ref": "urn:aios:mcp-next:1:actions#/definitions/ActionStatus"
+    },
+    "RowReceipt": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "row_receipt_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "not": {
+                "pattern": "\\u0000"
+              },
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+            },
+            "row_key": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "not": {
+                "pattern": "\\u0000"
+              },
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+            },
+            "task_id": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128,
+                  "not": {
+                    "pattern": "\\u0000"
+                  },
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "readback": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/Readback"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "dispatch": {
+              "const": "queued"
+            },
+            "action": {
+              "const": null
+            },
+            "domain": {
+              "const": null
+            },
+            "error": {
+              "const": null
+            }
+          },
+          "required": [
+            "row_receipt_id",
+            "row_key",
+            "task_id",
+            "readback",
+            "dispatch",
+            "action",
+            "domain",
+            "error"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "row_receipt_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "not": {
+                "pattern": "\\u0000"
+              },
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+            },
+            "row_key": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "not": {
+                "pattern": "\\u0000"
+              },
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+            },
+            "task_id": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128,
+                  "not": {
+                    "pattern": "\\u0000"
+                  },
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "readback": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/Readback"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "dispatch": {
+              "const": "unavailable"
+            },
+            "action": {
+              "const": null
+            },
+            "domain": {
+              "const": null
+            },
+            "error": {
+              "$ref": "#/definitions/Error"
+            }
+          },
+          "required": [
+            "row_receipt_id",
+            "row_key",
+            "task_id",
+            "readback",
+            "dispatch",
+            "action",
+            "domain",
+            "error"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "row_receipt_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "not": {
+                "pattern": "\\u0000"
+              },
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+            },
+            "row_key": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "not": {
+                "pattern": "\\u0000"
+              },
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+            },
+            "task_id": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128,
+                  "not": {
+                    "pattern": "\\u0000"
+                  },
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "readback": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/Readback"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "dispatch": {
+              "const": "submitted"
+            },
+            "action": {
+              "allOf": [
+                {
+                  "$ref": "#/definitions/ActionStatus"
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "enum": [
+                        "requested",
+                        "running",
+                        "pending_approval"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "status"
+                  ]
+                }
+              ]
+            },
+            "domain": {
+              "const": null
+            },
+            "error": {
+              "const": null
+            }
+          },
+          "required": [
+            "row_receipt_id",
+            "row_key",
+            "task_id",
+            "readback",
+            "dispatch",
+            "action",
+            "domain",
+            "error"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "row_receipt_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "not": {
+                "pattern": "\\u0000"
+              },
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+            },
+            "row_key": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "not": {
+                "pattern": "\\u0000"
+              },
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+            },
+            "task_id": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128,
+                  "not": {
+                    "pattern": "\\u0000"
+                  },
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "readback": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/Readback"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "dispatch": {
+              "const": "submitted"
+            },
+            "action": {
+              "allOf": [
+                {
+                  "$ref": "#/definitions/ActionStatus"
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "enum": [
+                        "denied",
+                        "conflict",
+                        "failed"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "status"
+                  ]
+                }
+              ]
+            },
+            "domain": {
+              "const": null
+            },
+            "error": {
+              "const": null
+            }
+          },
+          "required": [
+            "row_receipt_id",
+            "row_key",
+            "task_id",
+            "readback",
+            "dispatch",
+            "action",
+            "domain",
+            "error"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "row_receipt_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "not": {
+                "pattern": "\\u0000"
+              },
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+            },
+            "row_key": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "not": {
+                "pattern": "\\u0000"
+              },
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+            },
+            "task_id": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128,
+                  "not": {
+                    "pattern": "\\u0000"
+                  },
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "readback": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/Readback"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "dispatch": {
+              "const": "submitted"
+            },
+            "action": {
+              "allOf": [
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/definitions/ActionStatus"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "status": {
+                          "enum": [
+                            "succeeded"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "status"
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "properties": {
+                    "entity": {
+                      "properties": {
+                        "kind": {
+                          "const": "task"
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "domain": {
+              "$ref": "#/definitions/Domain"
+            },
+            "error": {
+              "const": null
+            }
+          },
+          "required": [
+            "row_receipt_id",
+            "row_key",
+            "task_id",
+            "readback",
+            "dispatch",
+            "action",
+            "domain",
+            "error"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "SourceRow": {
+      "type": "object",
+      "properties": {
+        "row_key": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "not": {
+            "pattern": "\\u0000"
+          },
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+        },
+        "values": {
+          "$ref": "#/definitions/LocalFields"
+        }
+      },
+      "required": [
+        "row_key",
+        "values"
+      ],
+      "additionalProperties": false
+    },
+    "JsonValue": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 65536,
+          "not": {
+            "pattern": "\\u0000"
+          }
+        },
+        {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/JsonValue"
+          }
+        },
+        {
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "minLength": 0,
+            "maxLength": 65536,
+            "not": {
+              "pattern": "\\u0000"
+            }
+          },
+          "additionalProperties": {
+            "$ref": "#/definitions/JsonValue"
+          }
+        }
+      ]
+    },
+    "Source": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "existing"
+            },
+            "item_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "not": {
+                "pattern": "\\u0000"
+              },
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+            }
+          },
+          "required": [
+            "kind",
+            "item_id"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "create"
+            },
+            "path": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1024,
+              "not": {
+                "pattern": "\\u0000"
+              }
+            },
+            "access": {
+              "enum": [
+                "team",
+                "external"
+              ]
+            },
+            "body": {
+              "type": "string",
+              "minLength": 0,
+              "maxLength": 1000000,
+              "not": {
+                "pattern": "\\u0000"
+              }
+            },
+            "frontmatter": {
+              "type": "object",
+              "maxProperties": 100,
+              "propertyNames": {
+                "type": "string",
+                "minLength": 0,
+                "maxLength": 65536,
+                "not": {
+                  "pattern": "\\u0000"
+                }
+              },
+              "additionalProperties": {
+                "$ref": "#/definitions/JsonValue"
+              }
+            },
+            "rows": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/SourceRow"
+              },
+              "minItems": 0,
+              "maxItems": 5000
+            }
+          },
+          "required": [
+            "kind",
+            "path",
+            "access",
+            "body",
+            "frontmatter",
+            "rows"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "ConnectRequest": {
+      "type": "object",
+      "properties": {
+        "contract_version": {
+          "const": "task-sync/1"
+        },
+        "project_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "not": {
+            "pattern": "\\u0000"
+          },
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+        },
+        "operation_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "not": {
+            "pattern": "\\u0000"
+          },
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+        },
+        "mode": {
+          "const": "connect"
+        },
+        "workspace_id": {
+          "type": "string",
+          "minLength": 36,
+          "maxLength": 36,
+          "not": {
+            "pattern": "\\u0000"
+          },
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "source": {
+          "$ref": "#/definitions/Source"
+        }
+      },
+      "required": [
+        "contract_version",
+        "project_id",
+        "operation_id",
+        "mode",
+        "workspace_id",
+        "source"
+      ],
+      "additionalProperties": false
+    },
+    "Selection": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "task_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "not": {
+                "pattern": "\\u0000"
+              },
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+            },
+            "row_key": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "not": {
+                "pattern": "\\u0000"
+              },
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+            },
+            "expected_revision": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "not": {
+                "pattern": "\\u0000"
+              }
+            },
+            "selection_token": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 2048,
+              "not": {
+                "pattern": "\\u0000"
+              }
+            },
+            "local_state": {
+              "const": "absent"
+            }
+          },
+          "required": [
+            "task_id",
+            "row_key",
+            "expected_revision",
+            "selection_token",
+            "local_state"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "task_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "not": {
+                "pattern": "\\u0000"
+              },
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+            },
+            "row_key": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "not": {
+                "pattern": "\\u0000"
+              },
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+            },
+            "expected_revision": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "not": {
+                "pattern": "\\u0000"
+              }
+            },
+            "selection_token": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 2048,
+              "not": {
+                "pattern": "\\u0000"
+              }
+            },
+            "local_state": {
+              "const": "present"
+            },
+            "values": {
+              "$ref": "#/definitions/LocalFields"
+            }
+          },
+          "required": [
+            "task_id",
+            "row_key",
+            "expected_revision",
+            "selection_token",
+            "local_state",
+            "values"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "AttachRequest": {
+      "type": "object",
+      "properties": {
+        "contract_version": {
+          "const": "task-sync/1"
+        },
+        "project_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "not": {
+            "pattern": "\\u0000"
+          },
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+        },
+        "operation_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "not": {
+            "pattern": "\\u0000"
+          },
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+        },
+        "mode": {
+          "const": "attach"
+        },
+        "link_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "not": {
+            "pattern": "\\u0000"
+          },
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+        },
+        "link_generation": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "selections": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/Selection"
+          },
+          "minItems": 1,
+          "maxItems": 200
+        }
+      },
+      "required": [
+        "contract_version",
+        "project_id",
+        "operation_id",
+        "mode",
+        "link_id",
+        "link_generation",
+        "selections"
+      ],
+      "additionalProperties": false
+    },
+    "InitializationGrant": {
+      "type": "object",
+      "properties": {
+        "token": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048,
+          "not": {
+            "pattern": "\\u0000"
+          }
+        },
+        "task_revision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "not": {
+            "pattern": "\\u0000"
+          }
+        },
+        "link_generation": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "scope": {
+          "enum": [
+            "preparation",
+            "link"
+          ]
+        },
+        "generation": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "token",
+        "task_revision",
+        "link_generation",
+        "scope",
+        "generation"
+      ],
+      "additionalProperties": false
+    },
+    "Row": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "initialize"
+            },
+            "task_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "not": {
+                "pattern": "\\u0000"
+              },
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+            },
+            "row_key": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "not": {
+                "pattern": "\\u0000"
+              },
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+            },
+            "expected_revision": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "not": {
+                "pattern": "\\u0000"
+              }
+            },
+            "initialization_token": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 2048,
+              "not": {
+                "pattern": "\\u0000"
+              }
+            },
+            "values": {
+              "$ref": "#/definitions/Fields"
+            }
+          },
+          "required": [
+            "kind",
+            "task_id",
+            "row_key",
+            "expected_revision",
+            "initialization_token",
+            "values"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "existing"
+            },
+            "task_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "not": {
+                "pattern": "\\u0000"
+              },
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+            },
+            "row_key": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "not": {
+                "pattern": "\\u0000"
+              },
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+            },
+            "expected_revision": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "not": {
+                "pattern": "\\u0000"
+              }
+            },
+            "baseline_generation": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "baseline": {
+              "$ref": "#/definitions/Fields"
+            },
+            "values": {
+              "$ref": "#/definitions/Fields"
+            }
+          },
+          "required": [
+            "kind",
+            "task_id",
+            "row_key",
+            "expected_revision",
+            "baseline_generation",
+            "baseline",
+            "values"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "new"
+            },
+            "row_key": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "not": {
+                "pattern": "\\u0000"
+              },
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+            },
+            "values": {
+              "$ref": "#/definitions/Fields"
+            }
+          },
+          "required": [
+            "kind",
+            "row_key",
+            "values"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "ReconcileRequest": {
+      "type": "object",
+      "properties": {
+        "contract_version": {
+          "const": "task-sync/1"
+        },
+        "project_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "not": {
+            "pattern": "\\u0000"
+          },
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+        },
+        "operation_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "not": {
+            "pattern": "\\u0000"
+          },
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+        },
+        "mode": {
+          "const": "reconcile"
+        },
+        "link_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "not": {
+            "pattern": "\\u0000"
+          },
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+        },
+        "link_generation": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "source_item_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "not": {
+            "pattern": "\\u0000"
+          },
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+        },
+        "rows": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/Row"
+          },
+          "minItems": 0,
+          "maxItems": 5000
+        }
+      },
+      "required": [
+        "contract_version",
+        "project_id",
+        "operation_id",
+        "mode",
+        "link_id",
+        "link_generation",
+        "source_item_id",
+        "rows"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "rows": {
+                "contains": {
+                  "properties": {
+                    "kind": {
+                      "const": "initialize"
+                    }
+                  },
+                  "required": [
+                    "kind"
+                  ]
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "rows": {
+                "maxItems": 200,
+                "items": {
+                  "properties": {
+                    "kind": {
+                      "const": "initialize"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "Acknowledgement": {
+      "type": "object",
+      "properties": {
+        "task_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "not": {
+            "pattern": "\\u0000"
+          },
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+        },
+        "row_key": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "not": {
+            "pattern": "\\u0000"
+          },
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+        },
+        "token": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048,
+          "not": {
+            "pattern": "\\u0000"
+          }
+        },
+        "values": {
+          "$ref": "#/definitions/Fields"
+        }
+      },
+      "required": [
+        "task_id",
+        "row_key",
+        "token",
+        "values"
+      ],
+      "additionalProperties": false
+    },
+    "AcknowledgeRequest": {
+      "type": "object",
+      "properties": {
+        "contract_version": {
+          "const": "task-sync/1"
+        },
+        "project_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "not": {
+            "pattern": "\\u0000"
+          },
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+        },
+        "operation_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "not": {
+            "pattern": "\\u0000"
+          },
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+        },
+        "mode": {
+          "const": "acknowledge"
+        },
+        "link_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "not": {
+            "pattern": "\\u0000"
+          },
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+        },
+        "link_generation": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "receipts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/Acknowledgement"
+          },
+          "minItems": 1,
+          "maxItems": 5000
+        }
+      },
+      "required": [
+        "contract_version",
+        "project_id",
+        "operation_id",
+        "mode",
+        "link_id",
+        "link_generation",
+        "receipts"
+      ],
+      "additionalProperties": false
+    },
+    "Request": {
+      "oneOf": [
+        {
+          "$ref": "#/definitions/ConnectRequest"
+        },
+        {
+          "$ref": "#/definitions/AttachRequest"
+        },
+        {
+          "$ref": "#/definitions/ReconcileRequest"
+        },
+        {
+          "$ref": "#/definitions/AcknowledgeRequest"
+        }
+      ]
+    },
+    "Query": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "contract_version": {
+              "const": "task-sync/1"
+            },
+            "view": {
+              "const": "snapshot"
+            },
+            "link_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "not": {
+                "pattern": "\\u0000"
+              },
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+            },
+            "cursor": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 2048,
+                  "not": {
+                    "pattern": "\\u0000"
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "contract_version",
+            "view",
+            "link_id",
+            "cursor"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "contract_version": {
+              "const": "task-sync/1"
+            },
+            "view": {
+              "const": "attachable"
+            },
+            "link_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "not": {
+                "pattern": "\\u0000"
+              },
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+            },
+            "cursor": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 2048,
+                  "not": {
+                    "pattern": "\\u0000"
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "row_keys": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128,
+                "not": {
+                  "pattern": "\\u0000"
+                },
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+              },
+              "minItems": 0,
+              "maxItems": 200,
+              "uniqueItems": true
+            }
+          },
+          "required": [
+            "contract_version",
+            "view",
+            "link_id",
+            "cursor",
+            "row_keys"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "contract_version": {
+              "const": "task-sync/1"
+            },
+            "view": {
+              "const": "operation"
+            },
+            "project_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "not": {
+                "pattern": "\\u0000"
+              },
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+            },
+            "operation_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "not": {
+                "pattern": "\\u0000"
+              },
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+            }
+          },
+          "required": [
+            "contract_version",
+            "view",
+            "project_id",
+            "operation_id"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "ProjectState": {
+      "enum": [
+        "disabled",
+        "preparing",
+        "enabled"
+      ]
+    },
+    "ConnectResult": {
+      "type": "object",
+      "properties": {
+        "contract_version": {
+          "const": "task-sync/1"
+        },
+        "project_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "not": {
+            "pattern": "\\u0000"
+          },
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+        },
+        "operation_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "not": {
+            "pattern": "\\u0000"
+          },
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+        },
+        "mode": {
+          "const": "connect"
+        },
+        "link_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "not": {
+            "pattern": "\\u0000"
+          },
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+        },
+        "link_generation": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "source_item_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "not": {
+            "pattern": "\\u0000"
+          },
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+        },
+        "project_state": {
+          "$ref": "#/definitions/ProjectState"
+        },
+        "preparation_generation": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "contract_version",
+        "project_id",
+        "operation_id",
+        "mode",
+        "link_id",
+        "link_generation",
+        "source_item_id",
+        "project_state",
+        "preparation_generation"
+      ],
+      "additionalProperties": false
+    },
+    "AttachReceipt": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "row_receipt_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "not": {
+                "pattern": "\\u0000"
+              },
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+            },
+            "task_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "not": {
+                "pattern": "\\u0000"
+              },
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+            },
+            "row_key": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "not": {
+                "pattern": "\\u0000"
+              },
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+            },
+            "status": {
+              "const": "attached"
+            },
+            "revision": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "not": {
+                "pattern": "\\u0000"
+              }
+            },
+            "values": {
+              "$ref": "#/definitions/Fields"
+            },
+            "baseline": {
+              "$ref": "#/definitions/Baseline"
+            },
+            "conflicts": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/Conflict"
+              },
+              "minItems": 0,
+              "maxItems": 4
+            },
+            "acknowledgement": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/AckGrant"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "initialization": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/InitializationGrant"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "row_receipt_id",
+            "task_id",
+            "row_key",
+            "status",
+            "revision",
+            "values",
+            "baseline",
+            "conflicts",
+            "acknowledgement",
+            "initialization"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "row_receipt_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "not": {
+                "pattern": "\\u0000"
+              },
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+            },
+            "task_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "not": {
+                "pattern": "\\u0000"
+              },
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+            },
+            "row_key": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "not": {
+                "pattern": "\\u0000"
+              },
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+            },
+            "status": {
+              "enum": [
+                "stale_revision",
+                "baseline_required",
+                "not_found",
+                "identity_conflict",
+                "identity_backfill_required"
+              ]
+            },
+            "error": {
+              "$ref": "#/definitions/Error"
+            },
+            "readback": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/Readback"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "conflicts": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/Conflict"
+              },
+              "minItems": 0,
+              "maxItems": 4
+            },
+            "initialization": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/InitializationGrant"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "row_receipt_id",
+            "task_id",
+            "row_key",
+            "status",
+            "error",
+            "readback",
+            "conflicts",
+            "initialization"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "row_receipt_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "not": {
+                "pattern": "\\u0000"
+              },
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+            },
+            "task_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "not": {
+                "pattern": "\\u0000"
+              },
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+            },
+            "row_key": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "not": {
+                "pattern": "\\u0000"
+              },
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+            },
+            "status": {
+              "const": "mapping_required"
+            },
+            "revision": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "not": {
+                "pattern": "\\u0000"
+              }
+            },
+            "raw_values": {
+              "$ref": "#/definitions/LocalFields"
+            },
+            "error": {
+              "$ref": "#/definitions/Error"
+            },
+            "acknowledgement": {
+              "const": null
+            },
+            "initialization": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/InitializationGrant"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "row_receipt_id",
+            "task_id",
+            "row_key",
+            "status",
+            "revision",
+            "raw_values",
+            "error",
+            "acknowledgement",
+            "initialization"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "AttachResult": {
+      "type": "object",
+      "properties": {
+        "contract_version": {
+          "const": "task-sync/1"
+        },
+        "project_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "not": {
+            "pattern": "\\u0000"
+          },
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+        },
+        "operation_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "not": {
+            "pattern": "\\u0000"
+          },
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+        },
+        "mode": {
+          "const": "attach"
+        },
+        "link_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "not": {
+            "pattern": "\\u0000"
+          },
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+        },
+        "link_generation": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "rows": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/AttachReceipt"
+          },
+          "minItems": 1,
+          "maxItems": 200
+        }
+      },
+      "required": [
+        "contract_version",
+        "project_id",
+        "operation_id",
+        "mode",
+        "link_id",
+        "link_generation",
+        "rows"
+      ],
+      "additionalProperties": false
+    },
+    "StaleConflict": {
+      "type": "object",
+      "properties": {
+        "task_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "not": {
+            "pattern": "\\u0000"
+          },
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+        },
+        "revision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "not": {
+            "pattern": "\\u0000"
+          }
+        },
+        "origin": {
+          "const": "workspace"
+        },
+        "code": {
+          "const": "stale_revision"
+        }
+      },
+      "required": [
+        "task_id",
+        "revision",
+        "origin",
+        "code"
+      ],
+      "additionalProperties": false
+    },
+    "BatchResult": {
+      "type": "object",
+      "properties": {
+        "contract_version": {
+          "const": "task-sync/1"
+        },
+        "project_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "not": {
+            "pattern": "\\u0000"
+          },
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+        },
+        "operation_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "not": {
+            "pattern": "\\u0000"
+          },
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+        },
+        "mode": {
+          "const": "reconcile"
+        },
+        "batch_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "not": {
+            "pattern": "\\u0000"
+          },
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+        },
+        "link_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "not": {
+            "pattern": "\\u0000"
+          },
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+        },
+        "link_generation": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "phase": {
+          "enum": [
+            "processing",
+            "complete"
+          ]
+        },
+        "rows": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/RowReceipt"
+          },
+          "minItems": 0,
+          "maxItems": 5000
+        },
+        "applied": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "task_id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128,
+                "not": {
+                  "pattern": "\\u0000"
+                },
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+              },
+              "revision": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128,
+                "not": {
+                  "pattern": "\\u0000"
+                }
+              }
+            },
+            "required": [
+              "task_id",
+              "revision"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 0,
+          "maxItems": 5000
+        },
+        "conflicts": {
+          "type": "array",
+          "items": {
+            "oneOf": [
+              {
+                "$ref": "#/definitions/Conflict"
+              },
+              {
+                "$ref": "#/definitions/StaleConflict"
+              }
+            ]
+          },
+          "minItems": 0,
+          "maxItems": 20000
+        }
+      },
+      "required": [
+        "contract_version",
+        "project_id",
+        "operation_id",
+        "mode",
+        "batch_id",
+        "link_id",
+        "link_generation",
+        "phase",
+        "rows",
+        "applied",
+        "conflicts"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "phase": {
+                "const": "complete"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "rows": {
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "dispatch": {
+                      "const": "submitted"
+                    },
+                    "action": {
+                      "type": "object",
+                      "properties": {
+                        "status": {
+                          "enum": [
+                            "succeeded",
+                            "denied",
+                            "conflict",
+                            "failed"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "status"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "dispatch",
+                    "action"
+                  ]
+                }
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "rows": {
+                "contains": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "dispatch": {
+                          "enum": [
+                            "queued",
+                            "unavailable"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "dispatch"
+                      ]
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "dispatch": {
+                          "const": "submitted"
+                        },
+                        "action": {
+                          "type": "object",
+                          "properties": {
+                            "status": {
+                              "enum": [
+                                "requested",
+                                "running",
+                                "pending_approval"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "status"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "dispatch",
+                        "action"
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "AckReceipt": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "task_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "not": {
+                "pattern": "\\u0000"
+              },
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+            },
+            "row_key": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "not": {
+                "pattern": "\\u0000"
+              },
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+            },
+            "status": {
+              "const": "acknowledged"
+            },
+            "baseline": {
+              "$ref": "#/definitions/Baseline"
+            }
+          },
+          "required": [
+            "task_id",
+            "row_key",
+            "status",
+            "baseline"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "task_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "not": {
+                "pattern": "\\u0000"
+              },
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+            },
+            "row_key": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "not": {
+                "pattern": "\\u0000"
+              },
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+            },
+            "status": {
+              "const": "refresh_required"
+            },
+            "error": {
+              "$ref": "#/definitions/Error"
+            }
+          },
+          "required": [
+            "task_id",
+            "row_key",
+            "status",
+            "error"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "AcknowledgeResult": {
+      "type": "object",
+      "properties": {
+        "contract_version": {
+          "const": "task-sync/1"
+        },
+        "project_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "not": {
+            "pattern": "\\u0000"
+          },
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+        },
+        "operation_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "not": {
+            "pattern": "\\u0000"
+          },
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+        },
+        "mode": {
+          "const": "acknowledge"
+        },
+        "link_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "not": {
+            "pattern": "\\u0000"
+          },
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+        },
+        "link_generation": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "rows": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/AckReceipt"
+          },
+          "minItems": 1,
+          "maxItems": 5000
+        }
+      },
+      "required": [
+        "contract_version",
+        "project_id",
+        "operation_id",
+        "mode",
+        "link_id",
+        "link_generation",
+        "rows"
+      ],
+      "additionalProperties": false
+    },
+    "SnapshotRow": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "task_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "not": {
+                "pattern": "\\u0000"
+              },
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+            },
+            "row_key": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "not": {
+                "pattern": "\\u0000"
+              },
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+            },
+            "revision": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "not": {
+                "pattern": "\\u0000"
+              }
+            },
+            "values": {
+              "$ref": "#/definitions/Fields"
+            },
+            "baseline": {
+              "$ref": "#/definitions/Baseline"
+            },
+            "origin": {
+              "enum": [
+                "ui",
+                "sync"
+              ]
+            },
+            "original_source_item_id": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128,
+                  "not": {
+                    "pattern": "\\u0000"
+                  },
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "permitted_fields": {
+              "type": "array",
+              "items": {
+                "enum": [
+                  "title",
+                  "assignee",
+                  "status",
+                  "due"
+                ]
+              },
+              "minItems": 0,
+              "maxItems": 4,
+              "uniqueItems": true
+            },
+            "conflicts": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/Conflict"
+              },
+              "minItems": 0,
+              "maxItems": 4
+            },
+            "acknowledgement": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/AckGrant"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "sync": {
+              "$ref": "urn:aios:mcp-next:1:actions#/definitions/Sync"
+            },
+            "state": {
+              "const": "ready"
+            },
+            "initialization": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/InitializationGrant"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "task_id",
+            "row_key",
+            "revision",
+            "values",
+            "baseline",
+            "origin",
+            "original_source_item_id",
+            "permitted_fields",
+            "conflicts",
+            "acknowledgement",
+            "sync",
+            "state",
+            "initialization"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "state": {
+              "const": "mapping_required"
+            },
+            "task_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "not": {
+                "pattern": "\\u0000"
+              },
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+            },
+            "row_key": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "not": {
+                "pattern": "\\u0000"
+              },
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+            },
+            "revision": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "not": {
+                "pattern": "\\u0000"
+              }
+            },
+            "origin": {
+              "enum": [
+                "ui",
+                "sync"
+              ]
+            },
+            "original_source_item_id": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128,
+                  "not": {
+                    "pattern": "\\u0000"
+                  },
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "raw_values": {
+              "$ref": "#/definitions/LocalFields"
+            },
+            "baseline": {
+              "$ref": "#/definitions/Baseline"
+            },
+            "error": {
+              "$ref": "#/definitions/Error"
+            },
+            "acknowledgement": {
+              "const": null
+            },
+            "initialization": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/InitializationGrant"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "state",
+            "task_id",
+            "row_key",
+            "revision",
+            "origin",
+            "original_source_item_id",
+            "raw_values",
+            "baseline",
+            "error",
+            "acknowledgement",
+            "initialization"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "Snapshot": {
+      "type": "object",
+      "properties": {
+        "contract_version": {
+          "const": "task-sync/1"
+        },
+        "view": {
+          "const": "snapshot"
+        },
+        "link_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "not": {
+            "pattern": "\\u0000"
+          },
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+        },
+        "link_generation": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "project_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "not": {
+            "pattern": "\\u0000"
+          },
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+        },
+        "source_item_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "not": {
+            "pattern": "\\u0000"
+          },
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+        },
+        "project_state": {
+          "$ref": "#/definitions/ProjectState"
+        },
+        "preparation_generation": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "source_generation": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "rows": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/SnapshotRow"
+          },
+          "minItems": 0,
+          "maxItems": 200
+        },
+        "eligible_assignees": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128,
+                "not": {
+                  "pattern": "\\u0000"
+                },
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+              },
+              "label": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200,
+                "not": {
+                  "pattern": "\\u0000"
+                }
+              }
+            },
+            "required": [
+              "id",
+              "label"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 0,
+          "maxItems": 1000
+        },
+        "eligible_statuses": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "backlog",
+              "ready",
+              "in_progress",
+              "in_review",
+              "blocked",
+              "done"
+            ]
+          },
+          "minItems": 6,
+          "maxItems": 6,
+          "uniqueItems": true
+        },
+        "next_cursor": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 2048,
+              "not": {
+                "pattern": "\\u0000"
+              }
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "complete": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "contract_version",
+        "view",
+        "link_id",
+        "link_generation",
+        "project_id",
+        "source_item_id",
+        "project_state",
+        "preparation_generation",
+        "source_generation",
+        "rows",
+        "eligible_assignees",
+        "eligible_statuses",
+        "next_cursor",
+        "complete"
+      ],
+      "additionalProperties": false
+    },
+    "Candidate": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "task_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "not": {
+                "pattern": "\\u0000"
+              },
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+            },
+            "row_key": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "not": {
+                "pattern": "\\u0000"
+              },
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+            },
+            "revision": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "not": {
+                "pattern": "\\u0000"
+              }
+            },
+            "values": {
+              "$ref": "#/definitions/Fields"
+            },
+            "selection_token": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 2048,
+              "not": {
+                "pattern": "\\u0000"
+              }
+            },
+            "state": {
+              "const": "ready"
+            }
+          },
+          "required": [
+            "task_id",
+            "row_key",
+            "revision",
+            "values",
+            "selection_token",
+            "state"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "state": {
+              "const": "mapping_required"
+            },
+            "task_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "not": {
+                "pattern": "\\u0000"
+              },
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+            },
+            "row_key": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "not": {
+                "pattern": "\\u0000"
+              },
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+            },
+            "revision": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "not": {
+                "pattern": "\\u0000"
+              }
+            },
+            "raw_values": {
+              "$ref": "#/definitions/LocalFields"
+            },
+            "selection_token": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 2048,
+              "not": {
+                "pattern": "\\u0000"
+              }
+            },
+            "error": {
+              "$ref": "#/definitions/Error"
+            }
+          },
+          "required": [
+            "state",
+            "task_id",
+            "row_key",
+            "revision",
+            "raw_values",
+            "selection_token",
+            "error"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "Discovery": {
+      "type": "object",
+      "properties": {
+        "contract_version": {
+          "const": "task-sync/1"
+        },
+        "view": {
+          "const": "attachable"
+        },
+        "link_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "not": {
+            "pattern": "\\u0000"
+          },
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+        },
+        "link_generation": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "project_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "not": {
+            "pattern": "\\u0000"
+          },
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+        },
+        "source_generation": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "rows": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/Candidate"
+          },
+          "minItems": 0,
+          "maxItems": 200
+        },
+        "next_cursor": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 2048,
+              "not": {
+                "pattern": "\\u0000"
+              }
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "complete": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "contract_version",
+        "view",
+        "link_id",
+        "link_generation",
+        "project_id",
+        "source_generation",
+        "rows",
+        "next_cursor",
+        "complete"
+      ],
+      "additionalProperties": false
+    },
+    "Response": {
+      "oneOf": [
+        {
+          "$ref": "#/definitions/ConnectResult"
+        },
+        {
+          "$ref": "#/definitions/AttachResult"
+        },
+        {
+          "$ref": "#/definitions/BatchResult"
+        },
+        {
+          "$ref": "#/definitions/AcknowledgeResult"
+        },
+        {
+          "$ref": "#/definitions/Snapshot"
+        },
+        {
+          "$ref": "#/definitions/Discovery"
+        }
+      ]
+    },
+    "AdminRequest": {
+      "type": "object",
+      "properties": {
+        "project_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "not": {
+            "pattern": "\\u0000"
+          },
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+        },
+        "operation_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "not": {
+            "pattern": "\\u0000"
+          },
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+        },
+        "operation": {
+          "enum": [
+            "prepare",
+            "activate",
+            "abort"
+          ]
+        },
+        "expected_generation": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "project_id",
+        "operation_id",
+        "operation",
+        "expected_generation"
+      ],
+      "additionalProperties": false
+    },
+    "AdminResult": {
+      "type": "object",
+      "properties": {
+        "project_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "not": {
+            "pattern": "\\u0000"
+          },
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+        },
+        "operation_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "not": {
+            "pattern": "\\u0000"
+          },
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+        },
+        "state": {
+          "$ref": "#/definitions/ProjectState"
+        },
+        "generation": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "ready": {
+          "type": "boolean"
+        },
+        "pending_initializations": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "pending_approvals": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "unmapped_assignees": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "unsupported_writers": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100,
+            "not": {
+              "pattern": "\\u0000"
+            }
+          },
+          "minItems": 0,
+          "maxItems": 100
+        },
+        "audit_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "not": {
+            "pattern": "\\u0000"
+          },
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+        }
+      },
+      "required": [
+        "project_id",
+        "operation_id",
+        "state",
+        "generation",
+        "ready",
+        "pending_initializations",
+        "pending_approvals",
+        "unmapped_assignees",
+        "unsupported_writers",
+        "audit_ref"
+      ],
+      "additionalProperties": false
+    }
+  }
+}
