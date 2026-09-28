@@ -318,3 +318,35 @@ test("Windows setup secures a newly created authority directory without changing
   });
   assert.deepEqual(secured, [path.join(home, ".aios", "mcp-profile.lock")]);
 });
+
+import { installMcpHosts } from "../scripts/mcp-host-install.mjs";
+import { workspaceProfileCredential } from "../scripts/mcp-profile-workspace-credentials.mjs";
+test("host installation resolves the selected workspace credential through the real scoped adapter", async (t) => {
+  const { home, input, options } = fixture(t);
+  const root = path.join(home, "root");
+  fs.mkdirSync(root);
+  fs.writeFileSync(path.join(root, ".env"), "KEY=selected-workspace-key\nUNRELATED=unused\n");
+  const env = { AIOS_CONFIG_DIR: options.env.AIOS_CONFIG_DIR };
+  await registerProfile(
+    { ...input, mode: "workspace", root },
+    { ...options, env, workspaceCredential: workspaceProfileCredential }
+  );
+  const calls = [];
+  await assert.rejects(
+    installMcpHosts({
+      ...options,
+      env,
+      hosts: ["cursor"],
+      profileId: input.id,
+      dryRun: true,
+      runningHosts: () => [],
+      fetchImpl: (url, request) => {
+        calls.push(request.headers.Authorization);
+        return options.fetchImpl(url);
+      },
+    }),
+    (error) =>
+      error.code === "UNAVAILABLE" && /published profile-capable artifact/.test(error.message)
+  );
+  assert.deepEqual(calls, ["Bearer selected-workspace-key", "Bearer selected-workspace-key"]);
+});

@@ -96,7 +96,9 @@ export function resolveUserConfigPath(options = {}) {
  * purely numeric key has no stem and is never secret-bearing.
  */
 function dropOrdinal(key) {
-  return key.replace(/\d+$/, "");
+  let end = key.length;
+  while (end > 0 && key.charCodeAt(end - 1) >= 48 && key.charCodeAt(end - 1) <= 57) end--;
+  return key.slice(0, end);
 }
 
 function normalizedKey(key) {

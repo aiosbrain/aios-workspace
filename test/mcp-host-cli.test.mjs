@@ -204,3 +204,24 @@ test("profile artifact unavailability is actionable and other profile refusals r
     assert.match(rejected.remediation, /profile status/);
   }
 });
+
+import { chooseProfileSetup } from "../scripts/mcp-profile-command.mjs";
+test("guided install preserves the current read-only connection before profile publication", async () => {
+  let choices;
+  const selection = await chooseProfileSetup({
+    ui: {
+      select: async (prompt) => {
+        choices = prompt;
+        return "legacy";
+      },
+      isCancel: () => false,
+      text: () => assert.fail("legacy selection must not register a profile"),
+    },
+  });
+  assert.deepEqual(selection, { legacy: true });
+  assert.equal(choices.initialValue, "legacy");
+  assert.deepEqual(
+    choices.options.map((row) => row.value),
+    ["legacy", "brain-only", "workspace"]
+  );
+});

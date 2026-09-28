@@ -109,10 +109,12 @@ export function startMcp(
             };
           }
         : undefined,
-      safeError: (error) =>
+      safeError: (error, { phase } = {}) =>
         error instanceof ProfileError
           ? `${error.code}: ${error.message}`
-          : "The selected connection could not be verified. Inspect profile status and retry.",
+          : phase === "tool"
+            ? "The tool request failed. Retry the operation; profile status can verify the current connection."
+            : "The selected connection could not be verified. Inspect profile status and retry.",
     });
   })();
   return serveStdio(ready, deps);

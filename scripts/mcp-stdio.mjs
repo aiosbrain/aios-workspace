@@ -93,7 +93,7 @@ export function createDispatcher({
             content: [
               {
                 type: "text",
-                text: `Error: ${resolveRequest && safeError ? safeError(e) : (e?.message ?? String(e))}`,
+                text: `Error: ${resolveRequest && safeError ? safeError(e, { phase: "tool" }) : (e?.message ?? String(e))}`,
               },
             ],
             isError: true,

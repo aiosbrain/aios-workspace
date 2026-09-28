@@ -1,3 +1,4 @@
+import { workspaceProfileCredential } from "./mcp-profile-workspace-credentials.mjs";
 import {
   loadProfileBinding,
   inspectProfileBinding,
@@ -180,7 +181,12 @@ export async function installMcpHosts(options = {}) {
   const home = options.home || os.homedir(),
     project = options.project || process.cwd();
   const profileBinding =
-    options.profileId && !uninstall ? loadProfileBinding(options.profileId, options) : null;
+    options.profileId && !uninstall
+      ? loadProfileBinding(options.profileId, {
+          workspaceCredential: workspaceProfileCredential,
+          ...options,
+        })
+      : null;
   if (
     options.profileId &&
     (options.hosts || []).includes("claude-code") &&

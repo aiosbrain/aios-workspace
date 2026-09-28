@@ -78,15 +78,18 @@ export async function cmdMcpProfile(args, options = {}) {
 
 /** Guided setup is explicit; no field or grant is selected from the current directory. */
 export async function chooseProfileSetup(options = {}) {
-  const { clack: ui } = await import("./onboard-ui.mjs");
+  const ui = options.ui || (await import("./onboard-ui.mjs")).clack;
   const mode = await ui.select({
     message: "Choose the connection",
+    initialValue: "legacy",
     options: [
+      { value: "legacy", label: "Current read-only Brain connection" },
       { value: "brain-only", label: "Team Brain" },
       { value: "workspace", label: "Team Brain + workspace" },
     ],
   });
   if (ui.isCancel(mode)) return null;
+  if (mode === "legacy") return { legacy: true };
   const input = { mode, grants: emptyGrants(), readRoots: [], draftRoots: [] };
   for (const [key, message] of [
     ["id", "Profile name"],

@@ -20,8 +20,12 @@ test("live list and old reads/status reload selected profile and never use stale
     OTHER: "sentinel_b",
   };
   const requests = [];
+  let failToolRequest = false;
   const fetchImpl = async (url, opts) => {
     requests.push({ url, authorization: opts.headers?.Authorization });
+    if (failToolRequest && !url.endsWith("/me") && !url.includes("/projects/")) {
+      throw new Error("sentinel_upstream");
+    }
     return {
       ok: true,
       status: 200,
@@ -78,6 +82,12 @@ test("live list and old reads/status reload selected profile and never use stale
   }
   assert.equal((await rpc(1, "tools/list")).result.tools.length, 9);
   assert.equal((await rpc(2, "tools/call", { name: "brain_status" })).result.isError, undefined);
+  failToolRequest = true;
+  const toolFailure = await rpc(6, "tools/call", { name: "brain_list_tasks" });
+  assert.equal(toolFailure.result.isError, true);
+  assert.match(toolFailure.result.content[0].text, /The tool request failed/);
+  assert.doesNotMatch(JSON.stringify(toolFailure), /sentinel_upstream/);
+  failToolRequest = false;
   await registerProfile(
     { ...profile, brainOrigin: "https://two.example.test", reference: "env:OTHER" },
     options
