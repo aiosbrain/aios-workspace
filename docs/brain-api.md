@@ -635,6 +635,8 @@ it is not evidence of a server-side tier gate.
 { "actor": "alex", "role": "lead", "tier": "team", "team": "uuid" }
 ```
 
+**Proposed task-sync/1 compatibility (document revision 1.33):** adds authenticated `member_id` and the installed capability advertisement; see [task synchronization](contract/mcp-next-v1/task-sync.md#workspace-connection-discovery-and-legacy-protection). Identity responses use `Cache-Control: no-store`. Runtime availability remains capability-gated.
+
 **Client-used:** yes — `aios whoami` and the tier probe in `aios stakeholders` (both in
 `scripts/aios.mjs`), and the MCP surface (`scripts/brain-mcp.mjs`).
 
@@ -1095,6 +1097,8 @@ an unrestricted project inventory.
   ]
 }
 ```
+
+**Proposed task-sync/1 compatibility (document revision 1.33):** each visible project additionally returns `id` and `task_revision_state`; see [connection discovery](contract/mcp-next-v1/task-sync.md#workspace-connection-discovery-and-legacy-protection). These no-store metadata fields let Workspace select the revision-safe path without granting access or creating projects.
 
 ## `GET /api/v1/company-graph` — structured stakeholder map (all authenticated members)
 

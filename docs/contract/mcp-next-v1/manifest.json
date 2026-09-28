@@ -2,8 +2,8 @@
   "version": "1.0.2",
   "status": "proposed",
   "files": {
-    "actions-fixtures.json": "de32648c35098515bd5431bf841105c1b54b7368076f582086bee8c7f60c0892",
-    "actions.schema.json": "d33c0e1cdc25d16d88d091af181a84481be229abcb6bec46222aa45ea7f097c5",
+    "actions-fixtures.json": "18938ddd05ee12f5332aa045c377cc61d4b2e09dd75c6842dd967ff7cdb8ba42",
+    "actions.schema.json": "e93a5658497b9324af656636ed94ba60e7b000b4ddc50b4d9246acba8f4bf186",
     "operations.json": "4e997bf3b91edf4378a5746b0699a1fe492a36f9f96bbbee82d962eafeedbd16",
     "profile.schema.json": "25a322a0cf859ee0033997b6f60d04f33a797ecbb7e093b6e1d65bc0cc4a7a33",
     "read-baseline.json": "657753d3397889fcf0dfb12c7169ade68de5fcdc28a91b06539eb39e035fa0c1",
