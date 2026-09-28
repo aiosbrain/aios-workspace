@@ -44,8 +44,12 @@ const PUBLIC_EXPORTS = {
     "runtimeCapabilities",
   ],
   "workspace-parse": [
+    "DECISION_CELL_MARKER",
     "DECISION_REDACTION_VERSION",
+    "classifyDecisionTableLines",
     "classifyKind",
+    "decodeTableCell",
+    "encodeTableCell",
     "evidencePayloadContent",
     "isCanonicalEvidencePath",
     "normalizeTier",
