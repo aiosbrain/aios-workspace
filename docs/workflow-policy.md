@@ -47,10 +47,13 @@ The preparation PR removed fifteen measured pinning waivers: CI jobs `changes`, 
 `pr-review-evidence.yml` job `evidence`. Existing v7 tags resolved to their current commit SHAs;
 the real audit confirmed all fifteen entries unused before removal.
 
-Eight scoped, owner-documented entries remain in `scripts/workflow-policy-allowlist.json`:
-three leak-gate entries; the CI scanner secret entry; three trusted-automation secret entries;
-and the review-evidence workflow's status-write entry. Removing these depends on the separate
-Security App and credential workstream. No new waiver is introduced by expression hardening.
+Seven scoped, owner-documented entries remain in `scripts/workflow-policy-allowlist.json`:
+three leak-gate entries, three trusted-automation secret entries, and the review-evidence
+workflow's status-write entry. The CI scanner waiver was retired when scanning moved from the
+PR-reachable `ci.yml` into the push-only `codebase-scan.yml`; a bounded, identity-checked artifact
+handoff preserves coverage without exposing Brain credentials to candidate CI. Removing the
+remaining waivers depends on the separate Security App and credential workstream. No new waiver is
+introduced by expression hardening.
 
 ## Verification
 
