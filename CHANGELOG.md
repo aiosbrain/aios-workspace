@@ -10,6 +10,16 @@ This is the **individual workspace** repo. The Team Brain sync contract
 
 ## [Unreleased]
 
+### Added
+
+- `aios analyze`, `aios context-health` and `aios codebase-health` render through the
+  shared terminal presenter on capable human terminals: violet headings, lime next
+  commands, teal shadow and estimate readings, and emerald/amber/red score bands, with
+  proportional bars, aligned columns at wide widths and stacked rows below 80 columns.
+  Prose wraps only at spaces; long paths break after separators. The plain report,
+  `--json`, pipes, CI and `AIOS_UI_TIER=plain` keep their exact previous output and never
+  load Ink.
+
 ### Fixed
 
 - Source checkouts and worktrees no longer fall back to black-and-white output when

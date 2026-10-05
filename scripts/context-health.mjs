@@ -673,9 +673,26 @@ export function renderContextHealth(result, target, colors) {
 
 // CLI entry for `aios context-health` — kept here (not in aios.mjs) so the dispatcher
 // stays under its size cap; aios.mjs passes its ANSI color helper through.
-export function runContextHealthCli(repo, args = [], colors = {}) {
+// A capable human terminal gets the shared colour presenter; every other path (--json,
+// pipes, CI, AIOS_UI_TIER=plain) prints the plain render above, byte-for-byte unchanged.
+export async function runContextHealthCli(repo, args = [], colors = {}) {
   const target = path.resolve(args.find((a) => !a.startsWith("--")) || repo);
   const result = computeContextHealth(target);
-  if (args.includes("--json")) console.log(JSON.stringify(result, null, 2));
-  else console.log(renderContextHealth(result, target, colors));
+  if (args.includes("--json")) return console.log(JSON.stringify(result, null, 2));
+  const presenter = await (await import("./ui.mjs")).createPresenter();
+  if (!presenter) return console.log(renderContextHealth(result, target, colors));
+  const { score, mode: m, checks } = result;
+  const summary = String(result.summary);
+  presenter.contextHealth(
+    {
+      target,
+      mode: m,
+      score,
+      summary: summary.startsWith(`${score}/4 — `)
+        ? summary.slice(`${score}/4 — `.length)
+        : summary,
+      checks: checks.map(({ id, label, kind, ok, detail }) => ({ id, label, kind, ok, detail })),
+    },
+    renderContextHealth(result, target, {})
+  );
 }

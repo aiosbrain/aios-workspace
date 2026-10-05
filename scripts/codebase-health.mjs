@@ -400,9 +400,50 @@ export function renderCodebaseHealth(result, target, colors = {}) {
 // CLI entry for `aios codebase-health [path] [--json]` — kept here (not in aios.mjs)
 // so the dispatcher stays at its size cap; aios.mjs passes its ANSI helper through.
 // Read-only; exit 0 on any successful scoring (health is a reading, not a gate).
+// A capable human terminal gets the shared colour presenter; every other path (--json,
+// pipes, CI, AIOS_UI_TIER=plain) prints the plain render above, byte-for-byte unchanged.
 export async function runCodebaseHealthCli(repo, args = [], colors = {}) {
   const target = path.resolve(args.find((a) => !a.startsWith("--")) || repo);
   const result = await computeCodebaseHealth(target, { mode: "full" });
-  if (args.includes("--json")) console.log(JSON.stringify(toHealthJson(result, target), null, 2));
-  else console.log(renderCodebaseHealth(result, target, colors));
+  if (args.includes("--json")) {
+    console.log(JSON.stringify(toHealthJson(result, target), null, 2));
+    return;
+  }
+  const presenter = await (await import("./ui.mjs")).createPresenter();
+  if (!presenter) {
+    console.log(renderCodebaseHealth(result, target, colors));
+    return;
+  }
+  presenter.codebaseHealth(
+    codebaseHealthView(result, target),
+    renderCodebaseHealth(result, target)
+  );
+}
+
+/** Plain-data view for the colour renderer: the same facts the plain render prints. */
+export function codebaseHealthView(result, target) {
+  const prefix = `${result.status} — `;
+  const summary = String(result.summary);
+  return {
+    target,
+    mode: result.mode,
+    status: result.status,
+    summary: summary.startsWith(prefix) ? summary.slice(prefix.length) : summary,
+    axes: Object.entries(result.axes).map(([key, a]) => ({
+      label: key.replace(/_/g, " "),
+      band: a.band,
+      passed: a.passed,
+      total: a.total,
+      evidence: a.evidence_status,
+    })),
+    checks: result.checks.map((c) => ({
+      title: c.title,
+      ok: c.ok,
+      skipped: c.value === null,
+      evidence: c.evidence_status,
+      required: c.required,
+      detail: c.detail,
+    })),
+    nextMoves: (result.next_moves ?? []).slice(0, 5),
+  };
 }

@@ -1,7 +1,7 @@
 # Terminal presentation
 
 The human presentation layer covers workspace onboarding, connector prompts, status,
-and normal item push/pull. It uses selected TermCN Ink sources pinned in
+normal item push/pull, and the `analyze`, `context-health` and `codebase-health` reports. It uses selected TermCN Ink sources pinned in
 `src/terminal/vendor/provenance.json`; the MIT license and provenance travel in the
 packed distribution. No component registry is contacted at runtime.
 
@@ -21,6 +21,22 @@ Onboarding retains Personal/Join/Create, exact-origin consent, optional tools, a
 masked credentials. Each question releases terminal input before the existing engine
 runs. Completed answers leave a short scrollback receipt; secret values are omitted.
 Cancellation leaves completed changes in place and says so explicitly.
+
+`aios analyze`, `aios context-health` and `aios codebase-health` are presented static
+reports. Each command builds a plain-data view from the same values its plain report
+prints (`scripts/analyze/view.mjs`, `codebaseHealthView`) and passes it, together with
+that plain text as the fallback, to the presenter. Colour carries meaning only: 0–4
+scores and bands are emerald from 3, amber from 2 and red below; codebase status follows
+healthy/degraded/critical the same way; shadow readings (cognitive ergonomics) and
+API-equivalent cost estimates are teal; commands are lime; real spend stays in the
+terminal foreground. Bars are proportional to the real score and an unscored value
+renders as an empty dotted track, never a guess. At 80 columns and wider, keyed blocks
+share one aligned column (bars widen to 20 cells from 100 columns); below 80, keys
+stand alone and values stack beneath them. Prose wraps only at spaces; a single token
+wider than its column, such as a long path, breaks after a separator (`/`, `_`, `-`).
+`NO_COLOR` keeps the presented layout in monochrome and `AIOS_UI_GLYPHS=ascii` also
+transliterates report punctuation. Piped, CI, `--json` and `AIOS_UI_TIER=plain` output
+is byte-for-byte the previous plain report.
 
 Sync progresses through named stages. Item pushes show a known denominator; pull
 pages never invent an overall percentage. Completed writes are not retried if rendering
@@ -88,7 +104,8 @@ colors, and synchronous input refs for batched paste/navigation plus Enter. Upda
 
 ## Verification
 
-`npm test` builds the terminal code and discovers `test/terminal-presentation.test.mjs`.
+`npm test` builds the terminal code and discovers `test/terminal-presentation.test.mjs`
+and `test/terminal-reports.test.mjs`.
 It verifies capability gating, complete narrow output, control-character sanitization,
 operation-once behavior on display failure, and real PTY interactions. The PTY harness
 uses Python's standard library on POSIX; no native Node PTY addon is required.

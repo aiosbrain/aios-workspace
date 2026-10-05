@@ -242,6 +242,40 @@ export function buildResult({ events, tools, since, until }) {
   return { result, inWindow };
 }
 
+/**
+ * Render the report through the shared colour presenter on a capable human
+ * terminal. Returns false — having printed nothing — on every other path (pipe,
+ * CI, AIOS_UI_TIER=plain, TERM=dumb, missing build), so the caller's
+ * legacy text output stays byte-for-byte what it was. The presenter module is
+ * light; Ink loads only after the capability check accepts the terminal.
+ */
+async function presentAnalyze({ result, contextHealth, codebaseHealth, costData, opts }) {
+  const { createPresenter } = await import("../ui.mjs");
+  const presenter = await createPresenter();
+  if (!presenter) return false;
+  let view;
+  try {
+    view = (await import("./view.mjs")).buildAnalyzeView({
+      result,
+      contextHealth,
+      codebaseHealth,
+      costData,
+      report: opts.report,
+    });
+  } catch {
+    return false; // an unexpected shape falls back to the plain report, never fails the run
+  }
+  const plain = [
+    renderText(result, undefined, contextHealth, codebaseHealth),
+    renderCostSummary(costData),
+    opts.report ? renderReport(result, undefined, contextHealth) : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+  presenter.analyze(view, plain);
+  return true;
+}
+
 export async function cmdAnalyze(repo, cfg, rest, helpers = {}) {
   const opts = parseArgs(rest);
   const since = await resolveSince(opts.since, (msg) => console.warn(color.yellow(msg)));
@@ -293,7 +327,7 @@ export async function cmdAnalyze(repo, cfg, rest, helpers = {}) {
 
   if (opts.json) {
     console.log(JSON.stringify(toJson(result, costData, contextHealth, codebaseHealth), null, 2));
-  } else {
+  } else if (!(await presentAnalyze({ result, contextHealth, codebaseHealth, costData, opts }))) {
     console.log(renderText(result, color, contextHealth, codebaseHealth));
     const costBlock = renderCostSummary(costData, color);
     if (costBlock) console.log(costBlock);
