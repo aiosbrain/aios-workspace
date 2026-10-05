@@ -17,7 +17,9 @@ This is the **individual workspace** repo. The Team Brain sync contract
   when its content fingerprint changes: at `npm install`, during worktree hydration, and
   on the first rich command after a pull. JSON, porcelain, piped and CI output never pay
   for the check, and published installs never compile. If the colour UI still cannot
-  load, a terminal user gets one stderr hint instead of a silent fallback.
+  load, a terminal user gets one stderr hint instead of a silent fallback. Concurrent
+  commands share one build; an interrupted or crashed build never leaves a later command
+  waiting, and a command running while another builds shows the previous colour UI.
 
 ## [2.1.0] — 2026-09-21
 

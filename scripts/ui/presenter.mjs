@@ -61,6 +61,21 @@ async function loadTerminalModules({ root, stderr, env }) {
       /* notice only */
     }
   });
+  let modules;
+  try {
+    const dist = (file) => pathToFileURL(path.join(root, "dist", "terminal", file)).href;
+    const [reports, session] = await Promise.all([
+      import(dist("report.js")),
+      import(dist("session.js")),
+    ]);
+    modules = { reports, session };
+  } catch {
+    // Missing build or unsupported renderer: fall back BEFORE any operation starts,
+    // and say so once — a silently plain checkout is the bug this replaced.
+    hint(stderr, env, fallbackHint(build));
+    return null;
+  }
+  // Only promise "the previous build" once it has actually loaded.
   if (build.ok === false && build.built)
     hint(
       stderr,
@@ -69,19 +84,7 @@ async function loadTerminalModules({ root, stderr, env }) {
         ? "aios: colour UI is being rebuilt by another command — showing the previous build"
         : `aios: colour UI is out of date (rebuild failed) — ${REBUILD}`
     );
-  try {
-    const dist = (file) => pathToFileURL(path.join(root, "dist", "terminal", file)).href;
-    const [reports, session] = await Promise.all([
-      import(dist("report.js")),
-      import(dist("session.js")),
-    ]);
-    return { reports, session };
-  } catch {
-    // Missing build or unsupported renderer: fall back BEFORE any operation starts,
-    // and say so once — a silently plain checkout is the bug this replaced.
-    hint(stderr, env, fallbackHint(build));
-    return null;
-  }
+  return modules;
 }
 
 /** Capability checks precede imports: machine/plain paths never load React or Ink. */

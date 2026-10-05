@@ -50,12 +50,17 @@ so a partially deleted `dist/terminal` reads as stale and rebuilds. A failed com
 keeps the last good build and records its fingerprint, so an in-progress edit with type
 errors is not recompiled by every command; the next source change retries.
 
+Each build compiles into a private staging directory under `dist/` and swaps it in
+whole, so a command importing `dist/terminal` while another builds reads complete files
+rather than ones the compiler is still writing, and outputs of deleted sources disappear.
+
 Concurrent commands serialise on `dist/.terminal-build.lock`, which records the owner's
-pid and host. Ctrl-C, `SIGTERM` or `SIGHUP` during a build removes the lock before the
-signal ends the command; a lock whose owner died some other way (a crash or `SIGKILL`) is
-reclaimed as soon as the next command sees the pid is gone. When an older build exists,
-the presenter waits at most 1.5 s for another command's build, then renders the older
-build with a one-line notice; only a checkout with no build at all waits for one.
+pid. Ctrl-C, `SIGTERM` or `SIGHUP` during a build removes the lock and still ends the
+command, including a signal sent to the `aios` process alone. A lock whose owner died some
+other way (a crash or `SIGKILL`) is reclaimed as soon as the next command sees the pid is
+gone, even if the hostname has changed since. When an older build exists, the presenter
+waits at most 1.5 s for another command's build, then renders the older build with a
+one-line notice; only a checkout with no build at all waits for one.
 
 When the colour UI cannot load, the CLI falls back to plain output and prints one
 stderr line naming the fix: `npm run build:terminal`, or `npm install` first in a

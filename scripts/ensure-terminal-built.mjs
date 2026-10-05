@@ -25,9 +25,10 @@
 // Contract: nothing here throws. A failed build records its fingerprint so an in-progress
 // edit with type errors is not recompiled on every invocation; the next source change
 // retries. Concurrent CLI invocations serialise on dist/.terminal-build.lock, which holds
-// the owner's pid and host: a lock whose owner is dead (Ctrl-C, crash, OOM kill) is
-// reclaimed at once, and the mtime rule only covers owners on another host. SIGINT,
-// SIGTERM and SIGHUP during a build remove the lock before the signal is re-raised.
+// the owner's pid (and, for diagnostics, its host): a lock whose owner is dead (Ctrl-C,
+// crash, OOM kill) is reclaimed at once; the mtime rule is the backstop for a reused pid.
+// SIGINT, SIGTERM and SIGHUP during a build remove the lock before the signal is
+// re-raised, and a signal received during the build is never swallowed.
 //
 // Usage: node scripts/ensure-terminal-built.mjs [repoRoot] [--quiet]
 
@@ -39,8 +40,10 @@ import {
   mkdirSync,
   openSync,
   readFileSync,
+  linkSync,
   readdirSync,
   realpathSync,
+  renameSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -126,9 +129,8 @@ export function terminalFingerprint(root = PACKAGE_ROOT) {
   return hash.digest("hex");
 }
 
-/** Every file under dist/terminal, relative and slash-separated, excluding the stamp. */
-function listOutputs(root) {
-  const base = path.join(root, "dist", "terminal");
+/** Every file under `base`, relative and slash-separated, excluding the stamp. */
+function listOutputs(base) {
   const out = [];
   const walk = (dir) => {
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -167,33 +169,65 @@ export function terminalBuildState(root = PACKAGE_ROOT) {
   }
 }
 
-/** Written by build-terminal.mjs after a successful compile: fingerprint, then outputs. */
-export function writeTerminalStamp(root, fingerprint) {
-  const body = [fingerprint, ...listOutputs(root)].join("\n");
-  writeFileSync(path.join(root, STAMP_FILE), `${body}\n`);
+/**
+ * Written by build-terminal.mjs after a successful compile: fingerprint, then outputs.
+ * `dir` is the build's output directory (its staging directory before the swap).
+ */
+export function writeTerminalStamp(root, fingerprint, dir = path.join(root, "dist", "terminal")) {
+  const body = [fingerprint, ...listOutputs(dir)].join("\n");
+  writeFileSync(path.join(dir, path.basename(STAMP_FILE)), `${body}\n`);
   rmSync(path.join(root, FAILED_FILE), { force: true });
 }
 
 const sleep = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 
-/** True when the lock's owner can no longer release it. */
-function lockIsStale(lockPath, timeoutMs) {
-  let age;
+/**
+ * The lock file's identity when its owner can no longer release it, else null.
+ * Liveness is decided by pid alone. A host check would turn this machine's own dead lock
+ * into a "remote" one whenever its hostname changes (macOS derives it from the network),
+ * and a checkout shared live between hosts is not a supported layout: the worst case
+ * there is a redundant compile, which the staged swap in build-terminal.mjs makes safe.
+ */
+export function staleLock(lockPath, timeoutMs) {
+  let st;
   try {
-    age = Date.now() - statSync(lockPath).mtimeMs;
+    st = statSync(lockPath);
   } catch {
-    return false; // already gone: the next open attempt wins it
+    return null; // already gone: the next open attempt wins it
   }
-  if (age > timeoutMs) return true;
-  const [pidText, host] = (read(lockPath)?.toString("utf8") ?? "").trim().split(/\s+/);
-  const pid = Number(pidText);
-  if (!Number.isInteger(pid) || pid <= 0) return age > OWNERLESS_LOCK_GRACE_MS;
-  if (host && host !== os.hostname()) return false; // cannot probe a remote pid: mtime rule
+  const age = Date.now() - st.mtimeMs;
+  const identity = { ino: st.ino, mtimeMs: st.mtimeMs };
+  if (age > timeoutMs) return identity;
+  const pid = Number((read(lockPath)?.toString("utf8") ?? "").trim().split(/\s+/)[0]);
+  if (!Number.isInteger(pid) || pid <= 0) return age > OWNERLESS_LOCK_GRACE_MS ? identity : null;
   try {
     process.kill(pid, 0);
-    return false;
+    return null;
   } catch (error) {
-    return error?.code === "ESRCH";
+    return error?.code === "ESRCH" ? identity : null;
+  }
+}
+
+/**
+ * Remove the stale lock judged by staleLock() — and only that one. Two waiters can judge
+ * the same dead lock; the first reclaims it and creates its own. A plain rm by the second
+ * would delete the winner's live lock. Instead, move the file aside (one rename wins) and
+ * check it is the file that was judged; if a live lock was moved, link it back.
+ */
+export function reclaimLock(lockPath, judged) {
+  const aside = `${lockPath}.${process.pid}.reclaim`;
+  try {
+    renameSync(lockPath, aside);
+  } catch {
+    return; // another waiter reclaimed it first
+  }
+  try {
+    const st = statSync(aside);
+    if (st.ino !== judged.ino || st.mtimeMs !== judged.mtimeMs) linkSync(aside, lockPath);
+  } catch {
+    /* EEXIST: a newer lock already took the path; the moved one is ours to drop */
+  } finally {
+    rmSync(aside, { force: true });
   }
 }
 
@@ -220,8 +254,9 @@ function acquireLock(lockPath, { timeoutMs, waitMs, onWait }) {
     const attempt = tryCreateLock(lockPath);
     if (attempt === "acquired") return { ok: true };
     if (attempt !== "held") return { ok: false, reason: attempt };
-    if (lockIsStale(lockPath, timeoutMs)) {
-      rmSync(lockPath, { force: true });
+    const judged = staleLock(lockPath, timeoutMs);
+    if (judged) {
+      reclaimLock(lockPath, judged);
       continue;
     }
     const waited = Date.now() - started;
@@ -241,15 +276,27 @@ function acquireLock(lockPath, { timeoutMs, waitMs, onWait }) {
 const SIGNALS = process.platform === "win32" ? ["SIGINT"] : ["SIGINT", "SIGTERM", "SIGHUP"];
 
 /**
- * Run `fn` with the lock released on interruption. While a listener is installed, Node
- * defers the signal until spawnSync returns, so `finally` removes the lock; the signal is
- * then re-raised with the default disposition so Ctrl-C still ends the command.
+ * Run `fn` holding the lock, and never lose a termination signal.
+ *
+ * While a listener is installed, Node defers SIGINT/SIGTERM/SIGHUP until spawnSync
+ * returns, so `finally` always releases the lock. Two cases follow:
+ *  - the compiler died from the signal (Ctrl-C reaches the whole process group): re-raise
+ *    it synchronously with the default disposition, so the command still ends;
+ *  - the signal was sent to this pid alone: the compile finished, and libuv has queued the
+ *    signal for the event loop's next poll phase. Removing the listener before that poll
+ *    would drop it, so detach only after two setImmediate hops — which always straddle a
+ *    full poll phase that starts after spawnSync returned — and let onSignal re-raise.
  */
 function withLock(lockPath, fn) {
-  const release = () => rmSync(lockPath, { force: true });
+  let held = true;
+  const release = () => {
+    if (!held) return;
+    held = false;
+    rmSync(lockPath, { force: true });
+  };
   const detach = () => SIGNALS.forEach((sig) => process.off(sig, onSignal));
   function onSignal(sig) {
-    release();
+    release(); // no-op once released: never delete a lock another process now holds
     detach();
     process.kill(process.pid, sig);
   }
@@ -265,8 +312,7 @@ function withLock(lockPath, fn) {
       detach();
       process.kill(process.pid, interrupted);
     } else {
-      // A signal aimed only at this process is delivered on the next turn of the loop.
-      setTimeout(detach, 50).unref();
+      setImmediate(() => setImmediate(detach));
     }
   }
 }
@@ -365,8 +411,8 @@ function isMain() {
   }
 }
 
-if (process.argv[1] && isMain()) {
-  // postinstall / worktree-hydration entry point: best-effort, always exits 0.
+/** postinstall / worktree-hydration entry point: best-effort, always exits 0. */
+function main() {
   const args = process.argv.slice(2);
   const quiet = args.includes("--quiet");
   const root = args.find((a) => !a.startsWith("--")) || PACKAGE_ROOT;
@@ -375,7 +421,7 @@ if (process.argv[1] && isMain()) {
     onBuild: (state) => note(`terminal UI: ${state} — running build:terminal…`),
     onWait: () => note("terminal UI: waiting for another build:terminal…"),
   });
-  if (result.state === "installed") process.exit(0);
+  if (result.state === "installed") return;
   if (result.state === "fresh")
     note("terminal UI: dist/terminal is up to date — nothing to build.");
   else if (result.state === "no-compiler")
@@ -390,5 +436,11 @@ if (process.argv[1] && isMain()) {
     console.log(
       `\x1b[1;33mterminal UI: automatic build skipped (${result.reason}) — run: npm run build:terminal\x1b[0m`
     );
-  process.exit(0);
+}
+
+if (process.argv[1] && isMain()) {
+  // Exit by draining the loop, not process.exit(): a signal sent to this pid during the
+  // build is still queued, and withLock's deferred detach lets it end the process.
+  process.exitCode = 0;
+  main();
 }
