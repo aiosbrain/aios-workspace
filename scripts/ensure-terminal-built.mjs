@@ -70,6 +70,12 @@ const BUILD_TIMEOUT_MS = 120_000;
 // creating the file and writing its pid into it.
 const OWNERLESS_LOCK_GRACE_MS = 2_000;
 
+/** Code-unit order: stable across locales, unlike localeCompare. */
+const byCodeUnit = (a, b) => {
+  if (a < b) return -1;
+  return a > b ? 1 : 0;
+};
+
 const read = (file) => {
   try {
     return readFileSync(file);
@@ -87,7 +93,7 @@ export function terminalFingerprint(root = PACKAGE_ROOT) {
   };
   const walk = (dir) => {
     for (const entry of readdirSync(dir, { withFileTypes: true }).sort((a, b) =>
-      a.name < b.name ? -1 : a.name > b.name ? 1 : 0
+      byCodeUnit(a.name, b.name)
     )) {
       const p = path.join(dir, entry.name);
       if (entry.isDirectory()) walk(p);
@@ -132,7 +138,7 @@ function listOutputs(root) {
     }
   };
   walk(base);
-  return out.filter((f) => f !== path.basename(STAMP_FILE)).sort();
+  return out.filter((f) => f !== path.basename(STAMP_FILE)).sort(byCodeUnit);
 }
 
 /**
@@ -191,22 +197,29 @@ function lockIsStale(lockPath, timeoutMs) {
   }
 }
 
+/** One exclusive-create attempt: "acquired", "held", or an error reason. */
+function tryCreateLock(lockPath) {
+  try {
+    const fd = openSync(lockPath, "wx");
+    try {
+      writeSync(fd, `${process.pid} ${os.hostname()}\n`);
+    } finally {
+      closeSync(fd);
+    }
+    return "acquired";
+  } catch (error) {
+    return error?.code === "EEXIST" ? "held" : `lock-${error?.code ?? "error"}`;
+  }
+}
+
 /** Returns { ok: true } or { ok: false, reason }. Waits at most `waitMs`. */
 function acquireLock(lockPath, { timeoutMs, waitMs, onWait }) {
   const started = Date.now();
   let announced = false;
   for (;;) {
-    try {
-      const fd = openSync(lockPath, "wx");
-      try {
-        writeSync(fd, `${process.pid} ${os.hostname()}\n`);
-      } finally {
-        closeSync(fd);
-      }
-      return { ok: true };
-    } catch (error) {
-      if (error?.code !== "EEXIST") return { ok: false, reason: `lock-${error?.code ?? "error"}` };
-    }
+    const attempt = tryCreateLock(lockPath);
+    if (attempt === "acquired") return { ok: true };
+    if (attempt !== "held") return { ok: false, reason: attempt };
     if (lockIsStale(lockPath, timeoutMs)) {
       rmSync(lockPath, { force: true });
       continue;
@@ -300,6 +313,11 @@ export function ensureTerminalBuilt(
   }
 }
 
+function failureReason({ interruptedBy, timedOut }) {
+  if (interruptedBy) return "build-interrupted";
+  return timedOut ? "build-timeout" : "build-failed";
+}
+
 function build(root, initial, { onBuild, timeoutMs, failedPath }) {
   // Another invocation may have finished the build while we waited for the lock.
   const now = terminalBuildState(root);
@@ -331,7 +349,7 @@ function build(root, initial, { onBuild, timeoutMs, failedPath }) {
     ...initial,
     built: ENTRIES.every((f) => existsSync(path.join(root, f))),
     ok: false,
-    reason: interruptedBy ? "build-interrupted" : timedOut ? "build-timeout" : "build-failed",
+    reason: failureReason({ interruptedBy, timedOut }),
     interruptedBy,
     output: `${result.stdout ?? ""}${result.stderr ?? ""}`,
   };
