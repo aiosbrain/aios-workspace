@@ -148,6 +148,14 @@ export function buildPlan(repo, cfg, patterns, onlyPaths = null) {
   for (const rel of files) {
     const raw = readFileSync(path.join(repo, rel), "utf8");
     const { frontmatter, body } = parseFrontmatter(raw);
+    if (String(frontmatter?.from_brain).toLowerCase() === "true") {
+      plan.blocked.push({
+        rel,
+        class: HELD,
+        reason: "read-only Brain mirror; author a separate document to publish",
+      });
+      continue;
+    }
     const kind = classifyKind(rel, frontmatter);
     const hash = sha256(raw);
     if (!validEvidenceDeclaration(rel, frontmatter?.kind, frontmatter?.access)) {

@@ -1,0 +1,17 @@
+{
+  "id": "f090bcf6-e616-459c-a852-440c07f3cec5",
+  "project": "notes-111a1a67",
+  "path": "1-inbox/governed/note/f090bcf6-e616-459c-a852-440c07f3cec5.md",
+  "kind": "note",
+  "access": "team",
+  "frontmatter": {
+    "kind": "note",
+    "title": "  Brain note 🧠 \"quoted\"\r\n---\naccess: external end  ",
+    "access": "team",
+    "source": "governed"
+  },
+  "body": " \r\n# Accepted Brain note\r\n\nExact é body; 🧠.\n---\nDo not normalize.  \r\n",
+  "content_sha256": "92771c03fa4320dfe0e0fd4541a136094119e4af5a6871935dfbb7ca91bec096",
+  "actor": "actor-d2adc363",
+  "updated_at": "2026-09-28 15:12:08.758195+00"
+}
