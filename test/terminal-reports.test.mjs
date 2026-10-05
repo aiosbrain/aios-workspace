@@ -361,20 +361,17 @@ const plainAt = (width, render) =>
 
 test("bars are proportional to the real score; an unscored band is a dotted track with –", () => {
   const lines = plainAt(112, (ctx) => reports.renderAnalyze(ctx, view));
+  // Columns at 112: label 0–23, bar 24–43 (20 cells), two spaces, score from 46.
+  const meter = (filled) => `${"█".repeat(filled)}${"░".repeat(20 - filled)}  `;
   for (const axis of view.axes) {
     const row = lines.find((l) => l.startsWith(axis.label));
     const filled = Math.round((axis.score / 4) * 20);
-    const re = new RegExp(
-      `^.{24}█{${filled}}░{${20 - filled}} {2}${axis.scoreText.replace(".", "\\.")}`
-    );
-    assert.match(row, re, `${axis.label} bar`);
+    assert.equal(row.slice(24, 46), meter(filled), `${axis.label} bar`);
+    assert.ok(row.slice(46).startsWith(axis.scoreText), `${axis.label} score`);
   }
   const ce = lines.find((l) => l.startsWith("Cognitive ergonomics"));
   if (view.ergonomics.band == null) assert.match(ce, /^Cognitive ergonomics {2,}·{20} {2}–/);
-  else {
-    const filled = Math.round((view.ergonomics.band / 4) * 20);
-    assert.match(ce, new RegExp(`^Cognitive ergonomics {2,}█{${filled}}░{${20 - filled}}`));
-  }
+  else assert.equal(ce.slice(24, 46), meter(Math.round((view.ergonomics.band / 4) * 20)));
   const unscored = buildAnalyzeView({
     result: {
       ...result,
