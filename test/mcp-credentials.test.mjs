@@ -1,3 +1,4 @@
+import { fixtureOwner } from "./lib/mcp-host-fixture.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, rmSync, symlinkSync } from "node:fs";
@@ -18,8 +19,12 @@ function fixture(fn) {
   const directory = path.join(home, ".aios");
   const file = path.join(directory, "credentials.json");
   mkdirSync(directory, { mode: 0o700 });
-  const write = (value = { version: 1, default: tuple }) =>
+  fixtureOwner(home);
+  fixtureOwner(directory);
+  const write = (value = { version: 1, default: tuple }) => {
     writeFileSync(file, typeof value === "string" ? value : JSON.stringify(value), { mode: 0o600 });
+    fixtureOwner(file);
+  };
   try {
     return fn({ home, directory, file, write });
   } finally {

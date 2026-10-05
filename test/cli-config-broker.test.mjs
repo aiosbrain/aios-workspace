@@ -356,3 +356,22 @@ test("user config preserves unknown fields on write", async () => {
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+import { spawnSync } from "node:child_process";
+test("secret-key classification bounds work for a long digit run followed by a non-digit", () => {
+  const moduleUrl = new URL("../scripts/user-config-reader.mjs", import.meta.url).href;
+  const result = spawnSync(
+    process.execPath,
+    [
+      "--input-type=module",
+      "-e",
+      `import {parseUserConfig} from ${JSON.stringify(moduleUrl)};const key='9'.repeat(250000)+'x';const parsed=parseUserConfig(JSON.stringify({schemaVersion:2,[key]:'enabled'}));if(parsed.document[key]!=='enabled')process.exit(1);`,
+    ],
+    { encoding: "utf8", timeout: 5000 }
+  );
+  assert.equal(
+    result.status,
+    0,
+    "adversarial local config key must finish within the generous subprocess limit"
+  );
+});

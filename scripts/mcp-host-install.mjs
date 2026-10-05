@@ -1,14 +1,18 @@
+import { workspaceProfileCredential } from "./mcp-profile-workspace-credentials.mjs";
+import {
+  loadProfileBinding,
+  inspectProfileBinding,
+  validateProfileDestination,
+} from "./mcp-profile-binding.mjs";
+import { verifyServerCommand } from "./mcp-host-server-check.mjs";
+export { verifyServerCommand } from "./mcp-host-server-check.mjs";
+import { prepareProfileArtifact } from "./mcp-profile-artifact.mjs";
 import path from "node:path";
 import os from "node:os";
-import { execFileSync, spawn } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
-import {
-  hostTargets,
-  MCP_PACKAGE_VERSION,
-  MCP_SERVER_KEY,
-  MCP_PACKAGE_MEMBERSHIPS,
-} from "./mcp-hosts.mjs";
+import { hostTargets, MCP_SERVER_KEY } from "./mcp-hosts.mjs";
 import { readHostDocument, editHostDocument } from "./mcp-host-formats.mjs";
 import { filePolicy, commitHostFiles } from "./mcp-host-files.mjs";
 import { resolveBrainConfig } from "./mcp-config.mjs";
@@ -154,11 +158,17 @@ export function inspectMcpHosts(options = {}) {
       );
       result.configured = !!entry;
       result.owned = !!record && isDeepStrictEqual(record.entry, entry);
-      result.credential_source = resolveBrainConfig({
-        cwd: options.project || process.cwd(),
-        home,
-        env: options.env || process.env,
-      }).credential_source;
+      if (record?.profileId) {
+        const binding = inspectProfileBinding(record.profileId, { ...options, home });
+        result.profileId = record.profileId;
+        result.profile = binding.profile;
+        result.credential_source = binding.sourceClass;
+      } else
+        result.credential_source = resolveBrainConfig({
+          cwd: options.project || process.cwd(),
+          home,
+          env: options.env || process.env,
+        }).credential_source;
     } catch {
       result.error = "Configuration or credentials are unreadable";
     }
@@ -166,150 +176,23 @@ export function inspectMcpHosts(options = {}) {
   });
 }
 
-// The pinned server's Windows ACL probe can time out while PowerShell initializes
-// a fresh user profile. Retry that read-only startup once; never retry protocol,
-// membership, authorization, or overall verification timeouts.
-export async function verifyServerCommand(entry, options = {}) {
-  try {
-    return await verifyServerAttempt(entry, options);
-  } catch (error) {
-    if (
-      (options.platform || process.platform) !== "win32" ||
-      error.code !== "AIOS_MCP_WINDOWS_STARTUP_TIMEOUT"
-    )
-      throw error;
-    return verifyServerAttempt(entry, options);
-  }
-}
-
-async function verifyServerAttempt(
-  entry,
-  { home, project, env = process.env, timeoutMs = 120000, spawnImpl = spawn } = {}
-) {
-  return new Promise((resolve, reject) => {
-    const child = spawnImpl(entry.command, entry.args, {
-      cwd: project,
-      env: { ...env, ...entry.env, HOME: home, USERPROFILE: home },
-      stdio: ["pipe", "pipe", "pipe"],
-      windowsHide: true,
-      detached: process.platform !== "win32",
-    });
-    let output = "",
-      stderr = "",
-      finished = false,
-      timedOut = false;
-    function stopTree() {
-      try {
-        if (!child.pid) return;
-        if (process.platform === "win32")
-          execFileSync(
-            windowsSystemExecutable("taskkill"),
-            ["/PID", String(child.pid), "/T", "/F"],
-            {
-              stdio: "pipe",
-              windowsHide: true,
-              timeout: 5000,
-            }
-          );
-        else process.kill(-child.pid, "SIGKILL");
-      } catch (error) {
-        if (error.code !== "ESRCH") finish(new Error("MCP server process cleanup failed"));
-      }
-    }
-    const timer = setTimeout(() => {
-      timedOut = true;
-      stopTree();
-    }, timeoutMs);
-    function finish(error, result) {
-      if (finished) return;
-      finished = true;
-      clearTimeout(timer);
-      if (error) reject(error);
-      else resolve(result);
-    }
-    child.on("error", () => finish(new Error("MCP server command could not start")));
-    child.stdout.on("data", (chunk) => {
-      output += chunk;
-      if (output.length > 1024 * 1024) stopTree();
-    });
-    child.stderr.on("data", (chunk) => {
-      stderr += chunk;
-      if (stderr.length > 1024 * 1024) stopTree();
-    });
-    child.on("close", (code) => {
-      try {
-        if (timedOut) throw new Error("timeout");
-        if (code !== 0) throw new Error("exit");
-        const messages = output
-          .trim()
-          .split("\n")
-          .map((line) => JSON.parse(line));
-        const init = messages.find((message) => message.id === 1)?.result;
-        const tools = messages.find((message) => message.id === 2)?.result?.tools;
-        if (
-          init?.protocolVersion !== "2025-11-25" ||
-          init?.serverInfo?.version !== MCP_PACKAGE_VERSION ||
-          !Array.isArray(tools) ||
-          tools.some((tool) => tool?.annotations?.readOnlyHint !== true)
-        )
-          throw new Error("protocol");
-        // Exact membership of the pinned artifact: missing, extra, renamed or duplicated
-        // tools all fail, whatever the count.
-        const names = tools.map((tool) => tool.name).sort();
-        if (!MCP_PACKAGE_MEMBERSHIPS.some((expected) => isDeepStrictEqual(names, expected)))
-          throw new Error("membership");
-        finish(null, {
-          verified: true,
-          version: init.serverInfo.version,
-          tools: tools.map((tool) => tool.name),
-          credential_source: resolveBrainConfig({
-            cwd: project,
-            home,
-            env: { ...env, ...entry.env },
-          }).credential_source,
-        });
-      } catch (error) {
-        const reason = ["timeout", "exit", "protocol", "membership"].includes(error.message)
-          ? error.message
-          : "invalid response or credential source";
-        const failure = new Error(
-          `Recorded MCP command did not pass initialize and tools/list (${reason})`
-        );
-        if (
-          reason === "exit" &&
-          code === 1 &&
-          /^MCP startup failed: spawnSync [a-z]:[^\r\n]*[\\/]WindowsPowerShell[\\/]v1\.0[\\/]powershell\.exe ETIMEDOUT\r?\n?$/i.test(
-            stderr
-          )
-        )
-          failure.code = "AIOS_MCP_WINDOWS_STARTUP_TIMEOUT";
-        finish(failure);
-      }
-    });
-    child.stdin.on("error", () => {});
-    child.stdin.end(
-      [
-        JSON.stringify({
-          jsonrpc: "2.0",
-          id: 1,
-          method: "initialize",
-          params: {
-            protocolVersion: "2025-11-25",
-            capabilities: {},
-            clientInfo: { name: "aios-mcp-installer", version: "1" },
-          },
-        }),
-        JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} }),
-        "",
-      ].join("\n")
-    );
-  });
-}
-
 export async function installMcpHosts(options = {}) {
   const { dryRun = false, uninstall = false } = options;
   const home = options.home || os.homedir(),
     project = options.project || process.cwd();
+  const profileBinding =
+    options.profileId && !uninstall
+      ? loadProfileBinding(options.profileId, {
+          workspaceCredential: workspaceProfileCredential,
+          ...options,
+        })
+      : null;
+  if (
+    options.profileId &&
+    (options.hosts || []).includes("claude-code") &&
+    (!options.project || !path.isAbsolute(options.project))
+  )
+    throw new Error("Explicit host project required");
   const policy = options.policy || filePolicy(options);
   const targets = hostTargets({ ...options, home, project });
   const selected = [...new Set(options.hosts || [])];
@@ -327,7 +210,27 @@ export async function installMcpHosts(options = {}) {
   const names = (options.runningHosts || (() => runningHostNames(options.platform)))();
   const changes = [],
     proposals = [];
-  const command = uninstall ? null : options.command || installedServerCommand({ home });
+  let profileArtifact;
+  if (profileBinding) {
+    await validateProfileDestination(
+      profileBinding.profile,
+      profileBinding.config.api_key,
+      options.fetchImpl
+    );
+    profileArtifact = await prepareProfileArtifact({
+      mode: profileBinding.profile.mode,
+      profileId: options.profileId,
+      home,
+      policy,
+      dryRun: true,
+      artifactInput: options.artifactInput,
+      configDir: path.dirname(profileBinding.state.paths.config),
+      fetchImpl: options.artifactFetch,
+    });
+  }
+  const command = uninstall
+    ? null
+    : profileArtifact?.command || options.command || installedServerCommand({ home });
   for (const host of hosts) {
     if (isRunning(host, names, options.platform))
       throw new Error(
@@ -372,7 +275,15 @@ export async function installMcpHosts(options = {}) {
     }
     records.installations = records.installations.filter((row) => row.file !== host.file);
     if (entry)
-      records.installations.push({ host: host.id, file: host.file, entry, block: edited.block });
+      records.installations.push({
+        host: host.id,
+        file: host.file,
+        entry,
+        block: edited.block,
+        ...(profileBinding
+          ? { profileId: options.profileId, artifactReceipt: profileArtifact.artifactReceipt }
+          : {}),
+      });
     changes.push({ source, bytes: Buffer.from(edited.text) });
     proposals.push({
       host: host.id,
@@ -396,7 +307,7 @@ export async function installMcpHosts(options = {}) {
       restart_state: "unverified",
     };
   let tier;
-  if (!uninstall) {
+  if (!uninstall && !profileBinding) {
     const supplied =
       options.credential ||
       resolveBrainConfig({ cwd: project, home, env: options.env || process.env });
@@ -421,17 +332,29 @@ export async function installMcpHosts(options = {}) {
     source: recordsSource,
     bytes: Buffer.from(JSON.stringify(records, null, 2) + "\n"),
   });
-  if (!uninstall && !options.command) {
+  if (!uninstall && !options.command && !profileBinding) {
     const artifact = await prepareServerArtifact({ home, policy });
     changes.unshift(...artifact);
   }
+  if (profileBinding && !dryRun)
+    await prepareProfileArtifact({
+      mode: profileBinding.profile.mode,
+      profileId: options.profileId,
+      home,
+      policy,
+      artifactInput: options.artifactInput,
+      configDir: path.dirname(profileBinding.state.paths.config),
+      fetchImpl: options.artifactFetch,
+    });
   if (dryRun)
     return {
       dry_run: true,
       changes: proposals,
       credentials: uninstall
         ? "preserved"
-        : "validated; proposed owner-only global default (redacted)",
+        : profileBinding
+          ? "selected profile reference (redacted)"
+          : "validated; proposed owner-only global default (redacted)",
       host_loading: "unverified",
       restart_state: "unverified",
     };
@@ -440,7 +363,16 @@ export async function installMcpHosts(options = {}) {
   async function checkCommand() {
     if (!uninstall && !checks.length)
       checks.push(
-        await verify({ ...command, env: {} }, { home, project, env: options.env || process.env })
+        await verify(
+          { ...command, env: {} },
+          {
+            home,
+            project,
+            env: options.env || process.env,
+            expectedVersion: profileArtifact?.expectedServer.version,
+            profileId: options.profileId,
+          }
+        )
       );
   }
   const transaction = await commitHostFiles(changes, {
