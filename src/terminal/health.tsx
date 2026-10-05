@@ -108,22 +108,27 @@ type Kit = ReturnType<typeof kit>;
 function axisRows(k: Kit, axes: CodebaseHealthView["axes"]): Line[] {
   const { s } = k;
   const wide = k.cells >= 80;
-  const barCells = k.cells >= 100 ? 20 : wide ? 12 : 8;
   const labelCells = Math.max(...axes.map((a) => width([s(a.label)])), 0) + 2;
+  // When even an 8-cell bar cannot share the label's line, the label stands alone.
+  const inline = wide || labelCells + 8 + 2 + 5 <= k.cells;
+  const barCells =
+    k.cells >= 100 ? 20 : wide ? 12 : inline ? 8 : Math.max(4, Math.min(8, k.cells - 4 - 5));
   const bodyAt = labelCells + barCells + 2 + 5;
   return axes.flatMap((a) => {
-    const head: Line = [
-      ...padEnd([s(a.label)], labelCells),
+    const meter: Line = [
       ...k.bar(a.band, barCells),
       space(2),
       ...padEnd([a.band == null ? s("–", "muted") : s(`${a.band}/4`, scoreTone(a.band), true)], 5),
     ];
+    const head: Line = [...padEnd([s(a.label)], labelCells), ...meter];
     const body: Line = [
       s(a.total ? `${a.passed}/${a.total} checks ok` : "no inputs", a.total ? undefined : "muted"),
       s("; evidence ", "muted"),
       s(a.evidence, evidenceTone(a.evidence)),
     ];
-    return wide ? k.hang(head, bodyAt, body, k.cells) : [head, ...k.hang([], 2, body, k.cells)];
+    if (wide) return k.hang(head, bodyAt, body, k.cells);
+    const top = inline ? [head] : [...k.wrap([s(a.label)], k.cells), [space(2), ...meter]];
+    return [...top, ...k.hang([], 2, body, k.cells)];
   });
 }
 

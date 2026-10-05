@@ -81,20 +81,33 @@ function header(k: Kit, view: AnalyzeView): Line[] {
 function axes(k: Kit, view: AnalyzeView): Line[] {
   const { s, bar } = k;
   const wide = k.cells >= 80;
-  const barCells = k.cells >= 100 ? 20 : wide ? 12 : 8;
   const labelCells = wide ? KEY : 23;
   const scoreCells = k.ascii ? 8 : 7;
+  // Below ~40 columns even the narrow row cannot fit: the label stands alone and the bar
+  // shrinks (never below 4 cells) so bar and score share the next line.
+  const inline = wide || labelCells + 8 + 2 + scoreCells <= k.cells;
+  const barCells =
+    k.cells >= 100
+      ? 20
+      : wide
+        ? 12
+        : inline
+          ? 8
+          : Math.max(4, Math.min(8, k.cells - 4 - scoreCells));
   const glossAt = wide ? labelCells + barCells + 2 + scoreCells : 2;
   const L: Line[] = [];
   const row = (label: string, track: Line, score: Line, gloss: Line, note: Line | null) => {
-    const head: Line = [
-      ...padEnd([s(label)], labelCells),
-      ...track,
-      space(2),
-      ...padEnd(score, scoreCells),
-    ];
-    if (wide) L.push(...k.hang(head, glossAt, gloss, k.cells));
-    else L.push(head, ...k.hang([], 2, gloss, k.cells));
+    const meter: Line = [...track, space(2), ...padEnd(score, scoreCells)];
+    if (wide)
+      L.push(...k.hang([...padEnd([s(label)], labelCells), ...meter], glossAt, gloss, k.cells));
+    else if (inline)
+      L.push([...padEnd([s(label)], labelCells), ...meter], ...k.hang([], 2, gloss, k.cells));
+    else
+      L.push(
+        ...k.wrap([s(label)], k.cells),
+        [space(2), ...meter],
+        ...k.hang([], 2, gloss, k.cells)
+      );
     if (note) L.push(...k.hang([], glossAt, note, k.cells));
   };
   for (const axis of view.axes) {

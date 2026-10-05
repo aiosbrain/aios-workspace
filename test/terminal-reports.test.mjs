@@ -210,7 +210,7 @@ const analyzeTokens = [
   LONG_TOOL,
 ];
 
-for (const width of [112, 80, 60]) {
+for (const width of [112, 80, 60, 40]) {
   for (const background of ["dark", "light"]) {
     for (const colorDepth of [24, 4, 0]) {
       test(`analyze renders complete, aligned output at ${width} cols, ${background}, depth ${colorDepth}`, () => {
@@ -241,7 +241,8 @@ for (const width of [112, 80, 60]) {
           );
         } else {
           assert.ok(lines.includes("Attention"), "keys stack below 80 columns");
-          assert.ok(lines.includes("  orchestration-heavy — protect focus blocks"));
+          if (width >= 60)
+            assert.ok(lines.includes("  orchestration-heavy — protect focus blocks"));
         }
         assert.ok(
           !lines.some((l) => /^ {30,}\S/.test(l) && width < 80),
@@ -317,7 +318,7 @@ const chView = (() => {
     checks,
   };
 })();
-for (const width of [112, 80, 60]) {
+for (const width of [112, 80, 60, 40]) {
   for (const colorDepth of [24, 4, 0]) {
     test(`context-health and codebase-health render complete at ${width} cols, depth ${colorDepth}`, () => {
       const ctx = { ...base, width, background: "dark", colorDepth };

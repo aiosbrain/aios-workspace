@@ -220,7 +220,8 @@ function merge(line: Line): Line {
 
 /** `prefix` occupies a fixed-width column; `body` wraps beside it with a hanging indent. */
 export function hang(prefix: Line, prefixCells: number, body: Line, cells: number): Line[] {
-  const lines = wrap(body, Math.max(12, cells - prefixCells));
+  // Never wider than `cells`: a prefix that leaves no room still gets one cell per line.
+  const lines = wrap(body, Math.max(1, cells - prefixCells));
   return lines.map((l, i) => [
     ...(i === 0 ? padEnd(prefix, prefixCells) : [space(prefixCells)]),
     ...l,

@@ -409,7 +409,7 @@ export async function runCodebaseHealthCli(repo, args = [], colors = {}) {
     console.log(JSON.stringify(toHealthJson(result, target), null, 2));
     return;
   }
-  const presenter = await (await import("./ui.mjs")).createPresenter();
+  const presenter = await import("./ui.mjs").then((ui) => ui.createPresenter()).catch(() => null);
   if (!presenter) {
     console.log(renderCodebaseHealth(result, target, colors));
     return;

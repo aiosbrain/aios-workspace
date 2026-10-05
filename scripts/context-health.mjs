@@ -679,7 +679,7 @@ export async function runContextHealthCli(repo, args = [], colors = {}) {
   const target = path.resolve(args.find((a) => !a.startsWith("--")) || repo);
   const result = computeContextHealth(target);
   if (args.includes("--json")) return console.log(JSON.stringify(result, null, 2));
-  const presenter = await (await import("./ui.mjs")).createPresenter();
+  const presenter = await import("./ui.mjs").then((ui) => ui.createPresenter()).catch(() => null);
   if (!presenter) return console.log(renderContextHealth(result, target, colors));
   const { score, mode: m, checks } = result;
   const summary = String(result.summary);

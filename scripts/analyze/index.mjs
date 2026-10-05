@@ -250,8 +250,12 @@ export function buildResult({ events, tools, since, until }) {
  * light; Ink loads only after the capability check accepts the terminal.
  */
 async function presentAnalyze({ result, contextHealth, codebaseHealth, costData, opts }) {
-  const { createPresenter } = await import("../ui.mjs");
-  const presenter = await createPresenter();
+  let presenter;
+  try {
+    presenter = await (await import("../ui.mjs")).createPresenter();
+  } catch {
+    return false; // a UI setup failure must never cost the reading: print the plain report
+  }
   if (!presenter) return false;
   let view;
   try {
