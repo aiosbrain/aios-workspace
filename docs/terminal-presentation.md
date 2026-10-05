@@ -33,7 +33,28 @@ Skill, blueprint, and deliverable sync subcommands retain their existing output.
 in dependency-light JavaScript. Heavy TypeScript/TSX modules live under `src/terminal`
 and compile with `npm run build:terminal` into `dist/terminal`.
 `prepack` rebuilds them and copies third-party notices; installed users need neither
-TypeScript nor shadcn. Contributor checkouts must build after editing terminal sources.
+TypeScript nor shadcn.
+
+Contributor checkouts and worktrees never need a manual build.
+`scripts/ensure-terminal-built.mjs` compares a content fingerprint of every input —
+`src/terminal/**` including vendor notices, `tsconfig.terminal.json`, `tsconfig.json`, the
+build script, `package.json`'s module type, and the installed versions of TypeScript,
+Ink, React and their type packages — with the stamp `build-terminal.mjs` writes to
+`dist/terminal/.build-inputs.sha256`. It runs at `npm install`, during worktree
+hydration, and lazily inside `createPresenter()`, so the first rich command after a
+`git pull` or an edit to `src/terminal` rebuilds (under a second) before rendering.
+The lazy check runs only after the presenter has accepted a human TTY, so JSON,
+porcelain, plain, piped and CI output never pay for it. A published install has no
+`src/terminal` and stops at one `existsSync`. Concurrent commands serialise on
+`dist/.terminal-build.lock`. A failed compile keeps the last good build and records
+its fingerprint, so an in-progress edit with type errors is not recompiled by every
+command; the next source change retries.
+
+When the colour UI cannot load, the CLI falls back to plain output and prints one
+stderr line naming the fix (`npm run build:terminal`), or the out-of-date line when a
+rebuild failed over an older build. That hint appears only for a human TTY on stderr;
+it is suppressed under `AIOS_UI_TIER=plain`, `NO_COLOR`, `TERM=dumb`, `CI`, machine
+modes and redirected streams, and never touches stdout or the exit code.
 
 The design companion adds `@aios-alpha/design/terminal`, generated from canonical DTCG
 colors. Until that additive export is published, the CLI reads the same generated

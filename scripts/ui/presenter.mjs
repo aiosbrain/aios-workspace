@@ -1,9 +1,76 @@
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+import { ensureTerminalBuilt, PACKAGE_ROOT } from "../ensure-terminal-built.mjs";
 import { resolveOutputContext } from "./output-context.mjs";
+
+const off = (value) => ["", "0", "false", "off", "no"].includes(String(value ?? "").toLowerCase());
+const ensured = new Map();
+const hinted = new WeakSet();
+
+/**
+ * Source checkouts compile src/terminal on demand (one content-hash check per process,
+ * reached only after canPresent() accepted a human TTY). Installed packages short-circuit
+ * on a single existsSync. Never throws.
+ */
+function ensureBuilt(root, notice) {
+  if (!ensured.has(root))
+    ensured.set(
+      root,
+      ensureTerminalBuilt(root, { onBuild: () => notice("aios: building the colour UI…") })
+    );
+  return ensured.get(root);
+}
+
+/** The only diagnostic the plain fallback may print: once, to a human TTY stderr. */
+function hint(stderr, env, text) {
+  if (hinted.has(stderr) || stderr?.isTTY !== true || !off(env.CI)) return;
+  if (env.NO_COLOR || env.AIOS_UI_TIER === "plain" || env.TERM === "dumb") return;
+  hinted.add(stderr);
+  try {
+    stderr.write(`${text}\n`);
+  } catch {
+    /* a hint must never change an operation result */
+  }
+}
+
+/**
+ * Bring dist/terminal up to date (source checkouts only) and import it. Returns null —
+ * after one stderr hint — when the colour UI cannot load. Never throws.
+ */
+async function loadTerminalModules({ root, stderr, env }) {
+  const build = ensureBuilt(root, (text) => {
+    if (stderr?.isTTY !== true) return;
+    try {
+      stderr.write(`${text}\n`);
+    } catch {
+      /* notice only */
+    }
+  });
+  if (build.ok === false && build.built)
+    hint(
+      stderr,
+      env,
+      "aios: colour UI is out of date (rebuild failed) — run `npm run build:terminal`"
+    );
+  try {
+    const dist = (file) => pathToFileURL(path.join(root, "dist", "terminal", file)).href;
+    const [reports, session] = await Promise.all([
+      import(dist("report.js")),
+      import(dist("session.js")),
+    ]);
+    return { reports, session };
+  } catch {
+    // Missing build or unsupported renderer: fall back BEFORE any operation starts,
+    // and say so once — a silently plain checkout is the bug this replaced.
+    hint(stderr, env, "aios: colour UI not built — run `npm run build:terminal`");
+    return null;
+  }
+}
 
 /** Capability checks precede imports: machine/plain paths never load React or Ink. */
 export function canPresent({ mode = "human", stream = process.stdout, env = process.env } = {}) {
   const ctx = resolveOutputContext({ mode, stream, env });
-  const ci = !["", "0", "false", "off", "no"].includes(String(env.CI ?? "").toLowerCase());
+  const ci = !off(env.CI);
   return (
     mode === "human" && stream.isTTY === true && env.TERM !== "dumb" && !ci && ctx.tier !== "plain"
   );
@@ -13,18 +80,12 @@ export async function createPresenter({
   stdout = process.stdout,
   stderr = process.stderr,
   env = process.env,
+  root = PACKAGE_ROOT,
 } = {}) {
   if (!canPresent({ mode, stream: stdout, env })) return null;
-  let reports, session;
-  try {
-    [reports, session] = await Promise.all([
-      import("../../dist/terminal/report.js"),
-      import("../../dist/terminal/session.js"),
-    ]);
-  } catch {
-    // Missing build or unsupported renderer: fall back BEFORE any operation starts.
-    return null;
-  }
+  const modules = await loadTerminalModules({ root, stderr, env });
+  if (!modules) return null;
+  const { reports, session } = modules;
   const context = (stream) => resolveOutputContext({ mode, stream, env });
   const emit = (render, fallback, stream = stdout) => {
     let text;

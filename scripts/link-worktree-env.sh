@@ -211,6 +211,15 @@ if command -v node >/dev/null 2>&1 && [[ -f "$here/scripts/ensure-loop-built.mjs
   (cd "$here" && node scripts/ensure-loop-built.mjs) || echo "operator-loop build: skipped (see message above)"
 fi
 
+# ── terminal UI build ───────────────────────────────────────────────────────
+# The colour presentation (scripts/ui/presenter.mjs) loads dist/terminal, compiled
+# from src/terminal. A fresh worktree shares nothing with the primary's dist/, so
+# build it now. Best-effort, same contract as the loop build above; the presenter's
+# lazy content-hash check is the runtime backstop after any later pull or edit.
+if command -v node >/dev/null 2>&1 && [[ -f "$here/scripts/ensure-terminal-built.mjs" ]]; then
+  (cd "$here" && node scripts/ensure-terminal-built.mjs) || echo "terminal UI build: skipped (see message above)"
+fi
+
 # ── hydration marker ────────────────────────────────────────────────────────
 # Derived, disposable, per-worktree local state under the gitignored `.aios/`.
 # Written once, last, atomically (write + rename); read only as a boolean

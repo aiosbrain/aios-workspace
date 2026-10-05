@@ -8,6 +8,17 @@ This is the **individual workspace** repo. The Team Brain sync contract
 (`docs/brain-api.md`) is versioned separately; it is currently pinned at **v1.27**
 (additive within major `v1`). Entries predating a bump did not change the protocol.
 
+## [Unreleased]
+
+### Fixed
+
+- Source checkouts and worktrees no longer fall back to black-and-white output when
+  `dist/terminal` is missing or stale. The CLI rebuilds the colour UI from `src/terminal`
+  when its content fingerprint changes: at `npm install`, during worktree hydration, and
+  on the first rich command after a pull. JSON, porcelain, piped and CI output never pay
+  for the check, and published installs never compile. If the colour UI still cannot
+  load, a terminal user gets one stderr hint instead of a silent fallback.
+
 ## [2.1.0] — 2026-09-21
 
 ### Added
