@@ -44,7 +44,7 @@
   "scripts": {
     "help": "node scripts/npm-menu.mjs",
     "prepack": "npm run build:terminal && node scripts/write-build-provenance.mjs",
-    "postinstall": "node scripts/ensure-loop-built.mjs && node scripts/postinstall-banner.mjs",
+    "postinstall": "node scripts/ensure-loop-built.mjs && node scripts/ensure-terminal-built.mjs && node scripts/postinstall-banner.mjs",
     "aios": "dotenvx run -- node scripts/aios.mjs",
     "gen:catalog": "node scripts/gen-catalog.mjs",
     "build:loop": "tsc -p tsconfig.json --noEmitOnError",

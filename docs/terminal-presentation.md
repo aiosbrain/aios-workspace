@@ -33,7 +33,41 @@ Skill, blueprint, and deliverable sync subcommands retain their existing output.
 in dependency-light JavaScript. Heavy TypeScript/TSX modules live under `src/terminal`
 and compile with `npm run build:terminal` into `dist/terminal`.
 `prepack` rebuilds them and copies third-party notices; installed users need neither
-TypeScript nor shadcn. Contributor checkouts must build after editing terminal sources.
+TypeScript nor shadcn.
+
+Contributor checkouts and worktrees never need a manual build.
+`scripts/ensure-terminal-built.mjs` compares a content fingerprint of every input —
+`src/terminal/**` including vendor notices, `tsconfig.terminal.json`, `tsconfig.json`, the
+build script, `package.json`'s module type, and the installed versions of TypeScript,
+Ink, React and their type packages — with the stamp `build-terminal.mjs` writes to
+`dist/terminal/.build-inputs.sha256`. It runs at `npm install`, during worktree
+hydration, and lazily inside `createPresenter()`, so the first rich command after a
+`git pull` or an edit to `src/terminal` rebuilds (under a second) before rendering.
+The lazy check runs only after the presenter has accepted a human TTY, so JSON,
+porcelain, plain, piped and CI output never pay for it. A published install has no
+`src/terminal` and stops at one `existsSync`. The stamp also lists every emitted file,
+so a partially deleted `dist/terminal` reads as stale and rebuilds. A failed compile
+keeps the last good build and records its fingerprint, so an in-progress edit with type
+errors is not recompiled by every command; the next source change retries.
+
+Each build compiles into a private staging directory under `dist/` and swaps it in
+whole, so a command importing `dist/terminal` while another builds reads complete files
+rather than ones the compiler is still writing, and outputs of deleted sources disappear.
+
+Concurrent commands serialise on `dist/.terminal-build.lock`, which records the owner's
+pid. Ctrl-C, `SIGTERM` or `SIGHUP` during a build removes the lock and still ends the
+command, including a signal sent to the `aios` process alone. A lock whose owner died some
+other way (a crash or `SIGKILL`) is reclaimed as soon as the next command sees the pid is
+gone, even if the hostname has changed since. When an older build exists, the presenter
+waits at most 1.5 s for another command's build, then renders the older build with a
+one-line notice; only a checkout with no build at all waits for one.
+
+When the colour UI cannot load, the CLI falls back to plain output and prints one
+stderr line naming the fix: `npm run build:terminal`, or `npm install` first in a
+checkout without devDependencies. When a rebuild failed over an older build, the line
+says the UI is out of date instead. That hint appears only for a human TTY on stderr;
+it is suppressed under `AIOS_UI_TIER=plain`, `NO_COLOR`, `TERM=dumb`, `CI`, machine
+modes and redirected streams, and never touches stdout or the exit code.
 
 The design companion adds `@aios-alpha/design/terminal`, generated from canonical DTCG
 colors. Until that additive export is published, the CLI reads the same generated
