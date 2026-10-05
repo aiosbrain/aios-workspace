@@ -693,6 +693,6 @@ export async function runContextHealthCli(repo, args = [], colors = {}) {
         : summary,
       checks: checks.map(({ id, label, kind, ok, detail }) => ({ id, label, kind, ok, detail })),
     },
-    renderContextHealth(result, target, {})
+    renderContextHealth(result, target, colors)
   );
 }

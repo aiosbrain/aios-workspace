@@ -102,7 +102,7 @@ test("piped analyze keeps the legacy report and never imports Ink", () => {
 // ── Real PTY: the CLI picks the presenter on a capable terminal and honours every switch ──
 
 const python = spawnSync("python3", ["--version"]).status === 0;
-function pty(cols, cwd, args, env) {
+function pty(cols, cwd, args, env, nodeFlags = []) {
   const r = spawnSync(
     "python3",
     [
@@ -111,6 +111,7 @@ function pty(cols, cwd, args, env) {
       cwd,
       "--",
       process.execPath,
+      ...nodeFlags,
       path.join(root, "scripts/aios.mjs"),
       ...args,
     ],
@@ -181,5 +182,38 @@ test(
     const plain = pty(112, root, ["codebase-health", example], { AIOS_UI_TIER: "plain" });
     assert.match(plain.output, /Codebase health\S*: /);
     assert.doesNotMatch(plain.output, /AIOS · codebase health/);
+  }
+);
+
+test(
+  "real PTY: a colour render failure prints exactly the plain path's output, colours included",
+  ptyOpts,
+  () => {
+    const home = mkdtempSync(path.join(tmpdir(), "aios-analyze-fallback-"));
+    const throwing = [
+      "--no-warnings",
+      "--experimental-loader",
+      pathToFileURL(path.join(root, "test/fixtures/throwing-report-loader.mjs")).href,
+    ];
+    try {
+      const env = { HOME: home, COLORTERM: "truecolor" };
+      for (const [cwd, args] of [
+        [example, ["analyze", "--report"]],
+        [root, ["context-health", example]],
+        [root, ["codebase-health", example]],
+      ]) {
+        const failed = pty(112, cwd, args, env, throwing);
+        const plain = pty(112, cwd, args, { ...env, AIOS_UI_TIER: "plain" });
+        assert.equal(failed.code, 0, failed.output);
+        assert.equal(
+          failed.output,
+          plain.output,
+          `${args[0]} fallback differs from the plain path`
+        );
+        assert.ok(plain.output.includes(ESC), `${args[0]} plain path is coloured on a TTY`);
+      }
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
   }
 );

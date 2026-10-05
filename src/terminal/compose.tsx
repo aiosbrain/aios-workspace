@@ -250,7 +250,7 @@ function field(ctx: Capabilities, key: Line, values: FieldValue[], keyCells: num
   if (ctx.width >= 80) {
     return inner.map((line, i) => [...padEnd(i === 0 ? key : [], keyCells), ...line]);
   }
-  return [key, ...inner.map((line) => [space(2), ...line])];
+  return [...(key.length ? [key] : []), ...inner.map((line) => [space(2), ...line])];
 }
 
 /** Prefix then body beside it when there is room (column >= `minCells`), else stacked. */

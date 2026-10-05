@@ -25,14 +25,30 @@ import {
 
 const EN = "en-US";
 
-/** Compact token count: 9027980123 → "9.03B", 4500000 → "4.5M", 12345 → "12k". */
+/**
+ * Compact token count: 1.2e13 → "12.00T", 9027980123 → "9.03B", 4500000 → "4.5M",
+ * 12345 → "12k". A value that would round up to 1000 of a unit moves to the next unit
+ * (999950 → "1.0M", never "1000k").
+ */
 export function compactTokens(n) {
   const v = Number(n) || 0;
-  if (v >= 1e9) return `${(v / 1e9).toFixed(2)}B`;
-  if (v >= 1e6) return `${(v / 1e6).toFixed(1)}M`;
-  if (v >= 1e3) return `${Math.round(v / 1e3)}k`;
-  return String(Math.round(v));
+  const units = [
+    [1e3, "k", 0],
+    [1e6, "M", 1],
+    [1e9, "B", 2],
+    [1e12, "T", 2],
+  ];
+  if (Math.round(v) < 1e3) return String(Math.round(v));
+  for (let i = 0; i < units.length; i++) {
+    const [size, suffix, dp] = units[i];
+    const text = (v / size).toFixed(dp);
+    if (Number(text) < 1000 || i === units.length - 1) return `${text}${suffix}`;
+  }
+  return String(v);
 }
+
+/** A 0–4 score, or "–" when the score is absent (matching the dotted unscored bar). */
+const scoreText = (score) => (Number.isFinite(score) ? fmtNum(score, 1) : "–");
 
 /** "$1,234.56" (or "~$1,234.56" for an estimate). */
 export function usd(n, { estimated = false } = {}) {
@@ -128,7 +144,7 @@ function deepDiveView(result, contextHealth) {
   return {
     label: AXIS_LABELS[w],
     score: placement.axes[w],
-    scoreText: fmtNum(placement.axes[w], 1),
+    scoreText: scoreText(placement.axes[w]),
     meaning: g.meaning,
     why: g.why,
     where: `Score ${fmtNum(placement.axes[w], 1)}/4 — ${plainStat(w, signals)}.`,
@@ -138,7 +154,7 @@ function deepDiveView(result, contextHealth) {
       .map(([key, label]) => ({
         label,
         score: placement.axes[key],
-        scoreText: fmtNum(placement.axes[key], 1),
+        scoreText: scoreText(placement.axes[key]),
         stat: plainStat(key, signals),
       })),
     contextHealth:
@@ -159,7 +175,7 @@ function axesView(result) {
     axes: Object.entries(AXIS_LABELS).map(([key, label]) => ({
       label,
       score: placement.axes[key],
-      scoreText: fmtNum(placement.axes[key], 1),
+      scoreText: scoreText(placement.axes[key]),
       gloss: AXIS_GUIDE[key].gloss,
       note:
         key === "learning"

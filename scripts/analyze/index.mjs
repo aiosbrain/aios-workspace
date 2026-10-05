@@ -269,10 +269,11 @@ async function presentAnalyze({ result, contextHealth, codebaseHealth, costData,
   } catch {
     return false; // an unexpected shape falls back to the plain report, never fails the run
   }
+  // The fallback is exactly what the plain path prints, colours included.
   const plain = [
-    renderText(result, undefined, contextHealth, codebaseHealth),
-    renderCostSummary(costData),
-    opts.report ? renderReport(result, undefined, contextHealth) : "",
+    renderText(result, color, contextHealth, codebaseHealth),
+    renderCostSummary(costData, color),
+    opts.report ? renderReport(result, color, contextHealth) : "",
   ]
     .filter(Boolean)
     .join("\n");

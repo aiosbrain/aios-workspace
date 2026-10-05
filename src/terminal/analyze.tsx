@@ -20,7 +20,7 @@ export function renderAnalyze(ctx: Capabilities, view: AnalyzeView) {
     [],
     ...coaching(k, view, keyCells),
   ];
-  if (view.cost) costBlock(view, k, L);
+  if (view.cost) costBlock(view, k, L, keyCells);
   if (view.deepDive) deepDive(view, k, L, keyCells);
   return k.render(L);
 }
@@ -259,59 +259,74 @@ function metricGrid(metrics: [string, string][], cells: number, s: Kit["s"]): Li
   return rows;
 }
 
-function costBlock(view: AnalyzeView, k: Kit, L: Line[]) {
+/**
+ * Provider spend, keyed in the same label column as the sections above it: the window
+ * beside "Provider spend", real spend and API-equivalent estimates as aligned tables in
+ * the value column (label, right-aligned amount, basis), then the plan note and legend.
+ * A table too wide for the value column stacks each row (label, then amount and basis).
+ */
+function costBlock(view: AnalyzeView, k: Kit, L: Line[], keyCells: number) {
   const cost = view.cost!;
   const { s } = k;
+  const cells = k.valueCells(keyCells);
   const rows = [...cost.real, ...cost.estimates].filter((r) => r.label);
   const lw = Math.max(...rows.map((r) => width([s(r.label)])), 0);
   const aw = Math.max(...rows.map((r) => width([s(r.amount)])), 0);
-  const tableCells = 2 + lw + 3 + aw + 3 + Math.max(...rows.map((r) => width([s(r.basis)])), 0);
-  const inline = tableCells <= k.cells;
-  const costRow = (r: CostRow, amountTone: Tone | undefined) => {
-    if (r.note) {
-      L.push(...k.hang([], 4, [s(r.note, r.tone)], k.cells));
-      return;
-    }
-    const amount = s(r.amount, r.tone ?? amountTone, !r.tone);
-    const basis = s(r.basis, r.tone === "warning" ? "warning" : "muted");
-    if (inline) {
-      L.push(
-        ...k.hang(
-          [space(2), ...padEnd([s(r.label)], lw), space(3), ...padStart([amount], aw), space(3)],
-          2 + lw + 3 + aw + 3,
-          [basis],
-          k.cells
-        )
-      );
-    } else {
-      L.push(...k.hang([space(2)], 2, [s(r.label)], k.cells));
-      L.push(...k.hang([space(4)], 4, [amount, space(2), basis], k.cells));
-    }
-  };
+  const bw = Math.max(...rows.map((r) => width([s(r.basis)])), 0);
+  // Three-cell gutters, tightened to two when that is what lets the table stay inline.
+  const gap = lw + aw + bw + 6 <= cells ? 3 : 2;
+  const basisAt = lw + gap + aw + gap;
+  const inline = basisAt + bw <= cells;
+  const table = (list: CostRow[], amountTone: Tone | undefined): Line[] =>
+    list.flatMap((r) => {
+      if (r.note) return k.hang([], 2, [s(r.note, r.tone)], cells);
+      const amount = s(r.amount, r.tone ?? amountTone, !r.tone);
+      const basis = s(r.basis, r.tone === "warning" ? "warning" : "muted");
+      if (inline) {
+        const head = [
+          ...padEnd([s(r.label)], lw),
+          space(gap),
+          ...padStart([amount], aw),
+          space(gap),
+        ];
+        return k.hang(head, basisAt, [basis], cells);
+      }
+      return [
+        ...k.wrap([s(r.label)], cells),
+        ...k.hang([space(2)], 2, [amount, space(2), basis], cells),
+      ];
+    });
+  const key = (text: string): Line => [s(text, "heading", true)];
   L.push([]);
   L.push(
-    ...k.wrap(
-      [
-        s("Provider spend", "heading", true),
-        space(2),
-        s(`${cost.window.since} ${k.G.arrow} ${cost.window.until}`, "muted"),
-      ],
-      k.cells
+    ...k.field(
+      key("Provider spend"),
+      [[s(`${cost.window.since} ${k.G.arrow} ${cost.window.until}`, "muted")]],
+      keyCells
     )
   );
-  L.push([s("Real spend", undefined, true)]);
-  cost.real.forEach((r) => costRow(r, undefined));
+  if (cost.real.length)
+    L.push(...k.field(key("Real spend"), [{ block: table(cost.real, undefined) }], keyCells));
   if (cost.estimates.length) {
     L.push(
-      ...k.wrap(
-        [s("API-equivalent value", "info", true), s(" (not billed on a subscription)", "muted")],
-        k.cells
+      ...k.field(
+        key("API-equivalent value"),
+        [[s("(not billed on a subscription)", "muted")], { block: table(cost.estimates, "info") }],
+        keyCells
       )
     );
-    cost.estimates.forEach((r) => costRow(r, "info"));
   }
-  if (cost.note) L.push(...k.wrap([s("note: ", "muted"), s(cost.note, "muted")], k.cells));
-  L.push(...k.wrap([s(cost.legend, "muted")], k.cells));
+  const notes: Line[] = [];
+  if (cost.note) notes.push([s("note: ", "muted"), s(cost.note, "muted")]);
+  // Legend items stay whole; a wrap lands after a "·", never before one.
+  const items = cost.legend.split(" · ");
+  notes.push(
+    items.flatMap((item, i) => [
+      ...(i ? [space(1)] : []),
+      { ...s(i < items.length - 1 ? `${item} ·` : item, "muted"), keep: true },
+    ])
+  );
+  L.push(...k.field([], notes, keyCells));
 }
 
 function deepDive(view: AnalyzeView, k: Kit, L: Line[], keyCells: number) {

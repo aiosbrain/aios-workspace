@@ -416,7 +416,7 @@ export async function runCodebaseHealthCli(repo, args = [], colors = {}) {
   }
   presenter.codebaseHealth(
     codebaseHealthView(result, target),
-    renderCodebaseHealth(result, target)
+    renderCodebaseHealth(result, target, colors)
   );
 }
 

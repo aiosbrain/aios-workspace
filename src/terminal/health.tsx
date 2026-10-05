@@ -27,10 +27,12 @@ export function renderContextHealth(ctx: Capabilities, view: ContextHealthView) 
   );
   for (const chk of view.checks) {
     const head: Line = [mark(chk.ok, chk.kind), space(1), s(chk.label, undefined, !chk.ok)];
-    if (wide && width(head) <= labelCells) {
+    // A two-cell gutter is required; a label filling the capped column stacks instead.
+    if (wide && width(head) + 2 <= labelCells) {
       L.push(...k.hang(head, labelCells, [s(chk.detail, chk.ok ? "muted" : undefined)], ctx.width));
     } else {
-      L.push(...k.wrap(head, ctx.width));
+      // A wrapped label continues under itself, not at column 0.
+      L.push(...k.hang(head.slice(0, 2), 2, head.slice(2), ctx.width));
       L.push(...k.hang([], 2, [s(chk.detail, chk.ok ? "muted" : undefined)], ctx.width));
     }
   }

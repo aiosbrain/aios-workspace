@@ -9,11 +9,9 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { stripVTControlCharacters } from "node:util";
 
-import { buildAnalyzeView } from "../scripts/analyze/view.mjs";
-import { renderText, renderReport } from "../scripts/analyze/report.mjs";
-import { renderCostSummary } from "../scripts/analyze/cost-report.mjs";
+import { buildAnalyzeView, compactTokens } from "../scripts/analyze/view.mjs";
 import { placement } from "../scripts/analyze/aem.mjs";
-import { codebaseHealthView, renderCodebaseHealth } from "../scripts/codebase-health.mjs";
+import { codebaseHealthView } from "../scripts/codebase-health.mjs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const ESC = "\u001b";
@@ -27,7 +25,7 @@ assert.equal(build.status, 0, build.stderr);
 // test runner's stdout) decides depth, so give the library full depth to render into.
 process.env.FORCE_COLOR = "3";
 const reports = await import("../dist/terminal/report.js");
-const { wrap } = await import("../dist/terminal/compose.js");
+const { wrap, hang } = await import("../dist/terminal/compose.js");
 
 const LONG_PATH =
   "1-inbox/from-brain/github-aiosbrain-aios-team-brain__github__aiosbrain-aios-team-brain__docs__design__extraction-degradation-alarm.md";
@@ -210,7 +208,7 @@ const analyzeTokens = [
   LONG_TOOL,
 ];
 
-for (const width of [112, 80, 60, 40]) {
+for (const width of [112, 80, 60, 40, 30]) {
   for (const background of ["dark", "light"]) {
     for (const colorDepth of [24, 4, 0]) {
       test(`analyze renders complete, aligned output at ${width} cols, ${background}, depth ${colorDepth}`, () => {
@@ -318,7 +316,7 @@ const chView = (() => {
     checks,
   };
 })();
-for (const width of [112, 80, 60, 40]) {
+for (const width of [112, 80, 60, 40, 30]) {
   for (const colorDepth of [24, 4, 0]) {
     test(`context-health and codebase-health render complete at ${width} cols, depth ${colorDepth}`, () => {
       const ctx = { ...base, width, background: "dark", colorDepth };
@@ -356,16 +354,114 @@ for (const width of [112, 80, 60, 40]) {
   }
 }
 
-test("the presenter fallback for analyze is the uncoloured legacy text", () => {
-  const plain = [
-    renderText(result, undefined, contextHealth, codebaseHealth),
-    renderCostSummary(costData),
-    renderReport(result, undefined, contextHealth),
-  ].join("\n");
-  assert.equal(stripVTControlCharacters(plain), plain);
-  assert.match(plain, /^AIOS analyze — /);
-  assert.equal(
-    stripVTControlCharacters(renderCodebaseHealth(codebaseHealth, "/t")),
-    renderCodebaseHealth(codebaseHealth, "/t")
+const plainAt = (width, render) =>
+  stripVTControlCharacters(render({ ...base, width, background: "dark", colorDepth: 0 })).split(
+    "\n"
   );
+
+test("bars are proportional to the real score; an unscored band is a dotted track with –", () => {
+  const lines = plainAt(112, (ctx) => reports.renderAnalyze(ctx, view));
+  for (const axis of view.axes) {
+    const row = lines.find((l) => l.startsWith(axis.label));
+    const filled = Math.round((axis.score / 4) * 20);
+    const re = new RegExp(
+      `^.{24}█{${filled}}░{${20 - filled}} {2}${axis.scoreText.replace(".", "\\.")}`
+    );
+    assert.match(row, re, `${axis.label} bar`);
+  }
+  const ce = lines.find((l) => l.startsWith("Cognitive ergonomics"));
+  if (view.ergonomics.band == null) assert.match(ce, /^Cognitive ergonomics {2,}·{20} {2}–/);
+  else {
+    const filled = Math.round((view.ergonomics.band / 4) * 20);
+    assert.match(ce, new RegExp(`^Cognitive ergonomics {2,}█{${filled}}░{${20 - filled}}`));
+  }
+  const unscored = buildAnalyzeView({
+    result: {
+      ...result,
+      placement: { ...result.placement, axes: { ...result.placement.axes, learning: null } },
+    },
+    contextHealth,
+    codebaseHealth,
+    costData,
+  });
+  assert.equal(unscored.axes.find((a) => a.label.startsWith("Learning")).scoreText, "–");
+  const row = plainAt(112, (ctx) => reports.renderAnalyze(ctx, unscored)).find((l) =>
+    l.startsWith("Learning")
+  );
+  assert.match(row, /^Learning \/ compounding {2}·{20} {2}– /);
+  const cb = plainAt(112, (ctx) =>
+    reports.renderCodebaseHealth(ctx, codebaseHealthView(codebaseHealth, "/tmp/target"))
+  );
+  assert.ok(
+    cb.some((l) => /^modularity +█{10}░{10} {2}2\/4/.test(l)),
+    "band 2 fills half"
+  );
+  assert.ok(
+    cb.some((l) => /^invariants +·{20} {2}–/.test(l)),
+    "null band is dotted with –"
+  );
+});
+
+test("below ~40 columns the axis label stands alone and a shrunken bar shares the next line", () => {
+  const lines = plainAt(30, (ctx) => reports.renderAnalyze(ctx, view));
+  const i = lines.indexOf("Verification");
+  assert.ok(i >= 0, "label on its own line");
+  assert.match(lines[i + 1], /^ {2}█{4,8}░* {2}4\.0/);
+  // codebase labels are shorter, so their stacked branch starts nearer 25 columns.
+  const cb = plainAt(22, (ctx) =>
+    reports.renderCodebaseHealth(ctx, codebaseHealthView(codebaseHealth, "/tmp/target"))
+  );
+  const j = cb.indexOf("modularity");
+  assert.ok(j >= 0);
+  assert.match(cb[j + 1], /^ {2}█+░+ {2}2\/4/);
+});
+
+test("hang never exceeds its width, even when the prefix leaves almost no room", () => {
+  const lines = hang([{ text: "x".repeat(30) }], 30, [{ text: "alpha beta gamma delta" }], 35);
+  for (const l of lines)
+    assert.ok(l.map((seg) => seg.text).join("").length <= 35, JSON.stringify(l));
+});
+
+test("a check label exactly as wide as the capped label column keeps a gutter at 80 columns", () => {
+  const label = "CLAUDE.md lists all supported contexts";
+  assert.equal(label.length, 38);
+  const out = plainAt(80, (ctx) =>
+    reports.renderContextHealth(ctx, {
+      ...chView,
+      checks: [
+        {
+          id: "contexts-list",
+          label,
+          kind: "hard",
+          ok: true,
+          detail: "CLAUDE.md names all 3 supported context(s)",
+        },
+        { id: "x", label: "x".repeat(60), kind: "soft", ok: true, detail: "long label" },
+      ],
+    })
+  );
+  assert.ok(!out.some((l) => /contextsCLAUDE/.test(l)), out.join("\n"));
+  assert.ok(out.some((l) => /contexts$/.test(l)) || out.some((l) => /contexts {2,}CLAUDE/.test(l)));
+});
+
+test("a wrapped check label continues under itself below 80 columns", () => {
+  const label = "Tier vocabulary in sync between the hub copy and the scaffold copy";
+  const out = plainAt(40, (ctx) =>
+    reports.renderContextHealth(ctx, {
+      ...chView,
+      checks: [{ id: "tier", label, kind: "hard", ok: true, detail: "in sync" }],
+    })
+  );
+  const i = out.findIndex((l) => l.startsWith("✓ Tier vocabulary"));
+  assert.ok(i >= 0);
+  assert.match(out[i + 1], /^ {2}\S/, "continuation is indented under the label");
+});
+
+test("compactTokens has a T tier and never prints 1000 of a unit", () => {
+  assert.equal(compactTokens(1.2e13), "12.00T");
+  assert.equal(compactTokens(9_027_980_123), "9.03B");
+  assert.equal(compactTokens(999_950), "1.0M");
+  assert.equal(compactTokens(999_996_000), "1.00B");
+  assert.equal(compactTokens(12_345), "12k");
+  assert.equal(compactTokens(999), "999");
 });
