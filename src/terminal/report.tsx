@@ -1,7 +1,6 @@
-import { Box, Text, renderToString } from "ink";
-import { stripVTControlCharacters } from "node:util";
-import type { ReactNode } from "react";
-import { Providers, terminalTheme } from "./theme.js";
+import { Box, Text } from "ink";
+import { terminalTheme } from "./theme.js";
+import { renderStatic, safeText } from "./static.js";
 import { Badge } from "./vendor/ui/badge.js";
 import { KeyValue } from "./vendor/ui/key-value.js";
 import { Table } from "./vendor/ui/table.js";
@@ -9,22 +8,9 @@ import { SetupFlow } from "./vendor/ui/setup-flow.js";
 import { StatusMessage } from "./vendor/ui/status-message.js";
 import type { Capabilities, StatusReport, Status } from "./types.js";
 
-// Strip controls in external filenames/provider text before terminal rendering.
-// Control characters in provider text must never become terminal commands.
-export const safeText = (value: unknown) =>
-  // eslint-disable-next-line no-control-regex
-  stripVTControlCharacters(String(value ?? "")).replace(/[\x00-\x08\x0b-\x1f\x7f]/g, "");
-export function renderStatic(ctx: Capabilities, children: ReactNode) {
-  const text = renderToString(
-    <Providers ctx={ctx}>
-      <Box width={ctx.width} flexDirection="column">
-        {children}
-      </Box>
-    </Providers>,
-    { columns: ctx.width }
-  );
-  return ctx.colorDepth === 0 ? stripVTControlCharacters(text) : text;
-}
+export { renderStatic, safeText };
+export { renderAnalyze } from "./analyze.js";
+export { renderContextHealth, renderCodebaseHealth } from "./health.js";
 export function renderMessage(ctx: Capabilities, message: string, status: Status = "info") {
   return renderStatic(
     ctx,

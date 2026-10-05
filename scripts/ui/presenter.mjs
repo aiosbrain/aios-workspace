@@ -144,6 +144,7 @@ export async function createPresenter({
         ].join("\n")
       );
     },
+    ...staticReports(reports, emit),
     async prompt(question) {
       // Never retry a failed prompt or operation: an answer may already have been used.
       return session.prompt(context(stdout), question, stdout);
@@ -168,5 +169,20 @@ export async function createPresenter({
         }
       }
     },
+  };
+}
+
+/**
+ * Static report methods (analyze, context-health, codebase-health). `fallback` is the
+ * command's own plain text, printed unchanged if the colour render fails, so a display
+ * problem never hides a reading.
+ */
+function staticReports(reports, emit) {
+  return {
+    analyze: (view, fallback) => emit((ctx) => reports.renderAnalyze(ctx, view), fallback),
+    contextHealth: (view, fallback) =>
+      emit((ctx) => reports.renderContextHealth(ctx, view), fallback),
+    codebaseHealth: (view, fallback) =>
+      emit((ctx) => reports.renderCodebaseHealth(ctx, view), fallback),
   };
 }

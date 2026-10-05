@@ -24,7 +24,7 @@ import {
 import { AXIS_GUIDE, ergonomicsTip, contextHealthTip, codebaseHealthTip } from "./guidance.mjs";
 
 // Plain-English meaning of each Spine level (so "Spine L4" actually says something).
-const SPINE_GLOSS = {
+export const SPINE_GLOSS = {
   L1: "Prompting — you ask, and take what comes back",
   L2: "Prompt Engineering — reusable prompts, and you review the diffs",
   L3: "Context Engineering — you manage the agent's context and tools deliberately",
@@ -37,7 +37,7 @@ function bar(score) {
   return "█".repeat(filled) + "░".repeat(4 - filled);
 }
 
-function fmtNum(n, dp = 2) {
+export function fmtNum(n, dp = 2) {
   return Number.isFinite(n) ? n.toFixed(dp) : "0";
 }
 
@@ -79,7 +79,7 @@ function sparkGlyph(v) {
 }
 
 /** ↗ / ↘ / → from the last two non-null per-day bands (→ when < 2 exist). */
-function ceTrendArrow(bands) {
+export function ceTrendArrow(bands) {
   const vals = bands.map((b) => b.band).filter((v) => v != null);
   if (vals.length < 2) return "→";
   const last = vals[vals.length - 1];
@@ -88,7 +88,7 @@ function ceTrendArrow(bands) {
 }
 
 /** A plain-language stat line for an axis, drawn from its signals. */
-function plainStat(key, s) {
+export function plainStat(key, s) {
   switch (key) {
     case "verification":
       return `the agent ran a verifiable check (tests / build / shell) in ${pct(s.verify_tool_rate)} of its tool calls`;
