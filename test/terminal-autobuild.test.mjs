@@ -3,7 +3,7 @@
 // stat, and the plain fallback says why — once, and only to a human terminal.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import {
   appendFileSync,
   cpSync,
@@ -13,6 +13,7 @@ import {
   readFileSync,
   readdirSync,
   rmSync,
+  statSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -47,7 +48,13 @@ function checkout({ compiler = true } = {}) {
   ])
     cpSync(path.join(root, file), path.join(dir, file));
   writeFileSync(path.join(dir, "package.json"), '{ "type": "module" }\n');
-  if (compiler) symlinkSync(path.join(root, "node_modules"), path.join(dir, "node_modules"), "dir");
+  // A junction needs no privileges on Windows; elsewhere the type argument is ignored.
+  if (compiler)
+    symlinkSync(
+      path.join(root, "node_modules"),
+      path.join(dir, "node_modules"),
+      process.platform === "win32" ? "junction" : "dir"
+    );
   return dir;
 }
 
@@ -130,13 +137,16 @@ test("a failed auto-build never throws, is not retried until sources change, and
 });
 
 test("a checkout that cannot build falls back with exactly one hint", async () => {
-  for (const dir of [
-    checkout({ compiler: false }),
-    (() => {
-      const broken = checkout();
-      breakSources(broken);
-      return broken;
-    })(),
+  for (const [dir, remedy] of [
+    [checkout({ compiler: false }), /install devDependencies \(`npm install`\), then run `npm/],
+    [
+      (() => {
+        const broken = checkout();
+        breakSources(broken);
+        return broken;
+      })(),
+      /colour UI not built — run `npm run build:terminal`/,
+    ],
   ]) {
     assert.doesNotThrow(() => ensureTerminalBuilt(dir));
     const stderr = tty();
@@ -148,7 +158,7 @@ test("a checkout that cannot build falls back with exactly one hint", async () =
       );
     assert.deepEqual(stdout.chunks, [], "the hint never touches stdout");
     assert.equal(stderr.chunks.length, 1, stderr.chunks.join(""));
-    assert.match(stderr.chunks[0], /colour UI not built — run `npm run build:terminal`/);
+    assert.match(stderr.chunks[0], remedy);
   }
 });
 
@@ -239,4 +249,148 @@ test("piped output stays escape-free, hint-free, and never triggers a build", ()
   assert.equal(r.stdout, "Autobuild fixture plain\n");
   assert.equal(r.stderr, "");
   assert.equal(existsSync(path.join(dir, "dist")), false, "machine paths pay nothing");
+});
+
+test("a partially deleted build reads as stale and self-heals instead of hinting", async () => {
+  const dir = checkout();
+  ensureTerminalBuilt(dir);
+  rmSync(path.join(dir, "dist", "terminal", "theme.js"));
+  assert.equal(terminalBuildState(dir).state, "stale");
+  const stderr = tty();
+  const ui = await createPresenter({ stdout: tty(), stderr, env: { TERM: "xterm" }, root: dir });
+  assert.ok(ui, "the presenter rebuilt the missing output and rendered");
+  assert.ok(existsSync(path.join(dir, "dist", "terminal", "theme.js")));
+  assert.doesNotMatch(stderr.chunks.join(""), /not built|out of date/);
+});
+
+// ── the build lock (review F1/F8) ──────────────────────────────────────────
+const lockPath = (dir) => path.join(dir, "dist", ".terminal-build.lock");
+const SLOW_BUILD = "await new Promise((resolve) => setTimeout(resolve, 30000));\n";
+const cli = (dir, args = []) => [path.join(dir, "scripts", "ensure-terminal-built.mjs"), ...args];
+const waitFor = async (predicate, ms = 15000) => {
+  const deadline = Date.now() + ms;
+  while (!predicate()) {
+    if (Date.now() > deadline) throw new Error("timed out waiting");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+};
+/** Start the CLI entry in its own process group with a build that hangs until killed. */
+async function startHungBuild() {
+  const dir = checkout();
+  writeFileSync(path.join(dir, "scripts", "build-terminal.mjs"), SLOW_BUILD);
+  const child = spawn(process.execPath, cli(dir, ["--quiet"]), { detached: true, stdio: "ignore" });
+  const exited = new Promise((resolve) =>
+    child.on("exit", (code, signal) => resolve({ code, signal }))
+  );
+  await waitFor(() => existsSync(lockPath(dir)));
+  await new Promise((resolve) => setTimeout(resolve, 300)); // let the build spawn
+  const restore = () =>
+    cpSync(
+      path.join(root, "scripts", "build-terminal.mjs"),
+      path.join(dir, "scripts", "build-terminal.mjs")
+    );
+  return { dir, child, exited, restore };
+}
+const posix = process.platform !== "win32";
+
+test(
+  "Ctrl-C mid-build releases the lock, and an immediate rerun builds without stalling",
+  { skip: !posix },
+  async () => {
+    const { dir, child, exited, restore } = await startHungBuild();
+    process.kill(-child.pid, "SIGINT"); // what a terminal Ctrl-C delivers: the whole group
+    const { signal } = await exited;
+    assert.equal(signal, "SIGINT", "Ctrl-C still ends the command");
+    assert.equal(existsSync(lockPath(dir)), false, "the interrupted build released its lock");
+    assert.notEqual(terminalBuildState(dir).state, "fresh");
+    restore();
+    const started = Date.now();
+    assert.equal(ensureTerminalBuilt(dir).ok, true);
+    assert.ok(Date.now() - started < 15000, `rerun took ${Date.now() - started} ms`);
+    assert.equal(terminalBuildState(dir).state, "fresh");
+  }
+);
+
+test(
+  "a crashed builder's lock (dead owner pid) is reclaimed at once, not after the timeout",
+  { skip: !posix },
+  async () => {
+    const { dir, child, exited, restore } = await startHungBuild();
+    process.kill(-child.pid, "SIGKILL"); // uncatchable: the lock is left behind
+    await exited;
+    assert.ok(existsSync(lockPath(dir)), "SIGKILL leaves the lock");
+    assert.ok(Date.now() - statSync(lockPath(dir)).mtimeMs < 60000, "the lock is recent");
+    restore();
+    const started = Date.now();
+    const result = ensureTerminalBuilt(dir, { timeoutMs: 60000 });
+    assert.equal(result.ok, true, result.reason);
+    assert.ok(Date.now() - started < 15000, `reclaim took ${Date.now() - started} ms`);
+    assert.equal(existsSync(lockPath(dir)), false);
+  }
+);
+
+test("a live builder's lock bounds the presenter's wait when an older build can render", async () => {
+  const dir = checkout();
+  ensureTerminalBuilt(dir);
+  appendFileSync(path.join(dir, "src", "terminal", "theme.tsx"), "\nexport const __later = 1;\n");
+  writeFileSync(lockPath(dir), `${process.pid} ${os.hostname()}\n`); // a live owner
+  const stderr = tty();
+  const started = Date.now();
+  const ui = await createPresenter({ stdout: tty(), stderr, env: { TERM: "xterm" }, root: dir });
+  const waited = Date.now() - started;
+  rmSync(lockPath(dir));
+  assert.ok(ui, "the previous build renders");
+  assert.ok(waited < 5000, `waited ${waited} ms`);
+  assert.match(stderr.chunks.join(""), /waiting for another colour UI build/);
+  assert.match(stderr.chunks.join(""), /being rebuilt by another command/);
+});
+
+test("concurrent commands on a missing build compile exactly once", async () => {
+  const dir = checkout();
+  const run = () =>
+    new Promise((resolve) => {
+      const child = spawn(process.execPath, cli(dir), { stdio: ["ignore", "pipe", "pipe"] });
+      let out = "";
+      child.stdout.on("data", (chunk) => (out += chunk));
+      child.stderr.on("data", (chunk) => (out += chunk));
+      child.on("exit", (code) => resolve({ code, out }));
+    });
+  const results = await Promise.all([run(), run(), run()]);
+  assert.deepEqual(
+    results.map((r) => r.code),
+    [0, 0, 0]
+  );
+  const all = stripVTControlCharacters(results.map((r) => r.out).join(""));
+  assert.equal(all.match(/running build:terminal/g)?.length, 1, all);
+  assert.equal(terminalBuildState(dir).state, "fresh");
+  assert.equal(existsSync(lockPath(dir)), false);
+});
+
+test(
+  "an unwritable dist reports the real error, not a lock timeout",
+  {
+    skip: !posix || process.getuid?.() === 0,
+  },
+  () => {
+    const dir = checkout();
+    mkdirSync(path.join(dir, "dist"));
+    spawnSync("chmod", ["555", path.join(dir, "dist")]);
+    try {
+      const result = ensureTerminalBuilt(dir);
+      assert.equal(result.ok, false);
+      assert.equal(result.reason, "lock-EACCES");
+    } finally {
+      spawnSync("chmod", ["755", path.join(dir, "dist")]);
+    }
+  }
+);
+
+test("the CLI entry runs when invoked through a symlinked absolute path", { skip: !posix }, () => {
+  const dir = checkout();
+  const link = path.join(tmp(), "via-link");
+  symlinkSync(dir, link, "dir");
+  const r = spawnSync(process.execPath, cli(link), { encoding: "utf8", timeout: 60000 });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /build:terminal succeeded/);
+  assert.equal(terminalBuildState(dir).state, "fresh");
 });

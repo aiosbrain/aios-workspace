@@ -45,14 +45,22 @@ hydration, and lazily inside `createPresenter()`, so the first rich command afte
 `git pull` or an edit to `src/terminal` rebuilds (under a second) before rendering.
 The lazy check runs only after the presenter has accepted a human TTY, so JSON,
 porcelain, plain, piped and CI output never pay for it. A published install has no
-`src/terminal` and stops at one `existsSync`. Concurrent commands serialise on
-`dist/.terminal-build.lock`. A failed compile keeps the last good build and records
-its fingerprint, so an in-progress edit with type errors is not recompiled by every
-command; the next source change retries.
+`src/terminal` and stops at one `existsSync`. The stamp also lists every emitted file,
+so a partially deleted `dist/terminal` reads as stale and rebuilds. A failed compile
+keeps the last good build and records its fingerprint, so an in-progress edit with type
+errors is not recompiled by every command; the next source change retries.
+
+Concurrent commands serialise on `dist/.terminal-build.lock`, which records the owner's
+pid and host. Ctrl-C, `SIGTERM` or `SIGHUP` during a build removes the lock before the
+signal ends the command; a lock whose owner died some other way (a crash or `SIGKILL`) is
+reclaimed as soon as the next command sees the pid is gone. When an older build exists,
+the presenter waits at most 1.5 s for another command's build, then renders the older
+build with a one-line notice; only a checkout with no build at all waits for one.
 
 When the colour UI cannot load, the CLI falls back to plain output and prints one
-stderr line naming the fix (`npm run build:terminal`), or the out-of-date line when a
-rebuild failed over an older build. That hint appears only for a human TTY on stderr;
+stderr line naming the fix: `npm run build:terminal`, or `npm install` first in a
+checkout without devDependencies. When a rebuild failed over an older build, the line
+says the UI is out of date instead. That hint appears only for a human TTY on stderr;
 it is suppressed under `AIOS_UI_TIER=plain`, `NO_COLOR`, `TERM=dumb`, `CI`, machine
 modes and redirected streams, and never touches stdout or the exit code.
 

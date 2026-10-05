@@ -19,9 +19,15 @@
 // Installed-package layout (npm i -g @aiosbrain/aios): src/ is not in package.json
 // `files`, so the first existsSync() short-circuits — one stat, no hashing, no TypeScript.
 //
+// The stamp also lists every emitted file, so a partially deleted dist/terminal reads as
+// stale (and self-heals) rather than fresh.
+//
 // Contract: nothing here throws. A failed build records its fingerprint so an in-progress
 // edit with type errors is not recompiled on every invocation; the next source change
-// retries. Concurrent CLI invocations serialise on dist/.terminal-build.lock.
+// retries. Concurrent CLI invocations serialise on dist/.terminal-build.lock, which holds
+// the owner's pid and host: a lock whose owner is dead (Ctrl-C, crash, OOM kill) is
+// reclaimed at once, and the mtime rule only covers owners on another host. SIGINT,
+// SIGTERM and SIGHUP during a build remove the lock before the signal is re-raised.
 //
 // Usage: node scripts/ensure-terminal-built.mjs [repoRoot] [--quiet]
 
@@ -34,11 +40,14 @@ import {
   openSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   rmSync,
   statSync,
   writeFileSync,
+  writeSync,
 } from "node:fs";
 import path from "node:path";
+import os from "node:os";
 import { fileURLToPath } from "node:url";
 
 export const PACKAGE_ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -57,6 +66,9 @@ const DEP_INPUTS = [
   "cli-spinners",
 ];
 const BUILD_TIMEOUT_MS = 120_000;
+// A lock with no readable owner is only trusted for this long: its creator died between
+// creating the file and writing its pid into it.
+const OWNERLESS_LOCK_GRACE_MS = 2_000;
 
 const read = (file) => {
   try {
@@ -108,11 +120,26 @@ export function terminalFingerprint(root = PACKAGE_ROOT) {
   return hash.digest("hex");
 }
 
+/** Every file under dist/terminal, relative and slash-separated, excluding the stamp. */
+function listOutputs(root) {
+  const base = path.join(root, "dist", "terminal");
+  const out = [];
+  const walk = (dir) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const p = path.join(dir, entry.name);
+      if (entry.isDirectory()) walk(p);
+      else if (entry.isFile()) out.push(path.relative(base, p).split(path.sep).join("/"));
+    }
+  };
+  walk(base);
+  return out.filter((f) => f !== path.basename(STAMP_FILE)).sort();
+}
+
 /**
  * Classify dist/terminal for `root`:
  *   installed   — no src/terminal (published package): never build, never hash
  *   no-compiler — checkout without devDependencies: cannot build
- *   missing | stale | fresh
+ *   missing | stale | fresh   (stale includes a build with emitted files deleted)
  */
 export function terminalBuildState(root = PACKAGE_ROOT) {
   try {
@@ -122,50 +149,127 @@ export function terminalBuildState(root = PACKAGE_ROOT) {
       return { state: "no-compiler", built };
     const fingerprint = terminalFingerprint(root);
     if (!built) return { state: "missing", built, fingerprint };
-    const stamp = read(path.join(root, STAMP_FILE));
-    const fresh = stamp !== null && stamp.toString("utf8").trim() === fingerprint;
+    const [stamped, ...outputs] = (read(path.join(root, STAMP_FILE))?.toString("utf8") ?? "")
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean);
+    const complete = outputs.every((f) => existsSync(path.join(root, "dist", "terminal", f)));
+    const fresh = stamped === fingerprint && outputs.length > 0 && complete;
     return { state: fresh ? "fresh" : "stale", built, fingerprint };
   } catch (error) {
     return { state: "unknown", built: false, error };
   }
 }
 
-/** Written by build-terminal.mjs after a successful compile. */
+/** Written by build-terminal.mjs after a successful compile: fingerprint, then outputs. */
 export function writeTerminalStamp(root, fingerprint) {
-  writeFileSync(path.join(root, STAMP_FILE), `${fingerprint}\n`);
+  const body = [fingerprint, ...listOutputs(root)].join("\n");
+  writeFileSync(path.join(root, STAMP_FILE), `${body}\n`);
   rmSync(path.join(root, FAILED_FILE), { force: true });
 }
 
 const sleep = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 
-function acquireLock(lockPath, timeoutMs) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
+/** True when the lock's owner can no longer release it. */
+function lockIsStale(lockPath, timeoutMs) {
+  let age;
+  try {
+    age = Date.now() - statSync(lockPath).mtimeMs;
+  } catch {
+    return false; // already gone: the next open attempt wins it
+  }
+  if (age > timeoutMs) return true;
+  const [pidText, host] = (read(lockPath)?.toString("utf8") ?? "").trim().split(/\s+/);
+  const pid = Number(pidText);
+  if (!Number.isInteger(pid) || pid <= 0) return age > OWNERLESS_LOCK_GRACE_MS;
+  if (host && host !== os.hostname()) return false; // cannot probe a remote pid: mtime rule
+  try {
+    process.kill(pid, 0);
+    return false;
+  } catch (error) {
+    return error?.code === "ESRCH";
+  }
+}
+
+/** Returns { ok: true } or { ok: false, reason }. Waits at most `waitMs`. */
+function acquireLock(lockPath, { timeoutMs, waitMs, onWait }) {
+  const started = Date.now();
+  let announced = false;
+  for (;;) {
     try {
-      closeSync(openSync(lockPath, "wx"));
-      return true;
-    } catch (error) {
-      if (error?.code !== "EEXIST") return false;
+      const fd = openSync(lockPath, "wx");
       try {
-        // A crashed builder leaves its lock behind; anything older than a full build is dead.
-        if (Date.now() - statSync(lockPath).mtimeMs > timeoutMs) rmSync(lockPath, { force: true });
-      } catch {
-        /* lock vanished between open and stat: retry */
+        writeSync(fd, `${process.pid} ${os.hostname()}\n`);
+      } finally {
+        closeSync(fd);
       }
-      sleep(100);
+      return { ok: true };
+    } catch (error) {
+      if (error?.code !== "EEXIST") return { ok: false, reason: `lock-${error?.code ?? "error"}` };
+    }
+    if (lockIsStale(lockPath, timeoutMs)) {
+      rmSync(lockPath, { force: true });
+      continue;
+    }
+    const waited = Date.now() - started;
+    if (waited >= waitMs) return { ok: false, reason: "lock-busy" };
+    if (!announced && waited >= 1_000) {
+      announced = true;
+      try {
+        onWait?.();
+      } catch {
+        /* notice only */
+      }
+    }
+    sleep(Math.min(100, waitMs - waited));
+  }
+}
+
+const SIGNALS = process.platform === "win32" ? ["SIGINT"] : ["SIGINT", "SIGTERM", "SIGHUP"];
+
+/**
+ * Run `fn` with the lock released on interruption. While a listener is installed, Node
+ * defers the signal until spawnSync returns, so `finally` removes the lock; the signal is
+ * then re-raised with the default disposition so Ctrl-C still ends the command.
+ */
+function withLock(lockPath, fn) {
+  const release = () => rmSync(lockPath, { force: true });
+  const detach = () => SIGNALS.forEach((sig) => process.off(sig, onSignal));
+  function onSignal(sig) {
+    release();
+    detach();
+    process.kill(process.pid, sig);
+  }
+  SIGNALS.forEach((sig) => process.on(sig, onSignal));
+  let interrupted;
+  try {
+    const result = fn();
+    interrupted = result?.interruptedBy;
+    return result;
+  } finally {
+    release();
+    if (interrupted) {
+      detach();
+      process.kill(process.pid, interrupted);
+    } else {
+      // A signal aimed only at this process is delivered on the next turn of the loop.
+      setTimeout(detach, 50).unref();
     }
   }
-  return false;
 }
 
 /**
  * Build dist/terminal when missing or stale. Synchronous, never throws.
  * Returns { state, built, ok, reason? } where `state` is the state found before building.
- * `onBuild(state)` is called just before a compile starts (for a one-line notice).
+ * Options:
+ *   onBuild(state)  called just before a compile starts (for a one-line notice)
+ *   onWait()        called once if another build holds the lock for over a second
+ *   waitWhenBuiltMs cap on waiting for another build when an older build exists and can
+ *                   be used meanwhile (the presenter passes a short cap)
  */
 export function ensureTerminalBuilt(
   root = PACKAGE_ROOT,
-  { onBuild, timeoutMs = BUILD_TIMEOUT_MS } = {}
+  { onBuild, onWait, timeoutMs = BUILD_TIMEOUT_MS, waitWhenBuiltMs = timeoutMs } = {}
 ) {
   const initial = terminalBuildState(root);
   if (!["missing", "stale"].includes(initial.state))
@@ -177,46 +281,73 @@ export function ensureTerminalBuilt(
   const lockPath = path.join(root, LOCK_FILE);
   try {
     mkdirSync(path.dirname(lockPath), { recursive: true });
-  } catch {
-    return { ...initial, ok: false, reason: "dist-unwritable" };
+  } catch (error) {
+    return { ...initial, ok: false, reason: `dist-${error?.code ?? "unwritable"}` };
   }
-  if (!acquireLock(lockPath, timeoutMs)) return { ...initial, ok: false, reason: "lock-timeout" };
-  try {
-    // Another invocation may have finished the build while we waited for the lock.
+  const waitMs = initial.built ? Math.min(waitWhenBuiltMs, timeoutMs) : timeoutMs;
+  const lock = acquireLock(lockPath, { timeoutMs, waitMs, onWait });
+  if (!lock.ok) {
+    // Another command may have finished while we gave up waiting.
     const now = terminalBuildState(root);
-    if (now.state === "fresh") return { ...initial, built: true, ok: true };
-    try {
-      onBuild?.(now.state);
-    } catch {
-      /* notice failure cannot block the build */
-    }
-    const result = spawnSync(process.execPath, [path.join(root, "scripts", "build-terminal.mjs")], {
-      cwd: root,
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "pipe"],
-      timeout: timeoutMs,
-    });
-    if (result.status === 0) return { ...initial, built: true, ok: true };
+    if (now.state === "fresh")
+      return { ...initial, built: true, ok: true, reason: "built-elsewhere" };
+    return { ...initial, ok: false, reason: lock.reason };
+  }
+  try {
+    return withLock(lockPath, () => build(root, initial, { onBuild, timeoutMs, failedPath }));
+  } catch (error) {
+    return { ...initial, ok: false, reason: "build-error", error };
+  }
+}
+
+function build(root, initial, { onBuild, timeoutMs, failedPath }) {
+  // Another invocation may have finished the build while we waited for the lock.
+  const now = terminalBuildState(root);
+  if (now.state === "fresh")
+    return { ...initial, built: true, ok: true, reason: "built-elsewhere" };
+  try {
+    onBuild?.(now.state);
+  } catch {
+    /* notice failure cannot block the build */
+  }
+  const result = spawnSync(process.execPath, [path.join(root, "scripts", "build-terminal.mjs")], {
+    cwd: root,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+    timeout: timeoutMs,
+  });
+  if (result.status === 0) return { ...initial, built: true, ok: true };
+  const timedOut = result.error?.code === "ETIMEDOUT";
+  // The compiler died from a terminal signal (Ctrl-C reaches the whole process group):
+  // not a source failure, so do not latch it; let withLock re-raise the signal.
+  const interruptedBy = !timedOut && SIGNALS.includes(result.signal) ? result.signal : undefined;
+  if (!interruptedBy)
     try {
       writeFileSync(failedPath, `${now.fingerprint}\n`);
     } catch {
       /* best effort */
     }
-    return {
-      ...initial,
-      built: ENTRIES.every((f) => existsSync(path.join(root, f))),
-      ok: false,
-      reason: result.error?.code === "ETIMEDOUT" ? "build-timeout" : "build-failed",
-      output: `${result.stdout ?? ""}${result.stderr ?? ""}`,
-    };
-  } catch (error) {
-    return { ...initial, ok: false, reason: "build-error", error };
-  } finally {
-    rmSync(lockPath, { force: true });
+  return {
+    ...initial,
+    built: ENTRIES.every((f) => existsSync(path.join(root, f))),
+    ok: false,
+    reason: interruptedBy ? "build-interrupted" : timedOut ? "build-timeout" : "build-failed",
+    interruptedBy,
+    output: `${result.stdout ?? ""}${result.stderr ?? ""}`,
+  };
+}
+
+function isMain() {
+  try {
+    // argv[1] may reach this file through a symlink (~/Tessera → ~/Projects); the main
+    // module's URL is already realpath'd, so compare realpaths.
+    return realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
   }
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (process.argv[1] && isMain()) {
   // postinstall / worktree-hydration entry point: best-effort, always exits 0.
   const args = process.argv.slice(2);
   const quiet = args.includes("--quiet");
@@ -224,12 +355,18 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   const note = (msg) => quiet || console.log(`\x1b[2m${msg}\x1b[0m`);
   const result = ensureTerminalBuilt(root, {
     onBuild: (state) => note(`terminal UI: ${state} — running build:terminal…`),
+    onWait: () => note("terminal UI: waiting for another build:terminal…"),
   });
   if (result.state === "installed") process.exit(0);
   if (result.state === "fresh")
     note("terminal UI: dist/terminal is up to date — nothing to build.");
   else if (result.state === "no-compiler")
-    note("terminal UI: typescript not installed (devDependencies) — skipping automatic build.");
+    note(
+      "terminal UI: typescript not installed (devDependencies) — skipping automatic build.\n" +
+        "  Install devDependencies (npm install), then run: npm run build:terminal"
+    );
+  else if (result.ok && result.reason === "built-elsewhere")
+    note("terminal UI: another process finished the build.");
   else if (result.ok) note("terminal UI: build:terminal succeeded.");
   else
     console.log(

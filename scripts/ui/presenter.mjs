@@ -10,15 +10,30 @@ const hinted = new WeakSet();
 /**
  * Source checkouts compile src/terminal on demand (one content-hash check per process,
  * reached only after canPresent() accepted a human TTY). Installed packages short-circuit
- * on a single existsSync. Never throws.
+ * on a single existsSync. Never throws. When an older build exists, waiting on another
+ * command's build is capped so the CLI never looks hung; the older build renders.
  */
 function ensureBuilt(root, notice) {
   if (!ensured.has(root))
     ensured.set(
       root,
-      ensureTerminalBuilt(root, { onBuild: () => notice("aios: building the colour UI…") })
+      ensureTerminalBuilt(root, {
+        onBuild: () => notice("aios: building the colour UI…"),
+        onWait: () => notice("aios: waiting for another colour UI build…"),
+        waitWhenBuiltMs: STALE_WAIT_MS,
+      })
     );
   return ensured.get(root);
+}
+
+const STALE_WAIT_MS = 1_500;
+const REBUILD = "run `npm run build:terminal`";
+
+/** Name the remedy that can actually work for this state. */
+function fallbackHint(build) {
+  if (build.state === "no-compiler")
+    return "aios: colour UI not built — install devDependencies (`npm install`), then " + REBUILD;
+  return `aios: colour UI not built — ${REBUILD}`;
 }
 
 /** The only diagnostic the plain fallback may print: once, to a human TTY stderr. */
@@ -50,7 +65,9 @@ async function loadTerminalModules({ root, stderr, env }) {
     hint(
       stderr,
       env,
-      "aios: colour UI is out of date (rebuild failed) — run `npm run build:terminal`"
+      build.reason === "lock-busy"
+        ? "aios: colour UI is being rebuilt by another command — showing the previous build"
+        : `aios: colour UI is out of date (rebuild failed) — ${REBUILD}`
     );
   try {
     const dist = (file) => pathToFileURL(path.join(root, "dist", "terminal", file)).href;
@@ -62,7 +79,7 @@ async function loadTerminalModules({ root, stderr, env }) {
   } catch {
     // Missing build or unsupported renderer: fall back BEFORE any operation starts,
     // and say so once — a silently plain checkout is the bug this replaced.
-    hint(stderr, env, "aios: colour UI not built — run `npm run build:terminal`");
+    hint(stderr, env, fallbackHint(build));
     return null;
   }
 }
