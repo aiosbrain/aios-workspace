@@ -4,14 +4,19 @@
 
 ## Work item
 
-<!-- Reference the brain task so aios-work-sync advances it to Done on merge (brain → Linear).
-     No task yet, and this work should be tracked? Create one FIRST in the Team Brain dashboard
-     (→ Tasks; it projects to Linear), then put its key here. Don't hand-edit the Linear issue —
-     the brain is the source of truth, Linear is a one-way projection.
+<!-- The issue this PR implements. On merge, aios-work-sync posts a "merged"
+     event ONLY for the key selected by these rules (priority order):
 
-     Include the Linear identifier (e.g. AIO-130) in this PR's TITLE or body: on open, the
-     `PR → Linear In Review` workflow auto-moves that issue to In Review — you never do it by hand.
-     Merge then advances it to Done via aios-work-sync. -->
+     1. Explicit trailer below  →  highest priority, supports multiple keys
+     2. Key in the branch name  →  strongest signal (set by `aios worktree add`)
+     3. Key in the PR title     →  fallback
+
+     Body mentions (context, "see also", "blocked by") do NOT close issues.
+     To close multiple issues from one PR, add one trailer per issue.
+
+     No task yet? Create one FIRST in the Team Brain dashboard (→ Tasks; it
+     projects to Linear), then put its key here. Don't hand-edit Linear —
+     the brain is the source of truth. -->
 AIOS-Work: <!-- e.g. AIO-72 -->
 
 ## Checklist

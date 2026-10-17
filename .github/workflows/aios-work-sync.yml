@@ -82,15 +82,36 @@ jobs:
             mergedBy: process.env.PR_MERGED_BY || "",
             user: process.env.PR_USER || "",
           };
-          // Strip HTML comments first so PR-template placeholders (e.g. `<!-- e.g. AIO-72 -->`)
-          // aren't posted as real work keys.
-          const text = [
-            pr.title,
-            pr.body.replace(/<!--[\s\S]*?-->/g, " "),
-            pr.headRef,
-          ].join("\n");
-          const re = /\b(?:AIOS-Work:\s*)?([A-Z][A-Z0-9]+-\d+|[A-Z]\d+(?:\.\d+)*)\b/g;
-          const workKeys = [...new Set([...text.matchAll(re)].map((m) => m[1]))];
+          // Resolve work keys using a priority-based rule so body-only mentions
+          // (context, "blocked by", spec refs) never close unrelated issues.
+          // Canonical source: .github/lib/resolve-work-keys.mjs — keep in sync.
+          const WORK_KEY_RE = /\b([A-Z][A-Z0-9]+-\d+|[A-Z]\d+(?:\.\d+)*)\b/g;
+          function resolveWorkKeys(title, body, headRef) {
+            const cleanBody = (body || "").replace(/<!--[\s\S]*?-->/g, " ");
+            // 1. Explicit trailers — global iteration over ALL "AIOS-Work:" lines.
+            const trailerLineRe = /\bAIOS-Work:\s*(.+)/g;
+            const trailerKeys = [];
+            for (const line of cleanBody.matchAll(trailerLineRe)) {
+              for (const km of line[1].matchAll(WORK_KEY_RE)) {
+                trailerKeys.push(km[1]);
+              }
+            }
+            if (trailerKeys.length > 0) return [...new Set(trailerKeys)];
+            // 2. Branch name — case-INSENSITIVE (branches are lowercase by convention).
+            if (headRef) {
+              const branchRe = /\b([A-Z][A-Z0-9]+-\d+|[A-Z]\d+(?:\.\d+)*)\b/i;
+              const m = headRef.match(branchRe);
+              if (m) return [m[1].toUpperCase()];
+            }
+            // 3. PR title — first match only.
+            if (title) {
+              const m = title.match(WORK_KEY_RE);
+              if (m) return [m[0]];
+            }
+            // 4. Body-only mentions → no work event.
+            return [];
+          }
+          const workKeys = resolveWorkKeys(pr.title, pr.body, pr.headRef);
 
           const payload = {
             project: process.env.AIOS_PROJECT,
