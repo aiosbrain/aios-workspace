@@ -27,28 +27,20 @@ function eq(a, b) {
   const got = resolveWorkKeys(
     "docs(spec): AIO-539, AIO-540",
     "This fixes AIO-531 too.",
-    "feat/aio-539-mutation",
+    "feat/aio-539-mutation"
   );
   check("branch wins over body prose", eq(got, ["AIO-539"]));
 }
 
 // ── 2. Explicit trailer beats branch ─────────────────────────────────────────
 {
-  const got = resolveWorkKeys(
-    "fix(foo)",
-    "AIOS-Work: AIO-540",
-    "feat/aio-539-x",
-  );
+  const got = resolveWorkKeys("fix(foo)", "AIOS-Work: AIO-540", "feat/aio-539-x");
   check("explicit trailer beats branch", eq(got, ["AIO-540"]));
 }
 
 // ── 3. Title fallback when no trailer or branch match ────────────────────────
 {
-  const got = resolveWorkKeys(
-    "fix(foo) (AIO-123)",
-    "This also touches AIO-456.",
-    "",
-  );
+  const got = resolveWorkKeys("fix(foo) (AIO-123)", "This also touches AIO-456.", "");
   check("title fallback; body prose ignored", eq(got, ["AIO-123"]));
 }
 
@@ -60,21 +52,13 @@ function eq(a, b) {
 
 // ── 5. Multiple trailers on separate lines ────────────────────────────────────
 {
-  const got = resolveWorkKeys(
-    "generic",
-    "AIOS-Work: AIO-531\nAIOS-Work: AIO-532",
-    "",
-  );
+  const got = resolveWorkKeys("generic", "AIOS-Work: AIO-531\nAIOS-Work: AIO-532", "");
   check("multiple trailers — separate lines", eq(got, ["AIO-531", "AIO-532"]));
 }
 
 // ── 6. Multiple keys on one trailer line ─────────────────────────────────────
 {
-  const got = resolveWorkKeys(
-    "generic",
-    "AIOS-Work: AIO-531 AIO-532",
-    "",
-  );
+  const got = resolveWorkKeys("generic", "AIOS-Work: AIO-531 AIO-532", "");
   check("multiple keys on one trailer line", eq(got, ["AIO-531", "AIO-532"]));
 }
 
@@ -92,31 +76,19 @@ function eq(a, b) {
 
 // ── 9. HTML comment stripped before trailer scan ─────────────────────────────
 {
-  const got = resolveWorkKeys(
-    "generic",
-    "AIOS-Work: <!-- e.g. AIO-72 -->",
-    "",
-  );
+  const got = resolveWorkKeys("generic", "AIOS-Work: <!-- e.g. AIO-72 -->", "");
   check("HTML comment stripped before trailer scan", eq(got, []));
 }
 
 // ── 10. Trailer wins over all other sources ───────────────────────────────────
 {
-  const got = resolveWorkKeys(
-    "fix: AIO-100",
-    "AIO-200\nAIOS-Work: AIO-300",
-    "feat/aio-400",
-  );
+  const got = resolveWorkKeys("fix: AIO-100", "AIO-200\nAIOS-Work: AIO-300", "feat/aio-400");
   check("trailer wins over title, body prose, and branch", eq(got, ["AIO-300"]));
 }
 
 // ── 11. Duplicate trailers are deduped ───────────────────────────────────────
 {
-  const got = resolveWorkKeys(
-    "generic",
-    "AIOS-Work: AIO-531\nAIOS-Work: AIO-531",
-    "",
-  );
+  const got = resolveWorkKeys("generic", "AIOS-Work: AIO-531\nAIOS-Work: AIO-531", "");
   check("duplicate trailers deduped", eq(got, ["AIO-531"]));
 }
 
