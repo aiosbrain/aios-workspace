@@ -86,7 +86,8 @@ jobs:
           // (context, "blocked by", spec refs) never close unrelated issues.
           // Canonical source: .github/lib/resolve-work-keys.mjs — keep in sync.
           const WORK_KEY_RE = /\b([A-Z][A-Z0-9]+-\d+|[A-Z]\d+(?:\.\d+)*)\b/g;
-          const BRANCH_KEY_RE = /^(?:[^/]+\/)?([A-Z]{2,}[A-Z0-9]*-\d+)(?![A-Z0-9])/i;
+          const BRANCH_KEY_RE = /^(?:[^/]{1,256}\/)?([A-Z]{2,}[A-Z0-9]{0,32}-\d+)(?![A-Z0-9])/i;
+          const KEY_ONLY_RE = /^(?:[A-Z][A-Z0-9]+-\d+|[A-Z]\d+(?:\.\d+)*)$/;
           function resolveWorkKeys(title, body, headRef) {
             title = String(title ?? "");
             headRef = String(headRef ?? "");
@@ -96,8 +97,11 @@ jobs:
             const trailerLineRe = /^[ \t]*AIOS-Work:[ \t]*([^\r\n]+)/gm;
             const trailerKeys = [];
             for (const line of cleanBody.matchAll(trailerLineRe)) {
-              for (const km of line[1].matchAll(WORK_KEY_RE)) {
-                trailerKeys.push(km[1]);
+              // Leading run of keys only (see the canonical module).
+              for (const tok of line[1].split(/[\s,]+/)) {
+                if (!tok) continue;
+                if (!KEY_ONLY_RE.test(tok)) break;
+                trailerKeys.push(tok);
               }
             }
             if (trailerKeys.length > 0) return [...new Set(trailerKeys)];
@@ -113,6 +117,11 @@ jobs:
             return [];
           }
           const workKeys = resolveWorkKeys(pr.title, pr.body, pr.headRef);
+          // Make a branch/title disagreement visible in the run log (a branch typo silently wins).
+          const titleKeys = String(pr.title ?? "").match(WORK_KEY_RE) || [];
+          if (workKeys.length && titleKeys.length && !workKeys.some((k) => titleKeys.includes(k))) {
+            console.log(`aios-work-sync: note: resolved ${workKeys.join(",")} but the title names ${titleKeys.join(",")}`);
+          }
           // No key this PR implements: post nothing. The brain re-derives keys from pr_body when
           // work_keys is empty (ingest.ts), which would close every issue the body merely mentions.
           if (workKeys.length === 0) {

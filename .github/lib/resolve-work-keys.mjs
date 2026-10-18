@@ -24,7 +24,8 @@ const WORK_KEY_RE = /\b([A-Z][A-Z0-9]+-\d+|[A-Z]\d+(?:\.\d+)*)\b/g;
 // Branch keys: Linear-shaped only (two+ letters, hyphen, digits), anchored at the start of the
 // branch or of the segment after `type/`. Unanchored matching manufactured `V0.11.1` from
 // `release/v0.11.1` and `API-1` from `brain-api-1.22-…`, outranking the real key in the title.
-const BRANCH_KEY_RE = /^(?:[^/]+\/)?([A-Z]{2,}[A-Z0-9]*-\d+)(?![A-Z0-9])/i;
+const BRANCH_KEY_RE = /^(?:[^/]{1,256}\/)?([A-Z]{2,}[A-Z0-9]{0,32}-\d+)(?![A-Z0-9])/i;
+const KEY_ONLY_RE = /^(?:[A-Z][A-Z0-9]+-\d+|[A-Z]\d+(?:\.\d+)*)$/;
 
 export function resolveWorkKeys(title, body, headRef) {
   title = String(title ?? "");
@@ -38,8 +39,12 @@ export function resolveWorkKeys(title, body, headRef) {
   const trailerLineRe = /^[ \t]*AIOS-Work:[ \t]*([^\r\n]+)/gm;
   const trailerKeys = [];
   for (const line of cleanBody.matchAll(trailerLineRe)) {
-    for (const km of line[1].matchAll(WORK_KEY_RE)) {
-      trailerKeys.push(km[1]);
+    // Only the leading run of keys counts: `AIOS-Work: AIO-568 (epic AIO-541)` closes AIO-568, not
+    // the epic named in the aside. Keys are separated by spaces or commas; the first other token stops it.
+    for (const tok of line[1].split(/[\s,]+/)) {
+      if (!tok) continue;
+      if (!KEY_ONLY_RE.test(tok)) break;
+      trailerKeys.push(tok);
     }
   }
   if (trailerKeys.length > 0) return [...new Set(trailerKeys)];

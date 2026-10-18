@@ -140,6 +140,12 @@ test("inline workflow copy matches the canonical module", () => {
     ["AIO-864: r", "", "release/v0.11.1"],
     ["x", "<!-- AIOS-Work: AIO-8 -->", "fix/AIO-12-and-AIO-13"],
     [null, undefined, undefined],
+    // Pins the inline copy's branch anchor and first-title-key-only rule (mutation-tested by review).
+    ["AIO-995: x", "", "feat/brain-api-1.22-rollout"],
+    ["AIO-1112: x", "", "remediation/aio1112-toolkit-2.1"],
+    ["fix: AIO-1 AIO-2", "", ""],
+    ["x", "AIOS-Work: AIO-568 (epic AIO-541)", ""],
+    ["x", "AIOS-Work: AIO-1, AIO-2 and AIO-3", ""],
   ];
   for (const r of rows) assert.deepEqual(inline(...r), resolveWorkKeys(...r), JSON.stringify(r));
 });
@@ -149,4 +155,19 @@ test("workflow posts nothing when no key resolves", () => {
   const post = yml.indexOf("api/v1/work-events");
   assert.ok(guard !== -1 && guard < post, "empty-key guard must precede the POST");
   assert.match(yml.slice(guard, post), /process\.exit\(0\)/);
+});
+
+test("a trailer closes only the leading run of keys, not asides", () => {
+  assert.deepEqual(resolveWorkKeys("x", "AIOS-Work: AIO-568 (epic AIO-541)", ""), ["AIO-568"]);
+  assert.deepEqual(resolveWorkKeys("x", "AIOS-Work: AIO-1, AIO-2 and AIO-3", ""), [
+    "AIO-1",
+    "AIO-2",
+  ]);
+  assert.deepEqual(resolveWorkKeys("x", "AIOS-Work: see AIO-9", ""), []);
+});
+
+test("a very long slash-free branch does not backtrack quadratically", () => {
+  const t0 = Date.now();
+  resolveWorkKeys("x", "", "a".repeat(65536));
+  assert.ok(Date.now() - t0 < 250, "branch matching must be bounded");
 });

@@ -11,6 +11,8 @@
      2. Key leading the branch name, e.g. feat/aio-72-… (set by `aios worktree add`)
      3. Key in the PR title     →  fallback when the branch has none
 
+     The trailer must start at the beginning of a line with the exact label `AIOS-Work:`
+     (no list dash, bold or quote marks); only the keys right after it count.
      No key in any of the three: no event is posted at all.
 
      Body mentions (context, "see also", "blocked by") do NOT close issues.
