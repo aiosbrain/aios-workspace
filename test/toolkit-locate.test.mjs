@@ -130,6 +130,11 @@ test("no source at all → actionable error naming AIOS_TOOLKIT_DIR", () => {
 });
 
 test("loadToolkitModule loads the same core module instance as a static import", async () => {
+  // `aios ship` (devtools-dispatch.applyToolkitDefault) exports AIOS_TOOLKIT_DIR pointing at
+  // the main checkout, which any verify run in a worktree inherits. The seam would then load
+  // the main checkout's copy while the static import loads this worktree's: two instances.
+  // This test is about the in-tree default, so it must not depend on the ambient variable.
+  delete process.env.AIOS_TOOLKIT_DIR;
   const viaSeam = await loadToolkitModule("severity.mjs");
   const viaStatic = await import("../scripts/severity.mjs");
   assert.equal(typeof viaSeam.hasCriticalOrHighFindings, "function");
