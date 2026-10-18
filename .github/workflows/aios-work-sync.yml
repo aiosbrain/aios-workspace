@@ -84,34 +84,39 @@ jobs:
           };
           // Resolve work keys using a priority-based rule so body-only mentions
           // (context, "blocked by", spec refs) never close unrelated issues.
-          // Canonical source: .github/lib/resolve-work-keys.mjs — keep in sync.
+          // Canonical source: .github/lib/resolve-work-keys.mjs. Generated copy, keep identical.
           const WORK_KEY_RE = /\b([A-Z][A-Z0-9]+-\d+|[A-Z]\d+(?:\.\d+)*)\b/g;
 
           // Branch keys: anchored at the start of the branch or the segment after `type/`.
           // Linear-shaped only (two or more letters + hyphen + digits, e.g. aio-539 → AIO-539).
           // Hierarchical keys (W2.5.8) are NOT extracted from branch names; they fall through to
-          // the title. Length-bounded to prevent backtracking on long slash-free branch names.
+          // the title. Version and package branches (`release/v0.11.1`, `brain-api-1.22-…`)
+          // carry no extractable key and fall through to title. Length-bounded to prevent
+          // backtracking on long slash-free branch names.
           const BRANCH_KEY_RE = /^(?:[^/]{1,256}\/)?([A-Z]{2,30}-\d{1,8})(?![A-Z0-9])/i;
 
+          const KEY_ONLY_RE = /^(?:[A-Z][A-Z0-9]+-\d+|[A-Z]\d+(?:\.\d+)*)$/;
+
+          // A trailer token may be wrapped the way people write it in Markdown: `AIO-5`, (AIO-5), [AIO-5],
+          // [AIO-5](url), **AIO-5**, "AIO-5", AIO-5. or AIO-5; unwrap it before testing, or an explicit trailer
+          // silently loses to the branch. A markdown link is unwrapped first, so a long URL never reaches the
+          // strip below (which is quadratic on a very long run of closers, hence the length cap).
+          const unwrap = (tok) =>
+            tok.replace(/^\[([^\]]+)\]\([^)]*\)/, "$1").replace(/^[[(`*_"']+|[\])`*_.,;:"']+$/g, "");
+
+          /**
+           * Extract the leading run of work keys from an `AIOS-Work:` trailer value. Keys are separated by
+           * spaces, commas or semicolons; the first token that is not a key stops the run, so
+           * `AIO-568 (epic AIO-541)` yields only AIO-568. Returns [] for an unreadable line.
+           */
           function extractLeadingKeyRun(trailerValue) {
-            const KP = "[A-Z][A-Z0-9]+-\\d+|[A-Z]\\d+(?:\\.\\d+)*";
-            const SLOT_RE = new RegExp(
-              "^(?:" +
-                "`(" + KP + ")`" +
-                "|\\[(" + KP + ")\\]\\([^)]{0,200}\\)" +
-                "|\\*\\*(" + KP + ")\\*\\*" +
-                "|\\((" + KP + ")\\)" +
-                "|(" + KP + ")[.,;]?(?![A-Za-z0-9.])" +
-              ")"
-            );
-            let s = trailerValue.trimStart();
             const keys = [];
-            while (s.length > 0) {
-              const m = s.match(SLOT_RE);
-              if (!m) break;
-              const key = m[1] ?? m[2] ?? m[3] ?? m[4] ?? m[5];
-              if (key) keys.push(key);
-              s = s.slice(m[0].length).replace(/^[ \t,]+/, "");
+            for (const raw of trailerValue.split(/[\s,;]+/)) {
+              if (!raw) continue;
+              if (raw.length > 400) break;
+              const tok = unwrap(raw);
+              if (tok.length > 64 || !KEY_ONLY_RE.test(tok)) break;
+              keys.push(tok);
             }
             return keys;
           }
@@ -123,7 +128,7 @@ jobs:
 
             // 1. Explicit trailers — global iteration over ALL "AIOS-Work:" lines.
             //    Only the leading key run counts; the first non-key token stops the run.
-            //    Keys may be wrapped in Markdown (backticks, parens, bold, links, punctuation).
+            //    Keys may be wrapped in Markdown (backticks, parens, bold, markdown links, punctuation).
             //    Line-anchored (^…gm) so an empty trailer line cannot swallow the next line.
             const trailerLineRe = /^[ \t]*AIOS-Work:[ \t]*([^\r\n]+)/gm;
             const trailerKeys = [];
@@ -134,7 +139,10 @@ jobs:
               trailerKeys.push(...run);
             }
             if (trailerKeys.length > 0) return [...new Set(trailerKeys)];
-            if (sawTrailer) notes.push("an AIOS-Work trailer is present but no key could be read from it; falling back to branch and title");
+            if (sawTrailer)
+              notes.push(
+                "an AIOS-Work trailer is present but no key could be read from it; falling back to branch and title"
+              );
 
             // 2. Branch name — first (leading) Linear-shaped key only; a branch encodes one issue.
             //    Hierarchical keys (W2.5.8) are not extracted from branch names.

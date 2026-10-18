@@ -231,3 +231,56 @@ test("a dotless token in the title never shadows the real key", () => {
   assert.deepEqual(resolveWorkKeys("Q3 roadmap", "", ""), []);
   assert.deepEqual(resolveWorkKeys("feat(x): W2.5.8 support", "", ""), ["W2.5.8"]);
 });
+
+// Reviewer M1 (exact-head review of 635d4cac): every wrapper the template promises must still be an
+// explicit trailer, and an explicit trailer must beat the branch.
+test("any Markdown wrapper around a trailer key is still an explicit trailer", () => {
+  const long = "https://linear.app/je4light/issue/AIO-540/" + "slug-".repeat(60);
+  for (const line of [
+    "[AIO-540]",
+    "*AIO-540*",
+    "_AIO-540_",
+    '"AIO-540"',
+    "***AIO-540***",
+    "(AIO-540",
+    `[AIO-540](${long})`,
+    "AIO-540;",
+  ]) {
+    assert.deepEqual(
+      resolveWorkKeys("fix: x", `AIOS-Work: ${line}`, "feat/aio-539-x"),
+      ["AIO-540"],
+      line
+    );
+  }
+});
+
+test("semicolons separate trailer keys like commas do", () => {
+  assert.deepEqual(resolveWorkKeys("x", "AIOS-Work: AIO-1;AIO-2", ""), ["AIO-1", "AIO-2"]);
+  assert.deepEqual(resolveWorkKeys("x", "AIOS-Work: AIO-1; AIO-2, AIO-3 (epic AIO-9)", ""), [
+    "AIO-1",
+    "AIO-2",
+    "AIO-3",
+  ]);
+});
+
+test("a very long run of closing punctuation in a trailer does not backtrack quadratically", () => {
+  const t0 = Date.now();
+  resolveWorkKeys("x", `AIOS-Work: ${".".repeat(65000)}AIO-5`, "");
+  assert.ok(Date.now() - t0 < 250);
+});
+
+test("the inline copy agrees on notes, dedupe, list-dash and commented trailers (reviewer L4)", () => {
+  const rows = [
+    ["x", "- AIOS-Work: AIO-5", ""],
+    ["x", "AIOS-Work: AIO-5\nAIOS-Work: AIO-5", ""],
+    ["x", "<!--\nAIOS-Work: AIO-8\n-->", ""],
+    ["x", "AIOS-Work: none", "feat/aio-9-x"],
+    ["x", "AIOS-Work: [AIO-540]", "feat/aio-539-x"],
+  ];
+  for (const r of rows) {
+    const a = [];
+    const b = [];
+    assert.deepEqual(inline(...r, a), resolveWorkKeys(...r, b), JSON.stringify(r));
+    assert.deepEqual(a, b, `notes ${JSON.stringify(r)}`);
+  }
+});

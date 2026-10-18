@@ -5,7 +5,8 @@
  * Priority (highest to lowest):
  *   1. Explicit `AIOS-Work:` trailers in the PR body — supports multiple keys.
  *   2. A work key leading the branch name, right after the `type/` prefix
- *      (case-insensitive; branches are lowercase: `feat/aio-539-…`, `feat/w2.5.8-support`).
+ *      (case-insensitive; branches are lowercase: `feat/aio-539-…`). Hierarchical keys (W2.5.8)
+ *      are never taken from a branch name.
  *      Version and package branches (`release/v0.11.1`, `remediation/aio1112-toolkit-2.1`)
  *      carry no key and fall through to the title.
  *   3. A key in the PR title.
@@ -30,44 +31,29 @@ const WORK_KEY_RE = /\b([A-Z][A-Z0-9]+-\d+|[A-Z]\d+(?:\.\d+)*)\b/g;
 // backtracking on long slash-free branch names.
 const BRANCH_KEY_RE = /^(?:[^/]{1,256}\/)?([A-Z]{2,30}-\d{1,8})(?![A-Z0-9])/i;
 
+const KEY_ONLY_RE = /^(?:[A-Z][A-Z0-9]+-\d+|[A-Z]\d+(?:\.\d+)*)$/;
+
+// A trailer token may be wrapped the way people write it in Markdown: `AIO-5`, (AIO-5), [AIO-5],
+// [AIO-5](url), **AIO-5**, "AIO-5", AIO-5. or AIO-5; unwrap it before testing, or an explicit trailer
+// silently loses to the branch. A markdown link is unwrapped first, so a long URL never reaches the
+// strip below (which is quadratic on a very long run of closers, hence the length cap).
+const unwrap = (tok) =>
+  tok.replace(/^\[([^\]]+)\]\([^)]*\)/, "$1").replace(/^[[(`*_"']+|[\])`*_.,;:"']+$/g, "");
+
 /**
- * Extract the leading run of work keys from an `AIOS-Work:` trailer value.
- * Keys may be wrapped in Markdown (backticks, parens, bold, markdown links, trailing punct).
- * The first non-key token stops the run. Returns [] for an unreadable line (no leading key).
+ * Extract the leading run of work keys from an `AIOS-Work:` trailer value. Keys are separated by
+ * spaces, commas or semicolons; the first token that is not a key stops the run, so
+ * `AIO-568 (epic AIO-541)` yields only AIO-568. Returns [] for an unreadable line.
  */
 function extractLeadingKeyRun(trailerValue) {
-  const KP = "[A-Z][A-Z0-9]+-\\d+|[A-Z]\\d+(?:\\.\\d+)*";
-  const SLOT_RE = new RegExp(
-    "^(?:" +
-      "`(" +
-      KP +
-      ")`" + // `AIO-540`
-      "|\\[(" +
-      KP +
-      ")\\]\\([^)]{0,200}\\)" + // [AIO-5](url)
-      "|\\*\\*(" +
-      KP +
-      ")\\*\\*" + // **AIO-540**
-      "|\\((" +
-      KP +
-      ")\\)" + // (AIO-540)
-      "|(" +
-      KP +
-      ")[.,;]?(?![A-Za-z0-9.])" + // AIO-540 or AIO-540.
-      ")"
-  );
-
-  let s = trailerValue.trimStart();
   const keys = [];
-
-  while (s.length > 0) {
-    const m = s.match(SLOT_RE);
-    if (!m) break;
-    const key = m[1] ?? m[2] ?? m[3] ?? m[4] ?? m[5];
-    if (key) keys.push(key);
-    s = s.slice(m[0].length).replace(/^[ \t,]+/, "");
+  for (const raw of trailerValue.split(/[\s,;]+/)) {
+    if (!raw) continue;
+    if (raw.length > 400) break;
+    const tok = unwrap(raw);
+    if (tok.length > 64 || !KEY_ONLY_RE.test(tok)) break;
+    keys.push(tok);
   }
-
   return keys;
 }
 
