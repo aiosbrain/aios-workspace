@@ -114,6 +114,13 @@ test("a leading branch key is used, only the first one", () => {
   assert.deepEqual(resolveWorkKeys("x", "", "aio-556-no-type-prefix"), ["AIO-556"]);
 });
 
+test("single-letter or letter-digit branch prefix does not match (A2: two or more letters)", () => {
+  assert.deepEqual(resolveWorkKeys("AIO-999: fix", "", "feat/a-123"), ["AIO-999"]);
+  assert.deepEqual(resolveWorkKeys("AIO-999: fix", "", "feat/a1-123"), ["AIO-999"]);
+  assert.deepEqual(resolveWorkKeys("x", "", "feat/a-123"), []);
+  assert.deepEqual(resolveWorkKeys("x", "", "feat/a1-123"), []);
+});
+
 test("non-string inputs do not throw", () => {
   assert.deepEqual(resolveWorkKeys(null, undefined, 7), []);
   assert.deepEqual(resolveWorkKeys(5, 6, 7), []);
@@ -153,6 +160,11 @@ test("inline workflow copy matches the canonical module", () => {
     ["feat: V0.11.1 then AIO-5", "", ""],
     ["x", "", "a".repeat(65536)],
     ["x", "", "feat/aio-5a"],
+    ["AIO-999: fix", "", "feat/a-123"],
+    ["AIO-999: fix", "", "feat/a1-123"],
+    ["x", "", "feat/a-123"],
+    ["x", "AIOS-Work: AIO-568a", ""],
+    ["x", "AIOS-Work: W2.5.8x", ""],
   ];
   for (const r of rows) assert.deepEqual(inline(...r), resolveWorkKeys(...r), JSON.stringify(r));
 });
@@ -197,6 +209,12 @@ test("a wrapped trailer key is still an explicit trailer (backticks, brackets, m
       line
     );
   }
+});
+
+test("bare trailer key with trailing alphanumeric is not a valid key (A1 boundary)", () => {
+  assert.deepEqual(resolveWorkKeys("x", "AIOS-Work: AIO-568a", ""), []);
+  assert.deepEqual(resolveWorkKeys("x", "AIOS-Work: W2.5.8x", ""), []);
+  assert.deepEqual(resolveWorkKeys("x", "AIOS-Work: AIO-568 foo", ""), ["AIO-568"]);
 });
 
 test("an unreadable trailer is reported and falls back to branch and title", () => {

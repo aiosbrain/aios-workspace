@@ -91,7 +91,7 @@ jobs:
           // Linear-shaped only (two or more letters + hyphen + digits, e.g. aio-539 → AIO-539).
           // Hierarchical keys (W2.5.8) are NOT extracted from branch names; they fall through to
           // the title. Length-bounded to prevent backtracking on long slash-free branch names.
-          const BRANCH_KEY_RE = /^(?:[^/]{1,256}\/)?([A-Z][A-Z0-9]{0,29}-\d{1,8})(?![A-Z0-9])/i;
+          const BRANCH_KEY_RE = /^(?:[^/]{1,256}\/)?([A-Z]{2,30}-\d{1,8})(?![A-Z0-9])/i;
 
           function extractLeadingKeyRun(trailerValue) {
             const KP = "[A-Z][A-Z0-9]+-\\d+|[A-Z]\\d+(?:\\.\\d+)*";
@@ -101,7 +101,7 @@ jobs:
                 "|\\[(" + KP + ")\\]\\([^)]{0,200}\\)" +
                 "|\\*\\*(" + KP + ")\\*\\*" +
                 "|\\((" + KP + ")\\)" +
-                "|(" + KP + ")[.,;]?" +
+                "|(" + KP + ")[.,;]?(?![A-Za-z0-9.])" +
               ")"
             );
             let s = trailerValue.trimStart();

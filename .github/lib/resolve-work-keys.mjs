@@ -28,7 +28,7 @@ const WORK_KEY_RE = /\b([A-Z][A-Z0-9]+-\d+|[A-Z]\d+(?:\.\d+)*)\b/g;
 // the title. Version and package branches (`release/v0.11.1`, `brain-api-1.22-…`)
 // carry no extractable key and fall through to title. Length-bounded to prevent
 // backtracking on long slash-free branch names.
-const BRANCH_KEY_RE = /^(?:[^/]{1,256}\/)?([A-Z][A-Z0-9]{0,29}-\d{1,8})(?![A-Z0-9])/i;
+const BRANCH_KEY_RE = /^(?:[^/]{1,256}\/)?([A-Z]{2,30}-\d{1,8})(?![A-Z0-9])/i;
 
 /**
  * Extract the leading run of work keys from an `AIOS-Work:` trailer value.
@@ -53,7 +53,7 @@ function extractLeadingKeyRun(trailerValue) {
       ")\\)" + // (AIO-540)
       "|(" +
       KP +
-      ")[.,;]?" + // AIO-540 or AIO-540.
+      ")[.,;]?(?![A-Za-z0-9.])" + // AIO-540 or AIO-540.
       ")"
   );
 
