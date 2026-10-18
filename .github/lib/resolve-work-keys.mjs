@@ -29,16 +29,17 @@ const WORK_KEY_RE = /\b([A-Z][A-Z0-9]+-\d+|[A-Z]\d+(?:\.\d+)*)\b/g;
 // the title. Version and package branches (`release/v0.11.1`, `brain-api-1.22-…`)
 // carry no extractable key and fall through to title. Length-bounded to prevent
 // backtracking on long slash-free branch names.
-const BRANCH_KEY_RE = /^(?:[^/]{1,256}\/)?([A-Z]{2,30}-\d{1,8})(?![A-Z0-9])/i;
+const BRANCH_KEY_RE = /^(?:[^/]{1,256}\/)?([A-Z]{2,30}-\d{1,8})(?![A-Z0-9.])/i;
 
 const KEY_ONLY_RE = /^(?:[A-Z][A-Z0-9]+-\d+|[A-Z]\d+(?:\.\d+)*)$/;
 
-// A trailer token may be wrapped the way people write it in Markdown: `AIO-5`, (AIO-5), [AIO-5],
-// [AIO-5](url), **AIO-5**, "AIO-5", AIO-5. or AIO-5; unwrap it before testing, or an explicit trailer
-// silently loses to the branch. A markdown link is unwrapped first, so a long URL never reaches the
-// strip below (which is quadratic on a very long run of closers, hence the length cap).
-const unwrap = (tok) =>
-  tok.replace(/^\[([^\]]+)\]\([^)]*\)/, "$1").replace(/^[[(`*_"']+|[\])`*_.,;:"']+$/g, "");
+// Unwrap Markdown wrappers so `AIO-5`, (AIO-5), [AIO-5](url), **AIO-5**, AIO-5. etc. are recognized.
+// Link extraction is linear; char-strip is guarded by a length cap to prevent quadratic backtracking.
+const unwrap = (tok) => {
+  tok = tok.replace(/^\[([^\]]+)\]\([^)]*\)/, "$1");
+  if (tok.length > 200) return tok;
+  return tok.replace(/^[[(`*_"']+/, "").replace(/[\])`*_.,;:"']+$/, "");
+};
 
 /**
  * Extract the leading run of work keys from an `AIOS-Work:` trailer value. Keys are separated by
@@ -49,8 +50,7 @@ function extractLeadingKeyRun(trailerValue) {
   const keys = [];
   for (const raw of trailerValue.split(/[\s,;]+/)) {
     if (!raw) continue;
-    if (raw.length > 400) break;
-    const tok = unwrap(raw);
+    const tok = unwrap(raw).toUpperCase();
     if (tok.length > 64 || !KEY_ONLY_RE.test(tok)) break;
     keys.push(tok);
   }

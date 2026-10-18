@@ -107,6 +107,8 @@ test("release and versioned branches defer to the title", () => {
     ["AIO-1112"]
   );
   assert.deepEqual(resolveWorkKeys("chore: bump c8", "", "dependabot/npm_and_yarn/c8-12.0.0"), []);
+  assert.deepEqual(resolveWorkKeys("AIO-864: x", "", "renovate/node-22.x"), ["AIO-864"]);
+  assert.deepEqual(resolveWorkKeys("AIO-864: x", "", "chore/node-24.1-upgrade"), ["AIO-864"]);
 });
 
 test("a leading branch key is used, only the first one", () => {
@@ -165,6 +167,10 @@ test("inline workflow copy matches the canonical module", () => {
     ["x", "", "feat/a-123"],
     ["x", "AIOS-Work: AIO-568a", ""],
     ["x", "AIOS-Work: W2.5.8x", ""],
+    ["AIO-864: x", "", "renovate/node-22.x"],
+    ["AIO-864: x", "", "chore/node-24.1-upgrade"],
+    ["x", "AIOS-Work: aio-540", "feat/aio-539-x"],
+    ["x", "AIOS-Work: aio-1, aio-2", ""],
   ];
   for (const r of rows) assert.deepEqual(inline(...r), resolveWorkKeys(...r), JSON.stringify(r));
 });
@@ -209,6 +215,12 @@ test("a wrapped trailer key is still an explicit trailer (backticks, brackets, m
       line
     );
   }
+});
+
+test("lowercase trailer keys are normalized to uppercase", () => {
+  assert.deepEqual(resolveWorkKeys("x", "AIOS-Work: aio-540", "feat/aio-539-x"), ["AIO-540"]);
+  assert.deepEqual(resolveWorkKeys("x", "AIOS-Work: aio-1, aio-2", ""), ["AIO-1", "AIO-2"]);
+  assert.deepEqual(resolveWorkKeys("x", "AIOS-Work: `aio-540`", ""), ["AIO-540"]);
 });
 
 test("bare trailer key with trailing alphanumeric is not a valid key (A1 boundary)", () => {
@@ -267,6 +279,14 @@ test("a very long run of closing punctuation in a trailer does not backtrack qua
   const t0 = Date.now();
   resolveWorkKeys("x", `AIOS-Work: ${".".repeat(65000)}AIO-5`, "");
   assert.ok(Date.now() - t0 < 250);
+});
+
+test("a long markdown link in a trailer is still unwrapped and recognized", () => {
+  const longUrl = "https://linear.app/x/issue/AIO-540/" + "a".repeat(500);
+  assert.deepEqual(
+    resolveWorkKeys("x", `AIOS-Work: [AIO-540](${longUrl})`, ""),
+    ["AIO-540"]
+  );
 });
 
 test("the inline copy agrees on notes, dedupe, list-dash and commented trailers (reviewer L4)", () => {
