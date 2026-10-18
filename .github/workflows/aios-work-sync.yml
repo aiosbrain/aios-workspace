@@ -88,11 +88,33 @@ jobs:
           const WORK_KEY_RE = /\b([A-Z][A-Z0-9]+-\d+|[A-Z]\d+(?:\.\d+)*)\b/g;
 
           // Branch keys: anchored at the start of the branch or the segment after `type/`.
-          // Two alternations, both case-insensitive (branches are lowercase by convention):
-          //   1. Linear-shaped: letter + letters/digits + hyphen + digits (e.g. aio-539 → AIO-539).
-          //   2. Hierarchical brain key: letter A-U or W-Z (not V to avoid semver `v0.11.1`) + digits +
-          //      one or more dot-segments (e.g. w2.5.8 → W2.5.8). Requires ≥1 dot to avoid bare `W2`.
-          const BRANCH_KEY_RE = /^(?:[^/]{1,256}\/)?([A-Z][A-Z0-9]+-\d+|[A-UW-Z]\d+(?:\.\d+)+)(?![A-Z0-9])/i;
+          // Linear-shaped only (two or more letters + hyphen + digits, e.g. aio-539 → AIO-539).
+          // Hierarchical keys (W2.5.8) are NOT extracted from branch names; they fall through to
+          // the title. Length-bounded to prevent backtracking on long slash-free branch names.
+          const BRANCH_KEY_RE = /^(?:[^/]{1,256}\/)?([A-Z][A-Z0-9]{0,29}-\d{1,8})(?![A-Z0-9])/i;
+
+          function extractLeadingKeyRun(trailerValue) {
+            const KP = "[A-Z][A-Z0-9]+-\\d+|[A-Z]\\d+(?:\\.\\d+)*";
+            const SLOT_RE = new RegExp(
+              "^(?:" +
+                "`(" + KP + ")`" +
+                "|\\[(" + KP + ")\\]\\([^)]{0,200}\\)" +
+                "|\\*\\*(" + KP + ")\\*\\*" +
+                "|\\((" + KP + ")\\)" +
+                "|(" + KP + ")[.,;]?" +
+              ")"
+            );
+            let s = trailerValue.trimStart();
+            const keys = [];
+            while (s.length > 0) {
+              const m = s.match(SLOT_RE);
+              if (!m) break;
+              const key = m[1] ?? m[2] ?? m[3] ?? m[4] ?? m[5];
+              if (key) keys.push(key);
+              s = s.slice(m[0].length).replace(/^[ \t,]+/, "");
+            }
+            return keys;
+          }
 
           function resolveWorkKeys(title, body, headRef, notes = []) {
             title = String(title ?? "");
@@ -100,24 +122,22 @@ jobs:
             const cleanBody = String(body ?? "").replace(/<!--[\s\S]*?-->/g, " ");
 
             // 1. Explicit trailers — global iteration over ALL "AIOS-Work:" lines.
-            //    Each line may list multiple keys: "AIOS-Work: AIO-531 AIO-532".
-            //    Line-anchored (^…gm) so an empty trailer line cannot swallow the next
-            //    line and treat a body mention as an explicit key.
-            //    Full-line scan with WORK_KEY_RE: every key on the line is extracted, including
-            //    keys after prose connectors ("AIO-1, AIO-2 and AIO-3" → all three).
+            //    Only the leading key run counts; the first non-key token stops the run.
+            //    Keys may be wrapped in Markdown (backticks, parens, bold, links, punctuation).
+            //    Line-anchored (^…gm) so an empty trailer line cannot swallow the next line.
             const trailerLineRe = /^[ \t]*AIOS-Work:[ \t]*([^\r\n]+)/gm;
             const trailerKeys = [];
             let sawTrailer = false;
             for (const line of cleanBody.matchAll(trailerLineRe)) {
               sawTrailer = true;
-              for (const km of line[1].matchAll(WORK_KEY_RE)) {
-                trailerKeys.push(km[1]);
-              }
+              const run = extractLeadingKeyRun(line[1]);
+              trailerKeys.push(...run);
             }
             if (trailerKeys.length > 0) return [...new Set(trailerKeys)];
             if (sawTrailer) notes.push("an AIOS-Work trailer is present but no key could be read from it; falling back to branch and title");
 
-            // 2. Branch name — first (leading) key only; a branch encodes one issue.
+            // 2. Branch name — first (leading) Linear-shaped key only; a branch encodes one issue.
+            //    Hierarchical keys (W2.5.8) are not extracted from branch names.
             const bm = headRef.match(BRANCH_KEY_RE);
             if (bm) return [bm[1].toUpperCase()];
 

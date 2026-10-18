@@ -82,9 +82,10 @@ test("duplicate trailers deduped", () => {
   ]);
 });
 
-// 12. Hierarchical key in branch (case-insensitive)
-test("hierarchical key in branch is extracted case-insensitively", () => {
-  assert.deepEqual(resolveWorkKeys("generic", "", "feat/w2.5.8-support"), ["W2.5.8"]);
+// 12. Hierarchical key in branch falls through to title (A2: branch keys are Linear-shaped only)
+test("hierarchical key in branch falls through to title (A2)", () => {
+  // Branch extraction does NOT extract hierarchical keys; falls through to title.
+  assert.deepEqual(resolveWorkKeys("generic", "", "feat/w2.5.8-support"), []);
   assert.deepEqual(resolveWorkKeys("feat: W2.5.8 support", "", "feat/w2.5.8-support"), ["W2.5.8"]);
 });
 
@@ -163,20 +164,16 @@ test("workflow posts nothing when no key resolves", () => {
   assert.match(yml.slice(guard, post), /process\.exit\(0\)/);
 });
 
-test("trailer scans the full line — all keys extracted including after prose connectors", () => {
-  // Full-line scan: parenthetical key is also extracted.
-  assert.deepEqual(resolveWorkKeys("x", "AIOS-Work: AIO-568 (epic AIO-541)", ""), [
-    "AIO-568",
-    "AIO-541",
-  ]);
-  // "and" as a connector no longer stops extraction.
+test("trailer uses leading key run — first non-key token stops extraction (A1)", () => {
+  // Prose-in-parens after the key stops the run; the aside key is not extracted.
+  assert.deepEqual(resolveWorkKeys("x", "AIOS-Work: AIO-568 (epic AIO-541)", ""), ["AIO-568"]);
+  // "and" is a non-key token; AIO-3 is not extracted.
   assert.deepEqual(resolveWorkKeys("x", "AIOS-Work: AIO-1, AIO-2 and AIO-3", ""), [
     "AIO-1",
     "AIO-2",
-    "AIO-3",
   ]);
-  // A key after prose is still extracted.
-  assert.deepEqual(resolveWorkKeys("x", "AIOS-Work: see AIO-9", ""), ["AIO-9"]);
+  // A trailer starting with prose is unreadable; falls back to branch/title.
+  assert.deepEqual(resolveWorkKeys("x", "AIOS-Work: see AIO-9", "", []), []);
 });
 
 test("a very long slash-free branch does not backtrack quadratically", () => {

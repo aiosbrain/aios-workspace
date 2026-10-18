@@ -23,13 +23,43 @@
 const WORK_KEY_RE = /\b([A-Z][A-Z0-9]+-\d+|[A-Z]\d+(?:\.\d+)*)\b/g;
 
 // Branch keys: anchored at the start of the branch or the segment after `type/`.
-// Two alternations, both case-insensitive (branches are lowercase by convention):
-//   1. Linear-shaped: letter + letters/digits + hyphen + digits (e.g. aio-539 → AIO-539).
-//   2. Hierarchical brain key: letter A-U or W-Z (not V to avoid semver `v0.11.1`) + digits +
-//      one or more dot-segments (e.g. w2.5.8 → W2.5.8). Requires ≥1 dot to avoid bare `W2`.
-// Unanchored matching manufactured `V0.11.1` from `release/v0.11.1` and `API-1` from
-// `brain-api-1.22-…`, outranking the real key in the title.
-const BRANCH_KEY_RE = /^(?:[^/]{1,256}\/)?([A-Z][A-Z0-9]+-\d+|[A-UW-Z]\d+(?:\.\d+)+)(?![A-Z0-9])/i;
+// Linear-shaped only (two or more letters + hyphen + digits, e.g. aio-539 → AIO-539).
+// Hierarchical keys (W2.5.8) are NOT extracted from branch names; they fall through to
+// the title. Version and package branches (`release/v0.11.1`, `brain-api-1.22-…`)
+// carry no extractable key and fall through to title. Length-bounded to prevent
+// backtracking on long slash-free branch names.
+const BRANCH_KEY_RE = /^(?:[^/]{1,256}\/)?([A-Z][A-Z0-9]{0,29}-\d{1,8})(?![A-Z0-9])/i;
+
+/**
+ * Extract the leading run of work keys from an `AIOS-Work:` trailer value.
+ * Keys may be wrapped in Markdown (backticks, parens, bold, markdown links, trailing punct).
+ * The first non-key token stops the run. Returns [] for an unreadable line (no leading key).
+ */
+function extractLeadingKeyRun(trailerValue) {
+  const KP = "[A-Z][A-Z0-9]+-\\d+|[A-Z]\\d+(?:\\.\\d+)*";
+  const SLOT_RE = new RegExp(
+    "^(?:" +
+      "`(" + KP + ")`" +                        // `AIO-540`
+      "|\\[(" + KP + ")\\]\\([^)]{0,200}\\)" +  // [AIO-5](url)
+      "|\\*\\*(" + KP + ")\\*\\*" +              // **AIO-540**
+      "|\\((" + KP + ")\\)" +                    // (AIO-540)
+      "|(" + KP + ")[.,;]?" +                    // AIO-540 or AIO-540.
+    ")"
+  );
+
+  let s = trailerValue.trimStart();
+  const keys = [];
+
+  while (s.length > 0) {
+    const m = s.match(SLOT_RE);
+    if (!m) break;
+    const key = m[1] ?? m[2] ?? m[3] ?? m[4] ?? m[5];
+    if (key) keys.push(key);
+    s = s.slice(m[0].length).replace(/^[ \t,]+/, "");
+  }
+
+  return keys;
+}
 
 export function resolveWorkKeys(title, body, headRef, notes = []) {
   title = String(title ?? "");
@@ -37,19 +67,16 @@ export function resolveWorkKeys(title, body, headRef, notes = []) {
   const cleanBody = String(body ?? "").replace(/<!--[\s\S]*?-->/g, " ");
 
   // 1. Explicit trailers — global iteration over ALL "AIOS-Work:" lines.
-  //    Each line may list multiple keys: "AIOS-Work: AIO-531 AIO-532".
-  //    Line-anchored (^…gm) so an empty trailer line cannot swallow the next
-  //    line and treat a body mention as an explicit key.
-  //    Full-line scan with WORK_KEY_RE: every key on the line is extracted, including
-  //    keys after prose connectors ("AIO-1, AIO-2 and AIO-3" → all three).
+  //    Only the leading key run counts; the first non-key token stops the run.
+  //    Keys may be wrapped in Markdown (backticks, parens, bold, markdown links, punctuation).
+  //    Line-anchored (^…gm) so an empty trailer line cannot swallow the next line.
   const trailerLineRe = /^[ \t]*AIOS-Work:[ \t]*([^\r\n]+)/gm;
   const trailerKeys = [];
   let sawTrailer = false;
   for (const line of cleanBody.matchAll(trailerLineRe)) {
     sawTrailer = true;
-    for (const km of line[1].matchAll(WORK_KEY_RE)) {
-      trailerKeys.push(km[1]);
-    }
+    const run = extractLeadingKeyRun(line[1]);
+    trailerKeys.push(...run);
   }
   if (trailerKeys.length > 0) return [...new Set(trailerKeys)];
   if (sawTrailer)
@@ -57,7 +84,8 @@ export function resolveWorkKeys(title, body, headRef, notes = []) {
       "an AIOS-Work trailer is present but no key could be read from it; falling back to branch and title"
     );
 
-  // 2. Branch name — first (leading) key only; a branch encodes one issue.
+  // 2. Branch name — first (leading) Linear-shaped key only; a branch encodes one issue.
+  //    Hierarchical keys (W2.5.8) are not extracted from branch names.
   const bm = headRef.match(BRANCH_KEY_RE);
   if (bm) return [bm[1].toUpperCase()];
 
