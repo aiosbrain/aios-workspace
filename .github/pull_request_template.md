@@ -12,7 +12,8 @@
      3. Key in the PR title     →  fallback
 
      Body mentions (context, "see also", "blocked by") do NOT close issues.
-     To close multiple issues from one PR, add one trailer per issue.
+     To close multiple issues from one PR, list one or more keys after the
+     trailer (space-separated), or add multiple AIOS-Work: lines.
 
      No task yet? Create one FIRST in the Team Brain dashboard (→ Tasks; it
      projects to Linear), then put its key here. Don't hand-edit Linear —

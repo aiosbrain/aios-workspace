@@ -89,7 +89,8 @@ jobs:
           function resolveWorkKeys(title, body, headRef) {
             const cleanBody = (body || "").replace(/<!--[\s\S]*?-->/g, " ");
             // 1. Explicit trailers — global iteration over ALL "AIOS-Work:" lines.
-            const trailerLineRe = /\bAIOS-Work:\s*(.+)/g;
+            //    Line-anchored so an empty trailer cannot swallow the next line.
+            const trailerLineRe = /^[ \t]*AIOS-Work:[ \t]*([^\r\n]+)/gm;
             const trailerKeys = [];
             for (const line of cleanBody.matchAll(trailerLineRe)) {
               for (const km of line[1].matchAll(WORK_KEY_RE)) {

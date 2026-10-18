@@ -23,7 +23,9 @@ export function resolveWorkKeys(title, body, headRef) {
 
   // 1. Explicit trailers — global iteration over ALL "AIOS-Work:" lines.
   //    Each line may list multiple keys: "AIOS-Work: AIO-531 AIO-532".
-  const trailerLineRe = /\bAIOS-Work:\s*(.+)/g;
+  //    Line-anchored (^…gm) so an empty trailer line cannot swallow the next
+  //    line and treat a body mention as an explicit key.
+  const trailerLineRe = /^[ \t]*AIOS-Work:[ \t]*([^\r\n]+)/gm;
   const trailerKeys = [];
   for (const line of cleanBody.matchAll(trailerLineRe)) {
     for (const km of line[1].matchAll(WORK_KEY_RE)) {
