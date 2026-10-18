@@ -8,8 +8,10 @@
      event ONLY for the key selected by these rules (priority order):
 
      1. Explicit trailer below  →  highest priority, supports multiple keys
-     2. Key in the branch name  →  strongest signal (set by `aios worktree add`)
-     3. Key in the PR title     →  fallback
+     2. Key leading the branch name, e.g. feat/aio-72-… (set by `aios worktree add`)
+     3. Key in the PR title     →  fallback when the branch has none
+
+     No key in any of the three: no event is posted at all.
 
      Body mentions (context, "see also", "blocked by") do NOT close issues.
      To close multiple issues from one PR, list one or more keys after the

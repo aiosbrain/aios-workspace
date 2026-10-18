@@ -83,12 +83,70 @@ test("duplicate trailers deduped", () => {
 });
 
 // 12. Hierarchical key in branch (case-insensitive)
-test("hierarchical key in branch (lowercase)", () => {
-  assert.deepEqual(resolveWorkKeys("generic", "", "feat/w2.5.8-support"), ["W2.5.8"]);
+test("hierarchical key in a branch is not a branch key (it falls through to the title)", () => {
+  assert.deepEqual(resolveWorkKeys("generic", "", "feat/w2.5.8-support"), []);
+  assert.deepEqual(resolveWorkKeys("feat: W2.5.8 support", "", "feat/w2.5.8-support"), ["W2.5.8"]);
 });
 
 // 13. Regression: empty AIOS-Work: line must NOT swallow the next line's key
 test("empty trailer line does not capture next-line body mention", () => {
   const body = "AIOS-Work:\nBlocked by AIO-999";
   assert.deepEqual(resolveWorkKeys("generic", body, "feat/aio-100"), ["AIO-100"]);
+});
+
+// Reviewer scenarios (Fable, AIO-556): version/package branches must not manufacture keys that
+// outrank the real key in the title.
+test("release and versioned branches defer to the title", () => {
+  assert.deepEqual(resolveWorkKeys("AIO-864: cut release", "", "release/v0.11.1"), ["AIO-864"]);
+  assert.deepEqual(resolveWorkKeys("AIO-995: bump api", "", "feat/brain-api-1.22-rollout"), [
+    "AIO-995",
+  ]);
+  assert.deepEqual(
+    resolveWorkKeys("AIO-1112: toolkit 2.1", "", "remediation/aio1112-toolkit-2.1"),
+    ["AIO-1112"]
+  );
+  assert.deepEqual(resolveWorkKeys("chore: bump c8", "", "dependabot/npm_and_yarn/c8-12.0.0"), []);
+});
+
+test("a leading branch key is used, only the first one", () => {
+  assert.deepEqual(resolveWorkKeys("x", "", "fix/AIO-12-and-AIO-13"), ["AIO-12"]);
+  assert.deepEqual(resolveWorkKeys("x", "", "aio-556-no-type-prefix"), ["AIO-556"]);
+});
+
+test("non-string inputs do not throw", () => {
+  assert.deepEqual(resolveWorkKeys(null, undefined, 7), []);
+  assert.deepEqual(resolveWorkKeys(5, 6, 7), []);
+});
+
+// The workflow carries an inline copy (no checkout allowed). It must behave exactly like the
+// canonical module, and it must not post an event when there is no key.
+import { readFileSync } from "node:fs";
+const yml = readFileSync(
+  new URL("../.github/workflows/aios-work-sync.yml", import.meta.url),
+  "utf8"
+);
+const inlineStart = yml.indexOf("const WORK_KEY_RE");
+const inlineEnd = yml.indexOf("const workKeys = resolveWorkKeys");
+const inline = new Function(`${yml.slice(inlineStart, inlineEnd)}\nreturn resolveWorkKeys;`)();
+
+test("inline workflow copy matches the canonical module", () => {
+  const rows = [
+    ["docs(spec): x (AIO-539, AIO-540)", "see AIO-531", "feat/aio-539-mutation"],
+    ["fix", "AIOS-Work: AIO-540", "feat/aio-539-x"],
+    ["fix(foo) (AIO-123)", "prose AIO-456", ""],
+    ["generic", "AIO-999 prose", ""],
+    ["generic", "AIOS-Work:\nBlocked by AIO-999", ""],
+    ["generic", "AIOS-Work: AIO-1 AIO-2\r\nAIOS-Work: AIO-3", ""],
+    ["AIO-864: r", "", "release/v0.11.1"],
+    ["x", "<!-- AIOS-Work: AIO-8 -->", "fix/AIO-12-and-AIO-13"],
+    [null, undefined, undefined],
+  ];
+  for (const r of rows) assert.deepEqual(inline(...r), resolveWorkKeys(...r), JSON.stringify(r));
+});
+
+test("workflow posts nothing when no key resolves", () => {
+  const guard = yml.indexOf("workKeys.length === 0");
+  const post = yml.indexOf("api/v1/work-events");
+  assert.ok(guard !== -1 && guard < post, "empty-key guard must precede the POST");
+  assert.match(yml.slice(guard, post), /process\.exit\(0\)/);
 });

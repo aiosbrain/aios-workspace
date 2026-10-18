@@ -4,7 +4,10 @@
  *
  * Priority (highest to lowest):
  *   1. Explicit `AIOS-Work:` trailers in the PR body — supports multiple keys.
- *   2. A key embedded in the branch name (case-insensitive; branches are lowercase).
+ *   2. A Linear key leading the branch name, right after the `type/` prefix
+ *      (case-insensitive; branches are lowercase: `feat/aio-539-…`). Version and package
+ *      branches (`release/v0.11.1`, `remediation/aio1112-toolkit-2.1`) carry no key and
+ *      fall through to the title.
  *   3. A key in the PR title.
  *   4. Body-only mentions → returns [] (no work event fired).
  *
@@ -18,8 +21,15 @@
 // Used case-sensitively for title and body (convention: uppercase there).
 const WORK_KEY_RE = /\b([A-Z][A-Z0-9]+-\d+|[A-Z]\d+(?:\.\d+)*)\b/g;
 
+// Branch keys: Linear-shaped only (two+ letters, hyphen, digits), anchored at the start of the
+// branch or of the segment after `type/`. Unanchored matching manufactured `V0.11.1` from
+// `release/v0.11.1` and `API-1` from `brain-api-1.22-…`, outranking the real key in the title.
+const BRANCH_KEY_RE = /^(?:[^/]+\/)?([A-Z]{2,}[A-Z0-9]*-\d+)(?![A-Z0-9])/i;
+
 export function resolveWorkKeys(title, body, headRef) {
-  const cleanBody = (body || "").replace(/<!--[\s\S]*?-->/g, " ");
+  title = String(title ?? "");
+  headRef = String(headRef ?? "");
+  const cleanBody = String(body ?? "").replace(/<!--[\s\S]*?-->/g, " ");
 
   // 1. Explicit trailers — global iteration over ALL "AIOS-Work:" lines.
   //    Each line may list multiple keys: "AIOS-Work: AIO-531 AIO-532".
@@ -34,13 +44,9 @@ export function resolveWorkKeys(title, body, headRef) {
   }
   if (trailerKeys.length > 0) return [...new Set(trailerKeys)];
 
-  // 2. Branch name — case-INSENSITIVE (branches are lowercase by convention).
-  //    Returns the first match only (a branch encodes one issue).
-  if (headRef) {
-    const branchRe = /\b([A-Z][A-Z0-9]+-\d+|[A-Z]\d+(?:\.\d+)*)\b/i;
-    const m = headRef.match(branchRe);
-    if (m) return [m[1].toUpperCase()];
-  }
+  // 2. Branch name — first (leading) key only; a branch encodes one issue.
+  const bm = headRef.match(BRANCH_KEY_RE);
+  if (bm) return [bm[1].toUpperCase()];
 
   // 3. PR title — first match only.
   if (title) {

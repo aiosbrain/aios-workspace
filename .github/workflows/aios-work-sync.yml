@@ -86,8 +86,11 @@ jobs:
           // (context, "blocked by", spec refs) never close unrelated issues.
           // Canonical source: .github/lib/resolve-work-keys.mjs — keep in sync.
           const WORK_KEY_RE = /\b([A-Z][A-Z0-9]+-\d+|[A-Z]\d+(?:\.\d+)*)\b/g;
+          const BRANCH_KEY_RE = /^(?:[^/]+\/)?([A-Z]{2,}[A-Z0-9]*-\d+)(?![A-Z0-9])/i;
           function resolveWorkKeys(title, body, headRef) {
-            const cleanBody = (body || "").replace(/<!--[\s\S]*?-->/g, " ");
+            title = String(title ?? "");
+            headRef = String(headRef ?? "");
+            const cleanBody = String(body ?? "").replace(/<!--[\s\S]*?-->/g, " ");
             // 1. Explicit trailers — global iteration over ALL "AIOS-Work:" lines.
             //    Line-anchored so an empty trailer cannot swallow the next line.
             const trailerLineRe = /^[ \t]*AIOS-Work:[ \t]*([^\r\n]+)/gm;
@@ -98,12 +101,9 @@ jobs:
               }
             }
             if (trailerKeys.length > 0) return [...new Set(trailerKeys)];
-            // 2. Branch name — case-INSENSITIVE (branches are lowercase by convention).
-            if (headRef) {
-              const branchRe = /\b([A-Z][A-Z0-9]+-\d+|[A-Z]\d+(?:\.\d+)*)\b/i;
-              const m = headRef.match(branchRe);
-              if (m) return [m[1].toUpperCase()];
-            }
+            // 2. Branch name — leading Linear key only (see the canonical module).
+            const bm = headRef.match(BRANCH_KEY_RE);
+            if (bm) return [bm[1].toUpperCase()];
             // 3. PR title — first match only.
             if (title) {
               const m = title.match(WORK_KEY_RE);
@@ -113,6 +113,12 @@ jobs:
             return [];
           }
           const workKeys = resolveWorkKeys(pr.title, pr.body, pr.headRef);
+          // No key this PR implements: post nothing. The brain re-derives keys from pr_body when
+          // work_keys is empty (ingest.ts), which would close every issue the body merely mentions.
+          if (workKeys.length === 0) {
+            console.log("aios-work-sync: no work key in trailer, branch or title; no event posted");
+            process.exit(0);
+          }
 
           const payload = {
             project: process.env.AIOS_PROJECT,
