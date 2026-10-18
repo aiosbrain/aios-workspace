@@ -39,12 +39,22 @@ function extractLeadingKeyRun(trailerValue) {
   const KP = "[A-Z][A-Z0-9]+-\\d+|[A-Z]\\d+(?:\\.\\d+)*";
   const SLOT_RE = new RegExp(
     "^(?:" +
-      "`(" + KP + ")`" +                        // `AIO-540`
-      "|\\[(" + KP + ")\\]\\([^)]{0,200}\\)" +  // [AIO-5](url)
-      "|\\*\\*(" + KP + ")\\*\\*" +              // **AIO-540**
-      "|\\((" + KP + ")\\)" +                    // (AIO-540)
-      "|(" + KP + ")[.,;]?" +                    // AIO-540 or AIO-540.
-    ")"
+      "`(" +
+      KP +
+      ")`" + // `AIO-540`
+      "|\\[(" +
+      KP +
+      ")\\]\\([^)]{0,200}\\)" + // [AIO-5](url)
+      "|\\*\\*(" +
+      KP +
+      ")\\*\\*" + // **AIO-540**
+      "|\\((" +
+      KP +
+      ")\\)" + // (AIO-540)
+      "|(" +
+      KP +
+      ")[.,;]?" + // AIO-540 or AIO-540.
+      ")"
   );
 
   let s = trailerValue.trimStart();
