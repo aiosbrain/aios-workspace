@@ -83,8 +83,8 @@ test("duplicate trailers deduped", () => {
 });
 
 // 12. Hierarchical key in branch (case-insensitive)
-test("hierarchical key in a branch is not a branch key (it falls through to the title)", () => {
-  assert.deepEqual(resolveWorkKeys("generic", "", "feat/w2.5.8-support"), []);
+test("hierarchical key in branch is extracted case-insensitively", () => {
+  assert.deepEqual(resolveWorkKeys("generic", "", "feat/w2.5.8-support"), ["W2.5.8"]);
   assert.deepEqual(resolveWorkKeys("feat: W2.5.8 support", "", "feat/w2.5.8-support"), ["W2.5.8"]);
 });
 
@@ -163,13 +163,20 @@ test("workflow posts nothing when no key resolves", () => {
   assert.match(yml.slice(guard, post), /process\.exit\(0\)/);
 });
 
-test("a trailer closes only the leading run of keys, not asides", () => {
-  assert.deepEqual(resolveWorkKeys("x", "AIOS-Work: AIO-568 (epic AIO-541)", ""), ["AIO-568"]);
+test("trailer scans the full line — all keys extracted including after prose connectors", () => {
+  // Full-line scan: parenthetical key is also extracted.
+  assert.deepEqual(resolveWorkKeys("x", "AIOS-Work: AIO-568 (epic AIO-541)", ""), [
+    "AIO-568",
+    "AIO-541",
+  ]);
+  // "and" as a connector no longer stops extraction.
   assert.deepEqual(resolveWorkKeys("x", "AIOS-Work: AIO-1, AIO-2 and AIO-3", ""), [
     "AIO-1",
     "AIO-2",
+    "AIO-3",
   ]);
-  assert.deepEqual(resolveWorkKeys("x", "AIOS-Work: see AIO-9", ""), []);
+  // A key after prose is still extracted.
+  assert.deepEqual(resolveWorkKeys("x", "AIOS-Work: see AIO-9", ""), ["AIO-9"]);
 });
 
 test("a very long slash-free branch does not backtrack quadratically", () => {
