@@ -293,6 +293,12 @@ test("the inline copy agrees on notes, dedupe, list-dash and commented trailers 
     ["x", "<!--\nAIOS-Work: AIO-8\n-->", ""],
     ["x", "AIOS-Work: none", "feat/aio-9-x"],
     ["x", "AIOS-Work: [AIO-540]", "feat/aio-539-x"],
+    // Pins the branch anchor: unanchored, these mint CONTRACT-1, DEVTOOLS-030, CACHE-6, NODE-22 from real branches.
+    ["AIO-995: x", "", "feat/brain-api-1-rollout"],
+    ["AIO-995: x", "", "feat/scanner-identity-contract-1-23"],
+    ["AIO-995: x", "", "fix/aios-devtools-030-bump"],
+    ["x", "AIOS-Work: AIO-1;AIO-2", ""],
+    ["x", `AIOS-Work: ${"(".repeat(201)}AIO-5`, ""],
   ];
   for (const r of rows) {
     const a = [];
@@ -300,4 +306,17 @@ test("the inline copy agrees on notes, dedupe, list-dash and commented trailers 
     assert.deepEqual(inline(...r, a), resolveWorkKeys(...r, b), JSON.stringify(r));
     assert.deepEqual(a, b, `notes ${JSON.stringify(r)}`);
   }
+});
+
+test("a key must lead the branch: a word-and-digits pair inside a branch never becomes a key", () => {
+  for (const b of [
+    "feat/brain-api-1-rollout",
+    "feat/scanner-identity-contract-1-23",
+    "fix/aios-devtools-030-bump",
+    "fix/token-cache-6-ttl",
+    "chore/aios-node-22-notes",
+  ]) {
+    assert.deepEqual(resolveWorkKeys("AIO-995: x", "", b), ["AIO-995"], b);
+  }
+  assert.deepEqual(resolveWorkKeys("x", "", "feat/aio-995-real"), ["AIO-995"]);
 });
