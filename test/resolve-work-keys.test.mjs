@@ -283,10 +283,7 @@ test("a very long run of closing punctuation in a trailer does not backtrack qua
 
 test("a long markdown link in a trailer is still unwrapped and recognized", () => {
   const longUrl = "https://linear.app/x/issue/AIO-540/" + "a".repeat(500);
-  assert.deepEqual(
-    resolveWorkKeys("x", `AIOS-Work: [AIO-540](${longUrl})`, ""),
-    ["AIO-540"]
-  );
+  assert.deepEqual(resolveWorkKeys("x", `AIOS-Work: [AIO-540](${longUrl})`, ""), ["AIO-540"]);
 });
 
 test("the inline copy agrees on notes, dedupe, list-dash and commented trailers (reviewer L4)", () => {
