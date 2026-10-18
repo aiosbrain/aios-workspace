@@ -14,6 +14,7 @@
  * @param {string} title   PR title
  * @param {string} body    PR body (HTML comments are stripped before scanning)
  * @param {string} headRef branch name (e.g. "feat/aio-539-mutation")
+ * @param {string[]} [notes] receives human-readable notes (e.g. an unreadable trailer)
  * @returns {string[]} Deduplicated array of uppercase work-key strings, possibly empty.
  */
 
@@ -27,7 +28,12 @@ const WORK_KEY_RE = /\b([A-Z][A-Z0-9]+-\d+|[A-Z]\d+(?:\.\d+)*)\b/g;
 const BRANCH_KEY_RE = /^(?:[^/]{1,256}\/)?([A-Z]{2,}[A-Z0-9]{0,32}-\d+)(?![A-Z0-9])/i;
 const KEY_ONLY_RE = /^(?:[A-Z][A-Z0-9]+-\d+|[A-Z]\d+(?:\.\d+)*)$/;
 
-export function resolveWorkKeys(title, body, headRef) {
+// Trailer tokens may be wrapped the way people write them in Markdown: `AIO-5`, (AIO-5), [AIO-5](url),
+// AIO-5. or AIO-5; strip that before testing the token, or an explicit trailer silently loses.
+const unwrap = (tok) =>
+  tok.replace(/^\[([^\]]+)\]\([^)]*\)/, "$1").replace(/^[[(`*_"']+|[\])`*_.,;:"']+$/g, "");
+
+export function resolveWorkKeys(title, body, headRef, notes = []) {
   title = String(title ?? "");
   headRef = String(headRef ?? "");
   const cleanBody = String(body ?? "").replace(/<!--[\s\S]*?-->/g, " ");
@@ -38,26 +44,33 @@ export function resolveWorkKeys(title, body, headRef) {
   //    line and treat a body mention as an explicit key.
   const trailerLineRe = /^[ \t]*AIOS-Work:[ \t]*([^\r\n]+)/gm;
   const trailerKeys = [];
+  let sawTrailer = false;
   for (const line of cleanBody.matchAll(trailerLineRe)) {
+    sawTrailer = true;
     // Only the leading run of keys counts: `AIOS-Work: AIO-568 (epic AIO-541)` closes AIO-568, not
     // the epic named in the aside. Keys are separated by spaces or commas; the first other token stops it.
-    for (const tok of line[1].split(/[\s,]+/)) {
+    for (const raw of line[1].split(/[\s,]+/)) {
+      const tok = unwrap(raw);
       if (!tok) continue;
       if (!KEY_ONLY_RE.test(tok)) break;
       trailerKeys.push(tok);
     }
   }
   if (trailerKeys.length > 0) return [...new Set(trailerKeys)];
+  if (sawTrailer)
+    notes.push(
+      "an AIOS-Work trailer is present but no key could be read from it; falling back to branch and title"
+    );
 
   // 2. Branch name — first (leading) key only; a branch encodes one issue.
   const bm = headRef.match(BRANCH_KEY_RE);
   if (bm) return [bm[1].toUpperCase()];
 
-  // 3. PR title — first match only.
-  if (title) {
-    const m = title.match(WORK_KEY_RE);
-    if (m) return [m[0]];
-  }
+  // 3. PR title — the first Linear-shaped key; a hierarchical key (W2.5.8) only if it has a dot and
+  //    no Linear key exists, so a dotless token like Q3 or V2 can never shadow the real key.
+  const titleKeys = title.match(WORK_KEY_RE) ?? [];
+  const pick = titleKeys.find((k) => /-\d+$/.test(k)) ?? titleKeys.find((k) => k.includes("."));
+  if (pick) return [pick];
 
   // 4. Body-only mentions → no work event.
   return [];

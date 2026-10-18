@@ -146,6 +146,12 @@ test("inline workflow copy matches the canonical module", () => {
     ["fix: AIO-1 AIO-2", "", ""],
     ["x", "AIOS-Work: AIO-568 (epic AIO-541)", ""],
     ["x", "AIOS-Work: AIO-1, AIO-2 and AIO-3", ""],
+    ["fix: AIO-540 x", "AIOS-Work: `AIO-540`", "feat/aio-539-x"],
+    ["x", "AIOS-Work: [AIO-5](https://linear.app/x/issue/AIO-5), (AIO-6)", ""],
+    ["Q3 roadmap page (AIO-512)", "", ""],
+    ["feat: V0.11.1 then AIO-5", "", ""],
+    ["x", "", "a".repeat(65536)],
+    ["x", "", "feat/aio-5a"],
   ];
   for (const r of rows) assert.deepEqual(inline(...r), resolveWorkKeys(...r), JSON.stringify(r));
 });
@@ -170,4 +176,36 @@ test("a very long slash-free branch does not backtrack quadratically", () => {
   const t0 = Date.now();
   resolveWorkKeys("x", "", "a".repeat(65536));
   assert.ok(Date.now() - t0 < 250, "branch matching must be bounded");
+});
+
+test("a wrapped trailer key is still an explicit trailer (backticks, brackets, markdown link, punctuation)", () => {
+  for (const line of [
+    "`AIO-540`",
+    "(AIO-540)",
+    "[AIO-540](https://linear.app/x/issue/AIO-540)",
+    "AIO-540.",
+    "AIO-540;",
+    "**AIO-540**",
+  ]) {
+    assert.deepEqual(
+      resolveWorkKeys("fix: AIO-539", `AIOS-Work: ${line}`, "feat/aio-538-x"),
+      ["AIO-540"],
+      line
+    );
+  }
+});
+
+test("an unreadable trailer is reported and falls back to branch and title", () => {
+  const notes = [];
+  assert.deepEqual(resolveWorkKeys("x", "AIOS-Work: none", "feat/aio-539-x", notes), ["AIO-539"]);
+  assert.equal(notes.length, 1);
+  assert.match(notes[0], /AIOS-Work trailer is present/);
+});
+
+test("a dotless token in the title never shadows the real key", () => {
+  assert.deepEqual(resolveWorkKeys("Q3 roadmap page (AIO-512)", "", ""), ["AIO-512"]);
+  assert.deepEqual(resolveWorkKeys("feat: V2 of assessment flow AIO-512", "", ""), ["AIO-512"]);
+  assert.deepEqual(resolveWorkKeys("feat: V0.11.1 then AIO-5", "", ""), ["AIO-5"]);
+  assert.deepEqual(resolveWorkKeys("Q3 roadmap", "", ""), []);
+  assert.deepEqual(resolveWorkKeys("feat(x): W2.5.8 support", "", ""), ["W2.5.8"]);
 });

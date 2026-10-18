@@ -84,39 +84,62 @@ jobs:
           };
           // Resolve work keys using a priority-based rule so body-only mentions
           // (context, "blocked by", spec refs) never close unrelated issues.
-          // Canonical source: .github/lib/resolve-work-keys.mjs — keep in sync.
+          // Canonical source: .github/lib/resolve-work-keys.mjs — generated copy, keep identical.
           const WORK_KEY_RE = /\b([A-Z][A-Z0-9]+-\d+|[A-Z]\d+(?:\.\d+)*)\b/g;
+
+          // Branch keys: Linear-shaped only (two+ letters, hyphen, digits), anchored at the start of the
+          // branch or of the segment after `type/`. Unanchored matching manufactured `V0.11.1` from
+          // `release/v0.11.1` and `API-1` from `brain-api-1.22-…`, outranking the real key in the title.
           const BRANCH_KEY_RE = /^(?:[^/]{1,256}\/)?([A-Z]{2,}[A-Z0-9]{0,32}-\d+)(?![A-Z0-9])/i;
           const KEY_ONLY_RE = /^(?:[A-Z][A-Z0-9]+-\d+|[A-Z]\d+(?:\.\d+)*)$/;
-          function resolveWorkKeys(title, body, headRef) {
+
+          // Trailer tokens may be wrapped the way people write them in Markdown: `AIO-5`, (AIO-5), [AIO-5](url),
+          // AIO-5. or AIO-5; strip that before testing the token, or an explicit trailer silently loses.
+          const unwrap = (tok) =>
+            tok.replace(/^\[([^\]]+)\]\([^)]*\)/, "$1").replace(/^[[(`*_"']+|[\])`*_.,;:"']+$/g, "");
+
+          function resolveWorkKeys(title, body, headRef, notes = []) {
             title = String(title ?? "");
             headRef = String(headRef ?? "");
             const cleanBody = String(body ?? "").replace(/<!--[\s\S]*?-->/g, " ");
+
             // 1. Explicit trailers — global iteration over ALL "AIOS-Work:" lines.
-            //    Line-anchored so an empty trailer cannot swallow the next line.
+            //    Each line may list multiple keys: "AIOS-Work: AIO-531 AIO-532".
+            //    Line-anchored (^…gm) so an empty trailer line cannot swallow the next
+            //    line and treat a body mention as an explicit key.
             const trailerLineRe = /^[ \t]*AIOS-Work:[ \t]*([^\r\n]+)/gm;
             const trailerKeys = [];
+            let sawTrailer = false;
             for (const line of cleanBody.matchAll(trailerLineRe)) {
-              // Leading run of keys only (see the canonical module).
-              for (const tok of line[1].split(/[\s,]+/)) {
+              sawTrailer = true;
+              // Only the leading run of keys counts: `AIOS-Work: AIO-568 (epic AIO-541)` closes AIO-568, not
+              // the epic named in the aside. Keys are separated by spaces or commas; the first other token stops it.
+              for (const raw of line[1].split(/[\s,]+/)) {
+                const tok = unwrap(raw);
                 if (!tok) continue;
                 if (!KEY_ONLY_RE.test(tok)) break;
                 trailerKeys.push(tok);
               }
             }
             if (trailerKeys.length > 0) return [...new Set(trailerKeys)];
-            // 2. Branch name — leading Linear key only (see the canonical module).
+            if (sawTrailer) notes.push("an AIOS-Work trailer is present but no key could be read from it; falling back to branch and title");
+
+            // 2. Branch name — first (leading) key only; a branch encodes one issue.
             const bm = headRef.match(BRANCH_KEY_RE);
             if (bm) return [bm[1].toUpperCase()];
-            // 3. PR title — first match only.
-            if (title) {
-              const m = title.match(WORK_KEY_RE);
-              if (m) return [m[0]];
-            }
+
+            // 3. PR title — the first Linear-shaped key; a hierarchical key (W2.5.8) only if it has a dot and
+            //    no Linear key exists, so a dotless token like Q3 or V2 can never shadow the real key.
+            const titleKeys = title.match(WORK_KEY_RE) ?? [];
+            const pick = titleKeys.find((k) => /-\d+$/.test(k)) ?? titleKeys.find((k) => k.includes("."));
+            if (pick) return [pick];
+
             // 4. Body-only mentions → no work event.
             return [];
           }
-          const workKeys = resolveWorkKeys(pr.title, pr.body, pr.headRef);
+          const notes = [];
+          const workKeys = resolveWorkKeys(pr.title, pr.body, pr.headRef, notes);
+          for (const n of notes) console.log(`aios-work-sync: note: ${n}`);
           // Make a branch/title disagreement visible in the run log (a branch typo silently wins).
           const titleKeys = String(pr.title ?? "").match(WORK_KEY_RE) || [];
           if (workKeys.length && titleKeys.length && !workKeys.some((k) => titleKeys.includes(k))) {

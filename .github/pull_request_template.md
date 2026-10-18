@@ -12,7 +12,8 @@
      3. Key in the PR title     →  fallback when the branch has none
 
      The trailer must start at the beginning of a line with the exact label `AIOS-Work:`
-     (no list dash, bold or quote marks); only the keys right after it count.
+     (no list dash or quote mark); only the keys right after it count. Backticks,
+     brackets and a trailing period around a key are fine; `AIOS-Work: none` is ignored.
      No key in any of the three: no event is posted at all.
 
      Body mentions (context, "see also", "blocked by") do NOT close issues.
