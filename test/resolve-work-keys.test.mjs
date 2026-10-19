@@ -130,14 +130,20 @@ test("non-string inputs do not throw", () => {
 
 // The workflow carries an inline copy (no checkout allowed). It must behave exactly like the
 // canonical module, and it must not post an event when there is no key.
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
 const yml = readFileSync(
   new URL("../.github/workflows/aios-work-sync.yml", import.meta.url),
   "utf8"
 );
 const inlineStart = yml.indexOf("const WORK_KEY_RE");
 const inlineEnd = yml.indexOf("const workKeys = resolveWorkKeys");
-const inline = new Function(`${yml.slice(inlineStart, inlineEnd)}\nreturn resolveWorkKeys;`)();
+// Load the slice as a real module (no eval): write it to a temp file and import it.
+const sliceFile = path.join(mkdtempSync(path.join(tmpdir(), "aios-work-sync-")), "inline.mjs");
+writeFileSync(sliceFile, `${yml.slice(inlineStart, inlineEnd)}\nexport { resolveWorkKeys };\n`);
+const { resolveWorkKeys: inline } = await import(pathToFileURL(sliceFile).href);
 
 test("inline workflow copy matches the canonical module", () => {
   const rows = [
