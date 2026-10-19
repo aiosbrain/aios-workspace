@@ -37,6 +37,7 @@ import {
 import { linearJourney, slackJourney } from "./lib/journeys-connectors.mjs";
 import { rollbackJourney, upgradeJourney } from "./lib/journeys-lifecycle.mjs";
 import { runFaultControls } from "./lib/faults.mjs";
+import { profileHostJourney } from "./lib/journeys-mcp-profiles.mjs";
 import { mcpHostJourney } from "./lib/journeys-mcp.mjs";
 import { currentUpgradeJourney } from "./lib/journeys-current-upgrade.mjs";
 
@@ -94,6 +95,7 @@ async function main() {
 async function runJourneys(ctx) {
   const install = freshInstallJourney(ctx);
   await mcpHostJourney(ctx, install);
+  await profileHostJourney(ctx, install);
   currentUpgradeJourney(ctx, install);
   isolationProbes(ctx, install);
   diagnosticsJourney(ctx, install);

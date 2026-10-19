@@ -377,14 +377,14 @@ test("registry: every adapt hands its module the EXACT argument signature (table
     }
   }
 
-  // mcp additionally reads its env-first config before starting the server.
+  // mcp resolves the explicit launch selector before reading legacy configuration.
   const h = harness();
   await findCommand("mcp").adapt(h.ctx, h.mod);
   assert.deepEqual(
     h.calls.map((x) => String(x.prop)),
-    ["resolveBrainConfig", "runStdio"]
+    ["resolveLaunchConfig", "runStdio"]
   );
-  assert.deepEqual(h.calls[0].args, []);
+  assert.deepEqual(h.calls[0].args, [A]);
 });
 
 test("dispatch: exit-status only assigns a truthy status (never clobbers with 0)", () => {

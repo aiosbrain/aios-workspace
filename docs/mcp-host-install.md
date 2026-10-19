@@ -95,3 +95,32 @@ Primary format references, verified September 2026:
 - [Claude Code MCP](https://code.claude.com/docs/en/mcp)
 - [Codex MCP](https://developers.openai.com/codex/mcp)
 - [Cursor MCP](https://cursor.com/docs/mcp)
+
+## Explicit connection profiles (unreleased)
+
+The profile infrastructure preserves the released read-only installer. Public profile
+installation remains unavailable until a profile-capable package is published and pinned.
+Candidate testing uses exact packed artifacts; it does not publish or replace existing releases.
+
+Register a connection explicitly using `aios mcp profile register --profile <name>` with
+`--mode brain-only|workspace`, `--brain-origin <https-origin>`, `--team <id>`,
+`--project-id <id>`, `--credential-source <name>` and `--reference env:VARIABLE|keychain:service`.
+Workspace mode also requires `--root <absolute-folder>`; `--read-root` and `--draft-root`
+are separate relative folder lists. Permissions default off. Enable only explicitly named
+`--grant brainActions,workspaceRead,workspaceDraft,workspacePublish` permissions.
+Brain-only profiles cannot have workspace permissions or roots.
+
+`aios mcp profile status --profile <name> --json` verifies the current identity and destination
+without printing the key. `aios mcp profile revoke --profile <name>` revokes the profile;
+`--revoke <permission>` withdraws an individual permission. Running servers recheck every
+tool list and call, including existing reads and status. A changed connection requires a
+restart after its new destination and grants have been reviewed. `--read-only` overrides
+all mutation permissions. The former working-directory collector is unavailable until
+profile-bounded collection is delivered.
+
+Migration (`aios mcp profile migrate`) preserves unknown configuration and grants nothing.
+An interrupted profile transaction blocks calls until explicit `aios mcp profile recover`;
+recovery disables permissions and advances the retained generation. Restoring an old config
+snapshot cannot reactivate an older generation. Host uninstall preserves shared profile
+records and credentials and does not revoke access. For a project-scoped host, supply its
+configuration directory explicitly with `--project <absolute-directory>`.

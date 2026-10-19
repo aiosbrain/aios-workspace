@@ -106,3 +106,5 @@ export async function prepareServerArtifact({ home, policy, fetchImpl = fetch })
     return { source, bytes };
   });
 }
+
+export { prepareProfileArtifact } from "./mcp-profile-artifact.mjs";
