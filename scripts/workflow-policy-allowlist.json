@@ -23,13 +23,6 @@
       "justification": "This is the narrow reviewed pull_request_target exception the plan sanctions. The job fetches the PR head as a tarball and treats it strictly as inert scanner input: the scanner, the workflow, and every executed line come from the base branch, and nothing in the candidate tree is built, installed, sourced, or run (plan §4.2 states the same no-execution property for the replacement service). It is waived, not exempt — the App's Git-object scanner removes the download entirely in phase 7. Delete this entry with the workflow. Note that the sibling secrets-in-pr-reachable and mutable-action-ref waivers are listed separately on purpose: each rule is suspended by name, so a NEW class of violation in this same job still fails the gate."
     },
     {
-      "workflow": ".github/workflows/ci.yml",
-      "job": "scan",
-      "rule": "secrets-in-pr-reachable",
-      "owner": "Platform Engineering",
-      "justification": "The `scan` job carries AIOS_API_KEY / AIOS_BRAIN_URL / AIOS_TEAM / GITHUB_TOKEN and is guarded by `if: github.event_name == 'push' && github.ref == 'refs/heads/main'`, so it does not execute on a pull request today. That `if:` is not a trust boundary — it lives in a file a same-repo PR can edit — which is exactly why this gate still reports it. The fix is to lift the job out of ci.yml into a push-only trusted workflow (plan §5.1 / §2.4); that is a separate change to the coverage-bundle handoff and is deliberately not bundled with the introduction of this checker. Delete this entry when the scan job moves."
-    },
-    {
       "workflow": ".github/workflows/aios-work-sync.yml",
       "job": "notify-brain",
       "rule": "secrets-in-pr-reachable",
