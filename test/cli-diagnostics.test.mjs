@@ -330,14 +330,24 @@ test("registry provenance reads validated packed identity and retains legacy met
 });
 
 test("doctor warns on a Node that predates the eMudhra trust-store fix", () => {
-  for (const v of ["v22.21.1", "v22.23.3", "v24.19.0", "v26.12.0"]) {
+  for (const v of [
+    "v18.20.0",
+    "v20.19.0",
+    "v22.21.1",
+    "v22.23.3",
+    "v23.11.0",
+    "v24.19.0",
+    "v25.1.0",
+    "v26.12.0",
+  ]) {
     const r = runtimeResult(v);
     assert.equal(r.status, "warn", v);
     assert.match(r.detail, /eMudhra/);
     assert.ok(r.remediation);
   }
-  for (const v of ["v22.23.4", "v22.30.0", "v24.22.1", "v26.12.1", "v26.13.0"]) {
+  for (const v of ["v22.23.4", "v22.30.0", "v24.22.1", "v26.12.1", "v26.13.0", "v27.0.0"]) {
     assert.equal(runtimeResult(v).status, "pass", v);
   }
-  assert.equal(runtimeResult(null).status, "warn");
+  for (const v of [null, "", "garbage", "v22"])
+    assert.equal(runtimeResult(v).status, "warn", String(v));
 });

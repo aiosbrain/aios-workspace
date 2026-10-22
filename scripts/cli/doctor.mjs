@@ -24,10 +24,23 @@ export function runtimeResult(nodeVersion) {
   if (nodeVersion == null) return result("runtime", "warn", "unavailable");
   const v = String(nodeVersion).replace(/^v/, "");
   const [major, minor, patch] = v.split(".").map(Number);
+  if (![major, minor, patch].every(Number.isInteger)) {
+    return result("runtime", "warn", `unrecognized node version ${nodeVersion}`);
+  }
   const floor = NODE_TLS_FLOORS[major];
-  if (!floor) return result("runtime", "pass", nodeVersion);
+  // Lines after 26 shipped after the fix; anything else (20, 23, 25, …) is EOL and never got it.
+  if (!floor && major > 26) return result("runtime", "pass", nodeVersion);
+  if (!floor) {
+    return result(
+      "runtime",
+      "warn",
+      `${nodeVersion} is an unsupported line with no eMudhra trust-store fix`,
+      `install Node ${NODE_TLS_FLOORS[22]}+, ${NODE_TLS_FLOORS[24]}+ or ${NODE_TLS_FLOORS[26]}+`
+    );
+  }
   const [, fMinor, fPatch] = floor.split(".").map(Number);
-  if (minor > fMinor || (minor === fMinor && patch >= fPatch)) return result("runtime", "pass", nodeVersion);
+  if (minor > fMinor || (minor === fMinor && patch >= fPatch))
+    return result("runtime", "pass", nodeVersion);
   return result(
     "runtime",
     "warn",
