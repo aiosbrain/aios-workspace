@@ -14,6 +14,28 @@ function availabilityResult(id, value) {
   return result(id, value == null ? "warn" : "pass", value ?? "unavailable");
 }
 
+// First release on each supported line whose compiled-in root store rejects the eMudhra intermediates
+// disclosed on 2026-10-20 with recoverable private keys. Node verifies TLS against that store, so an
+// older patch can be handed a forged certificate for any host the toolkit calls. A warning, not a
+// failure: the engines contract (`22.x || 24.x || 26.x`) still admits these versions.
+export const NODE_TLS_FLOORS = Object.freeze({ 22: "22.23.4", 24: "24.22.1", 26: "26.12.1" });
+
+export function runtimeResult(nodeVersion) {
+  if (nodeVersion == null) return result("runtime", "warn", "unavailable");
+  const v = String(nodeVersion).replace(/^v/, "");
+  const [major, minor, patch] = v.split(".").map(Number);
+  const floor = NODE_TLS_FLOORS[major];
+  if (!floor) return result("runtime", "pass", nodeVersion);
+  const [, fMinor, fPatch] = floor.split(".").map(Number);
+  if (minor > fMinor || (minor === fMinor && patch >= fPatch)) return result("runtime", "pass", nodeVersion);
+  return result(
+    "runtime",
+    "warn",
+    `${nodeVersion} predates the eMudhra trust-store fix (need >= ${floor})`,
+    `upgrade Node to ${floor} or newer`
+  );
+}
+
 function binModeResult(name, mode) {
   if (!Number.isInteger(mode)) return result(`bin-mode-${name}`, "warn", "unavailable");
   const executable = Boolean(mode & 0o111);
@@ -64,7 +86,7 @@ export function collectDoctor(options = {}) {
     );
   }
   const provenance = options.provenance ?? collectProvenance(options);
-  checks.push(availabilityResult("runtime", provenance.node));
+  checks.push(runtimeResult(provenance.node));
   checks.push(availabilityResult("installation", provenance.installType));
   checks.push(
     result(

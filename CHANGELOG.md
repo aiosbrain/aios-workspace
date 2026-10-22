@@ -10,6 +10,14 @@ This is the **individual workspace** repo. The Team Brain sync contract
 
 ## [Unreleased]
 
+### Security
+
+- **eMudhra CA compromise (2026-10-20).** `aios doctor` now warns when the Node runtime predates
+  the first release on its line that rejects the eMudhra intermediates with recoverable private
+  keys (22.23.4 / 24.22.1 / 26.12.1); Node verifies TLS against its own compiled-in store, so an
+  older patch accepts forged certificates for any host. The engines contract is unchanged. The
+  brain scanner's hash-locked `certifi` pin (root and `scaffold/`) moves to 2026.10.19.
+
 ### Added
 
 - `aios analyze`, `aios context-health` and `aios codebase-health` render through the
