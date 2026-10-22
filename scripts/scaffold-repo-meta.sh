@@ -27,6 +27,8 @@ if [ "$CI_WORKFLOW" = true ]; then
   cp "$SCAFFOLD/.github/workflows/scan-on-merge.yml" "$OUTPUT/.github/workflows/scan-on-merge.yml"
   cp "$SCAFFOLD/.github/scripts/fetch-brain-scanner.sh" "$OUTPUT/.github/scripts/fetch-brain-scanner.sh"
   cp "$SCAFFOLD/.github/scripts/scan_with_health.py" "$OUTPUT/.github/scripts/scan_with_health.py"
+  # scan-on-merge.yml installs the scanner's runtime from this hash lock; without it the pip step fails.
+  cp "$SCAFFOLD/.github/scripts/brain-scanner-requirements.txt" "$OUTPUT/.github/scripts/brain-scanner-requirements.txt"
   chmod +x "$OUTPUT/.github/scripts/fetch-brain-scanner.sh"
 fi
 

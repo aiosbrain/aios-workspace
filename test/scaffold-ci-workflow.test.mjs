@@ -55,6 +55,7 @@ test("--with-ci-workflow records consent and stamps all Brain CI files", () => {
       ".github/workflows/scan-on-merge.yml",
       ".github/scripts/fetch-brain-scanner.sh",
       ".github/scripts/scan_with_health.py",
+      ".github/scripts/brain-scanner-requirements.txt",
     ]) {
       assert.equal(existsSync(path.join(output, file)), true, `${file} is stamped when enabled`);
     }

@@ -47,6 +47,11 @@ export const CI_WORKFLOW_MANAGED_PATHS = [
     src: "scaffold/.github/scripts/scan_with_health.py",
     kind: "file",
   },
+  {
+    dest: ".github/scripts/brain-scanner-requirements.txt",
+    src: "scaffold/.github/scripts/brain-scanner-requirements.txt",
+    kind: "file",
+  },
 ];
 
 export const MANAGED_PATHS = [
