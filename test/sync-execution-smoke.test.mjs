@@ -519,10 +519,7 @@ test("aios pull: a team-tier item round-trips into 1-inbox/from-brain; an unreco
     {
       id: randomUUID(),
       // brain-api.md §"Item kinds": "clients MUST ignore item kinds they don't recognize
-      // (a v1 client that predates `skill` simply skips those items on pull)". This client
-      // doesn't kind-switch on pull at all (cmdPull writes every item's body through
-      // generically) — so the concrete, testable guarantee is: an unrecognized kind must
-      // not throw/abort the pull, and its content still lands (never silently dropped).
+      // (a v1 client that predates `skill` simply skips those items on pull)".
       kind: "okf-node-from-a-future-contract-version",
       project: "sync-test-project",
       path: "2-work/from-brain-future-kind.md",
@@ -538,7 +535,7 @@ test("aios pull: a team-tier item round-trips into 1-inbox/from-brain; an unreco
   try {
     const r = await runAios(["pull", "--repo", dir], REPO);
     assert.equal(r.code, 0, `pull failed: ${r.stderr}\n${r.stdout}`);
-    assert.match(r.stdout, /pulled 2 item\(s\)/);
+    assert.match(r.stdout, /pulled 1 item\(s\)/);
 
     const knownDest = path.join(
       dir,
@@ -553,14 +550,10 @@ test("aios pull: a team-tier item round-trips into 1-inbox/from-brain; an unreco
       "sync-test-project__2-work__from-brain-future-kind.md"
     );
     assert.ok(existsSync(knownDest), "known-kind item must be written to the inbox");
-    assert.ok(existsSync(futureDest), "unrecognized-kind item must still be written, not dropped");
+    assert.equal(existsSync(futureDest), false, "unrecognized-kind item must be skipped");
     assert.ok(
       readFileSync(knownDest, "utf8").includes(knownBody),
       "known item body round-trips verbatim"
-    );
-    assert.ok(
-      readFileSync(futureDest, "utf8").includes(futureBody),
-      "future-kind item body round-trips verbatim despite the unrecognized kind"
     );
 
     // The non-optional /tasks writeback call was actually made (not skipped) — proves
