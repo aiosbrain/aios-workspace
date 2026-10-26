@@ -426,3 +426,15 @@ test("MCP protocol parse and process errors reject instead of escaping cleanup",
       rpc({ command: process.execPath, args: ["-e", script] }, { cwd: base, env: ctx.env() })
     );
 });
+
+import { profileAcceptanceHosts } from "./package-acceptance/lib/journeys-mcp-profiles.mjs";
+test("profile acceptance exercises supported native host formats without inventing Linux Desktop support", () => {
+  assert.deepEqual(profileAcceptanceHosts("linux"), ["claude-code", "codex", "cursor"]);
+  for (const platform of ["darwin", "win32"])
+    assert.deepEqual(profileAcceptanceHosts(platform), [
+      "claude-desktop",
+      "claude-code",
+      "codex",
+      "cursor",
+    ]);
+});

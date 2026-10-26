@@ -13,7 +13,7 @@ export const fetchImpl = async () => ({
   ok: true,
   json: async () => ({ tier: "team", actor: "synthetic", role: "member", team: "synthetic" }),
 });
-function fixtureOwner(file) {
+export function fixtureOwner(file) {
   if (process.platform !== "win32") return;
   // Elevated Windows CI creates files owned by Administrators by default. These
   // fixtures model an explicitly user-owned home; do not relax production checks.

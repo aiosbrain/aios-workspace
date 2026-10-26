@@ -9,6 +9,7 @@
 // from trusted constants (this table, the host registry, a fixed field enum), and what is
 // rendered is that trusted rebuild. Anything unrecognised is returned untouched and stays
 // the dispatcher's generic, redacted AIOS_E_INTERNAL.
+import { ProfileError } from "./mcp-profile-schema.mjs";
 import { AiosError } from "./cli.mjs";
 import { MCP_HOSTS, MCP_SERVER_KEY, hostTargets } from "./mcp-hosts.mjs";
 
@@ -173,6 +174,23 @@ function subject(file, options) {
 }
 
 function classify(error, options) {
+  if (error instanceof ProfileError) {
+    const unpublished =
+      "A published profile-capable artifact is not configured yet. Existing read-only installations are unchanged.";
+    if (error.code === "UNAVAILABLE" && error.message === unpublished)
+      return {
+        code: "AIOS_E_PROVIDER",
+        message: unpublished,
+        remediation:
+          "Use the existing read-only installation until a profile-capable package is published and pinned. Profile registration remains available.",
+      };
+    return {
+      code: error.code === "UNAVAILABLE" ? "AIOS_E_PROVIDER" : "AIOS_E_CONFIG_INVALID",
+      message: "The selected connection profile could not be verified.",
+      remediation:
+        "Run aios mcp profile status --profile <id>; inspect its destination and selected credential, then repeat explicit setup or recovery.",
+    };
+  }
   if (error?.constructor !== Error || typeof error.message !== "string") return null;
   if (error.code !== undefined && !String(error.code).startsWith("AIOS_MCP_")) return null;
   const message = error.message;

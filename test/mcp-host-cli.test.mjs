@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import { AiosError, normalizeError } from "../scripts/cli.mjs";
 import { cmdMcpHost } from "../scripts/mcp-host-command.mjs";
 import { typedInstallerError } from "../scripts/mcp-host-errors.mjs";
+import { ProfileError } from "../scripts/mcp-profile-schema.mjs";
 import { MCP_HOSTS } from "../scripts/mcp-hosts.mjs";
 import { fixture } from "./lib/mcp-host-fixture.mjs";
 
@@ -187,4 +188,40 @@ test("the real dispatcher renders typed usage refusals without echoing the offen
     assert.ok(!output.includes(SENTINEL), "sentinel absent from stdout and stderr");
     assert.ok(!output.includes("failed unexpectedly"));
   }
+});
+
+test("profile artifact unavailability is actionable and other profile refusals remain redacted", () => {
+  const unpublished =
+    "A published profile-capable artifact is not configured yet. Existing read-only installations are unchanged.";
+  const pending = typedInstallerError(new ProfileError("UNAVAILABLE", unpublished));
+  assert.equal(pending.code, "AIOS_E_PROVIDER");
+  assert.equal(pending.message, unpublished);
+  assert.match(pending.remediation, /published and pinned/);
+  for (const code of ["UNAVAILABLE", "AUTH_REVOKED", "PROFILE_CHANGED"]) {
+    const rejected = typedInstallerError(new ProfileError(code, SENTINEL));
+    assert.ok(rejected instanceof AiosError);
+    assert.ok(!rendered(rejected).includes(SENTINEL));
+    assert.match(rejected.remediation, /profile status/);
+  }
+});
+
+import { chooseProfileSetup } from "../scripts/mcp-profile-command.mjs";
+test("guided install preserves the current read-only connection before profile publication", async () => {
+  let choices;
+  const selection = await chooseProfileSetup({
+    ui: {
+      select: async (prompt) => {
+        choices = prompt;
+        return "legacy";
+      },
+      isCancel: () => false,
+      text: () => assert.fail("legacy selection must not register a profile"),
+    },
+  });
+  assert.deepEqual(selection, { legacy: true });
+  assert.equal(choices.initialValue, "legacy");
+  assert.deepEqual(
+    choices.options.map((row) => row.value),
+    ["legacy", "brain-only", "workspace"]
+  );
 });
