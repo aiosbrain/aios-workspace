@@ -118,6 +118,23 @@ guess.
 | `--accent-bar-height` | The gradient rule across the top of every slide. `3px` on dark (a hairline signature), `5px` on light (needs more presence to register). Genuinely optional — falls back to `4px` if omitted. |
 | `--deck-logo-height` | The intrinsic height of the cover logo, from the intake form's LOGO block. Optional — falls back to `26px`. Set it from the asset you were actually given rather than scaling a small raster up; a stretched logo is the most common cover defect. Record in the theme's role card which background variant the asset is for: a light theme needs the dark logo, and vice versa. |
 
+### Group C: optional editorial hooks (not in the token contract)
+
+`assets/editorial.css`, the default design layer, derives every color it uses
+from the contract above, so a new theme needs **nothing extra** to work with it.
+Two optional hooks let a brand choose its own two-voice pair:
+
+| Hook | Default when absent | Rule |
+|---|---|---|
+| `--voice-a` | `--emerald` mixed 28% toward `--fg` | The actor who owns the decision (people, the client, the target state). Must hold ≥4.5:1 on `--bg`: it colors the step numerals and list markers. |
+| `--voice-b` | `--violet-strong` | The assisting actor (AI, the vendor, today). Same contrast floor. Must be clearly distinct from `--voice-a` at a glance. |
+
+Define them in the theme's `:root`. Never define `--ed-voice-a` / `--ed-voice-b`
+there: `editorial.css` loads after the theme and would override them. The soft
+card tints are mixed from whichever hue wins, so they need no hook. These are
+deliberately **not** in the `@token-contract` block, because `qa-deck.mjs`
+would then warn on every theme that relies on the defaults.
+
 ---
 
 ## 3. Anti-slop calibration

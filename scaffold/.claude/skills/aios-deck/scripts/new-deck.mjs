@@ -5,9 +5,15 @@
  * Usage:
  *   node new-deck.mjs <target-dir> --theme <slug> [--title "..."] [--slides <list>]
  *                     [--subtitle "..."] [--presenter "..."] [--horizontal]
- *                     [--force] [--list-slides] [--list-themes]
+ *                     [--classic] [--force] [--list-slides] [--list-themes]
  *
- * Writes deck.html + deck-base.css + theme.css + deck-nav.js + assets/ + MANIFEST.md.
+ * Writes deck.html + deck-base.css + theme.css + editorial.css + deck-nav.js +
+ * assets/ + MANIFEST.md.
+ *
+ * EDITORIAL IS THE DEFAULT. The deck links assets/editorial.css after the theme
+ * and the starter slides use its `ed-` markup (scripts/editorial-slides.mjs).
+ * `--classic` opts out: no editorial.css, and the original deck-base-only
+ * slide set below. See SKILL.md, "Editorial is the default".
  * Every file is COPIED into the folder, never symlinked or @import-ed from the
  * skill: a handover deck is opened from file:// and must resolve nothing outside
  * its own directory (reference/gotchas.md #13).
@@ -23,8 +29,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { editorialSlides, editorialImages, EDITORIAL_DEFAULT_SLIDES } from './editorial-slides.mjs';
 
-const VERSION = '1.0.0';
+const VERSION = '1.1.0';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 /* Resolve skill assets from the SCRIPT's own location — never process.cwd(),
    because this is run from inside a scaffolded workspace, not from the skill. */
@@ -32,7 +39,7 @@ const SKILL = path.resolve(HERE, '..');
 const ASSETS = path.join(SKILL, 'assets');
 const THEMES = path.join(ASSETS, 'themes');
 
-const DEFAULT_SLIDES = 'cover,statement,content,two-col,cards,demo,close';
+const CLASSIC_DEFAULT_SLIDES = 'cover,statement,content,two-col,cards,demo,close';
 
 /* ------------------------------------------------------------------ utils */
 
@@ -172,7 +179,7 @@ const person = (src, name, role, bio) => `        <div class="person-card">
           <div class="p-bio">${bio}</div>
         </div>`;
 
-const SLIDES = {
+const CLASSIC_SLIDES = {
   cover: {
     desc: 'Slide 1. Photo + logo + title over a three-column grid.',
     html: (c) => `    <section class="slide cover" style="--photo-bg-image:url('${IMG.photo}')">
@@ -535,6 +542,13 @@ ${person(IMG.pE, 'E. Lawson', 'Research', 'One line.')}
   },
 };
 
+const EDITORIAL_SLIDES = editorialSlides({ esc, IMG, ED: editorialImages(dataSvg) });
+
+/** The slide table + default list for the chosen design layer. */
+const layer = (classic) => (classic
+  ? { name: 'classic', slides: CLASSIC_SLIDES, defaults: CLASSIC_DEFAULT_SLIDES }
+  : { name: 'editorial', slides: EDITORIAL_SLIDES, defaults: EDITORIAL_DEFAULT_SLIDES });
+
 /* ---------------------------------------------------------------- themes */
 
 function listThemeSlugs() {
@@ -559,8 +573,10 @@ function themeDescription(slug) {
 /* ------------------------------------------------------------- generation */
 
 function buildHtml(o) {
+  const SLIDES = layer(o.classic).slides;
   const sections = o.slides.map((k, i) =>
     `    <!-- ${i + 1} · ${k} -->\n${SLIDES[k].html(o)}`).join('\n\n');
+  const editorialLink = o.classic ? '' : '\n<link rel="stylesheet" href="editorial.css">';
   const deckClass = o.horizontal ? ' class="deck--horizontal"' : '';
   return `<!doctype html>
 <html lang="en">
@@ -571,7 +587,7 @@ function buildHtml(o) {
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="deck-base.css">
-<link rel="stylesheet" href="theme.css">
+<link rel="stylesheet" href="theme.css">${editorialLink}
 </head>
 <body>
 <div id="deck" data-deck-id="${esc(o.deckId)}"${deckClass}>
@@ -589,6 +605,7 @@ ${sections}
 }
 
 function buildManifest(o) {
+  const SLIDES = layer(o.classic).slides;
   return `---
 status: draft
 owner: ${o.owner}
@@ -602,6 +619,7 @@ access: team
 |---|---|
 | Deck id | \`${o.deckId}\` |
 | Theme | \`${o.theme}\` |
+| Design layer | ${o.classic ? 'classic (`deck-base.css` + theme only)' : '`editorial.css` (the default `ed-` layer, linked after the theme)'} |
 | Orientation | ${o.horizontal ? 'horizontal' : 'vertical'} |
 | Slides | ${o.slides.length} |
 | Entry point | \`deck.html\` (open from \`file://\`) |
@@ -620,7 +638,7 @@ this goes anywhere, and put the file in \`assets/\`.
 - [ ] Logo — SVG, or a 2x PNG. A light theme needs the dark logo variant and vice versa.
 - [ ] Product screenshots — **PNG, never JPEG**, for anything with small UI text. Region-targeted capture, not a full-viewport grab.
 - [ ] Portraits — square crops.
-- [ ] Exported diagrams — or rebuild them as inline SVG using the \`.svg-*\` classes so they follow the theme.
+- [ ] Exported diagrams — or rebuild them as inline SVG using the \`${o.classic ? '.svg-*' : '.ed-svg-*'}\` classes so they follow the theme.
 - [ ] Every \`<img>\` keeps a real \`alt\`; decorative images need \`alt="" aria-hidden="true"\`.
 
 ## Revision log
@@ -652,21 +670,26 @@ Options:
   --title "..."        Deck title: <title>, cover headline, MANIFEST heading.
   --subtitle "..."     Cover sub-copy.
   --presenter "..."    Cover brandline, e.g. "Name · Company".
-  --slides <list>      Comma-separated slide types. See --list-slides.
-                       Default: ${DEFAULT_SLIDES}
+  --slides <list>      Comma-separated slide types. See --list-slides
+                       (add --classic to list the classic set).
+                       Default: ${EDITORIAL_DEFAULT_SLIDES}
+                       Classic default: ${CLASSIC_DEFAULT_SLIDES}
   --horizontal         Horizontal (side-scrolling) deck.
+  --classic            Opt out of the editorial layer: no editorial.css, and the
+                       original deck-base-only slide set. Editorial is the default.
   --force              Overwrite an existing, non-empty target directory.
   --list-themes        Print available themes and exit.
   --list-slides        Print available slide types and exit.
   -h, --help           This message.
 
-Writes: deck.html, deck-base.css, theme.css, deck-nav.js, assets/, MANIFEST.md
+Writes: deck.html, deck-base.css, theme.css, editorial.css (unless --classic),
+        deck-nav.js, assets/, MANIFEST.md
 `;
 
 function parseArgs(argv) {
   const o = {
     dir: null, theme: null, title: null, subtitle: null, presenter: null,
-    slides: null, horizontal: false, force: false, listThemes: false, listSlides: false,
+    slides: null, horizontal: false, classic: false, force: false, listThemes: false, listSlides: false,
   };
   const need = (i, flag) => {
     if (i + 1 >= argv.length) die(`${flag} needs a value`);
@@ -680,6 +703,7 @@ function parseArgs(argv) {
     else if (a === '--presenter') { o.presenter = need(i, a); i++; }
     else if (a === '--slides') { o.slides = need(i, a); i++; }
     else if (a === '--horizontal') o.horizontal = true;
+    else if (a === '--classic') o.classic = true;
     else if (a === '--force') o.force = true;
     else if (a === '--list-themes') o.listThemes = true;
     else if (a === '--list-slides') o.listSlides = true;
@@ -703,12 +727,14 @@ function main() {
     process.exit(0);
   }
 
+  const L = layer(o.classic);
   if (o.listSlides) {
-    const keys = Object.keys(SLIDES);
+    const keys = Object.keys(L.slides);
     const w = Math.max(...keys.map((s) => s.length));
-    process.stdout.write('Slide types (see reference/slide-catalog.md):\n\n');
-    for (const k of keys) process.stdout.write(`  ${k.padEnd(w)}  ${SLIDES[k].desc}\n`);
-    process.stdout.write(`\nDefault --slides: ${DEFAULT_SLIDES}\n`);
+    process.stdout.write(`${L.name === 'editorial' ? 'Editorial' : 'Classic'} slide types (see reference/slide-catalog.md):\n\n`);
+    for (const k of keys) process.stdout.write(`  ${k.padEnd(w)}  ${L.slides[k].desc}\n`);
+    process.stdout.write(`\nDefault --slides: ${L.defaults}\n`);
+    if (!o.classic) process.stdout.write('Classic (deck-base only) set: add --classic.\n');
     process.exit(0);
   }
 
@@ -722,12 +748,29 @@ function main() {
   }
   const baseCss = path.join(ASSETS, 'deck-base.css');
   const navJs = path.join(ASSETS, 'deck-nav.js');
-  for (const f of [baseCss, navJs]) if (!fs.existsSync(f)) die(`missing skill asset: ${f}`);
+  const editorialCss = path.join(ASSETS, 'editorial.css');
+  /* Pre-check every asset this run copies BEFORE anything is written, so a
+     broken skill install fails cleanly instead of leaving a half-built deck
+     folder. On the path-traversal rule (Opengrep non-literal-fs-filename, run
+     by Codacy): none of these paths is user input. Each is ASSETS, resolved
+     from this script's own location, joined to a literal file name, and the
+     containment check proves it before the fs call, hence the suppression. */
+  const required = o.classic ? [baseCss, navJs] : [baseCss, navJs, editorialCss];
+  for (const f of required) {
+    if (path.dirname(path.normalize(f)) !== ASSETS) die(`skill asset outside ${ASSETS}: ${f}`);
+    if (!fs.existsSync(f)) die(`missing skill asset: ${f}`); // nosemgrep
+  }
 
-  const slideKeys = (o.slides || DEFAULT_SLIDES).split(',').map((s) => s.trim()).filter(Boolean);
+  const slideKeys = (o.slides || L.defaults).split(',').map((s) => s.trim()).filter(Boolean);
   if (!slideKeys.length) die('--slides resolved to an empty list');
-  const bad = slideKeys.filter((k) => !SLIDES[k]);
-  if (bad.length) die(`unknown slide type(s): ${bad.join(', ')}\n  available: ${Object.keys(SLIDES).join(', ')}`);
+  const bad = slideKeys.filter((k) => !L.slides[k]);
+  if (bad.length) {
+    const other = o.classic ? EDITORIAL_SLIDES : CLASSIC_SLIDES;
+    const hint = bad.every((k) => other[k])
+      ? `\n  ${bad.join(', ')} ${bad.length > 1 ? 'are' : 'is'} in the ${o.classic ? 'editorial (default)' : 'classic'} set: ${o.classic ? 'drop --classic' : 'add --classic'}, or copy the markup from reference/slide-catalog.md`
+      : '';
+    die(`unknown ${L.name} slide type(s): ${bad.join(', ')}\n  available: ${Object.keys(L.slides).join(', ')}${hint}`);
+  }
 
   const target = path.resolve(o.dir);
   if (fs.existsSync(target)) {
@@ -748,6 +791,7 @@ function main() {
     brand: title.length > 28 ? `${title.slice(0, 27)}…` : title,
     theme: o.theme,
     horizontal: o.horizontal,
+    classic: o.classic,
     slides: slideKeys,
     owner: process.env.USER || process.env.LOGNAME || 'unknown',
   };
@@ -757,6 +801,7 @@ function main() {
     fs.writeFileSync(path.join(target, 'deck.html'), buildHtml(ctx));
     fs.copyFileSync(baseCss, path.join(target, 'deck-base.css'));
     fs.copyFileSync(themeCss, path.join(target, 'theme.css'));
+    if (!o.classic) fs.copyFileSync(editorialCss, path.join(target, 'editorial.css'));
     fs.copyFileSync(navJs, path.join(target, 'deck-nav.js'));
     fs.writeFileSync(path.join(target, 'assets', '.gitkeep'), '');
     fs.writeFileSync(path.join(target, 'MANIFEST.md'), buildManifest(ctx));
@@ -766,12 +811,13 @@ function main() {
 
   const rel = path.relative(process.cwd(), target) || '.';
   process.stdout.write([
-    `new-deck ${VERSION} — scaffolded ${ctx.slides.length} slide(s), theme "${o.theme}"`,
+    `new-deck ${VERSION} — scaffolded ${ctx.slides.length} slide(s), theme "${o.theme}", ${L.name} layer`,
     `  ${target}`,
     '',
     '  deck.html      the deck (open it from file://)',
     '  deck-base.css  component library (copied)',
     '  theme.css      brand tokens (copied)',
+    ...(o.classic ? [] : ['  editorial.css  the editorial design layer (copied)']),
     '  deck-nav.js    arrow-key nav + progress HUD (copied)',
     '  assets/        put real images here',
     '  MANIFEST.md    revision log + assets-to-replace checklist',

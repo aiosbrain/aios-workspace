@@ -1,0 +1,363 @@
+/* ============================================================================
+   AIOS Deck System: editorial.css
+   Version: 1.0.0
+   The editorial design layer. The DEFAULT look for every new deck.
+
+   Load order is fixed. This file sits on top of the base and one theme:
+     <link rel="stylesheet" href="deck-base.css">
+     <link rel="stylesheet" href="theme.css">
+     <link rel="stylesheet" href="editorial.css">
+
+   What it adds over deck-base.css alone:
+   - a type scale where body copy never drops below 17px and captions never
+     below 15px at a 1440-wide viewport (the base's body sits near caption size)
+   - generous slide margins (7vw x 8.5vh) and a gap scale, so a slide has
+     vertical balance instead of a block of text pinned to the top
+   - cards, pills, icons, few-and-large lists, numbered steps, big numbers,
+     a quote with portrait, logo lockups and rows, a photo cover with a
+     centered composition, a timeline track, a video frame, a placeholder,
+     a CTA, and SVG diagram classes
+   - a "two-voice" color pair (--ed-voice-a / --ed-voice-b) for any deck whose
+     argument has two actors: people and AI, client and vendor, today and
+     target. Use it as a code the reader learns once, not as decoration.
+
+   Every color below is DERIVED from the theme token contract (deck-base.css),
+   so a theme swap re-skins this layer with no edits. All of them live in
+   :root, because qa-deck.mjs check (b) flags any color literal outside :root.
+   The derivations use color-mix() against --fg and --bg, which keeps them
+   correct in both light and dark themes: mixing toward --fg pushes a hue
+   toward contrast whichever way the theme runs.
+
+   Every class is prefixed `ed-`. Never reuse deck-base.css names here
+   (deck-base already owns .p-name, .p-role, .svg-label and friends).
+
+   Component reference: reference/slide-catalog.md, "Editorial layer"
+   Anti-patterns:       reference/gotchas.md, entries 18-23
+   Reference deck:      examples/editorial-proposal/deck.html
+   ============================================================================ */
+
+:root {
+  /* Surfaces */
+  --ed-paper:   var(--bg);
+  --ed-stone:   color-mix(in srgb, var(--fg) 5%, var(--bg));
+  --ed-stone-2: color-mix(in srgb, var(--fg) 11%, var(--bg));
+  --ed-line:    var(--border-visible);
+
+  /* Text. --ed-mist is pulled toward --fg-2 on purpose: a theme's --fg-3 is
+     tuned for 11px HUD labels, and at caption size it reads as disabled. At
+     80% it holds 4.5:1 or better on paper, stone and both voice tints on every
+     shipped light theme (measured in Chromium; see gotcha #20). */
+  --ed-ink:   var(--fg);
+  --ed-slate: var(--fg-2);
+  --ed-mist:  color-mix(in srgb, var(--fg-2) 80%, var(--fg-3));
+
+  /* The two-voice pair. Voice A defaults to the theme's positive hue, voice B
+     to its primary. A theme (or brand) changes them by defining the OPTIONAL
+     hooks --voice-a / --voice-b in its own :root. They are read through var()
+     fallbacks because this file loads after the theme, so redefining
+     --ed-voice-a in the theme itself would lose the cascade. The -soft tints
+     follow whichever hue wins. Voice A is mixed 42% toward --fg so it holds
+     4.5:1 as text on paper, and --ed-on-voice holds 4.5:1 on it, on both light
+     themes; on a dark theme the same mix lightens it. --ed-warn likewise. */
+  --ed-voice-a:      var(--voice-a, color-mix(in srgb, var(--emerald) 58%, var(--fg)));
+  --ed-voice-a-soft: color-mix(in srgb, var(--ed-voice-a) 13%, var(--bg));
+  --ed-voice-b:      var(--voice-b, var(--violet-strong));
+  --ed-voice-b-soft: color-mix(in srgb, var(--ed-voice-b) 12%, var(--bg));
+  --ed-on-voice:     var(--bg);
+  --ed-warn:         color-mix(in srgb, var(--amber) 52%, var(--fg));
+
+  /* The feature card is an inverse surface: ink background, paper text. */
+  --ed-feature:         var(--fg);
+  --ed-on-feature:      var(--bg);
+  --ed-on-feature-soft: color-mix(in srgb, var(--bg) 80%, var(--fg));
+
+  /* Over a photograph. Text is always the theme's photo foreground; the scrim
+     and the video bar are built from the bare --photo-scrim-rgb triplet. */
+  --ed-on-photo:      var(--photo-fg);
+  --ed-on-photo-soft: var(--photo-fg-soft);
+  --ed-scrim-top:     rgba(var(--photo-scrim-rgb), 0.58);
+  --ed-scrim-mid:     rgba(var(--photo-scrim-rgb), 0.46);
+  --ed-scrim-bot:     rgba(var(--photo-scrim-rgb), 0.78);
+  --ed-night:         rgb(var(--photo-scrim-rgb));
+  --ed-bar:           rgba(var(--photo-scrim-rgb), 0.75);
+  --ed-shadow:        var(--shot-shadow);
+
+  /* Margins: overrides the base's 4.5vh. The extra vertical air is what lets
+     .slide's justify-content:center produce a balanced composition. */
+  --slide-pad-x: 7vw;
+  --slide-pad-y: 8.5vh;
+
+  /* Type scale. The clamp() floors are the point: body 17px, captions 15px. */
+  --ed-h1:    clamp(38px, 4.1vw, 72px);
+  --ed-h1-lg: clamp(44px, 5.2vw, 92px);
+  --ed-h1-sm: clamp(32px, 3.2vw, 56px);
+  --ed-h3:    clamp(20px, 1.65vw, 28px);
+  --ed-body:  clamp(17px, 1.32vw, 22px);
+  --ed-lede:  clamp(19px, 1.6vw, 27px);
+  --ed-small: clamp(15px, 1.1vw, 18px);
+  --ed-num:   clamp(44px, 4.8vw, 86px);
+  --ed-quote: clamp(30px, 3.1vw, 54px);
+  --ed-gap:   clamp(20px, 2.4vw, 44px);
+
+  /* Weights come from the theme, so a serif with no bold axis is never
+     faux-bolded (see the aios-dark role card). */
+  --ed-weight-display: var(--weight-display);
+  --ed-weight-heading: var(--weight-heading);
+  --ed-weight-strong:  600;
+  --ed-track-display:  -0.03em;
+
+  /* Geometry */
+  --ed-radius:      22px;
+  --ed-radius-shot: 16px;
+  --ed-dot:         18px;
+}
+
+/* ---------------------------------------------------------------- chrome */
+/* The editorial look drops the rotated side-brand and the nav hint: on a slide
+   with real margins they read as clutter. The progress counter stays, because
+   qa-deck.mjs check (d) and the PDF both depend on it. */
+.side-brand, .navhint { display: none; }
+.progress { font-size: 12px; }
+
+/* ------------------------------------------------------------------ type */
+.ed-h1 {
+  font-family: var(--font-display); font-weight: var(--ed-weight-display);
+  font-size: var(--ed-h1); line-height: 1.04; letter-spacing: var(--ed-track-display);
+  color: var(--ed-ink); margin: 0; max-width: 22ch; text-wrap: balance;
+}
+.ed-h1--lg   { font-size: var(--ed-h1-lg); max-width: 18ch; }
+.ed-h1--sm   { font-size: var(--ed-h1-sm); }
+.ed-h1--wide { max-width: 30ch; }
+.ed-h3 {
+  font-family: var(--font-display); font-weight: var(--ed-weight-heading);
+  font-size: var(--ed-h3); line-height: 1.15; letter-spacing: -0.015em;
+  color: var(--ed-ink); margin: 0;
+}
+.ed-body  { font-family: var(--font-body); font-size: var(--ed-body); line-height: 1.45; color: var(--ed-slate); margin: 0; max-width: 70ch; }
+.ed-lede  { font-family: var(--font-body); font-size: var(--ed-lede); line-height: 1.4; color: var(--ed-slate); margin: 0; max-width: 46ch; text-wrap: pretty; }
+.ed-lede--wide { max-width: 70ch; }
+.ed-small { font-family: var(--font-body); font-size: var(--ed-small); line-height: 1.45; color: var(--ed-mist); margin: 0; }
+.ed-strong { color: var(--ed-ink); font-weight: var(--ed-weight-strong); }
+
+/* ---------------------------------------------------------------- layout */
+/* Splits and grids read a column-template property so a deck can set an
+   arbitrary ratio inline (style="--ed-grid-cols: 1fr 1fr 0.85fr") without a
+   <style> block. The properties are registered as NON-inheriting: a custom
+   property normally inherits, so an .ed-split set to 7fr 4fr would silently
+   hand that template to every .ed-grid2 nested inside it. */
+@property --ed-split-cols { syntax: '*'; inherits: false; }
+@property --ed-grid-cols  { syntax: '*'; inherits: false; }
+@property --ed-track-n    { syntax: '<integer>'; inherits: false; initial-value: 3; }
+.ed-stack { display: flex; flex-direction: column; gap: var(--ed-gap); }
+.ed-stack--tight { gap: calc(var(--ed-gap) * 0.45); }
+.ed-head { display: flex; flex-direction: column; gap: calc(var(--ed-gap) * 0.5); margin-bottom: calc(var(--ed-gap) * 1.1); }
+.ed-head--row { flex-direction: row; align-items: center; justify-content: space-between; gap: var(--ed-gap); }
+.ed-split { display: grid; grid-template-columns: var(--ed-split-cols, 5fr 6fr); gap: calc(var(--ed-gap) * 2); align-items: center; }
+.ed-split--even   { --ed-split-cols: 1fr 1fr; }
+.ed-split--visual { --ed-split-cols: 4fr 7fr; }
+.ed-split--wide   { --ed-split-cols: 7fr 4fr; }
+.ed-split--narrow { --ed-split-cols: 4fr 7fr; align-items: start; }
+.ed-split--stretch { align-items: stretch; }
+.ed-grid2 { display: grid; grid-template-columns: var(--ed-grid-cols, repeat(2, minmax(0, 1fr))); gap: var(--ed-gap); }
+.ed-grid3 { display: grid; grid-template-columns: var(--ed-grid-cols, repeat(3, minmax(0, 1fr))); gap: var(--ed-gap); }
+.ed-grid4 { display: grid; grid-template-columns: var(--ed-grid-cols, repeat(4, minmax(0, 1fr))); gap: calc(var(--ed-gap) * 0.7); }
+.ed-snug { gap: calc(var(--ed-gap) * 0.6); }
+.ed-row { display: flex; align-items: center; flex-wrap: wrap; gap: calc(var(--ed-gap) * 0.45); }
+.ed-after { margin-top: var(--ed-gap); }
+
+/* -------------------------------------------------------------- surfaces */
+.ed-card {
+  background: var(--ed-stone); border-radius: var(--ed-radius);
+  padding: clamp(20px, 2.1vw, 36px); display: flex; flex-direction: column; gap: 0.7em;
+}
+.ed-card--outline { background: var(--ed-paper); border: var(--deck-hairline) solid var(--ed-line); }
+.ed-card--voice-a { background: var(--ed-voice-a-soft); }
+.ed-card--voice-b { background: var(--ed-voice-b-soft); }
+.ed-card--feature { background: var(--ed-feature); }
+.ed-card--feature .ed-h3, .ed-card--feature .ed-num, .ed-card--feature .ed-strong { color: var(--ed-on-feature); }
+.ed-card--feature .ed-body, .ed-card--feature .ed-small, .ed-card--feature .ed-num small { color: var(--ed-on-feature-soft); }
+.ed-card--center { justify-content: center; }
+.ed-card--row { flex-direction: row; align-items: center; gap: 1.2em; }
+.ed-shot {
+  display: block; width: 100%; height: auto; border-radius: var(--ed-radius-shot);
+  box-shadow: var(--ed-shadow); border: var(--deck-hairline) solid var(--ed-line);
+}
+.ed-shot--tilt { transform: perspective(1600px) rotateY(-6deg); }
+.ed-shot--crop { aspect-ratio: 16 / 7; object-fit: cover; object-position: top; }
+
+/* ----------------------------------------------------------------- marks */
+.ed-pill {
+  white-space: nowrap; display: inline-flex; align-items: center; gap: 0.5em;
+  font-family: var(--font-body); font-weight: var(--ed-weight-strong); font-size: var(--ed-small);
+  color: var(--ed-ink); background: var(--ed-paper); border: var(--deck-hairline) solid var(--ed-line);
+  border-radius: var(--deck-radius-full); padding: 0.35em 0.9em; width: fit-content;
+}
+.ed-pill::before { content: ''; width: 0.6em; height: 0.6em; border-radius: 50%; background: var(--ed-mist); }
+.ed-pill--a::before { background: var(--ed-voice-a); }
+.ed-pill--b::before { background: var(--ed-voice-b); }
+.ed-pill--draft { color: var(--ed-warn); border-color: var(--ed-warn); }
+.ed-pill--draft::before { background: var(--ed-warn); }
+.ed-icon {
+  width: clamp(34px, 2.8vw, 48px); height: clamp(34px, 2.8vw, 48px); border-radius: 14px;
+  display: grid; place-items: center; background: var(--ed-paper);
+}
+.ed-icon svg {
+  width: 58%; height: 58%; fill: none; stroke: var(--ed-ink); stroke-width: 1.8;
+  stroke-linecap: round; stroke-linejoin: round;
+}
+.ed-card--voice-a .ed-icon svg { stroke: var(--ed-voice-a); }
+.ed-card--voice-b .ed-icon svg { stroke: var(--ed-voice-b); }
+
+/* ------------------------------------------------------ lists: few, large */
+.ed-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.75em; }
+.ed-list li {
+  font-family: var(--font-body); font-size: var(--ed-body); line-height: 1.4; color: var(--ed-slate);
+  padding-left: 1.3em; position: relative;
+}
+.ed-list li::before {
+  content: ''; position: absolute; left: 0; top: 0.55em; width: 0.5em; height: 0.5em;
+  border-radius: 50%; background: var(--ed-mist);
+}
+.ed-card--voice-a .ed-list li::before { background: var(--ed-voice-a); }
+.ed-card--voice-b .ed-list li::before { background: var(--ed-voice-b); }
+.ed-list strong { color: var(--ed-ink); font-weight: var(--ed-weight-strong); }
+
+/* Numbered steps: a real sequence only. The numerals imply order. */
+.ed-steps { list-style: none; margin: 0; padding: 0; counter-reset: ed-st; display: flex; flex-direction: column; gap: 1.1em; }
+.ed-steps li {
+  counter-increment: ed-st; display: grid; grid-template-columns: 2.2em 1fr; column-gap: 0.4em;
+  font-family: var(--font-body); font-size: var(--ed-body); line-height: 1.4; color: var(--ed-slate);
+}
+.ed-steps li::before {
+  content: counter(ed-st); font-family: var(--font-display); font-weight: var(--ed-weight-display);
+  font-size: 1.5em; line-height: 1; color: var(--ed-voice-a); grid-row: span 2;
+}
+.ed-steps strong {
+  display: block; color: var(--ed-ink); font-family: var(--font-display);
+  font-weight: var(--ed-weight-heading); font-size: var(--ed-h3); line-height: 1.2;
+}
+
+/* --------------------------------------------------------------- numbers */
+.ed-num {
+  font-family: var(--font-display); font-weight: var(--ed-weight-display); font-size: var(--ed-num);
+  line-height: 0.95; letter-spacing: -0.04em; color: var(--ed-ink);
+}
+.ed-num small { font-size: max(0.38em, var(--ed-small)); letter-spacing: -0.01em; font-weight: var(--ed-weight-strong); color: var(--ed-slate); margin-left: 0.15em; }
+.ed-num--sm { font-size: calc(var(--ed-num) * 0.6); }
+
+/* ------------------------------------------------------- quote + portrait */
+.ed-quote {
+  font-family: var(--font-display); font-weight: var(--ed-weight-heading); font-size: var(--ed-quote);
+  line-height: 1.08; letter-spacing: -0.025em; color: var(--ed-ink); margin: 0; text-wrap: balance;
+}
+.ed-who { display: flex; align-items: center; gap: 0.9em; }
+.ed-portrait {
+  width: clamp(56px, 4.6vw, 84px); height: clamp(56px, 4.6vw, 84px); border-radius: 50%;
+  object-fit: cover; box-shadow: 0 0 0 3px var(--ed-paper), 0 0 0 5px var(--ed-voice-a);
+}
+.ed-portrait--lg { width: clamp(96px, 8vw, 150px); height: clamp(96px, 8vw, 150px); }
+
+/* ----------------------------------------------------------------- logos */
+/* Lockup: one or two marks joined by an "x", optionally with a wordmark set in
+   the display face. Logo row: a quiet strip of client or partner marks. */
+.ed-lockup { display: flex; align-items: center; gap: clamp(14px, 1.4vw, 24px); }
+.ed-lockup img { height: clamp(30px, 2.6vw, 46px); width: auto; }
+.ed-lockup__x { font-family: var(--font-body); font-weight: 300; font-size: clamp(20px, 1.6vw, 28px); opacity: 0.7; }
+.ed-lockup__word { font-family: var(--font-display); font-weight: var(--ed-weight-heading); letter-spacing: 0.16em; font-size: clamp(20px, 1.75vw, 30px); }
+.ed-logos { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: clamp(18px, 2.4vw, 44px); }
+.ed-logos img { height: clamp(16px, 1.45vw, 24px); width: auto; opacity: 0.85; }
+.ed-logos--on-photo img { filter: brightness(0) invert(1); opacity: 0.82; }
+.ed-logos--mono img { filter: grayscale(1); opacity: 0.7; }
+.ed-logos--start { justify-content: flex-start; }
+.ed-logo-note {
+  font-family: var(--font-body); font-size: var(--ed-small); font-weight: var(--ed-weight-strong);
+  padding: 0.3em 0.8em; border-radius: var(--deck-radius-full); border: var(--deck-hairline) solid currentColor; opacity: 0.75;
+}
+.ed-brand { display: inline-flex; align-items: center; gap: 0.5em; font-family: var(--font-body); font-weight: var(--ed-weight-strong); font-size: var(--ed-body); color: var(--ed-ink); }
+.ed-brand img { height: 1.15em; width: auto; }
+
+/* ---------------------------------------------------------- photo slides */
+/* Set the image as a token: style="--photo-bg-image:url('assets/cover.jpg')".
+   The scrim is a ::after under the content, never a blur (gotcha #4). */
+.ed-photo { background-image: var(--photo-bg-image); background-size: cover; background-position: center; color: var(--ed-on-photo); }
+.ed-photo::after {
+  content: ''; position: absolute; inset: 0; z-index: 0;
+  background: linear-gradient(180deg, var(--ed-scrim-top) 0%, var(--ed-scrim-mid) 45%, var(--ed-scrim-bot) 100%);
+}
+.ed-photo > * { position: relative; z-index: 1; }
+.ed-photo .ed-h1, .ed-photo .ed-h3, .ed-photo .ed-strong { color: var(--ed-on-photo); }
+.ed-photo .ed-lede, .ed-photo .ed-body, .ed-photo .ed-small { color: var(--ed-on-photo-soft); }
+.ed-cover { justify-content: space-between; align-items: center; text-align: center; }
+.ed-cover .ed-h1, .ed-cover .ed-lede { margin: 0 auto; }
+.ed-cover-mid { display: flex; flex-direction: column; align-items: center; gap: calc(var(--ed-gap) * 0.8); }
+.ed-cover-foot { display: flex; flex-direction: column; align-items: center; gap: 14px; }
+
+/* --------------------------------------------------------------- timeline */
+.ed-track { position: relative; display: grid; grid-template-columns: repeat(var(--ed-track-n), minmax(0, 1fr)); gap: var(--ed-gap); }
+.ed-track::before {
+  content: ''; position: absolute; left: 0; right: 0; top: calc(var(--ed-dot) / 2);
+  height: var(--deck-rule-md); background: var(--ed-stone-2);
+}
+.ed-step { position: relative; display: flex; flex-direction: column; gap: 0.55em; padding-top: calc(var(--ed-dot) + 20px); }
+.ed-step::before {
+  content: ''; position: absolute; top: 0; left: 0; width: var(--ed-dot); height: var(--ed-dot);
+  border-radius: 50%; background: var(--ed-paper); border: var(--deck-rule-lg) solid var(--ed-ink);
+}
+.ed-step--a::before { border-color: var(--ed-voice-a); }
+.ed-step--b::before { border-color: var(--ed-voice-b); }
+.ed-step--milestone::before { background: var(--ed-ink); }
+.ed-when { font-family: var(--font-body); font-weight: var(--ed-weight-strong); font-size: var(--ed-small); color: var(--ed-mist); }
+
+/* ------------------------------------------------------------ video frame */
+/* A recorded walkthrough (Loom, a screen recording). Not a live embed: a deck
+   opened from file:// cannot rely on a third-party player loading. */
+.ed-video { position: relative; border-radius: var(--ed-radius-shot); overflow: hidden; box-shadow: var(--ed-shadow); aspect-ratio: 16 / 10; background: var(--ed-night); }
+.ed-video__img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.ed-video__bar {
+  position: absolute; left: 0; right: 0; bottom: 0; padding: 10px 14px;
+  display: flex; align-items: center; gap: 10px; background: linear-gradient(0deg, var(--ed-bar), transparent);
+}
+.ed-video__play { flex: none; width: 28px; height: 28px; border-radius: 50%; background: var(--ed-on-photo); display: grid; place-items: center; }
+.ed-video__play::after { content: ''; margin-left: 3px; border-left: 9px solid var(--ed-night); border-top: 6px solid transparent; border-bottom: 6px solid transparent; }
+.ed-video__title { font-family: var(--font-body); font-weight: var(--ed-weight-strong); font-size: var(--ed-small); line-height: 1.2; color: var(--ed-on-photo); }
+.ed-video__len { margin-left: auto; flex: none; font-family: var(--font-body); font-size: var(--ed-small); color: var(--ed-on-photo-soft); }
+
+/* ------------------------------------------------------------ placeholder */
+/* A visibly unfinished block: for a section someone else still has to write. */
+.ed-placeholder { border: var(--deck-rule-md) dashed var(--ed-warn); border-radius: var(--ed-radius); padding: clamp(24px, 3vw, 52px); display: flex; flex-direction: column; gap: 1em; }
+
+/* -------------------------------------------------------------------- CTA */
+/* Ink on paper by default; inverted to a light pill over a photograph. */
+.ed-cta {
+  display: inline-flex; align-items: center; gap: 0.6em; font-family: var(--font-body);
+  font-weight: var(--ed-weight-strong); font-size: var(--ed-body); color: var(--ed-paper); background: var(--ed-ink);
+  padding: 0.85em 1.5em; border-radius: var(--deck-radius-full); text-decoration: none; width: fit-content;
+}
+.ed-photo .ed-cta { color: var(--ed-night); background: var(--ed-on-photo); }
+
+/* ------------------------------------------------------ SVG charts, diagrams */
+/* The label sizes below are the 15px floor at a scale of 1. Keep the viewBox
+   no wider than the rendered width (at most 1100 units for a full-width
+   diagram at 1280x720, less inside a card) and, for .ed-svg--map, no taller
+   than 360 units, so the SVG never scales below 1 and no label drops under
+   15px at 1280x720 (gotcha #20). */
+.ed-svg { width: 100%; height: auto; display: block; overflow: visible; }
+.ed-svg--map { max-height: 50vh; }
+.ed-svg text { font-family: var(--font-body); }
+.ed-svg-voice-a { fill: var(--ed-voice-a-soft); stroke: var(--ed-voice-a); stroke-width: 1.4; }
+.ed-svg-voice-b { fill: var(--ed-voice-b-soft); stroke: var(--ed-voice-b); stroke-width: 1.4; }
+.ed-svg-gate    { fill: var(--ed-paper); stroke: var(--ed-ink); stroke-width: 1.4; stroke-dasharray: 5 4; }
+.ed-svg-plain   { fill: var(--ed-paper); stroke: var(--ed-line); stroke-width: 1.2; }
+.ed-svg-bar     { fill: var(--ed-stone-2); }
+.ed-svg-bar--target { fill: var(--ed-voice-a); }
+.ed-svg-line    { stroke: var(--ed-mist); stroke-width: 1.5; fill: none; }
+.ed-svg-line--dash { stroke-dasharray: 4 5; }
+.ed-svg-t1   { font-size: 18px; font-weight: 700; fill: var(--ed-ink); }
+.ed-svg-t2   { font-size: 16px; fill: var(--ed-slate); }
+.ed-svg-t3   { font-size: 15px; font-weight: 600; fill: var(--ed-mist); }
+.ed-svg-t-on { font-size: 16px; font-weight: 700; fill: var(--ed-on-voice); }
+
+/* ------------------------------------------------------------------ print */
+@media print {
+  .ed-photo::after, .ed-card, .ed-video { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+}

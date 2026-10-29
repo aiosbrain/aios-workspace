@@ -1,6 +1,7 @@
 # Slide catalog
 
-Copy-pasteable markup for every slide type `deck-base.css` v1.0.0 supports.
+Copy-pasteable markup for the editorial layer (`editorial.css`, the default)
+and for every classic slide type `deck-base.css` v1.0.0 supports.
 
 **How to use this file:** find the slide type that matches the *point you are
 making*, copy its block into the deck between `<div id="deck">` and `</div>`,
@@ -17,7 +18,8 @@ the quality bar; this file is only the parts list.
 
 Every deck is one self-contained HTML file. The container, the HUD and the nav
 script are identical in every deck — copy this shell verbatim and only change
-the `<title>`, the theme filename, and `data-deck-id`.
+the `<title>`, the theme filename, and `data-deck-id`. Drop the
+`editorial.css` line only for a `--classic` deck.
 
 ```html
 <!doctype html>
@@ -30,6 +32,7 @@ the `<title>`, the theme filename, and `data-deck-id`.
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="deck-base.css">
 <link rel="stylesheet" href="theme.css">
+<link rel="stylesheet" href="editorial.css">
 </head>
 <body>
 <div id="deck" data-deck-id="my-deck">
@@ -55,10 +58,363 @@ Notes that matter:
   changes; the nav script listens on both arrow axes and the print block handles
   both orientations.
 - **Handover:** the deck folder must contain `deck.html`, `deck-base.css`, the
-  one theme `.css`, `deck-nav.js` and `assets/`. It is opened from `file://`, so
+  one theme `.css`, `editorial.css` (unless classic), `deck-nav.js` and `assets/`. It is opened from `file://`, so
   nothing may reference a path outside the folder.
 
+## Editorial layer (the default)
+
+Everything in this section needs `editorial.css` linked **after** the theme
+(the deck shell above shows it). `new-deck.mjs` adds it unless you pass
+`--classic`. Every class is prefixed `ed-`, and every color is derived from
+the theme's tokens, so nothing here changes when you swap themes.
+`examples/editorial-proposal/deck.html` shows all of it in real use.
+
+**The shape of an editorial slide:** one `.ed-h1`, optionally one `.ed-lede`,
+then one composition (a split, a grid, a track, a diagram). No eyebrow above the
+heading, no full-width strip under it. `.slide` already centers its content
+vertically, so do not pad a slide to push content down; let it balance.
+
+### Type
+
+```html
+<h1 class="ed-h1">The one claim this slide makes</h1>
+<h1 class="ed-h1 ed-h1--lg">Cover or statement headline</h1>
+<h1 class="ed-h1 ed-h1--sm ed-h1--wide">A long title over a dense diagram</h1>
+<h3 class="ed-h3">Card or column heading</h3>
+<p class="ed-lede">One line that frames the slide. 46ch wide; add ed-lede--wide for 70ch.</p>
+<p class="ed-body">Body copy. <span class="ed-strong">Emphasis</span> inside it.</p>
+<p class="ed-small">Captions, sources, attributions. Never smaller than this.</p>
+```
+
+| Class | Size at 1440 | When not to |
+|---|---|---|
+| `.ed-h1` | about 59px | Never two on one slide. A second heading is a second slide. |
+| `.ed-h1--lg` | about 75px | Only on a cover, a statement or a close. On a content slide it crowds the composition. |
+| `.ed-h1--sm` | about 46px | Only when a full diagram or map needs the height. Not as a way to fit more copy. |
+| `.ed-h3` | about 24px | Not as a slide title; it is for cards, steps and columns. |
+| `.ed-lede` | about 23px | Not for a second paragraph. One lede, one line or two. |
+| `.ed-body` | about 19px (17px floor) | Not for a sentence that only needs to be a caption. |
+| `.ed-small` | about 16px (15px floor) | Not for anything the audience must read to follow the argument. |
+
+### Layout
+
+```html
+<div class="ed-head">                     <!-- heading block above a composition -->
+  <h1 class="ed-h1">Heading</h1>
+  <p class="ed-lede">Lede.</p>
+</div>
+<div class="ed-head ed-head--row">        <!-- heading with a pill on the right -->
+  <h1 class="ed-h1">Options and investment</h1>
+  <span class="ed-pill ed-pill--draft">Draft figures</span>
+</div>
+
+<div class="ed-split">…two children…</div>                 <!-- 5:6, centered -->
+<div class="ed-split ed-split--even">…</div>               <!-- 1:1 -->
+<div class="ed-split ed-split--visual">…</div>             <!-- 4:7, text beside a big visual -->
+<div class="ed-split ed-split--wide ed-split--stretch">…</div>  <!-- 7:4, equal-height columns -->
+<div class="ed-split ed-split--narrow">…</div>             <!-- 4:7, top-aligned: heading beside a list -->
+<div class="ed-split" style="--ed-split-cols: 0.9fr 1.15fr">…</div>  <!-- any ratio -->
+
+<div class="ed-grid2">…</div>  <div class="ed-grid3">…</div>  <div class="ed-grid4">…</div>
+<div class="ed-grid3" style="--ed-grid-cols: 1fr 1fr 0.85fr">…</div>
+
+<div class="ed-stack">…</div>  <div class="ed-stack ed-stack--tight">…</div>
+<div class="ed-row">…pills or chips in a line…</div>
+<p class="ed-body ed-after">A closing sentence below a composition.</p>
+```
+
+`.ed-snug` tightens the gap on any stack or grid. `--ed-split-cols` and
+`--ed-grid-cols` are registered as non-inheriting, so a ratio set on a split
+never leaks into a grid nested inside it.
+
+When not to: do not use `.ed-split` with `align-items` overridden to `center`
+when one side can grow much taller (the classic `.two-col` gotcha #16 applies);
+reach for `--narrow` (top-aligned) instead. Do not nest a split inside a split.
+Beyond `ed-grid4`, cards stop being readable at 1280 wide.
+
+### Cards
+
+```html
+<div class="ed-card">                                <!-- stone: the default -->
+  <div class="ed-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l7 3v6c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6z"/></svg></div>
+  <h3 class="ed-h3">Name</h3>
+  <p class="ed-body">One or two sentences.</p>
+</div>
+<div class="ed-card ed-card--outline">…</div>         <!-- paper with a hairline -->
+<div class="ed-card ed-card--voice-a">…</div>         <!-- tinted with voice A -->
+<div class="ed-card ed-card--voice-b">…</div>         <!-- tinted with voice B -->
+<div class="ed-card ed-card--feature ed-card--center"> <!-- inverse: the one card that matters -->
+  <div class="ed-num">00</div>
+  <h3 class="ed-h3">the number that proves it</h3>
+  <p class="ed-body">Why that number matters.</p>
+</div>
+<div class="ed-card ed-card--voice-a ed-card--row">   <!-- pill beside text, horizontal -->
+  <span class="ed-pill ed-pill--a">Short label</span>
+  <div><h3 class="ed-h3">Item name</h3><p class="ed-body">When and what.</p></div>
+</div>
+```
+
+When not to: one `--feature` card per slide; two inverse cards fight. Do not
+tint a card with a voice unless the slide is about who does what; tint as
+decoration breaks the code. Not for a single sentence spanning the slide (that
+is the full-width strip anti-pattern, gotcha #18).
+
+### Pills and icons
+
+```html
+<span class="ed-pill">Neutral label</span>
+<span class="ed-pill ed-pill--a">Voice A</span>
+<span class="ed-pill ed-pill--b">Voice B</span>
+<span class="ed-pill ed-pill--draft">Draft: for review</span>
+<div class="ed-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg></div>
+```
+
+Icons are 24-unit line drawings; `editorial.css` sets the stroke and fill, so
+never color the SVG. When not to: a pill is a tag, not a heading; do not put a
+pill above every card heading on a slide where it says nothing new. Use
+`--draft` only for content that must change before the deck goes out. Do not
+mix icon styles (filled and line) on one slide.
+
+### Lists and numbered steps
+
+```html
+<ul class="ed-list">
+  <li><strong>Named thing.</strong> Why it matters here.</li>
+  <li><strong>Named thing.</strong> Why it matters here.</li>
+</ul>
+
+<ol class="ed-steps">
+  <li><strong>First move</strong>What happens, in one line.</li>
+  <li><strong>Second move</strong>What happens, in one line.</li>
+</ol>
+```
+
+`ed-list` markers pick up the voice color inside a voice card. `ed-steps`
+numerals use voice A. When not to: more than five items in an `ed-list` is a
+table or a second slide. Never use `ed-steps` for an unordered list; the
+numerals imply a sequence.
+
+### Big numbers
+
+```html
+<div class="ed-num">00<small>unit</small></div>
+<div class="ed-num ed-num--sm">00,000</div>
+```
+
+When not to: one hero number per card, and no more than three numbers per
+slide. Use `--sm` when three option cards each carry a price; full size three
+times reads as a dashboard.
+
+### Quote and portrait
+
+```html
+<p class="ed-quote">"The sentence someone actually said."</p>
+<div class="ed-who">
+  <img class="ed-portrait" alt="Portrait of A. Rivera" src="assets/a-rivera.jpg">
+  <div>
+    <p class="ed-body ed-strong">A. Rivera</p>
+    <p class="ed-small">Role, Company</p>
+  </div>
+</div>
+<img class="ed-portrait ed-portrait--lg" alt="Portrait of B. Okafor" src="assets/b-okafor.jpg">
+```
+
+When not to: one quote per slide. Never invent or paraphrase a quote. A
+portrait needs a real, square, consented photo; if you do not have one, drop
+the portrait and keep the attribution text.
+
+### Logos: lockup, logo row, brand chip
+
+```html
+<div class="ed-lockup">
+  <img alt="Partner name" src="assets/partner-logo.svg">
+  <span class="ed-lockup__x">×</span>
+  <img alt="Our logo" src="assets/our-mark.svg">
+  <span class="ed-lockup__word">OURNAME</span>
+</div>
+
+<div class="ed-logos ed-logos--on-photo">   <!-- or ed-logos--mono on paper; add ed-logos--start to left-align -->
+  <img alt="Client one" src="assets/logos/client-one.svg">
+  <img alt="Client two" src="assets/logos/client-two.svg">
+  <span class="ed-logo-note">A short note</span>
+</div>
+
+<span class="ed-brand"><img alt="" aria-hidden="true" src="assets/tool.svg">Tool name</span>
+```
+
+When not to: the lockup appears on the cover and the close only. A logo row is
+social proof; never list a logo you do not have permission to show; leave it
+out. `.ed-logo-note` is a short caption at the end of the row. `--on-photo` forces logos to white, so it is
+wrong on a light slide; use `--mono` there.
+
+### Photo cover and close
+
+```html
+<section class="slide ed-photo ed-cover" style="--photo-bg-image:url('assets/cover.jpg')">
+  <div class="ed-lockup">…</div>
+  <div class="ed-cover-mid">
+    <h1 class="ed-h1 ed-h1--lg">The one thing this deck is about.</h1>
+    <p class="ed-lede">One sentence of sub-copy.</p>
+    <p class="ed-small">Prepared for A. Rivera, Company. Date.</p>
+  </div>
+  <div class="ed-cover-foot">
+    <p class="ed-small">Clients and partners</p>
+    <div class="ed-logos ed-logos--on-photo">…</div>
+  </div>
+</section>
+
+<!-- Close: an empty first child keeps the three-row composition. -->
+<section class="slide ed-photo ed-cover" style="--photo-bg-image:url('assets/close.jpg')">
+  <div></div>
+  <div class="ed-cover-mid">
+    <h1 class="ed-h1 ed-h1--lg">The concrete ask</h1>
+    <p class="ed-lede">What happens next and when.</p>
+    <a class="ed-cta" href="mailto:name@example.com">Book the next call</a>
+  </div>
+  <div class="ed-lockup">…</div>
+</section>
+```
+
+The scrim is a vertical gradient from `--photo-scrim-rgb`, so the photo reads
+across the full width with centered text. When not to: a busy photo with detail
+behind the headline still fights the text; pick a calm one. Not for a content
+slide; two photo slides is the usual budget (cover and close).
+
+### Timeline track
+
+```html
+<div class="ed-track" style="--ed-track-n: 4">
+  <div class="ed-step"><span class="ed-when">When</span><h3 class="ed-h3">Phase one</h3><p class="ed-body">What happens.</p></div>
+  <div class="ed-step ed-step--b"><span class="ed-when">When</span><h3 class="ed-h3">Phase two</h3><p class="ed-body">What happens.</p></div>
+  <div class="ed-step ed-step--milestone"><span class="ed-when">When</span><h3 class="ed-h3">The milestone</h3><p class="ed-body">What they see.</p></div>
+  <div class="ed-step ed-step--a"><span class="ed-when">When</span><h3 class="ed-h3">Phase three</h3><p class="ed-body">What is true.</p></div>
+</div>
+```
+
+`--ed-track-n` is the number of steps (default 3). When not to: more than five
+steps stops fitting at 1280 wide; split the phases across two slides. Not for
+things that do not happen in order.
+
+### Video frame
+
+```html
+<div class="ed-video">
+  <img class="ed-video__img" alt="Still from the walkthrough: its title" src="assets/still-1.jpg">
+  <div class="ed-video__bar">
+    <span class="ed-video__play"></span>
+    <span class="ed-video__title">Walkthrough title</span>
+    <span class="ed-video__len">0 min</span>
+  </div>
+</div>
+```
+
+A still with a play bar, for recorded walkthroughs (Loom or similar). Wrap the
+frame in an `<a href>` if the recording is online. When not to: never embed a
+live player; the deck is opened from `file://` and a third-party iframe may not
+load. Not for a live demo; that is the classic `.demo-frame` (section 10).
+
+### Placeholder
+
+```html
+<div class="ed-placeholder">
+  <span class="ed-pill ed-pill--draft">For a named owner to complete</span>
+  <p class="ed-lede">What this section needs to say, and who will write it.</p>
+  <p class="ed-small">Move or delete this slide before the deck goes out.</p>
+</div>
+```
+
+When not to: never in a deck that is leaving your hands. It exists for a
+collaborator's section during drafting, and it is deliberately loud so nobody
+ships it.
+
+### CTA
+
+```html
+<a class="ed-cta" href="mailto:name@example.com?subject=Follow-up">Book the next call</a>
+```
+
+Ink on paper by default, a light pill on a photo slide. When not to: one CTA
+per deck, on the close. A CTA on a content slide reads as a sales page.
+
+### SVG diagrams and charts
+
+```html
+<svg class="ed-svg" viewBox="0 0 1000 150" role="img" aria-label="Describe the diagram in a sentence.">
+  <rect class="ed-svg-voice-a" x="0" y="30" width="220" height="90" rx="12"/>
+  <text class="ed-svg-t1" x="18" y="68">Stage one</text>
+  <text class="ed-svg-t2" x="18" y="94">who owns it</text>
+  <line class="ed-svg-line" x1="220" y1="75" x2="260" y2="75"/>
+  <rect class="ed-svg-voice-b" x="260" y="30" width="220" height="90" rx="12"/>
+  <rect class="ed-svg-gate" x="520" y="30" width="220" height="90" rx="12"/>
+  <rect class="ed-svg-plain" x="780" y="30" width="220" height="90" rx="12"/>
+  <path class="ed-svg-line ed-svg-line--dash" d="M630 30 V18 H110 V30"/>
+  <text class="ed-svg-t3" x="370" y="14" text-anchor="middle">loop back label</text>
+</svg>
+
+<!-- Bar chart: today vs target -->
+<!-- inside a card, keep the viewBox near 540 units wide (see the size note below) -->
+<rect class="ed-svg-bar" x="0" y="32" width="520" height="24" rx="6"/>
+<rect class="ed-svg-bar--target" x="0" y="60" width="330" height="24" rx="6"/>
+<text class="ed-svg-t-on" x="12" y="78">Target</text>
+```
+
+| Class | For |
+|---|---|
+| `.ed-svg` (`--map`) | The `<svg>` itself. `--map` caps the height at 50vh for a tall process map. |
+| `.ed-svg-voice-a` / `-voice-b` | Boxes owned by each voice. |
+| `.ed-svg-gate` | A dashed decision point. |
+| `.ed-svg-plain` | A neutral box. |
+| `.ed-svg-bar` / `--target` | Chart bars: today in stone, target in voice A. |
+| `.ed-svg-line` (`--dash`) | Connectors. |
+| `.ed-svg-t1` / `t2` / `t3` | Box title, box detail, micro label. |
+| `.ed-svg-t-on` | A label sitting on a filled target bar. |
+
+The text classes are 15-18px at a scale of 1, so the SVG must never render
+smaller than its viewBox. At 1280x720 a full-width diagram renders about 1100px
+wide, so keep its viewBox at most 1100 units wide; a `--map` is capped at 50vh
+(360px), so keep its viewBox at most 360 units tall; a chart inside a 7:4 split
+card renders about 600px wide, so keep it near 540 units. Then no label drops
+below the 15px floor (gotcha #20).
+When not to: never put a literal color in the SVG (gotcha #11). If the labels
+need a viewBox much wider than 1100 units to fit, the diagram has too many
+boxes for one slide.
+
+### Editorial component index
+
+`.ed-after` · `.ed-body` · `.ed-brand` · `.ed-card` (`--outline`, `--voice-a`,
+`--voice-b`, `--feature`, `--center`, `--row`) · `.ed-cover` · `.ed-cover-foot` ·
+`.ed-cover-mid` · `.ed-cta` · `.ed-grid2` · `.ed-grid3` · `.ed-grid4` · `.ed-h1`
+(`--lg`, `--sm`, `--wide`) · `.ed-h3` · `.ed-head` (`--row`) · `.ed-icon` ·
+`.ed-lede` (`--wide`) · `.ed-list` · `.ed-lockup` (`__x`, `__word`) ·
+`.ed-logo-note` · `.ed-logos` (`--on-photo`, `--mono`, `--start`) · `.ed-num`
+(`--sm`) · `.ed-photo` · `.ed-pill` (`--a`, `--b`, `--draft`) · `.ed-placeholder` ·
+`.ed-portrait` (`--lg`) · `.ed-quote` · `.ed-row` · `.ed-shot` (`--tilt`, `--crop`) ·
+`.ed-small` · `.ed-snug` · `.ed-split` (`--even`, `--visual`, `--wide`, `--narrow`,
+`--stretch`) · `.ed-stack` (`--tight`) · `.ed-step` (`--a`, `--b`, `--milestone`) ·
+`.ed-steps` · `.ed-strong` · `.ed-svg` (`--map`) and the `.ed-svg-*` set ·
+`.ed-track` · `.ed-video` (`__img`, `__bar`, `__play`, `__title`, `__len`) ·
+`.ed-when`
+
+Custom properties a deck may set inline: `--ed-split-cols`, `--ed-grid-cols`,
+`--ed-track-n`, `--photo-bg-image`. To change the two voices for a brand,
+define the optional hooks `--voice-a` and `--voice-b` in the theme file's
+`:root` (never in a `<style>` block). Do not redefine `--ed-voice-a` there:
+`editorial.css` loads after the theme and would win. The `-soft` tints follow
+automatically.
+
+### Classic components in an editorial deck
+
+The numbered sections below still work, because `deck-base.css` is always
+loaded. The table (section 8), spectrum (7), terminal (17) and live demo (10)
+have no editorial equivalent; use them as they are. Do **not** mix classic
+headings into an editorial deck: no `.kicker` + `.slide-title` pairs next to
+`.ed-h1` slides.
+
 ---
+
+# Classic slide types
+
+These are the `deck-base.css` slide types (`new-deck.mjs --classic`).
 
 ## 1. Cover — photo, logo, hero visual
 
@@ -670,3 +1026,8 @@ If you build something reusable that only one deck has used, list it here rather
 than promoting it.
 
 - (none yet)
+
+The `ed-` components above came from a single production deck and were promoted to
+the default by an owner decision rather than by the second-deck rule, because
+the improvement over the classic look was judged large enough to ship to every
+new deck. Treat any new `ed-` component under the normal rule.

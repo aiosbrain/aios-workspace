@@ -8,14 +8,20 @@ type: "Deliverable"
 
 # Example decks
 
-Two complete, presentable decks. They are the **quality bar** — read one end to
+Three complete, presentable decks. They are the **quality bar** — read one end to
 end before you write a slide. `reference/slide-catalog.md` is the parts list;
 these are what the parts are supposed to add up to.
 
 | Folder | Deck | Theme | Slides | Shows |
 |---|---|---|---|---|
 | [`product-demo-dark/`](product-demo-dark/deck.html) | Tideline product demo | `aios-dark` | 10 | Cover with hero shot · statement · problem · before/after · diagram · terminal · live demo · stats + quotes · 2-up bios · close |
+| [`editorial-proposal/`](editorial-proposal/deck.html) | Archive digitization proposal, **the default editorial look** | `prism-light` + `editorial.css` | 15 | Every `ed-` component: photo cover with lockup and logo row · quote + portrait · SVG process map · two-voice cards · numbered steps · timeline · bar chart + big numbers · video frames · placeholder · options · brand chips · terms · team · CTA close |
 | [`proposal-light/`](proposal-light/deck.html) | Partner-onboarding proposal | `prism-light` | 13 | Text-only cover · diagnosis · what we heard · cause/consequence · act break · spectrum · options · detail + schedule · table · headline number · risks · 5-up team · close |
+
+Start with **`editorial-proposal/`**: it is what `new-deck.mjs` produces by default.
+The other two are classic decks (`deck-base.css` + theme only, `--classic`), kept as
+references for that look and for the components the editorial layer does not replace
+(tables, spectrum, terminal, live demo).
 
 Each folder is **self-contained** and opens from `file://` by double-clicking
 `deck.html`. Nothing references a path outside its own folder
@@ -26,6 +32,7 @@ Each folder is **self-contained** and opens from `file://` by double-clicking
 ├── deck.html        the deck
 ├── deck-base.css    copied verbatim from ../../assets/
 ├── theme.css        copied verbatim from ../../assets/themes/<slug>.css
+├── editorial.css    copied verbatim from ../../assets/ (editorial-proposal only)
 ├── deck-nav.js      copied verbatim from ../../assets/
 └── MANIFEST.md      slide-by-slide index + revision log
 ```
@@ -33,7 +40,8 @@ Each folder is **self-contained** and opens from `file://` by double-clicking
 ## Everything here is fictional
 
 **Northwind Labs**, its product **Tideline**, the consultancy **Harbourline
-Partners**, every person named, every figure, every quote, every logo and every
+Partners**, the editorial example's **Lanternfield Studio** and **Velmont River
+Museum**, every person named, every figure, every quote, every logo and every
 screenshot are invented for this example. This repo is public: never put a real
 client, company, person, price or screenshot in `examples/`. If you need a
 sample, extend the fiction above rather than anonymising something real.
@@ -47,7 +55,7 @@ sample, extend the fiction above rather than anonymising something real.
   "recommended" — the spectrum's middle stop and the recommended option card,
   nowhere else. Break either rule and the one moment that carries a decision
   stops registering.
-- **Density.** Both decks clear `qa-deck.mjs` check (c) at 1280x720 **and**
+- **Density.** All three decks clear `qa-deck.mjs` check (c) at 1280x720 **and**
   1440x810 with zero overflow. If a slide of yours needs `--sm` *and*
   `--micro` to fit, it is two slides.
 - **Real `alt` on every image**, and a `.progress` whose static text matches the
@@ -78,8 +86,9 @@ plausible visuals without committing binaries to a public repo.
 ```bash
 node ../scripts/qa-deck.mjs product-demo-dark/deck.html
 node ../scripts/qa-deck.mjs proposal-light/deck.html
+node ../scripts/qa-deck.mjs editorial-proposal/deck.html
 ```
 
-Both must exit 0. The overflow check needs a browser; set
+All three must exit 0. The overflow check needs a browser; set
 `AIOS_DECK_BROWSER_DIR` to a directory from which `playwright` resolves, or
 check (c) SKIPs and only the static checks gate.

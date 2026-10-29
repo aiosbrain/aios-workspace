@@ -1,0 +1,800 @@
+/* ============================================================================
+   AIOS Deck System — deck-base.css
+   Version: 1.0.0
+   Brand-agnostic slide mechanics + component library.
+
+   This file defines NO colour and NO font-family value. Every visual brand
+   decision is a CSS custom property supplied by a theme file
+   (assets/themes/<slug>.css). Pair exactly one theme with this file.
+
+   Structural scales (radius, spacing, rule widths) ARE defined here, with the
+   values taken from @aios-alpha/design v0.3.0 (tokens/radius.json,
+   tokens/space.json). They are copied rather than @import-ed on purpose:
+   handover decks are opened from file:// and cannot resolve node_modules.
+   See reference/gotchas.md #13. A theme may override any of them.
+
+   Every default in this file bakes in a bug that cost real debugging rounds
+   in two production decks (14 and 5 revision rounds). Read reference/gotchas.md
+   BEFORE overriding .shot, .two-col, .photo-slide or @media print — several of
+   the "obvious" values are the broken ones.
+
+   Component reference: reference/slide-catalog.md
+   Theme authoring:     reference/brand-schema.md
+   QA gate:             node scripts/qa-deck.mjs <deck.html>
+   ============================================================================ */
+
+/* ----------------------------------------------------------------------------
+   THEME TOKEN CONTRACT
+
+   A theme file MUST define every token marked `required`. Omission fails
+   SILENTLY — this file deliberately ships no fallback colour or font, so a
+   missing token renders its component unstyled with no console error and no
+   visual warning (gotcha #12). `scripts/qa-deck.mjs` parses the block below
+   and FAILS on any missing required token. Do not reformat the block: the
+   parser reads lines of the form `--name  required|optional  description`.
+
+/* @token-contract:begin */
+/*
+   --bg                  required   Slide background.
+   --surface             required   Raised panel: cards, quotes, stat tiles, screenshot backing.
+   --elevated            required   Floating chrome: the progress + navhint HUD pills, chips.
+   --page-backdrop       required   Behind the slides — the scroll gutter. Never equal to --bg.
+   --fg                  required   Primary text: headings, stat numbers, strong.
+   --fg-2                required   Body text.
+   --fg-3                required   Micro-labels, captions, footnotes, HUD text.
+   --border              required   Hairline dividers (list rows, slide edges, footnote rule).
+   --border-visible      required   Card and screenshot borders.
+   --border-strong       required   Dashed frames, the side-brand tick, terminal dots.
+   --violet              required   Primary brand hue. Quote rule, note rule, callout border.
+   --violet-strong       required   Darker step of the primary. Small text + list markers; needs 4.5:1 on --surface.
+   --blue                required   Secondary accent, reserved for "recommended" ribbons and one quote variant.
+   --cyan                required   Tertiary accent (info note tint).
+   --cyan-strong         required   Darker step of --cyan (info note rule).
+   --emerald             required   Positive/success accent.
+   --amber               required   Caution accent.
+   --red                 required   Negative/warning accent (note--warn).
+   --lime                required   Live/active accent. Ration it: one filled lime action per screen.
+   --accent-fg           required   Text ON a filled --lime surface (the CTA pill). Near-black in EVERY theme — lime is bright in all of them, so this is mode-independent like --photo-fg. Never set it to --bg.
+   --gradient-prism      required   The signature gradient. Accent bar, list markers, step numerals ONLY — never text, never card backgrounds.
+   --kicker-color        required   Eyebrow label colour. Needs 4.5:1 on --bg.
+   --photo-fg            required   Text over a photo. Always white regardless of theme mode.
+   --photo-fg-soft       required   Secondary text over a photo.
+   --photo-scrim-rgb     required   RGB TRIPLET, not a colour. Bare numbers e.g. `6, 6, 8`. A hex here silently breaks every photo slide.
+   --shot-shadow         required   Screenshot card shadow.
+   --font-display        required   Display/heading typeface stack.
+   --font-body           required   Body typeface stack.
+   --font-mono           required   Monospace typeface stack.
+   --font-kicker         required   Eyebrow typeface — mono on a product theme, body on an editorial one.
+   --weight-display      required   Display weight. Use 400 for a serif with no true bold axis; 700-800 for a grotesque.
+   --weight-heading      required   Sub-heading weight. Same rule.
+   --accent-bar-height   optional   Top gradient rule height. Falls back to 4px.
+   --deck-logo-height    optional   Intrinsic height of the cover logo. Falls back to 26px.
+*/
+/* @token-contract:end */
+
+/* ----------------------------------------------------------------------------
+   Structural scale — from @aios-alpha/design v0.3.0.
+   radius.json sha256 prefix: see assets/themes/*.css headers for the pinned
+   package version recorded per theme. These are not brand values; they are the
+   shared geometry that keeps a deck feeling like one system.
+   -------------------------------------------------------------------------- */
+:root {
+  --deck-radius-none: 0px;
+  --deck-radius-sm:   4px;
+  --deck-radius-md:   6px;
+  --deck-radius-lg:   10px;
+  --deck-radius-xl:   14px;
+  --deck-radius-2xl:  20px;
+  --deck-radius-full: 9999px;
+  --deck-radius-circle: 50%;
+
+  --deck-space-1:  4px;
+  --deck-space-2:  8px;
+  --deck-space-3:  12px;
+  --deck-space-4:  16px;
+  --deck-space-5:  20px;
+  --deck-space-6:  24px;
+  --deck-space-7:  28px;
+  --deck-space-8:  32px;
+  --deck-space-10: 40px;
+  --deck-space-12: 48px;
+  --deck-space-16: 64px;
+  --deck-space-20: 80px;
+  --deck-space-24: 96px;
+
+  /* Rule widths. --deck-hairline is a true 1px device rule; the others are the
+     deliberate emphasis steps used by dashed frames and accent borders. */
+  --deck-hairline: 1px;
+  --deck-rule:     1.5px;
+  --deck-rule-md:  2px;
+  --deck-rule-lg:  3px;
+  --deck-rule-xl:  4px;
+
+  /* Slide padding. Viewport-relative so a slide reflows between a 1280-wide
+     laptop and a 1440-wide projector — both of which qa-deck.mjs checks. */
+  --slide-pad-y: 4.5vh;
+  --slide-pad-x: 7vw;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; height: 100%; background: var(--page-backdrop); }
+body { font-family: var(--font-body); color: var(--fg-2); overflow: hidden; }
+
+/* ----------------------------------------------------------------------------
+   Slide container + scroll-snap mechanics
+
+   VERTICAL snap is the default. Add `deck--horizontal` to #deck for a
+   horizontal deck — the nav JS listens for both arrow-key axes, so only the
+   CSS changes. The @media print block below handles BOTH axes (gotcha #10):
+   a horizontal deck needs `#deck { display: block }` + `.slide { width: 100% }`
+   in print, or the flex row survives into the PDF and every slide collapses
+   to a sliver.
+   -------------------------------------------------------------------------- */
+#deck {
+  height: 100vh; width: 100vw; overflow-y: scroll; overflow-x: hidden;
+  scroll-snap-type: y mandatory; scroll-behavior: smooth;
+}
+#deck.deck--horizontal {
+  overflow-x: scroll; overflow-y: hidden;
+  scroll-snap-type: x mandatory; display: flex;
+}
+.slide {
+  scroll-snap-align: start; height: 100vh; width: 100vw;
+  display: flex; flex-direction: column; justify-content: center;
+  padding: var(--slide-pad-y) var(--slide-pad-x); position: relative;
+  background: var(--bg);
+  border-bottom: var(--deck-hairline) solid var(--border);
+}
+#deck.deck--horizontal > .slide {
+  flex: none;
+  border-right: var(--deck-hairline) solid var(--border);
+  border-bottom: none;
+}
+/* The signature element: one gradient rule across the top of every slide. */
+.slide::before {
+  content: ''; position: absolute; top: 0; left: 0; right: 0;
+  height: var(--accent-bar-height, 4px); background: var(--gradient-prism); z-index: 2;
+}
+
+/* ----------------------------------------------------------------------------
+   Fixed nav / progress HUD
+
+   Deliberately NOT clickable. An earlier deck shipped click-to-advance and it
+   caused errant navigation — stray clicks on links, images and text selection
+   all fired slide changes. Arrow keys only.
+   -------------------------------------------------------------------------- */
+.progress, .navhint {
+  position: fixed; bottom: var(--deck-space-4);
+  font-family: var(--font-mono); color: var(--fg-3); z-index: 10;
+  background: var(--elevated); border: var(--deck-hairline) solid var(--border);
+  padding: 0.25em 0.65em; border-radius: var(--deck-radius-md);
+}
+.progress { right: var(--slide-pad-x); font-size: 0.68rem; }
+.navhint  { left:  var(--slide-pad-x); font-size: 0.66rem; }
+
+/* Persistent brand mark — a subtle rotated spine on the far-left edge. */
+.side-brand {
+  position: fixed; left: 22px; top: 50%;
+  transform: translateY(-50%) rotate(-90deg); transform-origin: left center;
+  font-family: var(--font-mono); font-size: 0.6rem; letter-spacing: 0.3em;
+  text-transform: uppercase; color: var(--fg-3); z-index: 10;
+  white-space: nowrap; display: flex; align-items: center;
+}
+.side-brand::before {
+  content: ''; display: inline-block; width: var(--deck-space-6);
+  height: var(--deck-hairline); background: var(--border-strong);
+  margin-right: 0.9em;
+}
+
+/* ----------------------------------------------------------------------------
+   Typography scale
+   -------------------------------------------------------------------------- */
+.kicker {
+  font-family: var(--font-kicker); font-size: 0.66rem; font-weight: 700;
+  letter-spacing: 0.14em; text-transform: uppercase; color: var(--kicker-color);
+  margin-bottom: 0.65em;
+}
+h1.slide-title {
+  font-family: var(--font-display); font-weight: var(--weight-display); font-style: normal;
+  color: var(--fg); font-size: clamp(1.7rem, 3.1vw, 2.6rem); line-height: 1.1;
+  letter-spacing: -0.015em; margin: 0 0 0.28em 0; max-width: 28ch;
+}
+/* Size modifier for a slide whose title shares vertical room with dense content.
+   Both source decks reached for an inline font-size override here; this is it. */
+h1.slide-title--sm { font-size: clamp(1.5rem, 2.4vw, 2rem); max-width: 34ch; }
+h1.slide-title--lg { font-size: clamp(2rem, 4.4vw, 3.4rem); max-width: 20ch; }
+h2.slide-sub {
+  font-family: var(--font-body); font-weight: 400; color: var(--fg-2);
+  font-size: clamp(0.95rem, 1.28vw, 1.12rem); margin: 0 0 0.85em 0;
+  max-width: 64ch; line-height: 1.5;
+}
+.col-label .col-eyebrow, .col-eyebrow {
+  font-family: var(--font-mono); font-size: 0.62rem; font-weight: 700;
+  letter-spacing: 0.12em; text-transform: uppercase; color: var(--fg-3);
+}
+.col-label .col-heading, .col-heading--plain {
+  font-family: var(--font-display); font-weight: var(--weight-heading);
+  font-size: 1.28rem; color: var(--fg); margin: 0.1em 0 0.3em 0; letter-spacing: -0.01em;
+}
+.col-heading--plain { margin: 0.6em 0 0.1em 0; }
+.brandline {
+  font-family: var(--font-mono); font-size: 0.78rem; color: var(--fg-3);
+  margin-top: 1.5em;
+}
+
+.center-slide { align-items: center; text-align: center; }
+.center-slide h1, .center-slide h2 { max-width: 70ch; margin-left: auto; margin-right: auto; }
+.center-slide .kicker { width: 100%; }
+.wide { max-width: 80vw; margin-left: auto; margin-right: auto; width: 100%; }
+
+/* ----------------------------------------------------------------------------
+   Cover slide — three-column grid over ONE full-bleed photo
+
+   Text left / a hero visual centre / empty right, so the photo reads clearly
+   through the gradient falloff. The right column is intentionally empty; do
+   not fill it "to balance", that is what makes the photo legible.
+
+   .deck-logo is the brand logo slot. Set --deck-logo-height in the theme, or
+   pass a per-deck override inline. Supply an SVG (or a 2x PNG) — a 26px-tall
+   raster logo scaled from a small source is the most common cover defect.
+   -------------------------------------------------------------------------- */
+.cover {
+  padding: 0; display: grid; grid-template-columns: 1fr 1fr 1fr; align-items: center;
+  background-image:
+    linear-gradient(90deg,
+      rgba(var(--photo-scrim-rgb), 0.94) 0%,
+      rgba(var(--photo-scrim-rgb), 0.88) 24%,
+      rgba(var(--photo-scrim-rgb), 0.55) 45%,
+      rgba(var(--photo-scrim-rgb), 0.18) 62%,
+      rgba(var(--photo-scrim-rgb), 0.04) 78%,
+      rgba(var(--photo-scrim-rgb), 0) 100%),
+    var(--photo-bg-image);
+  background-size: cover; background-position: center right;
+}
+.cover-left { padding: 0 3vw 0 5vw; }
+.cover-left h1.slide-title { max-width: 15ch; font-size: clamp(2rem, 3.4vw, 2.9rem); color: var(--photo-fg); }
+.cover-left h2.slide-sub { color: var(--photo-fg-soft); font-size: clamp(0.95rem, 1.2vw, 1.05rem); max-width: 38ch; }
+.cover-left .kicker { color: var(--photo-fg-soft); }
+.cover-left .brandline { color: var(--photo-fg-soft); }
+.cover-mid { display: flex; align-items: center; justify-content: center; }
+.cover-mid .shot { width: 92%; margin: 0; }
+.cover-right { }
+
+.deck-logo, .aios-logo {
+  display: block; height: var(--deck-logo-height, 26px); width: auto;
+  margin-bottom: 1.6em; opacity: 0.95;
+}
+.deck-logo--sm { height: calc(var(--deck-logo-height, 26px) * 0.72); }
+.deck-logo--lg { height: calc(var(--deck-logo-height, 26px) * 1.6); }
+/* Inline logo lockup for a non-cover slide (footer/close). */
+.deck-logo--inline { display: inline-block; margin: 0 0 0 0; vertical-align: middle; }
+
+/* ----------------------------------------------------------------------------
+   Photo slide — full-bleed image + gradient overlay
+
+   Gotcha #5: never split a slide into a solid-colour panel + a photo panel.
+   ONE continuous full-bleed image with a gradient overlay fading from opaque
+   (behind the text) to transparent (revealing the photo). Set the image inline:
+     <section class="slide photo-slide" style="--photo-bg-image:url('assets/hero.jpg')">
+
+   Gotcha #4: do NOT add backdrop-filter: blur() to this slide's ::before or
+   ::after to "soften" the photo. Pseudo-elements paint ON TOP of the slide's
+   real DOM children in the same stacking context, so the blur lands on your
+   headline and body copy, not just the photo. Blur the source asset instead.
+
+   .photo-slide          horizontal scrim (opaque left → transparent right).
+                         Use for a cover or a text-left hero.
+   .photo-slide--vertical  vertical scrim (dark top and bottom, lighter middle).
+                         Use for a close slide where the text is centred over
+                         the image and the photo must read across the full width.
+   -------------------------------------------------------------------------- */
+.photo-slide {
+  background-image:
+    linear-gradient(90deg,
+      rgba(var(--photo-scrim-rgb), 0.88) 0%,
+      rgba(var(--photo-scrim-rgb), 0.62) 32%,
+      rgba(var(--photo-scrim-rgb), 0.12) 62%,
+      rgba(var(--photo-scrim-rgb), 0) 100%),
+    var(--photo-bg-image);
+  background-size: cover; background-position: center right;
+}
+.photo-slide--vertical, .close-slide {
+  background-image:
+    linear-gradient(180deg,
+      rgba(var(--photo-scrim-rgb), 0.72) 0%,
+      rgba(var(--photo-scrim-rgb), 0.55) 45%,
+      rgba(var(--photo-scrim-rgb), 0.8) 100%),
+    var(--photo-bg-image);
+  background-size: cover; background-position: center;
+}
+.photo-slide .kicker, .close-slide .kicker { color: var(--photo-fg-soft); }
+/* The only two literal colours in this file, and the only two that are correct.
+   Text over a photo always sits on a dark scrim, so its shadow is always black
+   and the ring around a step numeral is always white — neither is a brand
+   decision, so neither belongs in the theme contract. qa-deck.mjs check (b)
+   allowlists exactly this shape (neutral rgba in a text-shadow/box-shadow). */
+.photo-slide h1.slide-title, .close-slide h1.slide-title {
+  color: var(--photo-fg); text-shadow: 0 2px 24px rgba(0, 0, 0, 0.35);
+}
+.photo-slide h2.slide-sub, .close-slide h2.slide-sub { color: var(--photo-fg-soft); }
+.photo-slide .brandline, .photo-slide .step-list li,
+.close-slide .brandline, .close-slide .step-list li,
+.close-slide .mission-line { color: var(--photo-fg-soft); }
+.photo-slide .step-list li strong, .close-slide .step-list li strong { color: var(--photo-fg); }
+.photo-slide .step-list li::before, .close-slide .step-list li::before {
+  box-shadow: 0 0 0 var(--deck-rule-md) rgba(255, 255, 255, 0.3);
+}
+
+/* ----------------------------------------------------------------------------
+   Two-column layout
+
+   Bonus gotcha: align-items defaults to flex-start, NOT center. `center` looks
+   fine until one column grows taller than the other — then the shorter column's
+   content silently centres within the row and opens a dead gap above it. Use
+   .two-col--center only when both columns are guaranteed roughly equal height.
+
+   Ratio modifiers: base is 1:1. Set --col-a / --col-b for anything else, or use
+   the two named presets. Both source decks reached for an asymmetric 1.25/1 and
+   one of them flagged the missing modifier as unbuilt debt in its own CSS.
+   -------------------------------------------------------------------------- */
+.two-col {
+  --col-a: 1; --col-b: 1;
+  display: flex; gap: 1.8rem; align-items: flex-start; width: 100%; text-align: left;
+}
+.two-col > div { min-width: 0; display: flex; flex-direction: column; justify-content: flex-start; flex: 1; }
+.two-col > div:first-child { flex: var(--col-a); }
+.two-col > div:last-child  { flex: var(--col-b); }
+.two-col > div svg { width: 100%; height: auto; display: block; margin: 0 auto; }
+.two-col--center { align-items: center; }
+.two-col--center > div { justify-content: center; }
+/* Text-heavy left column beside a diagram or screenshot. */
+.two-col--wide-left  { --col-a: 1.25; --col-b: 1; }
+/* Label or caption left, dominant visual right. */
+.two-col--wide-right { --col-a: 0.85; --col-b: 1.15; }
+/* A vertical rule between the columns — cause/consequence, before/after. */
+.two-col--divided > div:last-child {
+  border-left: var(--deck-hairline) solid var(--border);
+  padding-left: 1.7rem;
+}
+
+.grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1.1rem; margin-top: 1rem; width: 100%; }
+.grid4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.9rem; margin-top: 1.1rem; width: 100%; }
+/* Arbitrary column count without a new class — set --cols inline. */
+.grid-auto { display: grid; grid-template-columns: repeat(var(--cols, 3), 1fr); gap: 1rem; margin-top: 1rem; width: 100%; }
+
+/* Textured off-white section divider. Use to break a long deck into acts —
+   the change of surface signals "new chapter" without a new slide template. */
+.paperwhite {
+  background-color: color-mix(in srgb, var(--surface) 92%, var(--amber) 8%);
+  background-image: radial-gradient(circle, color-mix(in srgb, var(--fg) 5%, transparent) 1px, transparent 1.15px);
+  background-size: var(--deck-space-1) var(--deck-space-1);
+}
+.paperwhite .quote, .paperwhite .callout, .paperwhite .stat, .paperwhite .principle-card {
+  background-color: color-mix(in srgb, var(--surface) 96%, var(--amber) 4%);
+}
+
+.live-dot {
+  display: inline-block; width: var(--deck-space-2); height: var(--deck-space-2);
+  border-radius: var(--deck-radius-circle); background: var(--lime);
+  margin-right: 0.5em; box-shadow: 0 0 8px color-mix(in srgb, var(--lime) 50%, transparent);
+}
+
+/* ----------------------------------------------------------------------------
+   Lists
+   -------------------------------------------------------------------------- */
+ul.clean { list-style: none; padding: 0; margin: 0.35em 0; }
+ul.clean li {
+  padding: 0.42em 0 0.42em 1.5em; position: relative; font-size: 0.9rem; line-height: 1.46;
+  max-width: 74ch; border-bottom: var(--deck-hairline) solid var(--border);
+  text-align: left; color: var(--fg-2);
+}
+ul.clean li::before {
+  content: ''; position: absolute; left: 0; top: 0.92em; width: 7px; height: 7px;
+  border-radius: var(--deck-radius-circle); background: var(--gradient-prism);
+}
+ul.tight { list-style: none; padding: 0; margin: 0.3em 0 0.7em 0; }
+ul.tight li { padding: 0.28em 0 0.28em 1.2em; position: relative; font-size: 0.82rem; line-height: 1.4; text-align: left; color: var(--fg-2); }
+ul.tight li::before { content: '\2013'; position: absolute; left: 0; color: var(--violet-strong); font-weight: 700; }
+
+ul.check-list { list-style: none; padding: 0; margin: 0.7em 0 0 0; }
+ul.check-list li { display: flex; align-items: flex-start; gap: 0.6em; padding: 0.32em 0; font-size: 0.86rem; color: var(--fg-2); text-align: left; }
+ul.check-list li::before { content: '\2713'; color: var(--lime); font-family: var(--font-mono); font-weight: 700; flex-shrink: 0; }
+.check-eyebrow {
+  font-family: var(--font-mono); font-size: 0.6rem; font-weight: 700; letter-spacing: 0.1em;
+  text-transform: uppercase; color: var(--fg-3); margin-top: 1em;
+}
+
+.step-list { counter-reset: step; list-style: none; padding: 0; margin-top: 1rem; }
+.step-list li { counter-increment: step; display: flex; align-items: flex-start; gap: 0.75em; padding: 0.45em 0; font-size: 0.94rem; max-width: 68ch; text-align: left; color: var(--fg-2); }
+.step-list li strong { color: var(--fg); }
+.step-list li::before {
+  content: counter(step); flex-shrink: 0; width: 1.55em; height: 1.55em;
+  border-radius: var(--deck-radius-circle); background: var(--gradient-prism); color: var(--bg);
+  font-family: var(--font-mono); font-weight: 700; font-size: 0.78rem;
+  display: flex; align-items: center; justify-content: center; margin-top: 0.05em;
+}
+
+/* ----------------------------------------------------------------------------
+   Quote
+   -------------------------------------------------------------------------- */
+.quote {
+  border-left: var(--deck-rule-xl) solid var(--violet); background: var(--surface);
+  padding: 0.42em 0.75em;
+  border-radius: 0 var(--deck-radius-md) var(--deck-radius-md) 0;
+  margin: 0.22em 0; font-style: italic; color: var(--fg);
+  font-size: 0.85rem; line-height: 1.3; max-width: none; text-align: left;
+}
+.quote--accent-blue { border-left-color: var(--blue); }
+.quote__cite { display: block; font-family: var(--font-mono); font-style: normal; font-size: 0.63rem; color: var(--fg-3); margin-top: 0.26em; }
+
+/* ----------------------------------------------------------------------------
+   Stat tile / big number
+   -------------------------------------------------------------------------- */
+.stats-row { display: flex; gap: 0.7rem; margin-top: 0.55em; flex-wrap: wrap; }
+.stat {
+  flex: 1; min-width: 0; border: var(--deck-hairline) solid var(--border-visible);
+  border-radius: var(--deck-radius-lg); padding: 0.4em 0.65em; background: var(--surface);
+}
+.stat .stat-num { font-family: var(--font-display); font-weight: var(--weight-display); font-size: 1.32rem; color: var(--fg); line-height: 1; }
+.stat .stat-label { font-family: var(--font-mono); font-size: 0.58rem; color: var(--fg-3); text-transform: uppercase; letter-spacing: 0.03em; margin-top: 0.26em; line-height: 1.3; display: block; }
+
+/* The headline-number treatment — a stat scaled up to carry a whole slide.
+   Use ONE per slide; two competing hero numbers read as a dashboard, not a point. */
+.price-hero {
+  font-family: var(--font-display); font-size: clamp(1.9rem, 3.4vw, 2.6rem);
+  font-weight: var(--weight-display); color: var(--fg); line-height: 1.05;
+}
+.price-sub { font-family: var(--font-mono); font-size: 0.78rem; color: var(--fg-3); margin-top: 0.3em; }
+.price-note { font-size: 0.8rem; color: var(--fg-2); margin-top: 0.5em; max-width: 46ch; }
+
+/* ----------------------------------------------------------------------------
+   Note / callout — one annotation component with semantic modifiers.
+   Consolidates the four ad-hoc boxes both source decks independently
+   reinvented (risk / ownership / ROI / info); one of them recorded this exact
+   consolidation as unbuilt debt in its own CSS comments.
+   -------------------------------------------------------------------------- */
+.note {
+  border-left: var(--deck-rule-lg) solid var(--violet);
+  background: color-mix(in srgb, var(--violet) 6%, transparent);
+  padding: 0.55em 0.85em;
+  border-radius: 0 var(--deck-radius-md) var(--deck-radius-md) 0;
+  font-size: 0.8rem; margin-top: 0.6em; color: var(--fg-2);
+}
+.note strong { color: var(--fg); }
+.note--warn    { border-left-color: var(--red);         background: color-mix(in srgb, var(--red) 6%, transparent); }
+.note--info    { border-left-color: var(--cyan-strong); background: color-mix(in srgb, var(--cyan) 6%, transparent); }
+.note--success { border-left-color: var(--emerald);     background: color-mix(in srgb, var(--emerald) 6%, transparent); }
+.callout {
+  border: var(--deck-rule) dashed var(--violet); border-radius: var(--deck-radius-lg);
+  padding: 0.75rem 1.05rem; background: color-mix(in srgb, var(--violet) 4%, transparent);
+  margin-top: 0.9rem; max-width: 74ch; font-size: 0.86rem; text-align: left; color: var(--fg-2);
+}
+.callout strong { color: var(--fg); }
+
+.chip-row { display: flex; gap: 0.35rem; flex-wrap: wrap; }
+.chip {
+  font-family: var(--font-mono); font-size: 0.64rem; background: var(--elevated);
+  color: var(--fg-2); padding: 0.2em 0.5em; border-radius: var(--deck-radius-sm);
+}
+
+.footnote {
+  font-family: var(--font-mono); font-size: 0.72rem; color: var(--fg-3);
+  margin-top: 1rem; border-top: var(--deck-hairline) solid var(--border); padding-top: 0.6em;
+}
+.footnote--micro { font-size: 0.56rem; margin-top: 0.25em; padding-top: 0.25em; text-align: left; }
+/* Source attribution under a claim or a chart. Narrower and quieter than a footnote. */
+.cite {
+  font-family: var(--font-mono); font-size: 0.68rem; color: var(--fg-3);
+  border-top: var(--deck-hairline) solid var(--border); padding-top: 0.3em; margin-top: 0.35em;
+  max-width: 74ch; line-height: 1.35; text-align: left;
+}
+
+/* The one filled action per deck. Text colour is --accent-fg, NOT --bg: lime is
+   a bright colour in every theme, so on a light theme `--bg` put white on citron
+   at roughly 1.7:1 and the label was effectively unreadable. This is the same
+   mode-independent logic as --photo-fg (always white, because its backdrop is
+   always dark) — here the backdrop is always bright, so the text is always dark. */
+.cta-btn {
+  display: inline-block; font-family: var(--font-mono); font-size: 0.85rem; font-weight: 600;
+  color: var(--accent-fg); background: var(--lime); padding: 0.7em 1.4em;
+  border-radius: var(--deck-radius-full); margin-top: 1.4em; letter-spacing: 0.01em;
+}
+.mission-line { font-size: 0.88rem; color: var(--fg-2); max-width: 52ch; margin: 1.4em auto 0; line-height: 1.55; }
+
+/* Two-column prose for a dense "what's under the hood" paragraph. */
+.tech-blurb { font-size: 0.86rem; max-width: 76ch; margin: 0.4em auto 0.2em auto; text-align: left; color: var(--fg-2); }
+.tech-blurb ul.tight { column-count: 2; column-gap: 2rem; }
+
+/* ----------------------------------------------------------------------------
+   Table
+
+   Neither source deck's base had a table at all; one grew a private one and
+   the other went without. Header cells invert to the primary text colour so
+   the header band reads at a glance in both light and dark themes.
+   -------------------------------------------------------------------------- */
+table.deck-table, table.cost {
+  width: 100%; border-collapse: collapse; font-size: 0.78rem; margin-top: 0.5rem;
+  color: var(--fg-2);
+}
+table.deck-table th, table.deck-table td,
+table.cost th, table.cost td {
+  border: var(--deck-hairline) solid var(--border-visible);
+  padding: 0.42em 0.6em; text-align: left; vertical-align: top;
+}
+/* Header band. A fully inverted header (fg background, bg text) reads well on a
+   light theme and shouts on a dark one — this mix reads as a band in both modes
+   without either extreme, which is the point of a mode-agnostic base. */
+table.deck-table th, table.cost th {
+  background: color-mix(in srgb, var(--fg) 12%, var(--surface));
+  color: var(--fg);
+  border-bottom-color: var(--border-strong);
+  font-family: var(--font-mono); font-size: 0.64rem; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.03em;
+}
+table.deck-table td.total, table.cost td.total {
+  font-weight: 700; color: var(--violet-strong); font-family: var(--font-mono);
+}
+table.deck-table td.num, table.cost td.num { font-family: var(--font-mono); text-align: right; }
+table.deck-table tbody tr:nth-child(even) td { background: color-mix(in srgb, var(--fg) 2.5%, transparent); }
+
+/* ----------------------------------------------------------------------------
+   Option card + recommended ribbon
+
+   The generic "here are three ways to do this, we suggest the middle one"
+   component. `.recommended` must always carry a visible text label as well as
+   the accent border — colour alone is not an accessible signal.
+   -------------------------------------------------------------------------- */
+.option-card, .path-card {
+  border: var(--deck-hairline) solid var(--border-visible); border-radius: var(--deck-radius-xl);
+  padding: 1.1rem; background: var(--surface); position: relative; text-align: left;
+}
+.option-card.recommended, .path-card.recommended {
+  border-color: var(--blue); box-shadow: 0 0 0 var(--deck-hairline) var(--blue);
+}
+.badge {
+  position: absolute; top: -12px; right: var(--deck-space-4);
+  background: var(--blue); color: var(--bg);
+  font-family: var(--font-mono); font-size: 0.58rem; font-weight: 700;
+  letter-spacing: 0.08em; text-transform: uppercase;
+  padding: 0.28em 0.75em; border-radius: var(--deck-radius-2xl); white-space: nowrap;
+}
+.badge--center { right: auto; left: 50%; transform: translateX(-50%); }
+.option-card h3, .path-card h3 {
+  font-family: var(--font-display); font-weight: var(--weight-heading);
+  font-size: 1.08rem; color: var(--fg); margin: 0 0 0.3em 0;
+}
+.option-card .thesis, .path-card .thesis { font-size: 0.84rem; color: var(--fg-2); margin-bottom: 0.6em; }
+
+/* ----------------------------------------------------------------------------
+   Spectrum — three-or-more positions along a gradient axis, one recommended.
+
+   The most deck-generic component either source deck produced: a continuous
+   trade-off (cheap↔thorough, fast↔durable) with named stops rather than a
+   false three-way choice.
+   -------------------------------------------------------------------------- */
+.spectrum { width: 100%; }
+.spectrum-track {
+  height: 6px; border-radius: var(--deck-radius-md);
+  background: var(--gradient-prism); margin-bottom: 2.7rem;
+}
+.spectrum-stops { display: flex; justify-content: space-between; gap: 1.2rem; align-items: flex-start; }
+.spectrum-stop { flex: 1; text-align: left; position: relative; }
+.spectrum-stop.recommended {
+  border: var(--deck-hairline) solid var(--blue); border-radius: var(--deck-radius-lg);
+  padding: 0.9rem; background: color-mix(in srgb, var(--blue) 4%, transparent); margin-top: -0.9rem;
+}
+.spectrum-dot {
+  width: 14px; height: 14px; border-radius: var(--deck-radius-circle); margin-bottom: 0.5rem;
+  border: var(--deck-rule-md) solid var(--bg); box-shadow: 0 0 0 var(--deck-hairline) var(--border-visible);
+}
+.spectrum-stop h3 { font-family: var(--font-display); font-weight: var(--weight-heading); font-size: 1.1rem; color: var(--fg); margin: 0 0 0.3em 0; }
+.spectrum-stop p { font-size: 0.85rem; color: var(--fg-2); margin: 0 0 0.6em 0; }
+.spectrum-axis { display: flex; justify-content: space-between; font-size: 0.82rem; color: var(--fg-2); font-weight: 600; margin-top: 1rem; }
+
+/* ----------------------------------------------------------------------------
+   Media frame — fixed-height box for a diagram / SVG / image.
+   Set the SAME --media-h on every instance in a row of columns so they align.
+   -------------------------------------------------------------------------- */
+.media-frame { --media-h: 18vh; height: var(--media-h); display: flex; align-items: flex-end; justify-content: center; width: 100%; margin: 0 0 0.5em 0; }
+.media-frame > svg { height: 100%; width: auto; display: block; }
+.media-frame > img { max-height: 100%; max-width: 100%; object-fit: contain; display: block; }
+.media-frame--fill { display: flex; flex-direction: column; align-items: stretch; justify-content: flex-end; }
+
+/* ----------------------------------------------------------------------------
+   Shared SVG chart-label typography
+
+   Gotcha #11: one source deck carried SIX separate per-diagram <style> blocks,
+   each re-declaring font-family and a LITERAL fill colour for its tick, row and
+   caption text. Every one of those charts renders invisible text the moment the
+   deck changes theme. Use these classes on <text>/<tspan> inside any inline SVG
+   and never write a literal colour inside a themed deck's SVG.
+
+     .svg-label   default label text
+     .svg-strong  emphasised label / a value
+     .svg-tick    axis ticks and scale marks
+     .svg-cap     captions and annotations under a chart
+     .svg-num     a numeric readout in a diagram box
+     .svg-muted   de-emphasised / secondary series label
+   Stroke/fill for shapes: use fill="currentColor" on a group carrying one of
+   these classes, or reference var(--violet) etc. directly in the attribute.
+   -------------------------------------------------------------------------- */
+.svg-label, .svg-strong, .svg-tick, .svg-cap, .svg-num, .svg-muted {
+  font-family: var(--font-body);
+}
+.svg-label  { fill: var(--fg-2);  font-size: 12px; }
+.svg-strong { fill: var(--fg);    font-size: 13px; font-weight: 600; }
+.svg-tick   { fill: var(--fg-3);  font-size: 10px; font-family: var(--font-mono); letter-spacing: 0.02em; }
+.svg-cap    { fill: var(--fg-3);  font-size: 11px; }
+.svg-num    { fill: var(--fg);    font-size: 15px; font-family: var(--font-mono); font-weight: 700; }
+.svg-muted  { fill: var(--fg-3);  font-size: 12px; }
+/* Shape helpers so a diagram's boxes and rules also follow the theme. */
+.svg-box    { fill: var(--surface); stroke: var(--border-visible); stroke-width: 1; }
+.svg-rule   { stroke: var(--border); stroke-width: 1; }
+.svg-accent { fill: var(--violet); }
+
+/* ----------------------------------------------------------------------------
+   Screenshot chrome (the `.shot` family)
+
+   Every default here bakes in a bug found the hard way — reference/gotchas.md
+   #1, #2, #3, #7 and #9.
+
+   .shot        Standalone / centred use (inside .demo-frame, a .thumb-row, or
+                a .center-slide). Chrome sizes to the IMAGE's own rendered width
+                (width: fit-content), never stretched to the column — gotcha #2.
+
+   .shot--col   Two-column use, paired with left-aligned text in the SAME
+                column. Flush-left, not auto-centred — gotcha #1. Fills the
+                column width so two paired screenshots match visually even when
+                their native aspect ratios differ — gotcha #7.
+
+   .shot--plain Full diagrams that must show in full, with no card chrome.
+                Gotcha #3: a fixed max-height + overflow: hidden silently crops
+                real content off the bottom. Gotcha #9: removing the border is
+                NOT the same as removing the clipping — this modifier MUST
+                restate `overflow: visible`, and a shipped deck's copy that
+                forgot to had the crop bug live in the very deck that found it.
+
+   .shot--sm    Size modifier for thumbnails.
+   -------------------------------------------------------------------------- */
+.shot {
+  display: block; width: fit-content; margin: 0 auto;
+  border-radius: var(--deck-radius-lg); overflow: hidden;
+  border: var(--deck-hairline) solid var(--border-visible);
+  box-shadow: var(--shot-shadow); background: var(--surface);
+}
+.shot img { display: block; max-height: 42vh; width: auto; max-width: 100%; }
+.shot-cap { font-family: var(--font-mono); font-size: 0.68rem; color: var(--fg-3); margin-top: 0.55em; text-align: center; }
+.shot--col { margin: 0 0 0.8em 0; width: 100%; }
+.shot--col img { max-height: none; width: 100%; max-width: 100%; }
+.shot--plain {
+  border: none; box-shadow: none; background: none;
+  border-radius: var(--deck-radius-none); margin: 0 auto;
+  overflow: visible; /* gotcha #9 — required, not cosmetic. Do not remove. */
+}
+.shot--plain img { max-height: 84vh; max-width: 92vw; width: auto; object-fit: contain; }
+.shot--sm img { max-height: 22vh; }
+
+/* ----------------------------------------------------------------------------
+   Live-demo placeholder frame
+   -------------------------------------------------------------------------- */
+.demo-frame {
+  width: fit-content; margin: 0 auto;
+  border: var(--deck-rule) dashed var(--border-strong); border-radius: var(--deck-radius-xl);
+  padding: 2rem 2.4rem;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0.6em;
+  background: radial-gradient(ellipse 70% 60% at 50% 0%, color-mix(in srgb, var(--violet) 8%, transparent), transparent 70%);
+  text-align: center;
+}
+.demo-frame .demo-label { font-family: var(--font-mono); font-size: 0.72rem; letter-spacing: 0.1em; text-transform: uppercase; color: var(--lime); }
+.demo-frame .demo-note { font-size: 0.86rem; color: var(--fg-2); max-width: 46ch; }
+.demo-frame .deck-logo { margin-bottom: 0.3em; opacity: 0.85; }
+.thumb-row { display: flex; gap: 0.9rem; margin-top: 1.1rem; justify-content: center; flex-wrap: wrap; max-width: 84vw; }
+.thumb-row .shot img { max-height: 19vh; }
+
+/* ----------------------------------------------------------------------------
+   Animated terminal — a lightweight typewriter panel for a product slide.
+   Drive it from the deck's own script by appending .term__line elements; the
+   caret blink is pure CSS so it keeps animating with no JS at all.
+   -------------------------------------------------------------------------- */
+.term {
+  border-radius: var(--deck-radius-lg); overflow: hidden;
+  border: var(--deck-hairline) solid var(--border-visible); background: var(--surface);
+  box-shadow: var(--shot-shadow); font-family: var(--font-mono); font-size: 0.8rem;
+  width: 100%; max-width: 480px;
+}
+.term__bar { display: flex; align-items: center; gap: 0.5em; padding: 0.6em 0.9em; border-bottom: var(--deck-hairline) solid var(--border); }
+.term__dot { width: 9px; height: 9px; border-radius: var(--deck-radius-circle); background: var(--border-strong); }
+.term__title { margin-left: 0.4em; color: var(--fg-3); font-size: 0.68rem; letter-spacing: 0.04em; }
+.term__body { padding: 1.1em 1.2em; min-height: 130px; }
+.term__line { color: var(--fg-2); line-height: 1.8; word-break: break-all; }
+.term__prompt { color: var(--lime); margin-right: 0.5em; }
+.term__caret {
+  display: inline-block; width: 0.5em; height: 1em; background: var(--fg);
+  margin-left: 1px; vertical-align: text-bottom;
+  animation: term-blink 1s steps(1) infinite;
+}
+@keyframes term-blink { 50% { opacity: 0; } }
+
+/* ----------------------------------------------------------------------------
+   People grid
+
+   .slide-people + .people-wrap centre the whole block (heading + grid) as a
+   unit on the slide while the text inside stays left-aligned. Without the
+   wrapper the grid centres but the heading pins left, which reads as a mistake.
+   -------------------------------------------------------------------------- */
+.slide-people { align-items: center; justify-content: center; }
+.people-wrap { max-width: 780px; width: 100%; }
+.people-grid { display: grid; grid-template-columns: repeat(var(--people-cols, 5), 1fr); gap: 1rem; margin-top: 1rem; width: 100%; }
+.people-grid--duo { grid-template-columns: repeat(2, minmax(0, 340px)); gap: 2.2rem; margin-top: 1.8rem; justify-content: center; }
+.person-card { text-align: center; }
+.person-card img {
+  width: 100%; aspect-ratio: 1; object-fit: cover;
+  border-radius: var(--deck-radius-lg); border: var(--deck-hairline) solid var(--border-visible);
+}
+.person-card .p-name { font-family: var(--font-display); font-weight: var(--weight-heading); font-size: 1.02rem; color: var(--fg); margin-top: 0.5em; }
+.person-card .p-role { font-size: 0.82rem; color: var(--violet-strong); font-weight: 600; margin-top: 0.1em; font-family: var(--font-mono); }
+.person-card .p-bio { font-size: 0.76rem; color: var(--fg-2); line-height: 1.42; margin-top: 0.4em; }
+/* Row variant — photo beside text, for 2-up bios with real copy. */
+.person-card--row { text-align: left; display: flex; gap: 1rem; align-items: flex-start; }
+.person-card--row img { width: 84px; height: 84px; aspect-ratio: auto; flex-shrink: 0; border-radius: var(--deck-radius-lg); }
+.person-card--row .p-name { margin-top: 0; font-size: 1.2rem; }
+
+/* ----------------------------------------------------------------------------
+   Principle / value card grid — set --cols inline (default 4).
+   -------------------------------------------------------------------------- */
+.principle-grid { display: grid; grid-template-columns: repeat(var(--cols, 4), 1fr); gap: 1rem; margin-top: 1.1rem; width: 100%; }
+.principle-card, .value-card {
+  border: var(--deck-hairline) solid var(--border-visible); border-radius: var(--deck-radius-xl);
+  padding: 1.1rem; background: var(--surface); text-align: left;
+}
+.principle-card .card-media, .value-card .card-media {
+  position: relative; width: 100%; height: 90px;
+  border-radius: var(--deck-radius-md); overflow: hidden; margin-bottom: 0.8em;
+  background: color-mix(in srgb, var(--fg) 2.5%, var(--surface));
+}
+.principle-card .card-media svg, .value-card .card-media svg { width: 100%; height: 100%; display: block; }
+.principle-card h3, .value-card h3 { font-family: var(--font-display); font-weight: var(--weight-heading); font-size: 1.12rem; color: var(--fg); margin: 0 0 0.4em 0; }
+.principle-card p, .value-card p { font-size: 0.78rem; color: var(--fg-2); line-height: 1.5; margin: 0; }
+
+/* ----------------------------------------------------------------------------
+   Print export — handles BOTH scroll axes (gotcha #10).
+
+   A vertical deck only needs overflow/height resets. A horizontal deck ALSO
+   needs `#deck { display: block }` and `.slide { width: 100% }`, or the flex
+   row survives into the PDF and every slide collapses to a sliver. The rules
+   below are unconditional so one print block covers both orientations.
+   -------------------------------------------------------------------------- */
+@media print {
+  /* Page geometry has to come from CSS, not the exporter. Chrome's
+     `--print-to-pdf` CLI has no orientation flag (orientation is a CDP-only
+     parameter), so without this rule a deck exports onto portrait A4 and every
+     16:9 slide sits in a band with half the page blank. Declaring a 16:9 page
+     box here makes the export correct from ANY print path — the CLI, Cmd-P, or
+     Playwright's page.pdf() — instead of only the one the script happens to use. */
+  @page { size: 1280px 720px; margin: 0; }
+  html, body { overflow: visible; height: auto; background: var(--bg); }
+  #deck, #deck.deck--horizontal {
+    overflow: visible; height: auto; width: auto;
+    display: block;                 /* undo the horizontal deck's flex row */
+    scroll-snap-type: none;
+  }
+  .slide, #deck.deck--horizontal > .slide {
+    height: auto; min-height: 100vh; width: 100%;
+    flex: none; page-break-after: always; break-after: page;
+    border-right: none; border-bottom: none;
+  }
+  .slide:last-child { page-break-after: auto; break-after: auto; }
+  .progress, .navhint, .side-brand { display: none; }
+  /* Keep the photo scrims and gradient bar — print-to-PDF is run with
+     printBackground/--print-to-pdf background printing enabled. */
+  .slide::before { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+}
+
+/* ----------------------------------------------------------------------------
+   Reduced motion — honour the OS setting. The caret blink and smooth scroll
+   are the only motion in the system; both are decorative.
+   -------------------------------------------------------------------------- */
+@media (prefers-reduced-motion: reduce) {
+  #deck { scroll-behavior: auto; }
+  .term__caret { animation: none; }
+}
