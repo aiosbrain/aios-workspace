@@ -1,8 +1,10 @@
 # Deck gotchas
 
-Every entry below cost a real debugging round in one of the two source decks — a
+Entries 1-17 each cost a real debugging round in one of the two source decks — a
 proposal deck (14 revision rounds) and a product demo deck (5 revision rounds).
-Each fix is now a **default** in `deck-base.css`, not an opt-in flag.
+Each fix is now a **default** in `deck-base.css`, not an opt-in flag. Entries
+18-23 are the editorial anti-patterns: what made the classic default look dense,
+fixed by default in `editorial.css`.
 
 This file exists so nobody "fixes" a default back to the broken behaviour by
 accident. The *reasoning* is the point — the CSS alone looks arbitrary, and an
@@ -261,6 +263,96 @@ PNG, region-targeted, per gotcha #6.
 
 ---
 
+## Editorial anti-patterns (18-23)
+
+These six came from one review. A client proposal was built on the classic
+default, and the owner's verdict on the result was that it looked dense and
+unfinished. The rebuild on an editorial layer was judged a large step up, and
+every difference between the two decks is one of the entries below. The fixes
+are now the defaults in `assets/editorial.css` and the editorial starter slides
+in `new-deck.mjs`. Each entry exists so nobody walks a deck back to the old look
+one "small" change at a time.
+
+## 18. No full-width callout strips
+
+**Don't:** close a slide with a `.note` or `.callout` that runs the full width
+of the slide under the content. It reads as a warning banner, splits the slide
+into two unrelated halves, and is usually a sentence that did not fit anywhere
+else.
+
+**Do:** put the point inside the composition: a `.ed-card--feature` beside the
+cards it summarizes, an `.ed-lede` under the heading, or one `.ed-body.ed-after`
+sentence at text width (it is capped near 70ch, never full bleed). If it
+genuinely needs its own frame, it needs its own slide.
+
+## 19. No eyebrow label above every heading
+
+**Don't:** stack a small uppercase `.kicker` over every slide title. On one
+slide it is a signpost; on every slide it is noise, doubles the number of
+things the eye lands on before the claim, and pushes the heading down.
+
+**Do:** let `.ed-h1` stand alone and state the claim. If the audience needs to
+know which section they are in, say it in the heading itself or use one
+statement slide as the act break. The editorial starter slides carry no
+eyebrow anywhere, on purpose.
+
+## 20. Nothing below about 15px
+
+**Don't:** set body copy, captions or chart labels at caption size because a
+slide is full. The classic default's body ran close to caption size, and that
+is the single change that made the old decks look dense from across a room.
+
+**Do:** keep `.ed-body` (17px floor) for anything the audience reads and
+`.ed-small` (15px floor) as the smallest text on any slide. The floors are
+`clamp()` minimums in `editorial.css`; do not override them, and `.ed-num small`
+is held to the same 15px. SVG text is the trap: it scales with the viewBox, so a
+label set at 15px renders smaller whenever the SVG is drawn narrower or shorter
+than its viewBox. The `.ed-svg-t*` classes are 15-18px at a scale of 1, so at
+1280x720 keep a full-width diagram's viewBox at most 1100 units wide, a
+`.ed-svg--map` (capped at 50vh, 360px) at most 360 units tall, and a chart in a
+7:4 split card near 540 units wide. The editorial starter slides and
+`examples/editorial-proposal` hold every text node at 15px or more at 1280x720,
+measured in Chromium. Text inside raster or data-URI images (mockups,
+wireframes) is decoration and is exempt; never put copy the audience must read
+inside an image. Text contrast is part of the same rule: `--ed-mist`,
+`--ed-voice-a` and `.ed-svg-t-on` are mixed so they hold 4.5:1 or better on
+paper and stone in both light themes. Voice-A text on its own soft tint sits
+just under that on aios-light, so use it there only at heading size. If copy does not fit at those sizes, cut it or split the slide.
+
+## 21. No tiny bullets
+
+**Don't:** fill a slide with a long list of short, small bullets, or with
+`ul.tight` as the main content. Six-plus lines of small text is a document
+pasted onto a slide.
+
+**Do:** use `.ed-list` with three to five items at body size, each one a full
+thought with a bold lead-in, or turn the items into cards or numbered steps. A
+list longer than five is a table or a second slide.
+
+## 22. One heading per slide
+
+**Don't:** give a slide a title, then a second heading-sized line, then card
+headings that compete with both. Two headings means two claims, and the
+audience will not know which one the slide is proving.
+
+**Do:** one `.ed-h1` per slide, plus at most one `.ed-lede`. Everything below
+that is `.ed-h3` or smaller. A title that needs a second sentence to make sense
+is the wrong title.
+
+## 23. Vertical balance
+
+**Don't:** pin content to the top of the slide and leave the bottom third empty,
+or pad with spacer elements and margins to push it down. Both read as a slide
+that ran out of content halfway.
+
+**Do:** let the composition sit in the middle. `.slide` already uses
+`justify-content: center`, and `editorial.css` raises the vertical margin to
+8.5vh so the centered block has air above and below. Build each slide as one
+heading block plus one composition (`.ed-split`, a grid, a track, a diagram)
+and let the slide center it. In a split, `.ed-split` centers its two sides
+against each other; use `--narrow` (top-aligned) only when one side is much
+taller.
+
 ---
 
 ## Adding a gotcha
@@ -268,7 +360,7 @@ PNG, region-targeted, per gotcha #6.
 A gotcha earns a place in this file when **both** are true:
 
 1. It cost a real debugging round (not a hypothetical, not a style preference).
-2. The fix is now a **default** in `deck-base.css` (or in `qa-deck.mjs`).
+2. The fix is now a **default** in `deck-base.css`, `editorial.css` or `qa-deck.mjs`.
 
 The entry exists so nobody reverts that default by accident. If a finding fails
 either test it belongs in the deck's own notes, not here — this file is the

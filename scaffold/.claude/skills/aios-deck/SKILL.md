@@ -3,12 +3,13 @@ name: aios-deck
 description: |
   Build a presentation-grade, brand-themeable HTML slide deck — demo, proposal,
   update, or pitch — from a pre-debugged component library instead of a blank
-  page. Ships three themes, a slide catalog with copy-pasteable markup, a brand
+  page. New decks default to an editorial design layer (generous type, margins
+  and spacing). Ships three themes, a slide catalog with copy-pasteable markup, a brand
   intake schema for adding your own colours and logo, complete reference decks,
   and an automated QA gate that catches the layout and screenshot bugs two
   production decks each rediscovered from scratch. Output is one self-contained
   HTML folder plus a print-to-PDF script — never PowerPoint.
-version: 1.0.0
+version: 1.1.0
 kind: skill
 triggers:
   - build a deck
@@ -29,6 +30,34 @@ This skill exists because two production decks were built independently and
 **both** burned real revision rounds rediscovering the same layout, screenshot
 and export bugs — one over 14 rounds, one over 5. Everything those rounds proved
 is baked in here as a **default**, not an opt-in flag.
+
+## Editorial is the default
+
+Every new deck links **`assets/editorial.css`** after the theme and starts from
+editorial (`ed-`) markup. `--classic` opts out.
+
+Why: the original default (`deck-base.css` + a theme, nothing else) produced
+decks that looked dense and unfinished. Body copy sat at caption size, layouts
+were cramped with no vertical balance, callouts ran as full-width strips, and
+every heading carried an eyebrow label above it. A client deck rebuilt on a
+deck-local editorial layer was judged a large step up in color, styling,
+spacing and typography, so that layer is now the shipped default:
+
+- **Type you can read from the back of a room.** Body copy never drops below
+  17px at 1440 wide, captions never below 15px.
+- **Real margins.** 7vw x 8.5vh, so content sits in a balanced composition.
+- **Cards, pills, numbers and steps** instead of strips, eyebrows and bullets.
+- **A two-voice color pair** (`--ed-voice-a` / `--ed-voice-b`) for any argument
+  with two actors (people and AI, client and vendor, today and target).
+
+Every editorial color is derived from the theme's token contract, so the layer
+works on all three shipped themes, light and dark, and on any brand you add
+through `reference/brand-schema.md`. Use `--classic` only when you need the
+classic look on purpose, or a classic-only slide type (table, spectrum,
+terminal, live demo) as the backbone of the deck. Classic components still
+render inside an editorial deck, because `deck-base.css` is always loaded.
+
+---
 
 Your job is to follow the protocol below. It is deliberately blocking at step 1
 and step 4. Do not skip either.
@@ -63,11 +92,12 @@ path would use — treat it as an interface, not a worksheet.
 ### Step 2 — Read two complete examples. BEFORE writing anything.
 
 ```
-examples/product-demo-dark/deck.html    ← a 10-slide product demo, dark
-examples/proposal-light/deck.html       ← a 13-slide proposal, light
+examples/editorial-proposal/deck.html   ← a 15-slide proposal, the DEFAULT editorial look
+examples/product-demo-dark/deck.html    ← a 10-slide product demo, dark, classic
+examples/proposal-light/deck.html       ← a 13-slide proposal, light, classic
 ```
 
-These are the quality bar. Prose rules do not calibrate an authoring agent;
+Always read `editorial-proposal` unless you passed `--classic`. These are the quality bar. Prose rules do not calibrate an authoring agent;
 complete examples do. Read the one closest to what you are building, plus one
 other, before you write a slide. Everything in them is fictional — they are
 synthetic samples, never a source of facts.
@@ -78,18 +108,28 @@ synthetic samples, never a source of facts.
 
 ```bash
 node scripts/new-deck.mjs <target-dir> --theme <slug> --title "..." \
-  [--slides cover,statement,content,two-col,cards,demo,close] [--horizontal]
+  [--slides cover,statement,content,two-voice,steps,timeline,options,team,close] \
+  [--horizontal] [--classic]
 ```
 
-It writes `deck.html`, copies `deck-base.css` + the one theme + `deck-nav.js`
-into the folder, and seeds a `MANIFEST.md` with a revision-log stub. Run
-`--list-slides` and `--list-themes` to see the options.
+It writes `deck.html`, copies `deck-base.css` + the one theme +
+`editorial.css` + `deck-nav.js` into the folder, and seeds a `MANIFEST.md` with
+a revision-log stub. With `--classic` it skips `editorial.css` and uses the
+classic slide set. Run `--list-slides` (with or without `--classic`) and
+`--list-themes` to see the options.
 
 Then replace the content, one slide at a time, using
-**`reference/slide-catalog.md`** — 19 slide types, each with copy-pasteable
-markup and a note on when *not* to use it. Do not invent classes. If nothing
-fits, the answer is almost always a `.two-col` holding a different pair of
-existing components.
+**`reference/slide-catalog.md`**: its **Editorial layer** section is the parts
+list for the default look (every `ed-` component, copy-pasteable, each with a
+note on when *not* to use it), and the numbered sections cover the 19 classic
+slide types. Do not invent classes. If nothing fits, the answer is almost always
+an `.ed-split` (or a classic `.two-col`) holding a different pair of existing
+components.
+
+In an editorial deck, read the editorial anti-patterns in
+`reference/gotchas.md` (entries 18-23) before you write a slide: no full-width
+callout strips, no eyebrow-plus-heading pairs, nothing below about 15px, no
+tiny bullets, one heading per slide, and vertical balance.
 
 Read **`reference/gotchas.md`** before you touch `.shot`, `.two-col`,
 `.photo-slide`, an inline `<svg>`, or the `@media print` block. Those defaults
@@ -102,7 +142,8 @@ Three rules that are easy to get wrong:
    `.svg-cap` / `.svg-num` / `.svg-box` / `.svg-rule`. A hardcoded fill renders
    invisible the moment the theme swaps.
 2. **Never add a `<style>` block to a deck.** If a slide overflows, cut copy or
-   split the slide. Adding CSS forks the system.
+   split the slide. Adding CSS forks the system. (Inline custom properties the
+   catalog documents, such as `--ed-grid-cols` or `--ed-track-n`, are fine.)
 3. **The deck folder must be self-contained.** It is emailed and opened from
    `file://`. Nothing may reference a path outside the folder, and nothing may
    resolve through `node_modules`.
@@ -171,20 +212,23 @@ in that tool, not to machine-translate it.
 
 | Path | What |
 |---|---|
-| `reference/slide-catalog.md` | 19 slide types, copy-pasteable markup, the deck shell, density guidance, the full class index. **Start here when authoring.** |
+| `reference/slide-catalog.md` | The editorial layer's components, then 19 classic slide types, copy-pasteable markup, the deck shell, density guidance, the full class index. **Start here when authoring.** |
 | `reference/brand-schema.md` | Brand intake form, token mapping, derivation rules, anti-slop calibration, contrast gates. **Start here when theming.** |
-| `reference/gotchas.md` | 15 Don't/Do entries with the reasoning that stops someone reverting a fix. |
+| `reference/gotchas.md` | Don't/Do entries (including the editorial anti-patterns) with the reasoning that stops someone reverting a fix. |
+| `assets/editorial.css` | v1.0.0. The default design layer: `ed-` type scale, margins and components. Linked after the theme. Every color derived from theme tokens. |
+| `scripts/editorial-slides.mjs` | The editorial starter slides `new-deck.mjs` emits by default. |
 | `assets/deck-base.css` | v1.0.0. Brand-agnostic mechanics + component library. Declares the token contract between `@token-contract:begin/end` markers. Defines no colour or font value itself. |
 | `assets/themes/*.css` + `*.md` | Three themes, each with a machine file and a human role card. |
 | `assets/deck-nav.js` | Arrow-key navigation + live progress counter. No click-to-advance, deliberately. |
 | `scripts/new-deck.mjs` | Scaffold a deck folder from a theme + slide list. |
 | `scripts/qa-deck.mjs` | The gate. Exit 0 or it isn't done. |
 | `scripts/deck-pdf.mjs` | Print-to-PDF. |
-| `examples/` | Two complete reference decks. Fully synthetic — never a source of facts. |
+| `examples/` | Three complete reference decks (one editorial, two classic). Fully synthetic — never a source of facts. |
 
 ## Extending it
 
-A component earns a place in `deck-base.css` once a **second** deck needs it.
+A component earns a place in `deck-base.css` (or, for the editorial look,
+`editorial.css`) once a **second** deck needs it.
 Until then list it under "Unvalidated components" at the end of
 `reference/slide-catalog.md`. A gotcha earns a place in `reference/gotchas.md`
 once it has cost a real debugging round **and** its fix is a default in the base

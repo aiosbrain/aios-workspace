@@ -122,3 +122,28 @@ new sync surface, no brain API call, and no new item kind. The one governance-re
 directional — all source material was read from a private workspace and this repo is public, so
 every shipped example, screenshot, name, and number is synthetic. The acceptance criteria
 include an explicit scan for leaked identifiers before the branch is pushed.
+
+## Amendment 1.1: the editorial layer is the default (2026-10-29)
+
+**Why.** The 1.0 default (`deck-base.css` + one theme) produced decks the owner judged dense
+and unfinished: caption-sized body text, cramped layouts with no vertical balance, full-width
+callout strips, and an eyebrow label above every heading. A client deck rebuilt on a deck-local
+design layer was judged a large step up in color, styling, spacing and typography. That layer is
+generalized and shipped as the default.
+
+**Contract additions**, under `scaffold/.claude/skills/aios-deck/`:
+
+| Path | Kind | Contract |
+|---|---|---|
+| `assets/editorial.css` | CSS | v1.0.0. Loaded after the theme. Every class prefixed `ed-`. Every color is a `:root` custom property derived from the theme token contract (`color-mix()` against `--fg` / `--bg`), so it holds on light and dark themes and passes `qa-deck.mjs` check (b). Two optional theme hooks, `--voice-a` / `--voice-b`, set the two-voice pair; they are not in the token contract. Body text floor 17px, caption floor 15px, slide margins 7vw x 8.5vh. |
+| `scripts/editorial-slides.mjs` | Node ESM | The editorial starter slides. Imported by `new-deck.mjs`. |
+| `scripts/new-deck.mjs` | Node ESM | v1.1.0. Links and copies `editorial.css` and emits editorial slides by default. `--classic` restores the 1.0 deck output (no `editorial.css`, classic slide set); its MANIFEST gains a design-layer row. |
+| `examples/editorial-proposal/` | directory | A 15-slide synthetic proposal using every `ed-` component. |
+
+`reference/slide-catalog.md` gains an "Editorial layer" section (markup plus a "when not to" per
+component) and `reference/gotchas.md` gains the editorial anti-patterns as entries 18-23.
+
+**Acceptance.** A deck scaffolded with no flags, on each of the three shipped themes and with
+every editorial slide type, passes `qa-deck.mjs` with check (c) run by a real browser at 1280x720
+and 1440x810 and zero overflow. `--classic` output passes the same gate. `qa-deck.mjs` itself is
+unchanged.

@@ -98,6 +98,9 @@ What keeps the copy honest:
 - `deck-base.css` itself defines **no** colour or font value. It declares a
   machine-readable token contract between `@token-contract:begin/end` markers,
   and `scripts/qa-deck.mjs` fails a deck whose theme omits any required token.
+- The default design layer, `assets/editorial.css`, also defines no literal colour of its
+  own: every value is derived from the theme's tokens with `color-mix()`, so it inherits
+  whatever theme (and package version) the deck pins.
 - Structural scales (radius, spacing, rule widths) are copied from the package's
   `radius.json` / `space.json` rather than hardcoded per component — that was a
   live violation of rule 1 in the shipped deck CSS this skill replaced.

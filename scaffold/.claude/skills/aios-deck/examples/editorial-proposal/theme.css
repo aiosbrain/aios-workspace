@@ -1,0 +1,86 @@
+/* ============================================================================
+   Theme: Prism Light — the editorial / proposal identity
+   Mode: light
+   For: deck-base.css v1.0.0 (satisfies the full 30-token contract)
+
+   Source: the Prism Light document identity — the same token set as the
+   workspace's Prism Light PDF stylesheet. This theme is NOT derived from
+   @aios-alpha/design; it is the document-side brand, and it predates and sits
+   deliberately alongside the product palette. There is therefore no package
+   version or hash to pin for it. Recorded: 2026-07-29.
+
+   Tokens are INLINED rather than @import-ed on purpose: a deck is handed over
+   as a file:// folder and cannot resolve node_modules (reference/gotchas.md #13).
+
+   Role card (human-readable): prism-light.md
+   ============================================================================ */
+@import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@400;500;600;700;800&family=Hanken+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+:root {
+  /* Surfaces */
+  --bg:            #ffffff;
+  --surface:       #fafafa;
+  --elevated:      rgba(255, 255, 255, 0.85);
+  --page-backdrop: #e9e9ec;   /* a clear step darker than --bg, or the slide
+                                 edges vanish into the scroll gutter */
+
+  /* Text */
+  --fg:   rgba(15, 15, 17, 0.95);
+  --fg-2: rgba(15, 15, 17, 0.66);
+  --fg-3: rgba(15, 15, 17, 0.48);
+
+  /* Borders */
+  --border:         rgba(0, 0, 0, 0.08);
+  --border-visible: rgba(0, 0, 0, 0.12);
+  --border-strong:  rgba(15, 15, 17, 0.3);
+
+  /* Brand hues. Note the inversion against the dark theme: here the `-strong`
+     steps are DARKER than their base, because contrast runs the other way on
+     a white field. Both carry small text, so both must clear 4.5:1 on --surface. */
+  --violet:        #7c3aed;
+  --violet-strong: #6d28d9;
+  --blue:          #3b82f6;
+  --cyan:          #2dd4bf;
+  --cyan-strong:   #0d9488;
+  --emerald:       #10b981;
+  --amber:         #f59e0b;
+  --red:           #dc2626;
+  --lime:          #a3e635;
+  /* Text ON filled lime (the CTA pill). Mode-independent near-black: citron is
+     bright, so --bg (white here) gave ~1.7:1 and the CTA label was unreadable. */
+  --accent-fg:     #0f0f11;
+
+  /* Composite. Violet → blue → teal, rationed to the accent bar, the list
+     markers and the step numerals. Never text, never a card background. */
+  --gradient-prism: linear-gradient(135deg, #7c3aed 0%, #3b82f6 50%, #2dd4bf 100%);
+  --kicker-color:   #6d28d9;
+
+  /* Photo slides. --photo-fg stays WHITE even though this is a light theme:
+     the scrim behind it is always dark, regardless of the base mode.
+     --photo-scrim-rgb is a BARE TRIPLET (consumed as
+     rgba(var(--photo-scrim-rgb), 0.88)) — a hex value here silently breaks
+     every photo slide in the deck. */
+  --photo-fg:        #ffffff;
+  --photo-fg-soft:   rgba(255, 255, 255, 0.85);
+  --photo-scrim-rgb: 8, 8, 10;
+
+  /* Shadow — two stacked shadows tinted with the text colour. No light
+     hairline: on a white field the card's own border is enough. */
+  --shot-shadow: 0 20px 50px rgba(15, 15, 17, 0.16), 0 6px 16px rgba(15, 15, 17, 0.1);
+
+  /* Fonts */
+  --font-display: 'Bricolage Grotesque', -apple-system, sans-serif;
+  --font-body:    'Hanken Grotesk', -apple-system, sans-serif;
+  --font-mono:    'JetBrains Mono', ui-monospace, monospace;
+  --font-kicker:  var(--font-body);   /* body eyebrow = editorial register */
+
+  /* Weights — Bricolage Grotesque carries real 700 and 800 axes, so unlike a
+     no-bold-axis display serif this theme can and should ask for them. */
+  --weight-display: 800;
+  --weight-heading: 700;
+
+  /* Optional */
+  --accent-bar-height: 5px;   /* a white field needs more presence than the
+                                 3px hairline the dark theme uses on black */
+  --deck-logo-height:  26px;  /* a light theme needs the DARK logo variant */
+}
