@@ -47,6 +47,7 @@ import {
   warnBrainUrlMismatch,
 } from "./brain-config.mjs";
 import { pullSyncOriginTasks, resolveTasksPath, mergeWritebackFeed } from "./pull-tasks.mjs";
+import { renderPulledNote } from "./pull-notes.mjs";
 import {
   parseFrontmatter,
   normalizeTier,
@@ -79,6 +80,18 @@ import { createBrainClient } from "./brain-client.mjs";
 import * as skillContext from "./skill-context.mjs";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
+const PULL_ITEM_KINDS = new Set([
+  "deliverable",
+  "transcript",
+  "decision",
+  "task",
+  "artifact",
+  "skill",
+  "blueprint",
+  "fact",
+  "stakeholder_mention",
+  "note",
+]);
 const SYNCABLE_TIERS = ["team", "external"]; // canonical; `client` normalizes to external
 
 // ── tiny helpers ────────────────────────────────────────────────────────────
@@ -796,6 +809,7 @@ async function cmdPull(repo, cfg, args = [], { onProgress } = {}) {
       if (cursor) qs.set("cursor", cursor);
       const res = await stage("Fetching Team Brain items", () => api(cfg, "GET", `/items?${qs}`));
       for (const item of res.items || []) {
+        if (!PULL_ITEM_KINDS.has(item?.kind)) continue;
         // H1: flatten BOTH project and path (a MITM brain can put `..` in either) + safeJoin.
         const flat = `${String(item.project).replace(/\//g, "__")}__${item.path.replace(/\//g, "__")}`;
         const dest = safeJoin(destRoot, flat);
@@ -814,7 +828,11 @@ async function cmdPull(repo, cfg, args = [], { onProgress } = {}) {
           "---",
           "",
         ].join("\n");
-        writeFileSync(dest, fm + (item.body || ""));
+        const content =
+          item.kind === "note"
+            ? renderPulledNote(item, new Date().toISOString())
+            : fm + (item.body || "");
+        writeFileSync(dest, content);
         fetched++;
         if (presenter) presenter.message(`${destRel}/${flat}`, "success");
         else console.log(`  ${c.green("✓")} ${destRel}/${flat}`);
