@@ -1,15 +1,17 @@
 {
-  "version": "1.0.1",
+  "version": "1.0.2",
   "status": "proposed",
   "files": {
-    "actions-fixtures.json": "f1b524657e04cf3b6e8e2289ad1b49e60389d00337cfe77ee769ca9f7bc3727c",
-    "actions.schema.json": "d33c0e1cdc25d16d88d091af181a84481be229abcb6bec46222aa45ea7f097c5",
+    "actions-fixtures.json": "18938ddd05ee12f5332aa045c377cc61d4b2e09dd75c6842dd967ff7cdb8ba42",
+    "actions.schema.json": "e93a5658497b9324af656636ed94ba60e7b000b4ddc50b4d9246acba8f4bf186",
     "operations.json": "4e997bf3b91edf4378a5746b0699a1fe492a36f9f96bbbee82d962eafeedbd16",
     "profile.schema.json": "25a322a0cf859ee0033997b6f60d04f33a797ecbb7e093b6e1d65bc0cc4a7a33",
     "read-baseline.json": "657753d3397889fcf0dfb12c7169ade68de5fcdc28a91b06539eb39e035fa0c1",
-    "tasks-fixtures.json": "3d50b40d7e53d80471aea388e18c77dfe86061c6964fb64b5e5a867ef1b4f537",
+    "tasks-fixtures.json": "64752fbae79f2baeb91e3dff436f4fa227c4ed7141b05743626f014f3627724e",
+    "tasks-sync-fixtures.json": "77162e087a92d7afd3de0e46624cb3ff1c7b3767f60466cc1780eddf403351e7",
+    "tasks-sync.schema.json": "3d60a0edfce7c11ef58815119d879e8872709ceaa8efbcba45a2c4a36668407e",
     "tasks.schema.json": "b88f910b4a9a37a3043b641c9e814680ef188468403f14e8aa0a4d6263d5f95a",
-    "workspace-fixtures.json": "6d2c991234c86d955890eab8a1054cd009ebd1d618bacc7444f5acfbfa78acc5",
+    "workspace-fixtures.json": "b9374a9e0b600f45c11679fb899ad3039b7f3de5b0f741a34969dffe9bacd89e",
     "workspace.schema.json": "4a1a3705afaafe30a2bf779d13489d48800de97c2367995d665c2e8bf8595773"
   }
 }

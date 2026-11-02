@@ -1,4 +1,4 @@
-# MCP next contract — revision 1.0.1
+# MCP next contract — revision 1.0.2
 
 Status: **proposed, contract-only**. This supplement specifies the next local stdio
 release; passing its fixtures proves specification consistency, not runtime support.
@@ -216,3 +216,5 @@ revocation/race/fault tests against these vectors. Release requires verified dep
 capability/version alignment; this contract PR does not certify it.
 
 Implementation compatibility additions in revision 1.0.1 are specified in [governed item compatibility](governed-items.md). No runtime activation or package publication is implied.
+
+Revision 1.0.2 specifies [task revision reconciliation](task-sync.md), [explicit profile destination binding](profile-binding.md), and append-only note read compatibility. The task-sync/1 protocol has dedicated schemas and positive/negative fixtures; it does not activate a runtime capability.
