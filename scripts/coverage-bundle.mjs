@@ -22,6 +22,16 @@ export const PAYLOAD_FILES = Object.freeze([
   "coverage-summary.json",
   "lcov.info",
 ]);
+export const MAX_FILE_BYTES = Object.freeze({
+  "coverage-baseline-candidate.json": 64 * 1024,
+  "coverage-summary.json": 4 * 1024 * 1024,
+  "lcov.info": 16 * 1024 * 1024,
+  "manifest.json": 64 * 1024,
+});
+export const MAX_BUNDLE_BYTES = Object.values(MAX_FILE_BYTES).reduce(
+  (total, bytes) => total + bytes,
+  0
+);
 function compareStrings(left, right) {
   return left.localeCompare(right, "en");
 }
@@ -66,11 +76,14 @@ function sha256(bytes) {
   return createHash("sha256").update(bytes).digest("hex");
 }
 
-function readRegularFile(file, label) {
+function readRegularFile(file, label, maxBytes = MAX_FILE_BYTES[path.basename(file)]) {
   let descriptor;
   try {
     descriptor = openSync(file, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
-    if (!fstatSync(descriptor).isFile()) fail(`${label} must be a regular file`);
+    const status = fstatSync(descriptor);
+    if (!status.isFile()) fail(`${label} must be a regular file`);
+    if (!Number.isSafeInteger(maxBytes) || maxBytes < 1) fail(`${label} has no byte ceiling`);
+    if (status.size > maxBytes) fail(`${label} exceeds ${maxBytes} bytes`);
     return readFileSync(descriptor);
   } catch (error) {
     if (error?.code === "ELOOP") fail(`${label} must not be a symlink`);
@@ -160,16 +173,22 @@ function validateManifest(bytes, expectedIdentity) {
     }
   }
   assertExactKeys(manifest.files, PAYLOAD_FILES, "manifest.files");
+  let declaredBytes = 0;
   for (const name of PAYLOAD_FILES) {
     const metadata = manifest.files[name];
     assertExactKeys(metadata, ["bytes", "sha256"], `manifest.files.${name}`);
     if (!Number.isSafeInteger(metadata.bytes) || metadata.bytes < 1) {
       fail(`manifest.files.${name}.bytes must be a positive safe integer`);
     }
+    if (metadata.bytes > MAX_FILE_BYTES[name]) {
+      fail(`manifest.files.${name}.bytes exceeds ${MAX_FILE_BYTES[name]} bytes`);
+    }
+    declaredBytes += metadata.bytes;
     if (!/^[0-9a-f]{64}$/.test(metadata.sha256)) {
       fail(`manifest.files.${name}.sha256 must be a lowercase SHA-256 digest`);
     }
   }
+  if (declaredBytes > MAX_BUNDLE_BYTES) fail(`manifest payloads exceed ${MAX_BUNDLE_BYTES} bytes`);
   return manifest;
 }
 

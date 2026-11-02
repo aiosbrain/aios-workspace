@@ -17,6 +17,7 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 import {
   BUNDLE_SCHEMA_VERSION,
+  MAX_FILE_BYTES,
   PAYLOAD_FILES,
   installBundle,
   packBundle,
@@ -137,6 +138,23 @@ test("pack rejects symlinked source payloads", () =>
     symlinkSync(target, path.join(source, "coverage-summary.json"));
     assert.throws(() => packBundle({ source, out: bundle, ...IDENTITY }), /must not be a symlink/);
   }));
+
+test("pack and install reject payloads above their explicit byte ceilings", () => {
+  withFixture(fixture, ({ source, bundle }) => {
+    writeFileSync(
+      path.join(source, "coverage-baseline-candidate.json"),
+      Buffer.alloc(MAX_FILE_BYTES["coverage-baseline-candidate.json"] + 1, 0x20)
+    );
+    assert.throws(() => packBundle({ source, out: bundle, ...IDENTITY }), /exceeds .* bytes/);
+  });
+  withFixture(packedFixture, ({ bundle, dest }) => {
+    writeFileSync(
+      path.join(bundle, "manifest.json"),
+      Buffer.alloc(MAX_FILE_BYTES["manifest.json"] + 1, 0x20)
+    );
+    assert.throws(() => installBundle({ bundle, dest, ...IDENTITY }), /exceeds .* bytes/);
+  });
+});
 
 test("install rejects each missing bundle file and leaves destination absent", async (t) => {
   for (const name of [...PAYLOAD_FILES, "manifest.json"]) {
