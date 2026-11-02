@@ -1,3 +1,11 @@
+import { verifyProfileArtifactReceipt } from "./mcp-artifact-receipt.mjs";
+import { parseProfileSelector } from "./mcp-config.mjs";
+import {
+  loadProfileBinding,
+  authorizeProfileCall,
+  validateProfileDestination,
+} from "./mcp-profile-binding.mjs";
+import { ProfileError } from "./mcp-profile-schema.mjs";
 import { createBrainClient } from "./brain-client.mjs";
 import {
   TOOLS,
@@ -11,7 +19,17 @@ export function startMcp(
   config,
   { serverInfo, surface = "toolkit", workspaceHandler, argv = [], env = process.env, ...deps } = {}
 ) {
-  const selectors = parseSelectors(argv, env);
+  const selected = parseProfileSelector(argv);
+  if (selected.artifactReceipt) verifyProfileArtifactReceipt(selected.artifactReceipt, deps);
+  const selectors = parseSelectors(selected.rest, env);
+  const profileOptions = {
+    ...deps,
+    env: selected.configDir ? { ...env, AIOS_CONFIG_DIR: selected.configDir } : env,
+  };
+  const binding = selected.profileId
+    ? loadProfileBinding(selected.profileId, profileOptions)
+    : null;
+  if (binding) config = binding.config;
   const log = (message) => (deps.stderr || process.stderr).write(`${message}\n`);
   const controller = new AbortController();
   const doFetch = deps.fetch || globalThis.fetch;
@@ -31,7 +49,9 @@ export function startMcp(
     } catch (error) {
       capability = { tier: null, reason: `Brain configuration invalid: ${error.message}` };
     }
-    const tools = selectTools(TOOLS, { surface, tier: capability.tier, selectors });
+    const tools = selectTools(TOOLS, { surface, tier: capability.tier, selectors }).filter(
+      (tool) => tool.name !== "aios_loop_collect"
+    );
     // A failed request may contain credentials in an upstream error: never print the key.
     const reason = config.api_key
       ? capability.reason.replaceAll(config.api_key, "[redacted]")
@@ -43,7 +63,58 @@ export function startMcp(
       client,
       tools,
       serverInfo,
-      ctx: { cwd: deps.cwd || config.cwd || process.cwd(), workspaceHandler },
+      ctx: { workspaceHandler },
+      resolveRequest: binding
+        ? async () => {
+            const authorized = authorizeProfileCall(binding, {
+              ...profileOptions,
+              readOnly: selected.readOnly,
+            });
+            const current = loadProfileBinding(binding.profile.id, profileOptions);
+            const guardedFetch = (url, options) => {
+              authorizeProfileCall(binding, profileOptions);
+              const latest = loadProfileBinding(binding.profile.id, profileOptions);
+              if (latest.config.api_key !== current.config.api_key)
+                throw new ProfileError(
+                  "AUTH_REVOKED",
+                  "The selected credential changed. Retry the request."
+                );
+              return doFetch(url, options);
+            };
+            // A successful old startup probe is never current identity evidence.
+            const identity = await validateProfileDestination(
+              current.profile,
+              current.config.api_key,
+              guardedFetch
+            );
+            authorizeProfileCall(binding, profileOptions);
+            const currentClient = createBrainClient(current.config, {
+              ...deps,
+              fetch: guardedFetch,
+            });
+            const currentTools = selectTools(TOOLS, {
+              surface,
+              tier: identity.tier,
+              selectors,
+            }).filter((tool) => tool.name !== "aios_loop_collect");
+            return {
+              client: currentClient,
+              tools: currentTools,
+              ctx: {
+                profile: current.profile,
+                effectiveGrants: authorized.effectiveGrants,
+                readOnly: selected.readOnly,
+                identityVerified: true,
+              },
+            };
+          }
+        : undefined,
+      safeError: (error, { phase } = {}) =>
+        error instanceof ProfileError
+          ? `${error.code}: ${error.message}`
+          : phase === "tool"
+            ? "The tool request failed. Retry the operation; profile status can verify the current connection."
+            : "The selected connection could not be verified. Inspect profile status and retry.",
     });
   })();
   return serveStdio(ready, deps);

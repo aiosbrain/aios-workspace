@@ -142,14 +142,14 @@ test("selectors union explicit toolsets and additive tools, overriding only env 
 
 test("startup /me selects team or external and hidden tools cannot dispatch", async () => {
   const team = await launch();
-  assert.deepEqual(names(team.result[1].result.tools), names(TOOLS));
+  assert.deepEqual(
+    names(team.result[1].result.tools),
+    names(TOOLS.filter((tool) => tool.name !== "aios_loop_collect"))
+  );
   assert.equal(team.calls.filter((c) => c.url.endsWith("/me")).length, 1);
   assert.ok(team.calls[0].options.signal);
   const external = await launch({ response: identity("external") });
-  assert.deepEqual(
-    names(external.result[1].result.tools),
-    [...TOOLSETS.brain, ...TOOLSETS.workspace].sort()
-  );
+  assert.deepEqual(names(external.result[1].result.tools), [...TOOLSETS.brain].sort());
   assert.equal(external.result[2].error.code, -32602);
   assert.equal(external.calls.length, 1, "hidden call must never contact Brain");
   const standalone = await launch({ surface: "standalone" });
@@ -177,7 +177,7 @@ test("missing configuration, revoked keys, invalid identity and network failure 
   ];
   for (const options of failures) {
     const result = await launch(options);
-    assert.deepEqual(names(result.result[1].result.tools), ["aios_loop_collect"]);
+    assert.deepEqual(names(result.result[1].result.tools), []);
     assert.equal(result.result[2].error.code, -32602);
     assert.ok(result.diagnostics().length);
     if (options.cfg?.api_key?.startsWith("aiosd_"))
@@ -225,7 +225,7 @@ test("live startup buffers early input, has a three-second deadline and processe
     result.result.map((r) => r.id),
     [1, 2, 3]
   );
-  assert.deepEqual(names(result.result[1].result.tools), ["aios_loop_collect"]);
+  assert.deepEqual(names(result.result[1].result.tools), []);
 });
 
 test("availability stays immutable after startup while Brain still denies every revoked call", async () => {

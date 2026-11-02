@@ -154,3 +154,62 @@ export function readGlobalCredential({
     closeSync(fd);
   }
 }
+
+/** Read an owner-only profile/receipt document without following replacement links. */
+export function readPrivateDocument(
+  file,
+  {
+    platform = process.platform,
+    uid = process.getuid?.(),
+    readAcl = readWindowsCredentialAcl,
+    optional = false,
+  } = {}
+) {
+  let before;
+  try {
+    before = lstatSync(file);
+  } catch (error) {
+    if (optional && error.code === "ENOENT") return null;
+    throw new Error("Private configuration is unavailable");
+  }
+  for (let directory = path.dirname(file); ; directory = path.dirname(directory)) {
+    const entry = lstatSync(directory);
+    if (!entry.isDirectory() || entry.isSymbolicLink())
+      throw new Error("Private configuration has an unsafe parent");
+    if (platform === "win32") {
+      const acl = readAcl(directory);
+      if (acl.owner === acl.current) assertWindowsCredentialAcl(acl);
+    } else if (entry.uid === uid && entry.mode & 0o022)
+      throw new Error("Private configuration parent is writable by another principal");
+    if (directory === path.dirname(directory)) break;
+  }
+  if (
+    !before.isFile() ||
+    before.isSymbolicLink() ||
+    before.nlink !== 1 ||
+    before.size > 4 * 1024 * 1024
+  )
+    throw new Error("Private configuration must be a bounded regular file");
+  if (platform === "win32") assertWindowsCredentialAcl(readAcl(file));
+  else if (uid === undefined || before.uid !== uid || before.mode & 0o077)
+    throw new Error("Private configuration must be owner-only");
+  const fd = openSync(file, constants.O_RDONLY | (constants.O_NOFOLLOW || 0));
+  try {
+    const opened = fstatSync(fd);
+    if (opened.ino !== before.ino || opened.dev !== before.dev)
+      throw new Error("Private configuration changed");
+    const text = readFileSync(fd, "utf8");
+    const after = lstatSync(file);
+    if (
+      after.isSymbolicLink() ||
+      after.ino !== opened.ino ||
+      after.dev !== opened.dev ||
+      after.size !== opened.size ||
+      after.mtimeMs !== opened.mtimeMs
+    )
+      throw new Error("Private configuration changed");
+    return JSON.parse(text);
+  } finally {
+    closeSync(fd);
+  }
+}

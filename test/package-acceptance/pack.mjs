@@ -9,6 +9,8 @@
  * The output directory becomes the workflow artifact. No acceptance cell may run
  * `npm pack` itself; cells verify the digest recorded here before installing.
  */
+import { packMcp } from "../../packages/mcp-build/pack.mjs";
+import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import assert from "node:assert/strict";
 import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -117,6 +119,7 @@ export function packCandidate(outDir) {
     candidateSha,
     tarball: tarballName,
     sha256: sha256Hex(bytes),
+    integrity: `sha512-${createHash("sha512").update(bytes).digest("base64")}`,
     sizeBytes: bytes.length,
     packageName: pkg.name,
     packageVersion: pkg.version,
@@ -131,6 +134,8 @@ export function packCandidate(outDir) {
       platform: process.platform,
     },
   };
+  const standalone = packMcp(path.join(outDir, "mcp-candidate"), ROOT);
+  manifest.profileCandidate = { path: "mcp-candidate", ...standalone };
   writeFileSync(path.join(outDir, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);
   writeFileSync(path.join(outDir, "inventory.txt"), `${inventory.join("\n")}\n`);
   // The mocked-provider preloads + import probe ride along in the artifact so acceptance

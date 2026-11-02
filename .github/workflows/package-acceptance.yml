@@ -36,6 +36,7 @@ on:
       - "packages/foundation/**"
       - "packages/mcp-core/**"
       - "packages/mcp/**"
+      - "packages/mcp-build/**"
       - "validation/**"
       - "hooks/**"
       - "scaffold/**"
@@ -44,6 +45,7 @@ on:
       - "tsconfig.json"
       - ".claude/rubrics/**"
       - "docs/brain-api.md"
+      - "docs/contract/mcp-next-v1/**"
       - "docs/agentic-ergonomics/**"
       - "docs/devtools-*.md"
       - "docs/ENGINEERING-CONSTITUTION.md"
@@ -134,7 +136,18 @@ jobs:
         with:
           name: package-candidate
           path: ${{ runner.temp }}/package-candidate
+      - name: Expose OpenSSL for the disposable HTTPS profile fixture
+        shell: pwsh
+        run: |
+          $openssl = Get-Command openssl.exe -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty Source
+          if (-not $openssl) {
+            $openssl = Join-Path $env:ProgramFiles 'Git\usr\bin\openssl.exe'
+          }
+          if (-not (Test-Path -LiteralPath $openssl)) { throw 'OpenSSL is required for the disposable HTTPS fixture' }
+          Split-Path -Parent $openssl | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          & $openssl version
       # No checkout dependencies. Install and drive the same digest-verified tarball.
+      # The shared runner includes both installed profile modes and all four host formats.
       - name: Run native Windows MCP acceptance
         run: >
           node test/package-acceptance/run-mcp-cell.mjs
@@ -173,6 +186,8 @@ jobs:
         with:
           name: package-candidate
           path: ${{ runner.temp }}/package-candidate
+      - name: Verify OpenSSL for the disposable HTTPS profile fixture
+        run: openssl version
       # Deliberately NO `npm ci`: the cell runner uses Node builtins only, so the
       # checkout's node_modules cannot exist to participate — the installed tarball is
       # the whole runtime under test (run-cell re-verifies the digest + candidate SHA).
