@@ -43,7 +43,9 @@
 //   template [aios|finding]   print an issue scaffold (aios slice spec, or the
 //                             post-merge finding shape — see docs/finding-taxonomy.md)
 //   create "<title>" [--desc <file>] [--force] [--template aios] [--label <name>]... [--state <name>]
-//          [--parent <IDENT>] [--assignee <name-or-email>]
+//          [--parent <IDENT>] [--assignee <name-or-email>] [--team <KEY>]
+//                             team: --team, else the --parent's team, else the --project's
+//                             single team, else AIOS_LINEAR_TEAM_KEY, else AIO;
 //                             --label is repeatable; prints the Linear-generated git branch name;
 //                             optionally prepends a configured origin block (see SKILL.md);
 //                             --desc is ignored when --template is set; the description runs the
@@ -95,7 +97,7 @@ export function linearUsage() {
     "set-parent <IDENT> <PARENT_IDENT> | " +
     "add-label <IDENT> <LABEL> | template [aios|finding] | " +
     'create "<title>" [--desc <file>] [--force] [--template aios|finding] [--label <name>]... [--state Backlog] ' +
-    "[--parent <IDENT>] [--assignee <name-or-email>] [--project <name>] [--priority <level>] | " +
+    "[--parent <IDENT>] [--assignee <name-or-email>] [--project <name>] [--priority <level>] [--team <KEY>] | " +
     "users <TEAMKEY> | assign <IDENT> <name-or-email> | " +
     "query ['<graphql>'] [--vars <json>] | " +
     "activity pull [--repo PATH] [--tier admin|team|external] [--activity-path PATH] [--dry-run] | " +

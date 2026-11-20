@@ -31,6 +31,7 @@ export function parseCreateArgs(args, baseDir) {
   let assignee = null;
   let project = null;
   let priority = null;
+  let team = null;
   let force = false;
   const setters = {
     "--desc": (value) => (descFile = value),
@@ -41,6 +42,7 @@ export function parseCreateArgs(args, baseDir) {
     "--assignee": (value) => (assignee = value),
     "--project": (value) => (project = value),
     "--priority": (value) => (priority = parsePriority(value)),
+    "--team": (value) => (team = value.toUpperCase()),
   };
   for (let index = 1; index < args.length; index++) {
     const option = args[index];
@@ -85,17 +87,65 @@ export function parseCreateArgs(args, baseDir) {
     assignee,
     project,
     priority,
+    team,
     force,
   };
 }
 
+// The team prefix of an issue identifier ("VIB-527" -> "VIB"). Linear identifiers are always
+// TEAMKEY-<number>, so the parent's team is known without a network call.
+export function teamKeyOfIdentifier(identifier) {
+  const match = /^([A-Za-z][A-Za-z0-9]*)-\d+$/.exec(String(identifier || ""));
+  return match ? match[1].toUpperCase() : null;
+}
+
+// Which team a new issue is created in. Order: explicit --team; the --parent's team; the
+// --project's team when the project belongs to exactly one team; the configured default
+// (AIOS_LINEAR_TEAM_KEY, else AIO). Every conflict fails BEFORE the mutation is sent:
+// Linear rejects a parent or project from another team ("project not in same team as
+// issue"), and a create that reaches issueCreate is never retried. `projectTeamKeys` is
+// null when no --project was given.
+function pickTeamKey({ team, parentKey, project, keys }, defaultTeamKey) {
+  if (team) return team;
+  if (parentKey) return parentKey;
+  if (project && keys.length > 1) {
+    fail(`project "${project}" belongs to several teams (${keys.join(", ")}); pass --team`);
+  }
+  if (project && keys.length === 1) return keys[0];
+  return defaultTeamKey;
+}
+
+export function resolveCreateTeamKey(
+  { team = null, parent = null, project = null, projectTeamKeys = null },
+  defaultTeamKey = DEFAULT_TEAM_KEY
+) {
+  const parentKey = parent ? teamKeyOfIdentifier(parent) : null;
+  if (parent && !parentKey) fail(`invalid --parent "${parent}": expected TEAMKEY-<number>`);
+  if (team && parentKey && parentKey !== team) {
+    fail(`--team ${team} conflicts with --parent ${parent} (team ${parentKey})`);
+  }
+  const keys = (projectTeamKeys || []).map((key) => key.toUpperCase());
+  const chosen = pickTeamKey({ team, parentKey, project, keys }, defaultTeamKey);
+  if (project && keys.length && !keys.includes(chosen)) {
+    fail(`project "${project}" is not in team ${chosen} (its teams: ${keys.join(", ")})`);
+  }
+  return chosen;
+}
+
+async function findProjectTeamKeys(projectId) {
+  const data = await gql(`query($id:String!){ project(id:$id){ teams{ nodes{ key } } } }`, {
+    id: projectId,
+  });
+  return (data?.project?.teams?.nodes || []).map((node) => node.key);
+}
+
 // The issueCreate mutation is sent exactly once and never retried: a lost or malformed
 // response does not prove the issue was not created, and a retry could file duplicates.
-function reportUnconfirmedCreate(title, reason) {
+function reportUnconfirmedCreate(title, reason, teamKey = DEFAULT_TEAM_KEY) {
   console.error(`create FAILED: ${reason}`);
   console.error("  The issueCreate mutation was sent once and is NOT retried, but Linear");
   console.error("  may have created the issue anyway. Before re-running create, check:");
-  console.error(`    aios linear list ${DEFAULT_TEAM_KEY} --open   (look for "${title}")`);
+  console.error(`    aios linear list ${teamKey} --open   (look for "${title}")`);
   process.exit(1);
 }
 
@@ -138,8 +188,16 @@ async function resolveCreateInput({
   assignee,
   project,
   priority,
+  team,
 }) {
-  const teamId = await findTeamId(DEFAULT_TEAM_KEY);
+  let projectId = null;
+  let projectTeamKeys = null;
+  if (project) {
+    projectId = (await resolveProject(project)).id;
+    projectTeamKeys = await findProjectTeamKeys(projectId);
+  }
+  const teamKey = resolveCreateTeamKey({ team, parent, project, projectTeamKeys });
+  const teamId = await findTeamId(teamKey);
   const st = await findTeamState(teamId, state);
   if (!st) {
     console.error(`state "${state}" not found`);
@@ -161,12 +219,12 @@ async function resolveCreateInput({
     if (ids.length) input.labelIds = ids;
   }
   if (assignee) {
-    const u = await findUser(DEFAULT_TEAM_KEY, assignee);
+    const u = await findUser(teamKey, assignee);
     input.assigneeId = u.id;
   }
-  if (project) input.projectId = (await resolveProject(project)).id;
+  if (projectId) input.projectId = projectId;
   if (priority !== null) input.priority = priority;
-  return input;
+  return { input, teamKey };
 }
 
 export async function cmdCreate(args, baseDir) {
@@ -175,7 +233,7 @@ export async function cmdCreate(args, baseDir) {
   // Same pre-write guard as set-desc/patch-desc (AIO-1026): refuse markdown Linear is known
   // to corrupt BEFORE any network traffic, so a rejected description means zero mutations.
   lintDescription(description, { force });
-  const input = await resolveCreateInput(parsed);
+  const { input, teamKey } = await resolveCreateInput(parsed);
   let d;
   try {
     d = await gql(
@@ -184,7 +242,7 @@ export async function cmdCreate(args, baseDir) {
       { throwOnError: true }
     );
   } catch (error) {
-    reportUnconfirmedCreate(title, error.message);
+    reportUnconfirmedCreate(title, error.message, teamKey);
   }
   // An HTTP-success payload with missing/null data (Linear or an intermediary accepting the
   // mutation but returning no result) makes gql return undefined — that is just as
@@ -192,7 +250,11 @@ export async function cmdCreate(args, baseDir) {
   // the duplicate-prevention warning.
   const i = d?.issueCreate?.issue;
   if (!d?.issueCreate?.success || !i)
-    reportUnconfirmedCreate(title, "issueCreate returned no confirmation (missing or null data).");
+    reportUnconfirmedCreate(
+      title,
+      "issueCreate returned no confirmation (missing or null data).",
+      teamKey
+    );
   console.log(`created ${i.identifier}  ${i.title}\n${i.url}\nbranch: ${i.branchName}`);
   if (description) {
     // Post-write readback bound to the issue the mutation just returned, mirroring set-desc.

@@ -64,6 +64,8 @@ $LIN template aios              # print issue scaffold
 $LIN template finding           # print the post-merge finding scaffold (AIO-999)
 $LIN create "My slice" --template aios --state Triage
 $LIN create "My slice" --project Ultraharden --priority high  # set both at creation, no follow-up calls
+$LIN create "My slice" --parent VIB-527    # team comes from the parent (VIB), not the AIO default
+$LIN create "My slice" --team VIB --project "Peridot Shore"  # explicit team; else --parent's, else the project's only team, else AIOS_LINEAR_TEAM_KEY, else AIO
 $LIN set-desc AIO-75 spec.md [--force]  # replace description; force bypasses the table lint
 $LIN patch-desc AIO-75 patch.md [--force]  # SEARCH/REPLACE; force bypasses the table lint
 $LIN set-title AIO-75 "New title"
