@@ -120,10 +120,14 @@ export function installProjectsMockFetch({ pages, logPath, cycle }) {
           ? "cursor-" + (index + 1)
           : "cursor-0";
       data = { projects: { nodes, pageInfo: { hasNextPage, endCursor } } };
-    } else if (query.includes("project(id:$id){ teams")) {
+    } else if (query.includes("project(id:$id){ teams(first:250")) {
       // `create --project` asks which team the project is in (team inference). Every
       // fixture project lives in the default team.
-      data = { project: { teams: { nodes: [{ key: "AIO" }] } } };
+      data = {
+        project: {
+          teams: { nodes: [{ key: "AIO" }], pageInfo: { hasNextPage: false, endCursor: null } },
+        },
+      };
     } else if (query.includes("team(id:$key){ id }")) {
       data = { team: { id: "team-1" } };
     } else if (query.includes("states")) {

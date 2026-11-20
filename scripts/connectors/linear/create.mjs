@@ -16,6 +16,7 @@ import {
   findTeamState,
   findUser,
   gql,
+  paginate,
   parsePriority,
   resolveProject,
 } from "./core.mjs";
@@ -132,11 +133,19 @@ export function resolveCreateTeamKey(
   return chosen;
 }
 
+// Paginated like the other connection lookups: a project in more teams than one page holds
+// would otherwise reject a valid --team or parent team that sits on a later page.
 async function findProjectTeamKeys(projectId) {
-  const data = await gql(`query($id:String!){ project(id:$id){ teams{ nodes{ key } } } }`, {
-    id: projectId,
-  });
-  return (data?.project?.teams?.nodes || []).map((node) => node.key);
+  const teams = await paginate(async (after) => {
+    const data = await gql(
+      `query($id:String!,$after:String){
+        project(id:$id){ teams(first:250, after:$after){ nodes{ key } pageInfo{ hasNextPage endCursor } } }
+      }`,
+      { id: projectId, after }
+    );
+    return data?.project?.teams || { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } };
+  }, "Linear project-team pagination stalled");
+  return teams.map((node) => node.key);
 }
 
 // The issueCreate mutation is sent exactly once and never retried: a lost or malformed

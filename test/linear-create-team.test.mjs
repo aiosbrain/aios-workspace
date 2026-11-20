@@ -98,7 +98,13 @@ globalThis.fetch = async (_url, init) => {
   else if (query.includes("projects(first:100")) data = { projects: {
     nodes: [{ id: "proj-1", name: "Peridot Shore", url: "u", status: { name: "Planned", type: "planned" } }],
     pageInfo: { hasNextPage: false, endCursor: null } } };
-  else if (query.includes("project(id:$id){ teams")) data = { project: { teams: { nodes: [{ key: "VIB" }] } } };
+  else if (query.includes("project(id:$id){ teams(first:250")) {
+    // Two pages when PROJECT_TEAMS_PAGED is set: VIB sits on the second page.
+    if (process.env.PROJECT_TEAMS_PAGED && !variables.after) data = { project: { teams: {
+      nodes: [{ key: "AIO" }], pageInfo: { hasNextPage: true, endCursor: "c1" } } } };
+    else data = { project: { teams: {
+      nodes: [{ key: "VIB" }], pageInfo: { hasNextPage: false, endCursor: null } } } };
+  }
   else if (query.includes("issue(id:$id){ id identifier")) data = { issue: { id: "parent-1", identifier: variables.id, title: "p", state: { name: "Backlog" } } };
   else if (query.includes("issueCreate")) data = { issueCreate: { success: true, issue: {
     id: "i-1", identifier: "VIB-999", title: variables.input.title, url: "u", branchName: "b" } } };
@@ -107,7 +113,7 @@ globalThis.fetch = async (_url, init) => {
 };
 `;
 
-function runCreate(args) {
+function runCreate(args, extraEnv = {}) {
   const dir = mkdtempSync(path.join(tmpdir(), "linear-create-team-"));
   const preload = path.join(dir, "preload.mjs");
   const log = path.join(dir, "queries.log");
@@ -115,7 +121,13 @@ function runCreate(args) {
   writeFileSync(log, "");
   const r = spawnSync(process.execPath, ["--import", preload, CLI, "linear", "create", ...args], {
     encoding: "utf8",
-    env: { ...process.env, LINEAR_API_KEY: "test", AIOS_LINEAR_TEAM_KEY: "", QUERY_LOG: log },
+    env: {
+      ...process.env,
+      LINEAR_API_KEY: "test",
+      AIOS_LINEAR_TEAM_KEY: "",
+      QUERY_LOG: log,
+      ...extraEnv,
+    },
   });
   const queries = readFileSync(log, "utf8")
     .trim()
@@ -141,4 +153,15 @@ test("create --team AIO --parent VIB-527 sends no mutation", () => {
   assert.notEqual(r.status, 0);
   assert.match(r.stderr, /conflicts with --parent/);
   assert.equal(queries.filter((q) => q.query.includes("issueCreate")).length, 0);
+});
+
+test("project teams are paginated: a --team on the second page is accepted", () => {
+  const { r, queries } = runCreate(["Slice", "--team", "VIB", "--project", "Peridot Shore"], {
+    PROJECT_TEAMS_PAGED: "1",
+  });
+  assert.equal(r.status, 0, r.stderr);
+  const pages = queries.filter((q) => q.query.includes("project(id:$id){ teams(first:250"));
+  assert.equal(pages.length, 2);
+  const create = queries.find((q) => q.query.includes("issueCreate"));
+  assert.equal(create.variables.input.teamId, "team-VIB");
 });
